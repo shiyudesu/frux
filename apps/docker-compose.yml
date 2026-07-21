@@ -19,8 +19,6 @@ services:
   redis:
     image: redis:7.4-alpine
     container_name: gcfeed-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -47,6 +45,8 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
+      args:
+        GOPROXY: https://goproxy.cn,direct
     container_name: gcfeed-api
     depends_on:
       mysql:
@@ -71,6 +71,8 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
+      args:
+        GOPROXY: https://goproxy.cn,direct
     container_name: gcfeed-worker
     command: ["./gcfeed-worker"]
     depends_on:

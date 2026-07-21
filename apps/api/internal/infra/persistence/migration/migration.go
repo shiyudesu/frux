@@ -63,7 +63,7 @@ func isConcurrentMigrationError(err error) bool {
 		return false
 	}
 	switch mysqlErr.Number {
-	case 1060, 1061:
+	case 1050, 1060, 1061:
 		return true
 	default:
 		return false

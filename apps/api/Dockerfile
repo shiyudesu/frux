@@ -2,6 +2,8 @@
 
 FROM golang:1.26.1-alpine AS builder
 
+ARG GOPROXY
+
 WORKDIR /src
 
 COPY go.mod go.sum ./
