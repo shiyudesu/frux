@@ -11,8 +11,8 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v npm >/dev/null 2>&1; then
-  echo "npm command is required"
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pnpm command is required"
   exit 1
 fi
 
@@ -51,7 +51,7 @@ WORKER_PID=$!
 echo "Starting web dev server"
 echo "Working directory: ${WEB_DIR}"
 echo "URL: http://127.0.0.1:5173/"
-(cd "${WEB_DIR}" && npm run dev) &
+(cd "${WEB_DIR}" && pnpm run dev) &
 WEB_PID=$!
 
 echo "API PID: ${API_PID}"

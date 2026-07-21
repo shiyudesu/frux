@@ -107,7 +107,7 @@ go test ./...
 前端生产构建：
 
 ```bash
-npm --prefix apps/web run build
+pnpm -C apps/web run build
 ```
 
 Compose 配置校验：

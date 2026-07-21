@@ -56,5 +56,5 @@ Use these checks when relevant:
 ```bash
 openspec validate --all --strict
 cd apps/api && go test ./...
-cd apps/web && npm run build
+cd apps/web && pnpm run build
 ```

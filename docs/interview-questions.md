@@ -814,7 +814,7 @@
 
 5. Web 生产构建如何验证？
 
-   答：运行 `npm --prefix apps/web run build` 生成生产产物。验证构建成功后，再通过 Docker Compose 或 Nginx 容器访问 Web 页面。还应检查 API 地址配置、静态资源加载和主要页面交互。
+   答：运行 `pnpm -C apps/web run build` 生成生产产物。验证构建成功后，再通过 Docker Compose 或 Nginx 容器访问 Web 页面。还应检查 API 地址配置、静态资源加载和主要页面交互。
 
 ### 追问
 

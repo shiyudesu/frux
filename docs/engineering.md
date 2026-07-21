@@ -321,7 +321,7 @@ Web 构建命令：
 
 ```bash
 cd apps/web
-npm run build
+pnpm run build
 ```
 
 OpenSpec 校验命令：
