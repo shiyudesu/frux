@@ -1,2 +1,4 @@
 .DS_Store
 apps/api/uploads/*
+.kimi
+.kimi-code
