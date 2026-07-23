@@ -7,7 +7,7 @@ GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API �
 已实现能力：
 
 - 后端分层结构：Domain、Application、Infrastructure、Interfaces。
-- Gin HTTP 服务入口和 REST API 路由。
+- Hertz HTTP 服务入口和 REST API 路由。
 - MySQL + GORM 持久化。
 - JWT 登录态。
 - Redis Feed 缓存、热榜和互动计数。

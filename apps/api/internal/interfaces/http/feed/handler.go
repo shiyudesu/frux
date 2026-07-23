@@ -3,13 +3,16 @@ package interfaceshttpfeed
 import (
 	applicationfeed "GCFeed/internal/application/feed"
 	domainfeed "GCFeed/internal/domain/feed"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -22,7 +25,7 @@ func New(service *applicationfeed.Service) *Handler {
 }
 
 // ListFeedItems 读取指定 scene 的 Feed，cursor 和 limit 来自 query 参数。
-func (h *Handler) ListFeedItems(c *gin.Context) {
+func (h *Handler) ListFeedItems(ctx context.Context, c *app.RequestContext) {
 	limit, err := parseLimit(c.Query("limit"))
 	if err != nil {
 		writeFeedError(c, err)
@@ -30,7 +33,7 @@ func (h *Handler) ListFeedItems(c *gin.Context) {
 	}
 
 	viewerID, _ := viewerIDFromContext(c)
-	result, err := h.service.GetFeed(c.Request.Context(), applicationfeed.FeedRequest{
+	result, err := h.service.GetFeed(ctx, applicationfeed.FeedRequest{
 		Scene:    domainfeed.Scene(c.Query("scene")),
 		Cursor:   c.Query("cursor"),
 		Limit:    limit,
@@ -45,10 +48,10 @@ func (h *Handler) ListFeedItems(c *gin.Context) {
 }
 
 // Query 通过请求体接收复杂 Feed 查询参数，适合推荐上下文逐步扩展。
-func (h *Handler) Query(c *gin.Context) {
+func (h *Handler) Query(ctx context.Context, c *app.RequestContext) {
 	var req feedQueryRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
@@ -59,7 +62,7 @@ func (h *Handler) Query(c *gin.Context) {
 	}
 
 	viewerID, _ := viewerIDFromContext(c)
-	result, err := h.service.GetFeed(c.Request.Context(), applicationfeed.FeedRequest{
+	result, err := h.service.GetFeed(ctx, applicationfeed.FeedRequest{
 		Scene:         domainfeed.Scene(req.Scene),
 		Cursor:        req.Cursor,
 		Limit:         limit,
@@ -75,14 +78,14 @@ func (h *Handler) Query(c *gin.Context) {
 }
 
 // Refresh 从第一页重新读取 Feed，适合下拉刷新语义。
-func (h *Handler) Refresh(c *gin.Context) {
+func (h *Handler) Refresh(ctx context.Context, c *app.RequestContext) {
 	limit, err := parseLimit(c.Query("limit"))
 	if err != nil {
 		writeFeedError(c, err)
 		return
 	}
 
-	result, err := h.service.RefreshFeed(c.Request.Context(), limit)
+	result, err := h.service.RefreshFeed(ctx, limit)
 	if err != nil {
 		writeFeedError(c, err)
 		return
@@ -146,16 +149,16 @@ func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsRe
 }
 
 // writeFeedError 统一 Feed 接口错误响应。
-func writeFeedError(c *gin.Context, err error) {
+func writeFeedError(c *app.RequestContext, err error) {
 	if errors.Is(err, domainfeed.ErrViewerRequired) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": err.Error()})
 		return
 	}
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 // isBadRequestError 判断 Feed 参数错误。
@@ -166,7 +169,7 @@ func isBadRequestError(err error) bool {
 }
 
 // viewerIDFromContext 读取可选登录用户 ID，个性化 Feed 策略可以使用。
-func viewerIDFromContext(c *gin.Context) (int64, bool) {
+func viewerIDFromContext(c *app.RequestContext) (int64, bool) {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
 		return 0, false

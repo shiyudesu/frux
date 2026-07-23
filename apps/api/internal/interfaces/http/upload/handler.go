@@ -1,6 +1,7 @@
 package interfaceshttpupload
 
 import (
+	infrahttphertz "GCFeed/internal/infra/httphertz"
 	inframetrics "GCFeed/internal/infra/metrics"
 	"bytes"
 	"context"
@@ -19,7 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 const maxUploadBytes = 1024 << 20
@@ -115,7 +117,7 @@ func NewWithProcessor(root string, processor UploadProcessor) *Handler {
 }
 
 // Create 接收 multipart/form-data 文件，并按 kind 保存到不同子目录。
-func (h *Handler) Create(c *gin.Context) {
+func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	start := time.Now()
 	kind := "unknown"
 	var resultErr error
@@ -123,20 +125,22 @@ func (h *Handler) Create(c *gin.Context) {
 		inframetrics.ObserveUpload(kind, time.Since(start), resultErr)
 	}()
 
-	// MaxBytesReader 在读取请求体前限制上传大小，避免大文件撑爆内存或磁盘。
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
-
-	file, err := c.FormFile("file")
+	form, file, rawKind, err := readUploadForm(c, maxUploadBytes)
 	if err != nil {
 		resultErr = err
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		if errors.Is(err, errUploadTooLarge) {
+			writeUploadValidationError(c, err)
+			return
+		}
+		c.JSON(http.StatusBadRequest, utils.H{"error": "file is required"})
 		return
 	}
+	defer form.RemoveAll()
 
-	normalizedKind, ok := normalizeKind(c.PostForm("kind"))
+	normalizedKind, ok := normalizeKind(rawKind)
 	if !ok {
 		resultErr = errors.New("invalid upload kind")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid upload kind"})
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid upload kind"})
 		return
 	}
 	kind = normalizedKind
@@ -153,26 +157,26 @@ func (h *Handler) Create(c *gin.Context) {
 	targetDir := filepath.Join(h.root, kind)
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		resultErr = err
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare upload directory"})
+		c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to prepare upload directory"})
 		return
 	}
 
 	targetPath := filepath.Join(targetDir, filename)
 	if err := c.SaveUploadedFile(file, targetPath); err != nil {
 		resultErr = err
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save upload"})
+		c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to save upload"})
 		return
 	}
 
 	if kind == "video" {
-		if err := h.processor.ValidateVideo(c.Request.Context(), targetPath); err != nil {
+		if err := h.processor.ValidateVideo(ctx, targetPath); err != nil {
 			resultErr = err
 			_ = os.Remove(targetPath)
 			writeUploadProcessingError(c, err)
 			return
 		}
 		if shouldFaststart(validation.Ext) {
-			if err := h.processor.Faststart(c.Request.Context(), targetPath); err != nil {
+			if err := h.processor.Faststart(ctx, targetPath); err != nil {
 				resultErr = err
 				_ = os.Remove(targetPath)
 				writeUploadProcessingError(c, err)
@@ -187,6 +191,56 @@ func (h *Handler) Create(c *gin.Context) {
 		Filename: filename,
 		Size:     file.Size,
 	})
+}
+
+func readUploadForm(c *app.RequestContext, maxBytes int64) (*multipart.Form, *multipart.FileHeader, string, error) {
+	contentLength := int64(c.Request.Header.ContentLength())
+	if contentLength > maxBytes {
+		return nil, nil, "", errUploadTooLarge
+	}
+
+	boundary := string(c.Request.Header.MultipartFormBoundary())
+	if boundary == "" {
+		return nil, nil, "", errors.New("multipart boundary is required")
+	}
+
+	streamed := c.Request.IsBodyStream()
+	var body io.Reader
+	if streamed {
+		body = c.Request.BodyStream()
+	} else {
+		body = bytes.NewReader(c.Request.BodyBytes())
+	}
+	limited := &io.LimitedReader{R: body, N: maxBytes + 1}
+	form, err := multipart.NewReader(limited, boundary).ReadForm(8 << 10)
+	if err != nil {
+		if limited.N == 0 {
+			return nil, nil, "", errUploadTooLarge
+		}
+		return nil, nil, "", err
+	}
+	if _, err := io.Copy(io.Discard, limited); err != nil {
+		_ = form.RemoveAll()
+		return nil, nil, "", err
+	}
+	if limited.N == 0 {
+		_ = form.RemoveAll()
+		return nil, nil, "", errUploadTooLarge
+	}
+	if streamed {
+		infrahttphertz.MarkRequestBodyConsumed(c)
+	}
+
+	files := form.File["file"]
+	if len(files) == 0 {
+		_ = form.RemoveAll()
+		return nil, nil, "", errors.New("file is required")
+	}
+	kind := ""
+	if values := form.Value["kind"]; len(values) > 0 {
+		kind = values[0]
+	}
+	return form, files[0], kind, nil
 }
 
 // normalizeKind 规范化文件分类，分类会影响保存目录和访问 URL。
@@ -468,16 +522,16 @@ func createFaststartTempFile(path string) (*os.File, error) {
 	return os.CreateTemp(targetDir, "*.faststart.mp4")
 }
 
-func writeUploadValidationError(c *gin.Context, err error) {
-	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func writeUploadValidationError(c *app.RequestContext, err error) {
+	c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 }
 
-func writeUploadProcessingError(c *gin.Context, err error) {
+func writeUploadProcessingError(c *app.RequestContext, err error) {
 	if errors.Is(err, errVideoToolUnavailable) || errors.Is(err, errFaststartFailed) {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 }
 
 // randomSuffix 生成文件名随机后缀，随机失败时用时间戳兜底。

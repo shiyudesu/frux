@@ -6,7 +6,7 @@ GCFeed is a short-video Feed system. It provides a practical engineering baselin
 
 ## Technology
 
-- Go API with Gin and GORM.
+- Go API with Hertz and GORM.
 - MySQL for durable data.
 - Redis for Feed cache, hot ranking, counters, and short-lived state.
 - RabbitMQ for asynchronous write-behind and fanout work.

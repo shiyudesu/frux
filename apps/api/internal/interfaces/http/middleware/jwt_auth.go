@@ -2,37 +2,38 @@ package interfaceshttpmiddleware
 
 import (
 	infrajwt "GCFeed/internal/infra/jwt"
+	"context"
 	"crypto/subtle"
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 const ContextUserIDKey = "auth_user_id"
 const ContextRoleKey = "auth_role"
 
-// NewJWTAuth 返回 Gin 鉴权中间件，负责解析 Bearer token 并写入用户上下文。
-func NewJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		header := strings.TrimSpace(c.GetHeader("Authorization"))
+// NewJWTAuth validates access tokens and stores identity in the request context.
+func NewJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
+	return func(ctx context.Context, c *app.RequestContext) {
+		header := strings.TrimSpace(string(c.GetHeader("Authorization")))
 		if header == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
 				"message": "authorization header is required",
 			})
 			return
 		}
 
-		// Authorization 标准格式为：Bearer <access_token>。
 		parts := strings.SplitN(header, " ", 2)
 		if len(parts) != 2 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"message": "authorization format must be Bearer <token>",
+			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
+				"message": "authorization format must be Bearer token",
 			})
 			return
 		}
 		if !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
 				"message": "authorization scheme must be Bearer",
 			})
 			return
@@ -41,52 +42,51 @@ func NewJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
 		token := strings.TrimSpace(parts[1])
 		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
 				"message": "invalid access token",
 			})
 			return
 		}
 
-		// 后续 Handler 从 gin.Context 中读取用户 ID 和角色，避免重复解析 JWT。
 		c.Set(ContextUserIDKey, claims.UserID)
 		c.Set(ContextRoleKey, claims.Role)
-		c.Next()
+		c.Next(ctx)
 	}
 }
 
-// NewInternalTokenAuth 校验内部服务调用使用的 X-Internal-Token。
-func NewInternalTokenAuth(token string) gin.HandlerFunc {
+// NewInternalTokenAuth validates the token used by internal service calls.
+func NewInternalTokenAuth(token string) app.HandlerFunc {
 	token = strings.TrimSpace(token)
-	return func(c *gin.Context) {
+	return func(ctx context.Context, c *app.RequestContext) {
 		if token == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
 				"message": "internal token is required",
 			})
 			return
 		}
-		provided := strings.TrimSpace(c.GetHeader("X-Internal-Token"))
+		provided := strings.TrimSpace(string(c.GetHeader("X-Internal-Token")))
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
 				"message": "invalid internal token",
 			})
 			return
 		}
-		c.Next()
+		c.Next(ctx)
 	}
 }
 
-// NewOptionalJWTAuth 在公共接口中补充可选登录身份，适合 Feed 个性化场景。
-func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		header := strings.TrimSpace(c.GetHeader("Authorization"))
+// NewOptionalJWTAuth adds viewer identity to public requests when a token is valid.
+func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
+	return func(ctx context.Context, c *app.RequestContext) {
+		header := strings.TrimSpace(string(c.GetHeader("Authorization")))
 		if header == "" {
-			c.Next()
+			c.Next(ctx)
 			return
 		}
 
 		parts := strings.SplitN(header, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
-			c.Next()
+			c.Next(ctx)
 			return
 		}
 
@@ -96,6 +96,6 @@ func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
 			c.Set(ContextUserIDKey, claims.UserID)
 			c.Set(ContextRoleKey, claims.Role)
 		}
-		c.Next()
+		c.Next(ctx)
 	}
 }

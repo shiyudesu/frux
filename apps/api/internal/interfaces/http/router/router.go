@@ -13,6 +13,7 @@ import (
 	domainfeed "GCFeed/internal/domain/feed"
 	infracache "GCFeed/internal/infra/cache"
 	infraconfig "GCFeed/internal/infra/config"
+	infrahttphertz "GCFeed/internal/infra/httphertz"
 	infrajwt "GCFeed/internal/infra/jwt"
 	inframq "GCFeed/internal/infra/mq"
 	infraaccount "GCFeed/internal/infra/persistence/account"
@@ -39,15 +40,19 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/adaptor"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
 // Register 负责后端依赖装配：数据库模型、仓储、Service、Handler、中间件和路由。
-func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
+func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	// database/sql 连接池交给 GORM 复用，避免维护两套数据库连接。
 	gormDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
 		Conn: db,
@@ -128,14 +133,19 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	relationHandler := interfaceshttprelation.New(relationService)
 	uploadHandler := interfaceshttpupload.New("./uploads")
 
-	g.GET("/health", HealthCheck)
-	g.GET("/metrics", gin.WrapH(promhttp.Handler()))
-	// 静态文件路由让上传后的文件可以通过 /uploads/... 访问。
-	g.Static("/uploads", "./uploads")
+	h.GET("/health", HealthCheck)
+	h.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
+	// GET 通过标准库文件服务保留 Range 语义；HEAD 原生返回正确的文件元数据。
+	staticGetHandler, staticHeadHandler, err := infrahttphertz.StaticHandlers("./uploads", "/uploads")
+	if err != nil {
+		return err
+	}
+	h.GET("/uploads/*filepath", staticGetHandler)
+	h.HEAD("/uploads/*filepath", staticHeadHandler)
 
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
-	api := g.Group("/api")
+	api := h.Group("/api")
 
 	// RESTful 路由约定：路径表达资源，HTTP 方法表达动作。
 	// 会话资源用于登录态：创建会话表示登录，删除当前会话表示登出。
@@ -184,12 +194,16 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	api.GET("/preload-videos", authMiddleware, playbackHandler.ListPreloadVideos)
 	api.POST("/playback-qos-reports", authMiddleware, playbackHandler.CreateQoSReport)
 
-	internal := g.Group("/internal")
+	internal := h.Group("/internal")
 	internal.POST("/recommendation-candidates", recommendationHandler.ListCandidates)
 	internal.POST("/exposure-decisions", recommendationHandler.DecideExposures)
 	internal.POST("/exposures", recommendationHandler.SaveExposures)
 	internal.POST("/messages", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), messageHandler.Create)
 	internal.POST("/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), playbackHandler.CreateInternalQoSReport)
+
+	infrahttphertz.RegisterTrailingSlashRedirects(h)
+	h.GET("/uploads", infrahttphertz.RedirectTo("/uploads/"))
+	h.HEAD("/uploads", infrahttphertz.RedirectTo("/uploads/"))
 
 	return nil
 }
@@ -242,8 +256,8 @@ func (b *FollowFeedBackfiller) AddInboxItems(ctx context.Context, authorID int64
 }
 
 // HealthCheck 提供基础健康检查接口，方便本地调试和容器探活。
-func HealthCheck(c *gin.Context) {
-	c.JSON(200, gin.H{
+func HealthCheck(_ context.Context, c *app.RequestContext) {
+	c.JSON(http.StatusOK, utils.H{
 		"message": "All is well",
 	})
 }

@@ -1,10 +1,8 @@
 package test
 
 import (
-	"bytes"
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
@@ -17,7 +15,8 @@ import (
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	interfaceshttpplayback "GCFeed/internal/interfaces/http/playback"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 type playbackConfigAPIResponse struct {
@@ -274,9 +273,8 @@ func TestPlaybackAPIValidation(t *testing.T) {
 	requireStatus(t, performInternalPlaybackRequest(router, http.MethodPost, "/internal/playback-qos-reports", `{"user_id":-1,"video_id":101}`, testInternalToken, ""), http.StatusBadRequest)
 }
 
-func newPlaybackRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
+func newPlaybackRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
 
 	repo := newMemoryPlaybackRepo()
 	service := applicationplayback.New(repo)
@@ -286,7 +284,7 @@ func newPlaybackRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
 		t.Fatalf("new jwt manager: %v", err)
 	}
 
-	router := gin.New()
+	router := server.New()
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 	api := router.Group("/api", authMiddleware)
 	api.GET("/playback-config", handler.GetConfig)
@@ -297,34 +295,24 @@ func newPlaybackRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
 	return router, jwtManager
 }
 
-func performPlaybackJSONRequest(router *gin.Engine, method, path, body, accessToken, idempotencyKey string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
+func performPlaybackJSONRequest(router *server.Hertz, method, path, body, accessToken, idempotencyKey string) *ut.ResponseRecorder {
+	headers := make([]ut.Header, 0, 2)
 	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
+		headers = append(headers, ut.Header{Key: "Authorization", Value: "Bearer " + accessToken})
 	}
 	if idempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", idempotencyKey)
+		headers = append(headers, ut.Header{Key: "Idempotency-Key", Value: idempotencyKey})
 	}
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-	return resp
+	return performJSONRequestWithHeaders(router, method, path, body, headers...)
 }
 
-func performInternalPlaybackRequest(router *gin.Engine, method, path, body, internalToken, idempotencyKey string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
+func performInternalPlaybackRequest(router *server.Hertz, method, path, body, internalToken, idempotencyKey string) *ut.ResponseRecorder {
+	headers := make([]ut.Header, 0, 2)
 	if internalToken != "" {
-		req.Header.Set("X-Internal-Token", internalToken)
+		headers = append(headers, ut.Header{Key: "X-Internal-Token", Value: internalToken})
 	}
 	if idempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", idempotencyKey)
+		headers = append(headers, ut.Header{Key: "Idempotency-Key", Value: idempotencyKey})
 	}
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-	return resp
+	return performJSONRequestWithHeaders(router, method, path, body, headers...)
 }

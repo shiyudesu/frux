@@ -14,7 +14,7 @@ import (
 	interfaceshttpexposure "GCFeed/internal/interfaces/http/exposure"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 type exposureAPIResponse struct {
@@ -286,15 +286,14 @@ func TestExposureAPIValidation(t *testing.T) {
 	requireStatus(t, missingVideoResponse, http.StatusNotFound)
 }
 
-func newExposureRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager, *memoryExposureRepo) {
+func newExposureRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager, *memoryExposureRepo) {
 	return newExposureRouterWithPublisher(t, nil)
 }
 
-func newExposureRouterWithPublisher(t *testing.T, publisher applicationexposure.ViewEventPublisher) (*gin.Engine, *infrajwt.Manager, *memoryExposureRepo) {
+func newExposureRouterWithPublisher(t *testing.T, publisher applicationexposure.ViewEventPublisher) (*server.Hertz, *infrajwt.Manager, *memoryExposureRepo) {
 	t.Helper()
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+	router := server.New()
 
 	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
 	if err != nil {

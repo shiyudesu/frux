@@ -51,7 +51,7 @@ Both Go binaries load `./configs/config.yaml` using a relative path, so direct `
   - `internal/application/{module}`: use cases, cursor/idempotency logic, small interfaces for optional infrastructure, and workers.
   - `internal/infra`: GORM persistence, Redis cache/indexes, RabbitMQ, JWT, configuration, metrics, and migrations.
   - `internal/interfaces/http/{module}`: DTOs, request parsing, error-to-status mapping, and handlers.
-- The dependency direction is `Config/external clients -> Repository -> Application Service -> Handler -> Router`. Domain packages must not depend on Gin, GORM, Redis, or RabbitMQ types.
+- The dependency direction is `Config/external clients -> Repository -> Application Service -> Handler -> Router`. Domain packages must not depend on Hertz, GORM, Redis, or RabbitMQ types.
 - MySQL is the durable source of truth. Redis holds feed pages/cards/stats, hot-ranking buckets, following indexes, and fast interaction state. RabbitMQ carries action changes, video-published events, and exposure events to workers.
 - Redis and RabbitMQ are optional enhancements in the HTTP process: the router enables capabilities through application options when clients are available. The worker requires both Redis and RabbitMQ.
 - `migration.AutoMigrate` is called by both processes and includes retry handling for concurrent migration races. Add new GORM models there and keep module-specific post-migration/index setup explicit.
@@ -69,7 +69,7 @@ Both Go binaries load `./configs/config.yaml` using a relative path, so direct `
 - Write endpoints that can be retried use `Idempotency-Key`; preserve the existing conflict behavior and 128-character limit.
 - GORM models stay under `internal/infra/persistence/{module}`. Repositories return domain entities and keep transactions, stable ordering, and batch reads inside infrastructure.
 - Cross-module notifications and feed backfills are connected through small application interfaces/adapters in the composition root instead of importing another module's infrastructure.
-- API-flow tests under `apps/api/test` assemble Gin handlers/services with in-memory repositories and fakes, avoiding external services. Package-specific unit tests live beside the implementation.
+- API-flow tests under `apps/api/test` assemble Hertz handlers/services with in-memory repositories and fakes, using `pkg/common/ut.PerformRequest` where no real network writer is required. Package-specific unit tests live beside the implementation.
 - Frontend routes remain in the `Route` union and `normalizeRoute`; do not add a routing library. Navigation and session state flow through `useNavigate` and `useSession`, not prop drilling.
 - Keep frontend API calls in `src/api/client.ts` and per-domain API modules, with request/response types in `src/types.ts`. Validate `localStorage` JSON through the existing type guards.
 - Frontend TypeScript is strict: do not introduce JavaScript source, explicit `any`, `@ts-nocheck`, or `@ts-expect-error`. Preserve the current loading/error/empty/ready state handling in pages and hooks.

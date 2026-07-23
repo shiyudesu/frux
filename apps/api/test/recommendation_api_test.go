@@ -18,7 +18,7 @@ import (
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	interfaceshttprecommendation "GCFeed/internal/interfaces/http/recommendation"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 type recommendationAPIResponse struct {
@@ -376,9 +376,8 @@ func TestRecommendFeedScene(t *testing.T) {
 	requireStatus(t, unauthorizedResponse, http.StatusUnauthorized)
 }
 
-func newRecommendationRouter() *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+func newRecommendationRouter() *server.Hertz {
+	router := server.New()
 	service := applicationrecommendation.New(
 		newMemoryRecommendationRepo(),
 		applicationrecommendation.WithNow(func() time.Time {
@@ -395,11 +394,10 @@ func newRecommendationRouter() *gin.Engine {
 	return router
 }
 
-func newRecommendFeedRouterWithJWT(t *testing.T, service *applicationfeed.Service) (*gin.Engine, *infrajwt.Manager) {
+func newRecommendFeedRouterWithJWT(t *testing.T, service *applicationfeed.Service) (*server.Hertz, *infrajwt.Manager) {
 	t.Helper()
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+	router := server.New()
 	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
 	if err != nil {
 		t.Fatalf("new jwt manager: %v", err)

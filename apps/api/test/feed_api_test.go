@@ -14,7 +14,7 @@ import (
 	interfaceshttpfeed "GCFeed/internal/interfaces/http/feed"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 type feedAPIResponse struct {
@@ -728,13 +728,12 @@ func TestFeedAPIValidation(t *testing.T) {
 }
 
 // newFeedRouter 只装配 Feed 路由，测试时无需数据库。
-func newFeedRouter(items []*domainfeed.FeedItem) *gin.Engine {
+func newFeedRouter(items []*domainfeed.FeedItem) *server.Hertz {
 	return newFeedRouterWithService(applicationfeed.New(newMemoryFeedRepo(items)))
 }
 
-func newFeedRouterWithService(service *applicationfeed.Service) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+func newFeedRouterWithService(service *applicationfeed.Service) *server.Hertz {
+	router := server.New()
 
 	handler := interfaceshttpfeed.New(service)
 
@@ -745,11 +744,10 @@ func newFeedRouterWithService(service *applicationfeed.Service) *gin.Engine {
 	return router
 }
 
-func newFeedRouterWithServiceAndJWT(t *testing.T, service *applicationfeed.Service) (*gin.Engine, *infrajwt.Manager) {
+func newFeedRouterWithServiceAndJWT(t *testing.T, service *applicationfeed.Service) (*server.Hertz, *infrajwt.Manager) {
 	t.Helper()
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+	router := server.New()
 	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
 	if err != nil {
 		t.Fatalf("new jwt manager: %v", err)

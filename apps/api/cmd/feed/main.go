@@ -5,14 +5,14 @@ import (
 
 	infraconfig "GCFeed/internal/infra/config"
 	infradatabase "GCFeed/internal/infra/database"
-	infrahttpgin "GCFeed/internal/infra/httpgin"
+	infrahttphertz "GCFeed/internal/infra/httphertz"
 	interfaceshttprouter "GCFeed/internal/interfaces/http/router"
 )
 
 const configPath = "./configs/config.yaml"
 
 func main() {
-	// 启动顺序保持简单：配置 -> 数据库 -> Gin -> 路由 -> 启动服务。
+	// 启动顺序保持简单：配置 -> 数据库 -> Hertz -> 路由 -> 启动服务。
 	cfg, err := infraconfig.LoadConfig(configPath)
 	if err != nil {
 		log.Fatalf("load config failed: %v", err)
@@ -33,19 +33,23 @@ func main() {
 	}
 	log.Println("database connection initialized")
 
-	// Gin 引擎只负责 HTTP 入口，业务依赖在 router.Register 中装配。
-	g := infrahttpgin.Init()
-	log.Println("gin engine initialized")
+	// Hertz 引擎只负责 HTTP 入口，业务依赖在 router.Register 中装配。
+	h, err := infrahttphertz.Init(cfg)
+	if err != nil {
+		log.Fatalf("init hertz server failed: %v", err)
+	}
+	log.Println("hertz server initialized")
 
 	// router.Register 会完成仓储、Service、Handler 和中间件的组装。
-	if err := interfaceshttprouter.Register(g, cfg, db); err != nil {
+	if err := interfaceshttprouter.Register(h, cfg, db); err != nil {
+		_ = h.Engine.Close()
 		log.Fatalf("init router failed: %v", err)
 	}
 	log.Println("router registered")
 
-	// Run 会阻塞当前进程，直到服务器停止或启动失败。
+	// Run 会阻塞当前进程，直到服务器停止。
 	log.Println("server is running")
-	if err := infrahttpgin.Run(cfg, g); err != nil {
+	if err := infrahttphertz.Run(h); err != nil {
 		log.Fatalf("run server failed: %v", err)
 	}
 }

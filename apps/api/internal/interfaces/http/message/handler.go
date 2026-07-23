@@ -3,13 +3,16 @@ package interfaceshttpmessage
 import (
 	applicationmessage "GCFeed/internal/application/message"
 	domainmessage "GCFeed/internal/domain/message"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -22,10 +25,10 @@ func New(service *applicationmessage.Service) *Handler {
 }
 
 // List 查询当前登录用户的消息列表。
-func (h *Handler) List(c *gin.Context) {
+func (h *Handler) List(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -35,7 +38,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.List(c.Request.Context(), userID, c.Query("cursor"), limit)
+	result, err := h.service.List(ctx, userID, c.Query("cursor"), limit)
 	if err != nil {
 		writeMessageError(c, err)
 		return
@@ -44,14 +47,14 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 // CountUnread 查询当前登录用户未读消息数。
-func (h *Handler) CountUnread(c *gin.Context) {
+func (h *Handler) CountUnread(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
-	stat, err := h.service.CountUnread(c.Request.Context(), userID)
+	stat, err := h.service.CountUnread(ctx, userID)
 	if err != nil {
 		writeMessageError(c, err)
 		return
@@ -60,20 +63,20 @@ func (h *Handler) CountUnread(c *gin.Context) {
 }
 
 // MarkRead 将当前登录用户的指定消息标记为已读。
-func (h *Handler) MarkRead(c *gin.Context) {
+func (h *Handler) MarkRead(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
 	var req markReadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
-	result, err := h.service.MarkRead(c.Request.Context(), userID, req.MessageIDs)
+	result, err := h.service.MarkRead(ctx, userID, req.MessageIDs)
 	if err != nil {
 		writeMessageError(c, err)
 		return
@@ -82,21 +85,21 @@ func (h *Handler) MarkRead(c *gin.Context) {
 }
 
 // Create 供内部事件链路生成用户消息。
-func (h *Handler) Create(c *gin.Context) {
+func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	var req createMessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
 	result, err := h.service.CreateFromActorEvent(
-		c.Request.Context(),
+		ctx,
 		req.UserID,
 		req.Type,
 		req.Title,
 		req.Content,
 		req.EventID,
-		c.GetHeader("Idempotency-Key"),
+		string(c.GetHeader("Idempotency-Key")),
 		req.ActorID,
 		req.ActorNickname,
 		req.ActorAvatarURL,
@@ -113,7 +116,7 @@ func (h *Handler) Create(c *gin.Context) {
 	c.JSON(status, responseFromDomain(result.Message))
 }
 
-func userIDFromContext(c *gin.Context) (int64, bool) {
+func userIDFromContext(c *app.RequestContext) (int64, bool) {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
 		return 0, false
@@ -163,12 +166,12 @@ func responseFromDomain(message *domainmessage.Message) messageResponse {
 	}
 }
 
-func writeMessageError(c *gin.Context, err error) {
+func writeMessageError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 func isBadRequestError(err error) bool {

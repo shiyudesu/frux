@@ -3,13 +3,16 @@ package interfaceshttpaccount
 import (
 	applicationaccount "GCFeed/internal/application/account"
 	domainaccount "GCFeed/internal/domain/account"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -24,25 +27,25 @@ func New(service *applicationaccount.Service) *Handler {
 }
 
 // Register 处理用户注册请求，成功后返回新用户资料。
-func (h *Handler) Register(c *gin.Context) {
+func (h *Handler) Register(ctx context.Context, c *app.RequestContext) {
 	var req RegisterRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
 	// 具体注册规则在应用层和领域层执行，HTTP 层只传递请求字段。
-	profile, err := h.service.Register(c.Request.Context(), req.Account, req.Password, req.Nickname)
+	profile, err := h.service.Register(ctx, req.Account, req.Password, req.Nickname)
 	if err != nil {
 		if isBadRequestError(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 			return
 		}
 		if errors.Is(err, domainaccount.ErrAccountAlreadyExists) {
-			c.JSON(http.StatusConflict, gin.H{"error": "account already exists"})
+			c.JSON(http.StatusConflict, utils.H{"error": "account already exists"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 		return
 	}
 
@@ -50,25 +53,25 @@ func (h *Handler) Register(c *gin.Context) {
 }
 
 // Login 处理账号密码登录，成功后返回 Bearer token。
-func (h *Handler) Login(c *gin.Context) {
+func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 	var req LoginByPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
 	// 登录失败统一映射为 401，避免暴露账号是否存在。
-	token, err := h.service.Login(c.Request.Context(), req.Account, req.Password)
+	token, err := h.service.Login(ctx, req.Account, req.Password)
 	if err != nil {
 		if isBadRequestError(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 			return
 		}
 		if errors.Is(err, domainaccount.ErrInvalidCredentials) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid credentials"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 		return
 	}
 
@@ -80,19 +83,19 @@ func (h *Handler) Login(c *gin.Context) {
 }
 
 // Logout 当前项目使用无状态 JWT，服务端无需清理会话数据。
-func (h *Handler) Logout(c *gin.Context) {
+func (h *Handler) Logout(_ context.Context, c *app.RequestContext) {
 	c.Status(http.StatusNoContent)
 }
 
 // Me 读取当前登录用户资料，用户 ID 来自 JWT 中间件写入的上下文。
-func (h *Handler) Me(c *gin.Context) {
+func (h *Handler) Me(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
-	profile, err := h.service.GetProfile(c.Request.Context(), userID)
+	profile, err := h.service.GetProfile(ctx, userID)
 	if err != nil {
 		writeProfileError(c, err)
 		return
@@ -102,14 +105,14 @@ func (h *Handler) Me(c *gin.Context) {
 }
 
 // Get 读取公开用户资料，用于访问他人主页。
-func (h *Handler) Get(c *gin.Context) {
+func (h *Handler) Get(ctx context.Context, c *app.RequestContext) {
 	userID, err := parsePositiveUserID(c.Param("userId"))
 	if err != nil {
 		writeProfileError(c, err)
 		return
 	}
 
-	profile, err := h.service.GetPublicProfile(c.Request.Context(), userID)
+	profile, err := h.service.GetPublicProfile(ctx, userID)
 	if err != nil {
 		writeProfileError(c, err)
 		return
@@ -119,20 +122,20 @@ func (h *Handler) Get(c *gin.Context) {
 }
 
 // UpdateMe 更新当前登录用户资料，请求体支持部分字段更新。
-func (h *Handler) UpdateMe(c *gin.Context) {
+func (h *Handler) UpdateMe(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
 	var req UpdateProfileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
-	profile, err := h.service.UpdateProfile(c.Request.Context(), userID, req.Nickname, req.AvatarURL, req.Bio)
+	profile, err := h.service.UpdateProfile(ctx, userID, req.Nickname, req.AvatarURL, req.Bio)
 	if err != nil {
 		writeProfileError(c, err)
 		return
@@ -171,7 +174,7 @@ func profileResponse(profile *applicationaccount.Profile) userProfileResponse {
 }
 
 // userIDFromContext 从 JWT 中间件写入的上下文中读取登录用户 ID。
-func userIDFromContext(c *gin.Context) (int64, bool) {
+func userIDFromContext(c *app.RequestContext) (int64, bool) {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
 		return 0, false
@@ -189,16 +192,16 @@ func parsePositiveUserID(raw string) (int64, error) {
 }
 
 // writeProfileError 统一账号资料相关接口的错误响应。
-func writeProfileError(c *gin.Context, err error) {
+func writeProfileError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, domainaccount.ErrUserNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, utils.H{"error": "user not found"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 // isBadRequestError 判断哪些领域错误属于客户端请求参数问题。

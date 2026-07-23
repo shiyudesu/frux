@@ -12,7 +12,7 @@
 
 2. 这个项目的后端、前端、数据库、缓存和消息队列分别用了什么技术？
 
-   答：后端使用 Go、Gin 和 GORM，前端使用 React 和 Vite，数据库使用 MySQL，缓存使用 Redis，消息队列使用 RabbitMQ。鉴权使用 JWT，监控使用 Prometheus 和 Grafana，本地编排使用 Docker Compose。代码按 `Domain / Application / Infrastructure / Interfaces` 四层组织，适合讲清业务边界和技术实现边界。
+   答：后端使用 Go、Hertz 和 GORM，前端使用 React 和 Vite，数据库使用 MySQL，缓存使用 Redis，消息队列使用 RabbitMQ。鉴权使用 JWT，监控使用 Prometheus 和 Grafana，本地编排使用 Docker Compose。代码按 `Domain / Application / Infrastructure / Interfaces` 四层组织，适合讲清业务边界和技术实现边界。
 
 3. 从用户发布视频到另一个用户刷到视频，完整链路有哪些步骤？
 
@@ -84,7 +84,7 @@
 
 4. 为什么 Domain 层尽量只依赖标准库？
 
-   答：Domain 表达核心业务概念，应保持稳定和轻量。它依赖标准库后，业务规则可以脱离 Gin、GORM、Redis 运行，测试成本更低。基础设施升级时，Domain 的实体和不变量仍然保持稳定。
+   答：Domain 表达核心业务概念，应保持稳定和轻量。它依赖标准库后，业务规则可以脱离 Hertz、GORM、Redis 运行，测试成本更低。基础设施升级时，Domain 的实体和不变量仍然保持稳定。
 
 5. 这个分层方式和传统 MVC 的主要差异是什么？
 
@@ -96,7 +96,7 @@
 
 1. `/api/feed-items?scene=timeline&limit=10` 的请求从 Router 到 Service 再到 Repository 的调用链路是什么？
 
-   答：请求先进入 Gin Router，`optionalAuthMiddleware` 解析可选 JWT，然后 `feedHandler.ListFeedItems` 解析 scene、cursor 和 limit。Handler 调用 `feedService.GetFeed`，Service 根据 scene 选择 `TimelineStrategy`，策略先通过 `loadFeedPage` 读取缓存或回源 `repo.ListTimelinePage`。拿到轻量页后，`assembleFeedItems` 批量读取卡片和计数，最后返回 items、next_cursor 和 has_more。
+   答：请求先进入 Hertz Router，`optionalAuthMiddleware` 解析可选 JWT，然后 `feedHandler.ListFeedItems` 解析 scene、cursor 和 limit。Handler 调用 `feedService.GetFeed`，Service 根据 scene 选择 `TimelineStrategy`，策略先通过 `loadFeedPage` 读取缓存或回源 `repo.ListTimelinePage`。拿到轻量页后，`assembleFeedItems` 批量读取卡片和计数，最后返回 items、next_cursor 和 has_more。
 
 2. `FeedService` 为什么使用 scene 策略注册表？
 
@@ -488,7 +488,7 @@
 
 4. 视频和封面 URL 如何返回给前端？
 
-   答：上传接口保存文件后返回 `/uploads/{kind}/{filename}` 形式的 URL。Gin 通过 `g.Static("/uploads", "./uploads")` 暴露静态文件。前端拿到 URL 后在发布视频或展示卡片时使用。
+   答：上传接口保存文件后返回 `/uploads/{kind}/{filename}` 形式的 URL。Hertz 的 GET 路由通过 `http.FileServer` adaptor 暴露静态文件，HEAD 路由原生返回文件元数据。前端拿到 URL 后在发布视频或展示卡片时使用。
 
 5. 静态文件服务如何支持 Range 请求？
 
@@ -498,7 +498,7 @@
 
 1. 大文件上传时，API 进程内存如何控制？
 
-   答：上传处理应使用流式读取和大小限制，避免一次性把完整文件读入内存。Gin/HTTP 层可以设置最大 body，业务层按文件头和实际大小校验。大文件处理任务适合异步化，例如转码和 faststart。
+   答：上传处理使用 Hertz 流式请求体和有界 multipart reader，避免一次性把完整文件读入内存，并通过临时文件承载大文件。Handler 同时校验总大小和分类大小。大文件处理任务适合异步化，例如转码和 faststart。
 
 2. 文件名如何避免冲突和路径穿越？
 
@@ -572,7 +572,7 @@
 
 2. JWT 中间件如何把用户身份传给 Handler？
 
-   答：JWT 中间件解析 Authorization header，校验 token 签名和过期时间。解析成功后把 userID、角色等信息写入 Gin context。Handler 从 context 读取身份信息，再调用对应 Service。
+   答：JWT 中间件解析 Authorization header，校验 token 签名和过期时间。解析成功后把 userID、角色等信息写入 Hertz `RequestContext.Keys`。Handler 从请求上下文读取身份信息，并把标准 `context.Context` 传给对应 Service。
 
 3. 可选登录态 Feed 解决什么场景？
 

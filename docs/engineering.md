@@ -6,7 +6,7 @@
 
 | 区域 | 技术 |
 | --- | --- |
-| API | Go、Gin、GORM |
+| API | Go、Hertz、GORM |
 | 数据库 | MySQL |
 | 缓存 | Redis |
 | 消息队列 | RabbitMQ |
@@ -27,6 +27,7 @@ apps/api/
     domain/{module}/
     application/{module}/
     infra/
+    infra/httphertz/
     infra/persistence/{module}/
     interfaces/http/{module}/
     interfaces/http/router/router.go
@@ -148,6 +149,7 @@ Infrastructure 层负责外部资源和技术实现。
 ```text
 internal/infra/config/
 internal/infra/database/
+internal/infra/httphertz/
 internal/infra/cache/
 internal/infra/mq/
 internal/infra/jwt/
@@ -175,6 +177,8 @@ Handler 职责：
 - 调用 Application Service。
 - 将结果转换为响应 DTO。
 - 将业务错误映射成 HTTP 状态码。
+
+Hertz Handler 使用 `func(context.Context, *app.RequestContext)` 签名。标准 `context.Context` 传入 Application Service，并启用客户端断开取消；鉴权身份等同步请求数据保存在 `RequestContext.Keys`，不得让池化的 `RequestContext` 逃逸请求生命周期。JSON 请求统一使用 HTTP binding 包的有界解码器，避免流式请求体被无限读入内存。
 
 Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
 
@@ -318,6 +322,8 @@ apps/web/src/styles.css
 - 幂等重复请求。
 - 游标分页稳定性。
 - 关键状态变化和计数变化。
+
+HTTP API 流程测试使用 Hertz `pkg/common/ut.PerformRequest` 在进程内调用路由。依赖真实网络 writer 的 `http.Handler` adaptor 集成（例如静态 Range 或 Prometheus）使用短生命周期本地 listener 验证。
 
 常用命令：
 

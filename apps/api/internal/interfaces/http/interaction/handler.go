@@ -3,13 +3,16 @@ package interfaceshttpinteraction
 import (
 	applicationinteraction "GCFeed/internal/application/interaction"
 	domaininteraction "GCFeed/internal/domain/interaction"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -22,34 +25,34 @@ func New(service *applicationinteraction.Service) *Handler {
 }
 
 // Like 处理点赞接口：把当前用户对指定视频的点赞状态设置为有效。
-func (h *Handler) Like(c *gin.Context) {
+func (h *Handler) Like(ctx context.Context, c *app.RequestContext) {
 	// PUT /videos/{videoId}/like 进入这里，active=true 表示设置点赞生效。
-	h.setLike(c, true)
+	h.setLike(ctx, c, true)
 }
 
 // Unlike 处理取消点赞接口：把当前用户对指定视频的点赞状态设置为取消。
-func (h *Handler) Unlike(c *gin.Context) {
+func (h *Handler) Unlike(ctx context.Context, c *app.RequestContext) {
 	// DELETE /videos/{videoId}/like 进入这里，active=false 表示取消点赞。
-	h.setLike(c, false)
+	h.setLike(ctx, c, false)
 }
 
 // Favorite 处理收藏接口：把当前用户对指定视频的收藏状态设置为有效。
-func (h *Handler) Favorite(c *gin.Context) {
+func (h *Handler) Favorite(ctx context.Context, c *app.RequestContext) {
 	// 收藏和点赞共享同一套状态模型，只是 action_type 不同。
-	h.setFavorite(c, true)
+	h.setFavorite(ctx, c, true)
 }
 
 // Unfavorite 处理取消收藏接口：把当前用户对指定视频的收藏状态设置为取消。
-func (h *Handler) Unfavorite(c *gin.Context) {
-	h.setFavorite(c, false)
+func (h *Handler) Unfavorite(ctx context.Context, c *app.RequestContext) {
+	h.setFavorite(ctx, c, false)
 }
 
 // CreateComment 创建视频评论，videoId 来自路径，评论内容来自请求体。
-func (h *Handler) CreateComment(c *gin.Context) {
-	// JWT 中间件会把用户 ID 写入 gin.Context，业务 Handler 从上下文取登录用户。
+func (h *Handler) CreateComment(ctx context.Context, c *app.RequestContext) {
+	// JWT 中间件会把用户 ID 写入 RequestContext，业务 Handler 从上下文取登录用户。
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -61,12 +64,12 @@ func (h *Handler) CreateComment(c *gin.Context) {
 	}
 
 	var req createCommentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
-	result, err := h.service.CreateComment(c.Request.Context(), userID, videoID, req.Content, c.GetHeader("Idempotency-Key"))
+	result, err := h.service.CreateComment(ctx, userID, videoID, req.Content, string(c.GetHeader("Idempotency-Key")))
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -75,7 +78,7 @@ func (h *Handler) CreateComment(c *gin.Context) {
 }
 
 // ListComments 查询指定视频的评论列表，分页参数来自 query。
-func (h *Handler) ListComments(c *gin.Context) {
+func (h *Handler) ListComments(ctx context.Context, c *app.RequestContext) {
 	// 评论列表是视频的子资源，查询条件只保留分页参数。
 	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
 	if err != nil {
@@ -89,7 +92,7 @@ func (h *Handler) ListComments(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ListComments(c.Request.Context(), videoID, c.Query("cursor"), limit)
+	result, err := h.service.ListComments(ctx, videoID, c.Query("cursor"), limit)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -98,10 +101,10 @@ func (h *Handler) ListComments(c *gin.Context) {
 }
 
 // DeleteComment 删除评论，权限判断交给应用层和仓储层完成。
-func (h *Handler) DeleteComment(c *gin.Context) {
+func (h *Handler) DeleteComment(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 	role := roleFromContext(c)
@@ -113,7 +116,7 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.DeleteComment(c.Request.Context(), commentID, userID, role)
+	result, err := h.service.DeleteComment(ctx, commentID, userID, role)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -125,11 +128,11 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	})
 }
 
-func (h *Handler) setLike(c *gin.Context, active bool) {
+func (h *Handler) setLike(ctx context.Context, c *app.RequestContext, active bool) {
 	// 点赞和取消点赞共用参数解析逻辑，active 决定最终状态。
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -141,9 +144,9 @@ func (h *Handler) setLike(c *gin.Context, active bool) {
 
 	var result *applicationinteraction.ActionResult
 	if active {
-		result, err = h.service.Like(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+		result, err = h.service.Like(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
 	} else {
-		result, err = h.service.Unlike(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+		result, err = h.service.Unlike(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
 	}
 	if err != nil {
 		writeInteractionError(c, err)
@@ -152,11 +155,11 @@ func (h *Handler) setLike(c *gin.Context, active bool) {
 	c.JSON(http.StatusOK, actionResponseFromResult(result))
 }
 
-func (h *Handler) setFavorite(c *gin.Context, active bool) {
+func (h *Handler) setFavorite(ctx context.Context, c *app.RequestContext, active bool) {
 	// 收藏和取消收藏共用参数解析逻辑，active 决定最终状态。
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -168,9 +171,9 @@ func (h *Handler) setFavorite(c *gin.Context, active bool) {
 
 	var result *applicationinteraction.ActionResult
 	if active {
-		result, err = h.service.Favorite(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+		result, err = h.service.Favorite(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
 	} else {
-		result, err = h.service.Unfavorite(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+		result, err = h.service.Unfavorite(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
 	}
 	if err != nil {
 		writeInteractionError(c, err)
@@ -180,7 +183,7 @@ func (h *Handler) setFavorite(c *gin.Context, active bool) {
 }
 
 // userIDFromContext 从 JWT 中间件写入的上下文中读取当前登录用户 ID。
-func userIDFromContext(c *gin.Context) (int64, bool) {
+func userIDFromContext(c *app.RequestContext) (int64, bool) {
 	// ContextUserIDKey 由 JWT 中间件写入，缺失时按未登录处理。
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
@@ -190,7 +193,7 @@ func userIDFromContext(c *gin.Context) (int64, bool) {
 	return userID, ok && userID > 0
 }
 
-func roleFromContext(c *gin.Context) string {
+func roleFromContext(c *app.RequestContext) string {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextRoleKey)
 	if !exists {
 		return ""
@@ -263,21 +266,21 @@ func commentResponseFromDomain(comment *domaininteraction.Comment) commentRespon
 	}
 }
 
-func writeInteractionError(c *gin.Context, err error) {
+func writeInteractionError(c *app.RequestContext, err error) {
 	// 统一错误映射让所有互动接口返回一致的 HTTP 状态码和 JSON 格式。
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, domaininteraction.ErrVideoNotFound) || errors.Is(err, domaininteraction.ErrCommentNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "resource not found"})
+		c.JSON(http.StatusNotFound, utils.H{"error": "resource not found"})
 		return
 	}
 	if errors.Is(err, domaininteraction.ErrCommentPermissionDenied) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "comment permission denied"})
+		c.JSON(http.StatusForbidden, utils.H{"error": "comment permission denied"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 func isBadRequestError(err error) bool {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -15,7 +14,8 @@ import (
 	interfaceshttpaccount "GCFeed/internal/interfaces/http/account"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 type accountProfileResponse struct {
@@ -279,7 +279,7 @@ func TestPublicAccountProfile(t *testing.T) {
 }
 
 // registerAndLogin 为需要登录态的测试准备可用 access token。
-func registerAndLogin(t *testing.T, router *gin.Engine) string {
+func registerAndLogin(t *testing.T, router *server.Hertz) string {
 	t.Helper()
 
 	registerResponse := performJSONRequest(
@@ -309,16 +309,15 @@ func registerAndLogin(t *testing.T, router *gin.Engine) string {
 }
 
 // newAccountRouter 只装配账号相关路由，使测试聚焦账号模块。
-func newAccountRouter(t *testing.T) *gin.Engine {
+func newAccountRouter(t *testing.T) *server.Hertz {
 	router, _ := newAccountRouterWithRepo(t)
 	return router
 }
 
-func newAccountRouterWithRepo(t *testing.T) (*gin.Engine, *memoryAccountRepo) {
+func newAccountRouterWithRepo(t *testing.T) (*server.Hertz, *memoryAccountRepo) {
 	t.Helper()
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+	router := server.New()
 
 	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
 	if err != nil {
@@ -345,22 +344,25 @@ func newAccountRouterWithRepo(t *testing.T) (*gin.Engine, *memoryAccountRepo) {
 }
 
 // performJSONRequest 构造 JSON 请求，并在需要时附加 Bearer token。
-func performJSONRequest(router *gin.Engine, method, path, body, accessToken string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
+func performJSONRequest(router *server.Hertz, method, path, body, accessToken string) *ut.ResponseRecorder {
+	headers := make([]ut.Header, 0, 1)
 	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
+		headers = append(headers, ut.Header{Key: "Authorization", Value: "Bearer " + accessToken})
 	}
+	return performJSONRequestWithHeaders(router, method, path, body, headers...)
+}
 
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-	return resp
+func performJSONRequestWithHeaders(router *server.Hertz, method, path, body string, headers ...ut.Header) *ut.ResponseRecorder {
+	var requestBody *ut.Body
+	if body != "" {
+		requestBody = &ut.Body{Body: bytes.NewBufferString(body), Len: len(body)}
+		headers = append(headers, ut.Header{Key: "Content-Type", Value: "application/json"})
+	}
+	return ut.PerformRequest(router.Engine, method, path, requestBody, headers...)
 }
 
 // decodeJSON 解码响应体，失败时输出原始响应内容便于定位问题。
-func decodeJSON(t *testing.T, resp *httptest.ResponseRecorder, target any) {
+func decodeJSON(t *testing.T, resp *ut.ResponseRecorder, target any) {
 	t.Helper()
 
 	if err := json.Unmarshal(resp.Body.Bytes(), target); err != nil {
@@ -369,7 +371,7 @@ func decodeJSON(t *testing.T, resp *httptest.ResponseRecorder, target any) {
 }
 
 // requireStatus 统一断言 HTTP 状态码，失败时把响应体一并打印出来。
-func requireStatus(t *testing.T, resp *httptest.ResponseRecorder, expected int) {
+func requireStatus(t *testing.T, resp *ut.ResponseRecorder, expected int) {
 	t.Helper()
 
 	if resp.Code != expected {

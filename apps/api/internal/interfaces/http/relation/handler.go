@@ -4,12 +4,14 @@ import (
 	applicationrelation "GCFeed/internal/application/relation"
 	domainrelation "GCFeed/internal/domain/relation"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -22,20 +24,20 @@ func New(service *applicationrelation.Service) *Handler {
 }
 
 // Follow 处理关注用户接口。
-func (h *Handler) Follow(c *gin.Context) {
-	h.setFollow(c, true)
+func (h *Handler) Follow(ctx context.Context, c *app.RequestContext) {
+	h.setFollow(ctx, c, true)
 }
 
 // Unfollow 处理取消关注用户接口。
-func (h *Handler) Unfollow(c *gin.Context) {
-	h.setFollow(c, false)
+func (h *Handler) Unfollow(ctx context.Context, c *app.RequestContext) {
+	h.setFollow(ctx, c, false)
 }
 
 // ListFollowing 查询当前用户关注列表。
-func (h *Handler) ListFollowing(c *gin.Context) {
+func (h *Handler) ListFollowing(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -45,7 +47,7 @@ func (h *Handler) ListFollowing(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ListFollowing(c.Request.Context(), userID, c.Query("cursor"), limit)
+	result, err := h.service.ListFollowing(ctx, userID, c.Query("cursor"), limit)
 	if err != nil {
 		writeRelationError(c, err)
 		return
@@ -54,10 +56,10 @@ func (h *Handler) ListFollowing(c *gin.Context) {
 }
 
 // ListFollowers 查询当前用户粉丝列表。
-func (h *Handler) ListFollowers(c *gin.Context) {
+func (h *Handler) ListFollowers(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -67,7 +69,7 @@ func (h *Handler) ListFollowers(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ListFollowers(c.Request.Context(), userID, c.Query("cursor"), limit)
+	result, err := h.service.ListFollowers(ctx, userID, c.Query("cursor"), limit)
 	if err != nil {
 		writeRelationError(c, err)
 		return
@@ -75,10 +77,10 @@ func (h *Handler) ListFollowers(c *gin.Context) {
 	c.JSON(http.StatusOK, relationListResponseFromResult(result))
 }
 
-func (h *Handler) setFollow(c *gin.Context, active bool) {
+func (h *Handler) setFollow(ctx context.Context, c *app.RequestContext, active bool) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -90,9 +92,9 @@ func (h *Handler) setFollow(c *gin.Context, active bool) {
 
 	var result *applicationrelation.FollowResult
 	if active {
-		result, err = h.service.Follow(c.Request.Context(), userID, targetUserID, c.GetHeader("Idempotency-Key"))
+		result, err = h.service.Follow(ctx, userID, targetUserID, string(c.GetHeader("Idempotency-Key")))
 	} else {
-		result, err = h.service.Unfollow(c.Request.Context(), userID, targetUserID, c.GetHeader("Idempotency-Key"))
+		result, err = h.service.Unfollow(ctx, userID, targetUserID, string(c.GetHeader("Idempotency-Key")))
 	}
 	if err != nil {
 		writeRelationError(c, err)
@@ -101,7 +103,7 @@ func (h *Handler) setFollow(c *gin.Context, active bool) {
 	c.JSON(http.StatusOK, followResponseFromResult(result))
 }
 
-func userIDFromContext(c *gin.Context) (int64, bool) {
+func userIDFromContext(c *app.RequestContext) (int64, bool) {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
 		return 0, false
@@ -159,16 +161,16 @@ func relationListResponseFromResult(result *applicationrelation.ListResult) rela
 	}
 }
 
-func writeRelationError(c *gin.Context, err error) {
+func writeRelationError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, domainrelation.ErrTargetUserNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "target user not found"})
+		c.JSON(http.StatusNotFound, utils.H{"error": "target user not found"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 func isBadRequestError(err error) bool {

@@ -3,13 +3,16 @@ package interfaceshttpvideo
 import (
 	applicationvideo "GCFeed/internal/application/video"
 	domainvideo "GCFeed/internal/domain/video"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 const defaultListLimit = 20
@@ -24,28 +27,28 @@ func New(service *applicationvideo.Service) *Handler {
 }
 
 // Create 处理发布视频请求，用户身份来自 JWT，上行数据来自 JSON 请求体。
-func (h *Handler) Create(c *gin.Context) {
+func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
 	var req CreateVideoRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
 	// Idempotency-Key 来自请求头，用于客户端重试时获得同一个视频结果。
 	result, err := h.service.CreatePublished(
-		c.Request.Context(),
+		ctx,
 		userID,
 		req.Title,
 		req.Description,
 		req.MediaURL,
 		req.CoverURL,
-		c.GetHeader("Idempotency-Key"),
+		string(c.GetHeader("Idempotency-Key")),
 	)
 	if err != nil {
 		writeVideoError(c, err)
@@ -61,14 +64,14 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 // Get 查询公开视频详情，videoId 来自 RESTful 路径参数。
-func (h *Handler) Get(c *gin.Context) {
+func (h *Handler) Get(ctx context.Context, c *app.RequestContext) {
 	videoID, err := parsePositiveInt64(c.Param("videoId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid video id"})
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid video id"})
 		return
 	}
 
-	video, err := h.service.Get(c.Request.Context(), videoID)
+	video, err := h.service.Get(ctx, videoID)
 	if err != nil {
 		writeVideoError(c, err)
 		return
@@ -78,20 +81,20 @@ func (h *Handler) Get(c *gin.Context) {
 }
 
 // Delete 删除当前用户自己的视频，删除操作在领域层做作者权限校验。
-func (h *Handler) Delete(c *gin.Context) {
+func (h *Handler) Delete(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
 	videoID, err := parsePositiveInt64(c.Param("videoId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid video id"})
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid video id"})
 		return
 	}
 
-	if err := h.service.Delete(c.Request.Context(), userID, videoID); err != nil {
+	if err := h.service.Delete(ctx, userID, videoID); err != nil {
 		writeVideoError(c, err)
 		return
 	}
@@ -100,10 +103,10 @@ func (h *Handler) Delete(c *gin.Context) {
 }
 
 // ListByAuthor 查询指定用户的公开作品列表。
-func (h *Handler) ListByAuthor(c *gin.Context) {
+func (h *Handler) ListByAuthor(ctx context.Context, c *app.RequestContext) {
 	authorID, err := parsePositiveInt64(c.Param("userId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid user id"})
 		return
 	}
 
@@ -113,7 +116,7 @@ func (h *Handler) ListByAuthor(c *gin.Context) {
 		return
 	}
 
-	videos, err := h.service.ListByAuthor(c.Request.Context(), authorID, limit, offset)
+	videos, err := h.service.ListByAuthor(ctx, authorID, limit, offset)
 	if err != nil {
 		writeVideoError(c, err)
 		return
@@ -123,10 +126,10 @@ func (h *Handler) ListByAuthor(c *gin.Context) {
 }
 
 // ListMine 查询当前登录用户自己的作品列表。
-func (h *Handler) ListMine(c *gin.Context) {
+func (h *Handler) ListMine(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
@@ -136,7 +139,7 @@ func (h *Handler) ListMine(c *gin.Context) {
 		return
 	}
 
-	videos, err := h.service.ListByAuthor(c.Request.Context(), userID, limit, offset)
+	videos, err := h.service.ListByAuthor(ctx, userID, limit, offset)
 	if err != nil {
 		writeVideoError(c, err)
 		return
@@ -146,7 +149,7 @@ func (h *Handler) ListMine(c *gin.Context) {
 }
 
 // userIDFromContext 从 JWT 中间件写入的上下文读取登录用户 ID。
-func userIDFromContext(c *gin.Context) (int64, bool) {
+func userIDFromContext(c *app.RequestContext) (int64, bool) {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
 		return 0, false
@@ -165,7 +168,7 @@ func parsePositiveInt64(raw string) (int64, error) {
 }
 
 // parsePagination 解析 offset 分页参数，默认 limit 在 Handler 层给出。
-func parsePagination(c *gin.Context) (int, int, error) {
+func parsePagination(c *app.RequestContext) (int, int, error) {
 	limit := defaultListLimit
 	offset := 0
 
@@ -225,20 +228,20 @@ func videoListResponseFromDomain(videos []*domainvideo.Video, limit, offset int)
 }
 
 // writeVideoError 统一视频接口错误到 HTTP 状态码的映射。
-func writeVideoError(c *gin.Context, err error) {
+func writeVideoError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, domainvideo.ErrVideoNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "video not found"})
+		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
 		return
 	}
 	if errors.Is(err, domainvideo.ErrVideoPermissionDenied) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "video permission denied"})
+		c.JSON(http.StatusForbidden, utils.H{"error": "video permission denied"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 // isBadRequestError 判断哪些视频领域错误属于客户端请求问题。

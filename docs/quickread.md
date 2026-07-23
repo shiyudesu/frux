@@ -27,6 +27,7 @@ apps/api/
     domain/                        # 领域层：实体、错误、仓储接口
     application/                   # 应用层：业务用例编排
     infra/                         # 基础设施：MySQL、Redis、RabbitMQ、JWT
+    infra/httphertz/               # Hertz 启动配置、静态文件适配
     interfaces/http/               # HTTP 层：路由、Handler、中间件、DTO
   test/                            # API 流程测试
 ```
@@ -51,7 +52,8 @@ apps/api/
 1. `apps/api/cmd/feed/main.go`
 2. `apps/api/internal/infra/config`
 3. `apps/api/internal/infra/database`
-4. `apps/api/internal/interfaces/http/router/router.go`
+4. `apps/api/internal/infra/httphertz`
+5. `apps/api/internal/interfaces/http/router/router.go`
 
 重点看 `router.Register`。它把 GORM 仓储、Redis 缓存、RabbitMQ、JWT、各模块 Service 和 Handler 组装到一起。
 

@@ -3,13 +3,16 @@ package interfaceshttpplayback
 import (
 	applicationplayback "GCFeed/internal/application/playback"
 	domainplayback "GCFeed/internal/domain/playback"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -22,8 +25,8 @@ func New(service *applicationplayback.Service) *Handler {
 }
 
 // GetConfig 查询当前客户端播放配置。
-func (h *Handler) GetConfig(c *gin.Context) {
-	result, err := h.service.GetConfig(c.Request.Context(), c.Query("platform"), c.Query("network_type"))
+func (h *Handler) GetConfig(ctx context.Context, c *app.RequestContext) {
+	result, err := h.service.GetConfig(ctx, c.Query("platform"), c.Query("network_type"))
 	if err != nil {
 		writePlaybackError(c, err)
 		return
@@ -32,7 +35,7 @@ func (h *Handler) GetConfig(c *gin.Context) {
 }
 
 // ListPreloadVideos 查询 Feed 当前视频之后的预加载资源。
-func (h *Handler) ListPreloadVideos(c *gin.Context) {
+func (h *Handler) ListPreloadVideos(ctx context.Context, c *app.RequestContext) {
 	currentVideoID, err := parseOptionalInt64(c.Query("current_video_id"))
 	if err != nil {
 		writePlaybackError(c, domainplayback.ErrInvalidVideoID)
@@ -44,7 +47,7 @@ func (h *Handler) ListPreloadVideos(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ListPreloadVideos(c.Request.Context(), currentVideoID, limit)
+	result, err := h.service.ListPreloadVideos(ctx, currentVideoID, limit)
 	if err != nil {
 		writePlaybackError(c, err)
 		return
@@ -53,43 +56,43 @@ func (h *Handler) ListPreloadVideos(c *gin.Context) {
 }
 
 // CreateQoSReport 处理 Web 客户端播放质量上报。
-func (h *Handler) CreateQoSReport(c *gin.Context) {
+func (h *Handler) CreateQoSReport(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
-	h.createQoSReport(c, userID)
+	h.createQoSReport(ctx, c, userID)
 }
 
 // CreateInternalQoSReport 处理服务间播放质量上报。
-func (h *Handler) CreateInternalQoSReport(c *gin.Context) {
+func (h *Handler) CreateInternalQoSReport(ctx context.Context, c *app.RequestContext) {
 	var req createQoSReportRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
-	h.createQoSReportWithRequest(c, req.UserID, req)
+	h.createQoSReportWithRequest(ctx, c, req.UserID, req)
 }
 
-func (h *Handler) createQoSReport(c *gin.Context, userID int64) {
+func (h *Handler) createQoSReport(ctx context.Context, c *app.RequestContext, userID int64) {
 	var req createQoSReportRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
-	h.createQoSReportWithRequest(c, userID, req)
+	h.createQoSReportWithRequest(ctx, c, userID, req)
 }
 
-func (h *Handler) createQoSReportWithRequest(c *gin.Context, userID int64, req createQoSReportRequest) {
+func (h *Handler) createQoSReportWithRequest(ctx context.Context, c *app.RequestContext, userID int64, req createQoSReportRequest) {
 	result, err := h.service.CreateQoSReport(
-		c.Request.Context(),
+		ctx,
 		userID,
 		req.VideoID,
 		req.FirstFrameMs,
 		req.StutterCount,
 		req.WatchMs,
-		c.GetHeader("Idempotency-Key"),
+		string(c.GetHeader("Idempotency-Key")),
 	)
 	if err != nil {
 		writePlaybackError(c, err)
@@ -103,7 +106,7 @@ func (h *Handler) createQoSReportWithRequest(c *gin.Context, userID int64, req c
 	c.JSON(status, qosResponseFromResult(result))
 }
 
-func userIDFromContext(c *gin.Context) (int64, bool) {
+func userIDFromContext(c *app.RequestContext) (int64, bool) {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
 		return 0, false
@@ -173,12 +176,12 @@ func qosResponseFromResult(result *applicationplayback.QoSReportResult) qosRepor
 	}
 }
 
-func writePlaybackError(c *gin.Context, err error) {
+func writePlaybackError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 func isBadRequestError(err error) bool {

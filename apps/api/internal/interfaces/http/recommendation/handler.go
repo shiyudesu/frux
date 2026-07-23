@@ -3,10 +3,13 @@ package interfaceshttprecommendation
 import (
 	applicationrecommendation "GCFeed/internal/application/recommendation"
 	domainrecommendation "GCFeed/internal/domain/recommendation"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
+	"context"
 	"errors"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -17,10 +20,10 @@ func New(service *applicationrecommendation.Service) *Handler {
 	return &Handler{service: service}
 }
 
-func (h *Handler) ListCandidates(c *gin.Context) {
+func (h *Handler) ListCandidates(ctx context.Context, c *app.RequestContext) {
 	var req candidateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
@@ -28,7 +31,7 @@ func (h *Handler) ListCandidates(c *gin.Context) {
 	if req.Limit != nil {
 		limit = *req.Limit
 	}
-	result, err := h.service.Recommend(c.Request.Context(), applicationrecommendation.CandidateRequest{
+	result, err := h.service.Recommend(ctx, applicationrecommendation.CandidateRequest{
 		UserID:    req.UserID,
 		Scene:     req.Scene,
 		RequestID: req.RequestID,
@@ -43,10 +46,10 @@ func (h *Handler) ListCandidates(c *gin.Context) {
 	c.JSON(http.StatusOK, candidateResponseFromResult(result))
 }
 
-func (h *Handler) SaveExposures(c *gin.Context) {
+func (h *Handler) SaveExposures(ctx context.Context, c *app.RequestContext) {
 	var req exposuresRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
@@ -59,7 +62,7 @@ func (h *Handler) SaveExposures(c *gin.Context) {
 			RequestID: req.RequestID,
 		})
 	}
-	result, err := h.service.SaveExposures(c.Request.Context(), inputs)
+	result, err := h.service.SaveExposures(ctx, inputs)
 	if err != nil {
 		writeRecommendationError(c, err)
 		return
@@ -68,14 +71,14 @@ func (h *Handler) SaveExposures(c *gin.Context) {
 	c.JSON(http.StatusCreated, exposuresResponseFromResult(result))
 }
 
-func (h *Handler) DecideExposures(c *gin.Context) {
+func (h *Handler) DecideExposures(ctx context.Context, c *app.RequestContext) {
 	var req exposureDecisionsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
-	result, err := h.service.DecideExposures(c.Request.Context(), applicationrecommendation.ExposureDecisionInput{
+	result, err := h.service.DecideExposures(ctx, applicationrecommendation.ExposureDecisionInput{
 		UserID:    req.UserID,
 		Scene:     req.Scene,
 		RequestID: req.RequestID,
@@ -146,16 +149,16 @@ func exposureDecisionsResponseFromResult(result *applicationrecommendation.Expos
 	}
 }
 
-func writeRecommendationError(c *gin.Context, err error) {
+func writeRecommendationError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, domainrecommendation.ErrVideoNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "video not found"})
+		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 func isBadRequestError(err error) bool {

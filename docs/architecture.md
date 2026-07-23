@@ -28,7 +28,7 @@ flowchart LR
 
   Web["Web App<br/>React + Vite"]
   Client["移动端 / API 调用方"]
-  API["GCFeed API<br/>Go + Gin"]
+  API["GCFeed API<br/>Go + Hertz"]
   MySQL[("MySQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
@@ -135,7 +135,7 @@ config:
 sequenceDiagram
   autonumber
   participant C as Client
-  participant R as Gin Router
+  participant R as Hertz Router
   participant H as Handler
   participant S as Service
   participant Repo as GORM Repository

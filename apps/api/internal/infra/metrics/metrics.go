@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -146,17 +146,17 @@ func init() {
 }
 
 // HTTPMiddleware records request count and latency with stable route labels.
-func HTTPMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
+func HTTPMiddleware() app.HandlerFunc {
+	return func(ctx context.Context, c *app.RequestContext) {
 		start := time.Now()
-		c.Next()
+		c.Next(ctx)
 
 		route := c.FullPath()
 		if route == "" {
-			route = c.Request.URL.Path
+			route = string(c.Path())
 		}
-		status := strconv.Itoa(c.Writer.Status())
-		method := c.Request.Method
+		status := strconv.Itoa(c.Response.StatusCode())
+		method := string(c.Method())
 		duration := time.Since(start).Seconds()
 
 		HTTPRequestsTotal.WithLabelValues(method, route, status).Inc()

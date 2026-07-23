@@ -17,7 +17,7 @@ import (
 	interfaceshttpinteraction "GCFeed/internal/interfaces/http/interaction"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 type interactionActionAPIResponse struct {
@@ -602,11 +602,10 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 }
 
 // newInteractionRouter 只装配互动相关 RESTful 路由。
-func newInteractionRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
+func newInteractionRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	t.Helper()
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+	router := server.New()
 
 	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
 	if err != nil {

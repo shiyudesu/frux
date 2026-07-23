@@ -14,7 +14,7 @@
 
 ```mermaid
 flowchart LR
-    Client["Web Client"] --> API["Gin API"]
+    Client["Web Client"] --> API["Hertz API"]
     API --> MySQL["MySQL"]
     API --> Redis["Redis"]
     API --> RabbitMQ["RabbitMQ"]

@@ -1,11 +1,9 @@
 package test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"sort"
 	"sync"
 	"testing"
@@ -17,7 +15,8 @@ import (
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	interfaceshttpvideo "GCFeed/internal/interfaces/http/video"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 type videoAPIResponse struct {
@@ -348,16 +347,15 @@ func TestVideoAPIValidation(t *testing.T) {
 }
 
 // newVideoRouter 只装配视频相关路由，便于视频模块独立测试。
-func newVideoRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
+func newVideoRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	router, jwtManager, _ := newVideoRouterWithPublisher(t, nil)
 	return router, jwtManager
 }
 
-func newVideoRouterWithPublisher(t *testing.T, publisher applicationvideo.PublishedEventPublisher) (*gin.Engine, *infrajwt.Manager, *memoryVideoRepo) {
+func newVideoRouterWithPublisher(t *testing.T, publisher applicationvideo.PublishedEventPublisher) (*server.Hertz, *infrajwt.Manager, *memoryVideoRepo) {
 	t.Helper()
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+	router := server.New()
 
 	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
 	if err != nil {
@@ -397,21 +395,15 @@ func signTestToken(t *testing.T, jwtManager *infrajwt.Manager, userID int64) str
 }
 
 // performVideoJSONRequest 构造视频接口请求，并支持附加幂等键。
-func performVideoJSONRequest(router *gin.Engine, method, path, body, accessToken, idempotencyKey string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
+func performVideoJSONRequest(router *server.Hertz, method, path, body, accessToken, idempotencyKey string) *ut.ResponseRecorder {
+	headers := make([]ut.Header, 0, 2)
 	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
+		headers = append(headers, ut.Header{Key: "Authorization", Value: "Bearer " + accessToken})
 	}
 	if idempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", idempotencyKey)
+		headers = append(headers, ut.Header{Key: "Idempotency-Key", Value: idempotencyKey})
 	}
-
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-	return resp
+	return performJSONRequestWithHeaders(router, method, path, body, headers...)
 }
 
 // cloneVideo 返回视频副本，并复制发布时间指针指向的值。

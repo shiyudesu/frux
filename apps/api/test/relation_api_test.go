@@ -16,7 +16,7 @@ import (
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	interfaceshttprelation "GCFeed/internal/interfaces/http/relation"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
 )
 
 type relationFollowAPIResponse struct {
@@ -400,11 +400,10 @@ func TestRelationValidation(t *testing.T) {
 	requireStatus(t, badCursorResponse, http.StatusBadRequest)
 }
 
-func newRelationRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
+func newRelationRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	t.Helper()
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+	router := server.New()
 
 	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
 	if err != nil {

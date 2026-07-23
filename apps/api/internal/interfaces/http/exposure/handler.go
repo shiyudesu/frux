@@ -3,11 +3,14 @@ package interfaceshttpexposure
 import (
 	applicationexposure "GCFeed/internal/application/exposure"
 	domainexposure "GCFeed/internal/domain/exposure"
+	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	"context"
 	"errors"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -20,21 +23,21 @@ func New(service *applicationexposure.Service) *Handler {
 }
 
 // CreateViewEvent 处理视频曝光和观看行为上报。
-func (h *Handler) CreateViewEvent(c *gin.Context) {
+func (h *Handler) CreateViewEvent(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
 		return
 	}
 
 	var req createViewEventRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 
 	result, err := h.service.RecordViewEvent(
-		c.Request.Context(),
+		ctx,
 		userID,
 		req.VideoID,
 		req.Scene,
@@ -78,7 +81,7 @@ func responseFromResult(result *applicationexposure.RecordViewEventResult) creat
 	return response
 }
 
-func userIDFromContext(c *gin.Context) (int64, bool) {
+func userIDFromContext(c *app.RequestContext) (int64, bool) {
 	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
 	if !exists {
 		return 0, false
@@ -87,16 +90,16 @@ func userIDFromContext(c *gin.Context) (int64, bool) {
 	return userID, ok && userID > 0
 }
 
-func writeExposureError(c *gin.Context, err error) {
+func writeExposureError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, domainexposure.ErrVideoNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "video not found"})
+		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
 func isBadRequestError(err error) bool {

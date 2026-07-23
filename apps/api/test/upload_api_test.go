@@ -3,26 +3,32 @@ package test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 type stubUploadProcessor struct {
 	validateCalls  int
 	faststartCalls int
+	validateErr    error
+	faststartErr   error
 }
 
 func (p *stubUploadProcessor) ValidateVideo(ctx context.Context, path string) error {
 	p.validateCalls++
+	if p.validateErr != nil {
+		return p.validateErr
+	}
 	if _, err := os.Stat(path); err != nil {
 		return err
 	}
@@ -31,6 +37,9 @@ func (p *stubUploadProcessor) ValidateVideo(ctx context.Context, path string) er
 
 func (p *stubUploadProcessor) Faststart(ctx context.Context, path string) error {
 	p.faststartCalls++
+	if p.faststartErr != nil {
+		return p.faststartErr
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -78,6 +87,12 @@ func TestUploadValidationRejectsBadFiles(t *testing.T) {
 	badMime := performMultipartUpload(router, "/api/uploads", "cover", "cover.jpg", []byte("plain text"))
 	requireStatus(t, badMime, http.StatusBadRequest)
 
+	badKind := performMultipartUpload(router, "/api/uploads", "archive", "file.bin", []byte("content"))
+	requireStatus(t, badKind, http.StatusBadRequest)
+
+	oversizedImage := performMultipartUpload(router, "/api/uploads", "cover", "cover.png", make([]byte, (20<<20)+1))
+	requireStatus(t, oversizedImage, http.StatusBadRequest)
+
 	cover := performMultipartUpload(router, "/api/uploads", "cover", "cover.png", samplePNGBytes())
 	requireStatus(t, cover, http.StatusCreated)
 
@@ -86,21 +101,36 @@ func TestUploadValidationRejectsBadFiles(t *testing.T) {
 	}
 }
 
-func newUploadRouter(t *testing.T) (*gin.Engine, string, *stubUploadProcessor) {
+func TestUploadProcessingFailureRemovesTarget(t *testing.T) {
+	router, root, processor := newUploadRouter(t)
+	processor.validateErr = errors.New("invalid video metadata")
+
+	resp := performMultipartUpload(router, "/api/uploads", "video", "clip.mp4", sampleMP4Bytes())
+	requireStatus(t, resp, http.StatusBadRequest)
+
+	entries, err := os.ReadDir(filepath.Join(root, "video"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read video directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed video upload should remove target file")
+	}
+}
+
+func newUploadRouter(t *testing.T) (*server.Hertz, string, *stubUploadProcessor) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
 
 	root := t.TempDir()
 	processor := &stubUploadProcessor{}
 	handler := interfaceshttpupload.NewWithProcessor(root, processor)
 
-	router := gin.New()
+	router := server.New(server.WithDisablePreParseMultipartForm(true))
 	api := router.Group("/api")
 	api.POST("/uploads", handler.Create)
 	return router, root, processor
 }
 
-func performMultipartUpload(router *gin.Engine, path string, kind string, filename string, content []byte) *httptest.ResponseRecorder {
+func performMultipartUpload(router *server.Hertz, path string, kind string, filename string, content []byte) *ut.ResponseRecorder {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("kind", kind)
@@ -108,11 +138,13 @@ func performMultipartUpload(router *gin.Engine, path string, kind string, filena
 	_, _ = io.Copy(part, bytes.NewReader(content))
 	_ = writer.Close()
 
-	req := httptest.NewRequest(http.MethodPost, path, body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-	return resp
+	return ut.PerformRequest(
+		router.Engine,
+		http.MethodPost,
+		path,
+		&ut.Body{Body: body, Len: body.Len()},
+		ut.Header{Key: "Content-Type", Value: writer.FormDataContentType()},
+	)
 }
 
 func sampleMP4Bytes() []byte {

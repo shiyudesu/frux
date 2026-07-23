@@ -1,10 +1,8 @@
 package test
 
 import (
-	"bytes"
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"sort"
 	"sync"
 	"testing"
@@ -16,7 +14,8 @@ import (
 	interfaceshttpmessage "GCFeed/internal/interfaces/http/message"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
-	"github.com/gin-gonic/gin"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 const testInternalToken = "test-internal-token"
@@ -315,9 +314,8 @@ func TestMessageAPIValidation(t *testing.T) {
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"x","content":"x"}`, "wrong-token", ""), http.StatusUnauthorized)
 }
 
-func newMessageRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
+func newMessageRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
 
 	repo := newMemoryMessageRepo()
 	service := applicationmessage.New(repo)
@@ -327,7 +325,7 @@ func newMessageRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
 		t.Fatalf("new jwt manager: %v", err)
 	}
 
-	router := gin.New()
+	router := server.New()
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 	api := router.Group("/api", authMiddleware)
 	api.GET("/messages", handler.List)
@@ -338,18 +336,13 @@ func newMessageRouter(t *testing.T) (*gin.Engine, *infrajwt.Manager) {
 	return router, jwtManager
 }
 
-func performInternalMessageRequest(router *gin.Engine, method, path, body, internalToken, idempotencyKey string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
+func performInternalMessageRequest(router *server.Hertz, method, path, body, internalToken, idempotencyKey string) *ut.ResponseRecorder {
+	headers := make([]ut.Header, 0, 2)
 	if internalToken != "" {
-		req.Header.Set("X-Internal-Token", internalToken)
+		headers = append(headers, ut.Header{Key: "X-Internal-Token", Value: internalToken})
 	}
 	if idempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", idempotencyKey)
+		headers = append(headers, ut.Header{Key: "Idempotency-Key", Value: idempotencyKey})
 	}
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-	return resp
+	return performJSONRequestWithHeaders(router, method, path, body, headers...)
 }

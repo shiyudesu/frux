@@ -1,10 +1,19 @@
 package interfaceshttpupload
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 func TestValidateVideoMetadata(t *testing.T) {
@@ -66,5 +75,44 @@ func TestCreateFaststartTempFileUsesMP4Extension(t *testing.T) {
 	}
 	if !strings.HasSuffix(tmpPath, ".faststart.mp4") {
 		t.Fatalf("expected mp4 temp extension, got %s", tmpPath)
+	}
+}
+
+func TestReadUploadFormRejectsBodyLimit(t *testing.T) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "large.bin")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(make([]byte, 2048)); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	h := server.New(server.WithDisablePreParseMultipartForm(true))
+	h.POST("/upload", func(_ context.Context, c *app.RequestContext) {
+		form, _, _, err := readUploadForm(c, 1024)
+		if form != nil {
+			_ = form.RemoveAll()
+		}
+		if errors.Is(err, errUploadTooLarge) {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		c.Status(http.StatusInternalServerError)
+	})
+
+	resp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/upload",
+		&ut.Body{Body: body, Len: body.Len()},
+		ut.Header{Key: "Content-Type", Value: writer.FormDataContentType()},
+	)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, resp.Code, resp.Body.String())
 	}
 }
