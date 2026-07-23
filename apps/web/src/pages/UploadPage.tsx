@@ -1,0 +1,159 @@
+// 发布视频页：视频 + 封面上传后创建作品。
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { createVideo } from "../api/account";
+import { apiErrorMessage, uploadFile } from "../api/client";
+import { useNavigate } from "../router";
+import { useSession } from "../session";
+
+interface UploadForm {
+  title: string;
+  description: string;
+}
+
+export function UploadPage() {
+  const session = useSession();
+  const navigate = useNavigate();
+  const [form, setForm] = useState<UploadForm>({
+    title: "",
+    description: ""
+  });
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverPreview, setCoverPreview] = useState("");
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!coverFile) {
+      setCoverPreview("");
+      return;
+    }
+    const objectURL = URL.createObjectURL(coverFile);
+    setCoverPreview(objectURL);
+    return () => URL.revokeObjectURL(objectURL);
+  }, [coverFile]);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    setStatus("");
+    try {
+      if (!videoFile) {
+        throw new Error("请选择视频文件");
+      }
+      if (!coverFile) {
+        throw new Error("请选择封面文件");
+      }
+      const [videoUpload, coverUpload] = await Promise.all([
+        uploadFile(videoFile, "video", session.token),
+        uploadFile(coverFile, "cover", session.token)
+      ]);
+      await createVideo(session.token, {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        media_url: videoUpload.url,
+        cover_url: coverUpload.url
+      });
+      setStatus("发布成功");
+      navigate("/profile");
+    } catch (error) {
+      setStatus(apiErrorMessage(error, "发布失败"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!session.token) {
+    return (
+      <main className="upload-page">
+        <section className="upload-card">
+          <div className="upload-empty">
+            <span className="material-symbols-outlined">lock</span>
+            <h1>登录后发布视频</h1>
+            <button className="primary-button" onClick={() => navigate("/auth")}>
+              <span className="material-symbols-outlined">login</span>
+              登录
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="upload-page">
+      <section className="upload-card">
+        <header>
+          <div>
+            <p className="eyebrow">发布</p>
+            <h1>发布视频</h1>
+          </div>
+          <button className="ghost-button compact" onClick={() => navigate("/timeline")}>
+            <span className="material-symbols-outlined">home</span>
+            最新视频
+          </button>
+        </header>
+
+        <div className="upload-grid">
+          <form className="upload-form" onSubmit={handleSubmit}>
+            <label>
+              <span>标题</span>
+              <input
+                value={form.title}
+                onChange={(event) => setForm({ ...form, title: event.target.value })}
+                placeholder="输入视频标题"
+              />
+            </label>
+            <label>
+              <span>简介</span>
+              <textarea
+                value={form.description}
+                onChange={(event) => setForm({ ...form, description: event.target.value })}
+                placeholder="输入视频简介"
+                rows={4}
+              />
+            </label>
+            <label>
+              <span>视频</span>
+              <span className="file-picker">
+                <span className="material-symbols-outlined">movie</span>
+                <span className="file-picker-copy">
+                  <strong>{videoFile ? videoFile.name : "选择视频文件"}</strong>
+                  <small>本地视频上传</small>
+                </span>
+                <input type="file" accept="video/*" onChange={(event) => setVideoFile(event.target.files?.[0] || null)} />
+              </span>
+            </label>
+            <label>
+              <span>封面</span>
+              <span className="file-picker">
+                <span className="material-symbols-outlined">image</span>
+                <span className="file-picker-copy">
+                  <strong>{coverFile ? coverFile.name : "选择封面文件"}</strong>
+                  <small>本地图片上传</small>
+                </span>
+                <input type="file" accept="image/*" onChange={(event) => setCoverFile(event.target.files?.[0] || null)} />
+              </span>
+            </label>
+            {status && <p className={`form-message ${status === "发布成功" ? "success" : ""}`}>{status}</p>}
+            <button className="primary-button" disabled={submitting}>
+              <span className="material-symbols-outlined">publish</span>
+              {submitting ? "发布中" : "发布"}
+            </button>
+          </form>
+
+          <aside className="upload-preview">
+            <div className="preview-frame">
+              {coverPreview ? <img src={coverPreview} alt="" /> : <span className="material-symbols-outlined">movie</span>}
+            </div>
+            <div>
+              <h2>{form.title || "视频预览"}</h2>
+              <p>{form.description || (videoFile ? videoFile.name : "选择本地视频和封面后会提交到后端视频接口。")}</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  );
+}

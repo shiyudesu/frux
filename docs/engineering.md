@@ -282,22 +282,31 @@ HTTP 层使用 `errors.Is` 映射状态码。响应保持简洁：
 
 ## 13. 前端规范
 
-前端位于 `apps/web`，当前保持轻量结构：
+前端位于 `apps/web`，源码全部为 TypeScript（`strict` 全开），按模块分层：
 
 ```text
-apps/web/src/App.jsx
-apps/web/src/main.jsx
+apps/web/src/types.ts        # 领域/API 类型 + localStorage type guard
+apps/web/src/api/            # apiRequest<T> 客户端与按域 fetch（feed/messages/social/account）
+apps/web/src/session.tsx     # SessionContext + useSession/useUnreadCount
+apps/web/src/router.tsx      # Route union + normalizeRoute + useRoute/useNavigate
+apps/web/src/pages/          # Login/Feed/Messages/Profile/PublicProfile/Upload
+apps/web/src/components/     # AppShell/TopNav/VideoStage/CommentPanel 等共享组件
+apps/web/src/hooks/          # useFeed/useComments/useSwipe
+apps/web/src/App.tsx         # Provider 组装 + 路由分发
+apps/web/src/main.tsx
 apps/web/src/styles.css
 ```
 
 规则：
 
-- 组件使用函数组件。
-- API 调用集中使用 `apiRequest`。
+- 组件使用函数组件，props 全部显式 interface 类型化。
+- API 调用集中使用 `api/src/client.ts` 的 `apiRequest<T>`，按域拆分 fetch 函数。
+- 会话与导航通过 `useSession`/`useNavigate` 分发，不做多层 props 透传。
+- localStorage 读出的 JSON 必须过 `types.ts` 的 type guard 窄化。
+- 禁止 `@ts-nocheck`/`@ts-expect-error`/显式 `any`；构建门禁为 `tsc --noEmit && vite build`。
 - 服务端错误显示为用户可理解文案。
 - 页面状态保持清楚：loading、error、empty、success。
 - CSS class 使用语义命名。
-- 页面继续增长时拆为 `src/pages/`、`src/components/`、`src/lib/api.js`。
 
 ## 14. 测试规范
 
