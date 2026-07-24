@@ -50,7 +50,7 @@
 1. 电脑刷视频优先：主舞台按 16:9 宽屏设计，鼠标滚轮、方向键、J/K 键都能切视频。
 2. 内容第一眼可见：视频、标题、作者、互动数据在首屏形成完整判断。
 3. 抖音/TikTok 习惯：关注/推荐频道、快速切换、点赞动效、评论侧栏、作者关注入口保持短视频产品直觉。
-4. Apple 高级质感：浅灰背景、黑色沉浸区、毛玻璃面板、细边框、柔和阴影、短弹性动效。
+4. 桌面短视频质感：近黑背景、紧凑导航、沉浸舞台、克制圆角、玫红主操作和青色品牌点缀。
 5. 完整状态：每个页面具备加载、空状态、错误、成功、权限受限、提交中。
 6. 后台高效率：运营后台以表格、筛选、抽屉详情、批量操作和状态标签为核心。
 
@@ -58,9 +58,9 @@
 
 ### 2.1 用户 Web 端导航
 
-- 顶部栏：GCFeed 标识、关注/推荐频道、全局搜索、发布按钮、消息入口、用户菜单。
-- 左侧栏：Feed、发布、消息、我的作品、个人资料、关系。
-- Feed 主体：左侧导航 220px，中间 16:9 视频舞台，右侧 360px 评论与详情区。
+- 顶部栏：56px 高，包含全局搜索、投稿、消息、登录/头像和退出入口。
+- 左侧栏：宽屏 160px、紧凑桌面 72px，包含四类 Feed、消息、投稿和个人资料；GCFeed 标识固定在栏顶。
+- Feed 主体：左侧导航 + 沉浸视频舞台；评论关闭时舞台占满内容区，打开后增加 346px 评论与详情区并缩小舞台。
 - 快捷操作：滚轮切换、方向键切换、J/K 切换、L 点赞、F 收藏、C 评论、Space 播放/暂停。
 
 ### 2.2 运营 Web 端导航
@@ -105,7 +105,7 @@
 4. 用户滚轮下滑、方向键下、J 键进入下一条；滚轮上滑、方向键上、K 键回上一条。
 5. 视频曝光、观看、完播事件自动上报。
 6. 用户点赞、收藏、评论、关注作者，UI 即时更新并保留失败回滚能力。
-7. 右侧评论区保持可见，评论输入固定在底部。
+7. 评论关闭时视频获得最大空间；打开评论后宽屏右侧出现 346px 面板并缩小舞台，窄屏使用抽屉，移动端使用底部面板。
 
 ### 3.2 发布到审核
 
@@ -142,7 +142,7 @@
 
 ### 4.1 风格方向
 
-- 用户 Web：黑色沉浸背景、16:9 桌面视频舞台、强对比文字、右侧评论面板、抖音/TikTok 式快速切换。
+- 用户 Web：`#161823` 近黑背景、紧凑桌面导航、圆角沉浸视频舞台、强对比文字、右侧互动栏和按需展开的评论面板。
 - 运营 Web：Apple 风格浅灰背景、白色面板、细边框、低噪阴影、蓝色主操作。
 - 共同气质：圆角克制、毛玻璃轻量、信息分层清晰、动效短促。
 
@@ -150,9 +150,11 @@
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--color-brand` | `#0A84FF` | 主按钮、当前导航、重点链接 |
-| `--color-accent-rose` | `#FF2D55` | 点赞、短视频情绪点缀 |
-| `--color-accent-cyan` | `#00F5FF` | 发布按钮边缘光、频道辅助高亮 |
+| `--gc-rose` | `#FF2C55` | 主按钮、点赞、当前 Tab、未读状态 |
+| `--gc-cyan` | `#25F4EE` | GCFeed 品牌错位点缀、焦点和辅助高亮 |
+| `--gc-bg` | `#161823` | 用户 Web 主背景 |
+| `--gc-surface` | `#1C1E29` | 评论、页面面板和弹层 |
+| `--gc-surface-raised` | `#252733` | 输入框、悬浮和高层级控件 |
 | `--color-bg` | `#F5F5F7` | 运营后台页面背景 |
 | `--color-feed-bg` | `#000000` | 用户 Feed 黑场 |
 | `--color-surface` | `#FFFFFF` | 表格、卡片、弹窗、抽屉 |
@@ -180,26 +182,26 @@
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--topbar-height` | `64px` | Web 顶部栏 |
-| `--user-sidebar-width` | `220px` | 用户 Web 左侧栏 |
+| `--gc-header-height` | `56px` | 用户 Web 顶部栏 |
+| `--gc-sidebar-width` | `160px` | 宽屏用户导航 |
+| `--gc-sidebar-compact` | `72px` | 紧凑桌面图标导航 |
 | `--admin-sidebar-width` | `240px` | 运营后台侧边栏 |
-| `--feed-stage-min` | `720px` | 16:9 舞台最小宽度 |
-| `--feed-detail-width` | `360px` | Feed 右侧评论/详情 |
-| `--page-padding` | `24px` | 桌面页面内边距 |
-| `--panel-gap` | `24px` | 页面区块间距 |
-| `--radius-panel` | `24px` | 主面板圆角 |
-| `--radius-control` | `12px` | 按钮、输入框圆角 |
-| `--radius-pill` | `999px` | 胶囊按钮、头像 |
+| `--gc-detail-width` | `346px` | Feed 右侧评论/详情 |
+| `--gc-page-padding` | `24px` | 桌面页面内边距 |
+| `--gc-radius-stage` | `16px` | 视频舞台圆角 |
+| `--gc-radius-panel` | `18px` | 页面面板与弹层圆角 |
+| `--gc-radius-control` | `10px` | 按钮、输入框圆角 |
 
 ### 4.5 16:9 Feed 舞台规则
 
-- 外层舞台固定 `aspect-ratio: 16 / 9`，宽度至少 720px，高度随视口变化。
+- 宽屏舞台占满导航和顶部栏之外的可用高度，使用 16px 圆角；打开详情面板时宽度自适应收缩。
 - 竖屏短视频使用 `object-fit: contain` 居中显示。
-- 背景层使用当前视频封面，`scale(1.08)`、`blur(28px)`、透明度 55%。
+- 背景层使用当前视频封面，`scale(1.08)`、`blur(30px)`、透明度约 52%。
 - 舞台左右使用暗色渐变承接背景，保证文字与按钮可读。
-- 右侧互动栏贴近视频右缘，评论区占 360px。
+- 右侧互动栏贴近视频右缘；评论打开后在宽屏使用 346px 推挤式面板。
+- 底部控制栏显示真实播放/暂停、时间、进度、静音和全屏状态，不显示静态伪进度。
 - 桌面滚轮一次切一条视频，动画时长 360ms。
-- 窄屏切换为单列 9:16 浏览体验。
+- 901-1279px 使用 72px 图标导航和覆盖式详情抽屉；900px 以下切换为底部导航、9:16 舞台和评论底部面板。
 
 ## 5. 组件规范
 
@@ -209,13 +211,17 @@
 |---|---|---|
 | AppShell | user / admin | 用户端与后台外壳 |
 | TopNav | feed / admin | 顶部导航 |
-| Sidebar | user / admin / collapsed | 左侧导航 |
+| SideNav | desktop / compact | 160px 或 72px 左侧导航 |
+| MobileNav | bottom | 移动端底部导航 |
+| BrandMark | desktop / compact | GCFeed 原创字标与紧凑标识 |
+| Icon | outline / filled | 本地 TypeScript SVG 图标系统 |
 | ChannelTabs | follow / recommend | 关注/推荐频道 |
 | FeedStage | desktop16x9 / mobile9x16 | 视频舞台 |
 | VideoBackdrop | blur / gradient | 16:9 舞台背景 |
 | VideoPlayer | contain / preview | 播放器 |
 | FeedActionRail | vertical | 点赞、评论、收藏、分享 |
-| CommentPanel | side / bottom | 桌面右侧评论、窄屏底部评论 |
+| FeedPlayerControls | desktop / mobile | 播放、时间、进度、静音、全屏 |
+| FeedDetailsPanel | side / drawer / sheet | 宽屏右侧、紧凑抽屉、移动底部评论 |
 | UploadDropzone | video / cover | 发布上传 |
 | WorkCard | published / reviewing / offline | 我的作品 |
 | MessageList | all / unread / system | 消息列表 |
@@ -236,17 +242,16 @@
 
 ```txt
 stage:
-relative aspect-video min-w-[720px] h-[calc(100dvh-128px)] max-h-[760px]
-overflow-hidden rounded-[24px] bg-black shadow-video
+relative h-full w-full overflow-hidden rounded-[16px] bg-black shadow-stage
 
 backdrop:
-absolute inset-[-28px] scale-110 bg-cover bg-center opacity-55 blur-2xl
+absolute inset-[-30px] scale-[1.08] bg-cover bg-center opacity-52 blur-[30px]
 
 video:
-relative z-10 h-full w-full object-contain
+absolute inset-0 z-10 h-full w-full object-contain
 
 overlay:
-absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_34%,rgba(0,0,0,.58)_78%)]
+absolute inset-0 bg-[linear-gradient(0deg,rgba(0,0,0,.86),transparent_46%)]
 ```
 
 ### 5.3 Button 配方
@@ -289,8 +294,13 @@ flex items-center justify-between border-t border-border px-4 py-3
 
 ```txt
 side-panel:
-h-[calc(100dvh-128px)] w-[360px] rounded-[24px] border border-white/15
-bg-[rgba(28,28,30,.72)] text-white shadow-glow backdrop-blur-2xl
+h-full w-[346px] border-l border-white/10 bg-[#1C1E29] text-white
+
+compact-drawer:
+absolute inset-y-0 right-0 w-[min(346px,42vw)] shadow-panel
+
+mobile-sheet:
+fixed inset-x-0 bottom-[64px] h-[min(72dvh,620px)] rounded-t-[20px]
 
 comment-input:
 h-11 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-white
@@ -300,17 +310,19 @@ h-11 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-white
 
 ### 6.1 登录/注册
 
-- 结构：居中表单面板、账号、密码、昵称、登录、注册。
+- 结构：暗色短视频预览背景、居中浅色认证面板、账号、密码、昵称、登录、注册。
+- 约束：只展示后端已支持的账号密码能力，不伪造二维码、手机号或第三方登录。
 - 状态：输入校验、提交中、登录成功、账号冲突、密码错误、权限状态。
 - 跳转：普通用户进入 Feed；运营角色进入审核工作台。
 
 ### 6.2 Feed 浏览
 
-- 结构：顶部导航、左侧栏、16:9 FeedStage、互动栏、右侧评论/详情区。
+- 结构：56px 顶部导航、160px/72px 左侧栏、沉浸 FeedStage、互动栏、底部播放器控制、按需展开的详情评论区。
 - 主操作：切换下一条视频。
 - 必备能力：关注/推荐频道、搜索入口、播放/暂停、滚轮切换、键盘切换、点赞、收藏、评论、分享、关注作者、曝光上报、观看上报、完播上报。
-- 桌面布局：220px 左侧栏 + minmax(720px, 1fr) 舞台 + 360px 评论区。
-- 窄屏布局：单列 9:16，全屏浏览，底部导航。
+- 宽屏布局：160px 左侧栏 + 舞台；评论打开后增加 346px 推挤式面板。
+- 紧凑桌面布局：72px 图标栏 + 舞台 + 按需覆盖式详情抽屉。
+- 移动布局：单列 9:16、底部导航、评论底部面板。
 - 状态：首屏骨架、视频加载、播放错误、Feed 空状态、接口错误、操作成功、操作回滚。
 
 ### 6.3 视频详情
@@ -434,7 +446,7 @@ h-11 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-white
 
 - 所有按钮、输入框、Tab、表格行操作支持键盘聚焦。
 - Feed 快捷键：`J` 下一条、`K` 上一条、`L` 点赞、`F` 收藏、`C` 聚焦评论、`Space` 播放/暂停。
-- 焦点样式使用 Apple 蓝外环。
+- 焦点样式使用 GCFeed 青色外环。
 - Feed 舞台文字有遮罩，评论区和表格满足清晰对比。
 - 点击热区：Feed 图标按钮 52px，后台行操作 32px 以上。
 
@@ -443,6 +455,8 @@ h-11 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-white
 - [ ] 页面覆盖本文件第 2.3 节全部路由。
 - [ ] 用户 Web Feed 使用 16:9 桌面视频舞台。
 - [ ] 竖屏短视频在 16:9 舞台中居中播放，背景层用封面模糊补齐。
+- [ ] 宽屏评论打开后使用 346px 推挤式面板，紧凑桌面使用抽屉，移动端使用底部面板。
+- [ ] 播放控制真实同步视频播放、时间、进度、静音和全屏状态。
 - [ ] Feed 支持滚轮、方向键、J/K、L、F、C、Space。
 - [ ] 用户端具备登录、发布、Feed、详情、作品、消息、资料、关系、搜索。
 - [ ] 运营端具备审核、内容、推荐、播放、监控、告警、治理、配置、日志。
@@ -452,6 +466,7 @@ h-11 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-white
 - [ ] 后台表格具备筛选、分页、状态标签、详情抽屉。
 - [ ] 危险动作具备确认弹窗和原因输入。
 - [ ] 手机网页具备窄屏自适应体验。
+- [ ] 用户前端不依赖 Material Symbols，所有图标名称由 TypeScript 联合类型约束。
 
 ## 10. 待确认参数
 

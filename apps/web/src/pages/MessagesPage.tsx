@@ -7,6 +7,7 @@ import { useNavigate } from "../router";
 import { useSession, useUnreadCount } from "../session";
 import type { Message } from "../types";
 import { appendMessages, formatRelativeTime, messageActor, messageBody, messageIcon } from "../utils";
+import { Icon } from "../components/Icon";
 
 type MessagesState = "loading" | "loadingMore" | "ready" | "error";
 
@@ -101,7 +102,7 @@ export function MessagesPage() {
   const loadingMore = state === "loadingMore";
 
   return (
-    <main className="messages-page">
+    <main className="messages-page" data-ui="messages-page">
       <section className="messages-header">
         <div>
           <p className="eyebrow">Messages</p>
@@ -110,22 +111,22 @@ export function MessagesPage() {
         <div className="messages-actions">
           <span className="messages-count">{unreadCount > 0 ? `${unreadCount} 未读` : "已读完"}</span>
           <button className="ghost-button compact" onClick={() => loadMessages("", false)} disabled={loadingInitial || loadingMore}>
-            <span className="material-symbols-outlined">refresh</span>
+            <Icon name="refresh" size={17} />
             刷新
           </button>
           <button className="primary-button compact" onClick={markAllRead} disabled={markingAll || unreadCount === 0}>
-            <span className="material-symbols-outlined">done_all</span>
+            <Icon name="check-all" size={17} />
             {markingAll ? "处理中" : "全部已读"}
           </button>
         </div>
       </section>
 
       <section className="messages-list-wrap">
-        {loadingInitial && <PageMessage icon="hourglass_top" title="正在加载消息" />}
+        {loadingInitial && <PageMessage icon="hourglass" title="正在加载消息" />}
         {state === "error" && items.length === 0 && (
-          <PageMessage icon="sync_problem" title={error || "消息加载失败"} action="重试" onAction={() => loadMessages("", false)} />
+          <PageMessage icon="alert" title={error || "消息加载失败"} action="重试" onAction={() => loadMessages("", false)} />
         )}
-        {state === "ready" && items.length === 0 && <PageMessage icon="notifications" title="暂无消息" />}
+        {state === "ready" && items.length === 0 && <PageMessage icon="bell" title="暂无消息" />}
         {error && items.length > 0 && <p className="form-message">{error}</p>}
         <div className="messages-list">
           {items.map((message) => {
@@ -140,7 +141,7 @@ export function MessagesPage() {
                 disabled={busyID === message.id}
               >
                 <span className={`message-icon ${message.is_read ? "" : "active"}`}>
-                  <span className="material-symbols-outlined">{messageIcon(message.type)}</span>
+                  <Icon name={messageIcon(message.type)} filled={!message.is_read} />
                 </span>
                 <span className="message-copy">
                   <span className="message-title-row">
@@ -162,7 +163,7 @@ export function MessagesPage() {
         </div>
         {hasMore && (
           <button className="ghost-button messages-more" onClick={() => loadMessages(nextCursor, true)} disabled={loadingMore}>
-            <span className="material-symbols-outlined">expand_more</span>
+            <Icon name="chevron-down" size={17} />
             {loadingMore ? "加载中" : "加载更多"}
           </button>
         )}

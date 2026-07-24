@@ -299,11 +299,12 @@ apps/web/src/api/            # apiRequest<T> 客户端与按域 fetch（feed/mes
 apps/web/src/session.tsx     # SessionContext + useSession/useUnreadCount
 apps/web/src/router.tsx      # Route union + normalizeRoute + useRoute/useNavigate
 apps/web/src/pages/          # Login/Feed/Messages/Profile/PublicProfile/Upload
-apps/web/src/components/     # AppShell/TopNav/VideoStage/CommentPanel 等共享组件
+apps/web/src/components/     # AppShell/导航/Icon/VideoStage/FeedDetailsPanel 等共享组件
 apps/web/src/hooks/          # useFeed/useComments/useSwipe
+apps/web/src/styles/         # tokens/base/shell/feed/pages/responsive 模块化样式
 apps/web/src/App.tsx         # Provider 组装 + 路由分发
 apps/web/src/main.tsx
-apps/web/src/styles.css
+apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 ```
 
 规则：
@@ -316,6 +317,8 @@ apps/web/src/styles.css
 - 服务端错误显示为用户可理解文案。
 - 页面状态保持清楚：loading、error、empty、success。
 - CSS class 使用语义命名。
+- 图标使用 `components/Icon.tsx` 的本地 SVG 注册表与 `IconName` 联合类型，不引入图标字体或复制第三方品牌资产。
+- 用户端 Shell 通过稳定 `data-ui` 标记支持浏览器几何和响应式验证。
 
 ## 14. 测试规范
 

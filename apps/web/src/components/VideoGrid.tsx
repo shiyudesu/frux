@@ -2,6 +2,7 @@
 import { image } from "../constants";
 import type { Video } from "../types";
 import { formatMetric } from "../utils";
+import { Icon } from "./Icon";
 
 interface VideoGridProps {
   videos: Video[];
@@ -12,7 +13,7 @@ interface VideoGridProps {
 
 export function VideoGrid({ videos, state, onSelect }: VideoGridProps) {
   return (
-    <div className="work-list">
+    <div className="work-list" data-ui="work-grid">
       {state === "loading" && <p className="card-empty">正在加载作品</p>}
       {state !== "loading" && typeof state === "string" && state !== "ready" && <p className="card-empty">{state}</p>}
       {state === "ready" && videos.length === 0 && <p className="card-empty">暂无作品</p>}
@@ -21,7 +22,7 @@ export function VideoGrid({ videos, state, onSelect }: VideoGridProps) {
         <button className="work-item" key={video.id} onClick={() => onSelect(video)}>
           <div className="work-thumb">
             <img src={video.cover_url || image.stage} alt="" />
-            <span className="material-symbols-outlined">play_arrow</span>
+            <span className="work-play-icon"><Icon name="play" size={18} /></span>
           </div>
           <div className="work-meta">
             <h3>{video.title}</h3>

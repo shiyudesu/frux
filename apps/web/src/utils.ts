@@ -2,6 +2,7 @@
 // 全部搬运自 LegacyApp.jsx 底部工具函数，逻辑不变，仅补类型。
 import type { Dispatch, SetStateAction } from "react";
 import { DEFAULT_PLAYBACK_CONFIG, PUBLIC_PROFILE_KEY, image } from "./constants";
+import type { IconName } from "./components/Icon";
 import type { Route } from "./router";
 import {
   parseStoredPublicProfiles,
@@ -337,18 +338,18 @@ function legacyMessageActorName(content: string): string {
   return match ? `用户_${match[1]}` : "";
 }
 
-export function messageIcon(type: string): string {
+export function messageIcon(type: string): IconName {
   switch (String(type || "").toUpperCase()) {
     case "LIKE":
-      return "favorite";
+      return "heart";
     case "COMMENT":
-      return "chat_bubble";
+      return "comment";
     case "FOLLOW":
-      return "person_add";
+      return "user-plus";
     case "SYSTEM":
-      return "campaign";
+      return "megaphone";
     default:
-      return "notifications";
+      return "bell";
   }
 }
 

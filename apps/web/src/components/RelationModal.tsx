@@ -1,7 +1,9 @@
 // 关注/粉丝弹窗。
 import type { RelationTab } from "../api/social";
 import type { RelationUser } from "../types";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import { RelationList } from "./RelationList";
+import { Icon } from "./Icon";
 
 interface RelationModalProps {
   tab: RelationTab;
@@ -35,9 +37,17 @@ export function RelationModal({
   onLoadMore,
   onToggleFollow
 }: RelationModalProps) {
+  const closeButtonRef = useDialogFocus<HTMLButtonElement>(true, onClose);
+
   return (
     <div className="modal-backdrop relation-modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="relation-modal" onClick={(event) => event.stopPropagation()}>
+      <section
+        aria-modal="true"
+        className="relation-modal"
+        data-ui="relation-modal"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
         <header>
           <div>
             <p className="eyebrow">关系</p>
@@ -52,8 +62,8 @@ export function RelationModal({
                 粉丝
               </button>
             </div>
-            <button className="icon-button small" type="button" onClick={onClose} aria-label="关闭关系弹窗">
-              <span className="material-symbols-outlined">close</span>
+            <button ref={closeButtonRef} className="icon-button small" type="button" onClick={onClose} aria-label="关闭关系弹窗">
+              <Icon name="close" size={19} />
             </button>
           </div>
         </header>

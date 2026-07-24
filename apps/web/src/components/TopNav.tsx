@@ -1,10 +1,9 @@
-// 顶部导航栏：wordmark、搜索、发布、通知、头像、退出登录。
-// 迁移后通过 useSession/useUnreadCount/useNavigate 自取状态，不再接收透传 props。
 import { logoutSession } from "../api/account";
 import { image } from "../constants";
 import { useNavigate } from "../router";
 import { useSession, useUnreadCount } from "../session";
 import { formatBadgeCount } from "../utils";
+import { Icon } from "./Icon";
 
 export function TopNav() {
   const { token, user, clearAuth } = useSession();
@@ -21,25 +20,21 @@ export function TopNav() {
   }
 
   return (
-    <header className="top-nav">
-      <div className="top-left">
-        <button className="wordmark" onClick={() => navigate(authenticated ? "/recommend" : "/timeline")}>
-          GCFeed
-        </button>
-      </div>
+    <header className="top-nav" data-ui="top-nav">
       <div className="top-center">
         <label className="search-box">
-          <span className="material-symbols-outlined">search</span>
-          <input placeholder="搜索" />
+          <Icon name="search" size={20} />
+          <input aria-label="搜索" placeholder="搜索你感兴趣的内容" />
+          <span className="search-action">搜索</span>
         </label>
       </div>
       <div className="top-actions">
-        <button className="upload-button" onClick={() => navigate(authenticated ? "/upload" : "/auth")}>
-          <span className="material-symbols-outlined">upload</span>
-          发布
+        <button className="top-action-button upload-button" onClick={() => navigate(authenticated ? "/upload" : "/auth")}>
+          <Icon name="upload" size={18} />
+          投稿
         </button>
-        <button className="icon-button badge-button" aria-label="通知" onClick={() => navigate(authenticated ? "/messages" : "/auth")}>
-          <span className="material-symbols-outlined">notifications</span>
+        <button className="icon-button badge-button" type="button" aria-label="通知" onClick={() => navigate(authenticated ? "/messages" : "/auth")}>
+          <Icon name="bell" />
           {authenticated && unreadCount > 0 && <span className="nav-badge floating">{formatBadgeCount(unreadCount)}</span>}
         </button>
         <button
@@ -51,14 +46,14 @@ export function TopNav() {
             <img src={user?.avatar_url || image.currentUser} alt="" />
           ) : (
             <>
-              <span className="material-symbols-outlined">person</span>
+              <Icon name="user" size={18} />
               <span>登录</span>
             </>
           )}
         </button>
         {authenticated && (
-          <button className="icon-button" onClick={handleLogout} aria-label="退出登录">
-            <span className="material-symbols-outlined">logout</span>
+          <button className="icon-button desktop-logout" type="button" onClick={handleLogout} aria-label="退出登录">
+            <Icon name="logout" />
           </button>
         )}
       </div>

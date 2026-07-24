@@ -48,7 +48,7 @@ function clampSwipeOffset(direction: SwipeDirection, delta: number, height: numb
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   // 等价于迁移前的 `target?.closest?.(...)`：非 Element 的 target 没有 closest，返回 false
-  return target instanceof Element && Boolean(target.closest("button, a, input, textarea, select, .comment-panel"));
+  return target instanceof Element && Boolean(target.closest("button, a, input, textarea, select, [data-ui='details-panel']"));
 }
 
 export interface UseSwipeOptions {

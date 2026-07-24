@@ -6,6 +6,8 @@ import { apiErrorMessage } from "../api/client";
 import { image } from "../constants";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
+import { BrandMark } from "../components/BrandMark";
+import { Icon } from "../components/Icon";
 
 type AuthMode = "login" | "register";
 
@@ -51,26 +53,26 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth-page">
+    <main className="auth-page" data-ui="auth-page">
       <section className="auth-visual" aria-label="GCFeed">
         <div className="auth-preview">
           <img src={image.stage} alt="" />
           <div className="auth-preview-card">
-            <span className="material-symbols-outlined">play_arrow</span>
+            <span className="auth-preview-icon"><Icon name="play" /></span>
             <div>
               <strong>GCFeed</strong>
-              <span>16:9 桌面 Feed</span>
+              <span>沉浸式桌面短视频</span>
             </div>
           </div>
         </div>
       </section>
       <section className="auth-panel">
-        <div className="auth-card">
+        <div className="auth-card" data-ui="auth-dialog">
           <div className="brand-block">
-            <span className="brand-mark">GC</span>
+            <BrandMark />
             <div>
               <h1>登录 GCFeed</h1>
-              <p>连接后端账号、Feed 和个人资料。</p>
+              <p>登录后继续刷视频、互动和发布作品。</p>
             </div>
           </div>
 
@@ -115,7 +117,7 @@ export function LoginPage() {
             </label>
             {message && <p className="form-message">{message}</p>}
             <button className="primary-button" disabled={submitting}>
-              <span className="material-symbols-outlined">login</span>
+              <Icon name="login" size={18} />
               {submitting ? "提交中" : mode === "register" ? "注册并登录" : "登录"}
             </button>
           </form>

@@ -1,16 +1,30 @@
-// Feed 右侧操作栏按钮。
+import type { Ref } from "react";
+import { Icon } from "./Icon";
+import type { IconName } from "./Icon";
+
 interface ActionButtonProps {
-  icon: string;
+  icon: IconName;
   label: string;
+  ariaLabel: string;
   active?: boolean;
   compact?: boolean;
+  dataUI?: string;
+  buttonRef?: Ref<HTMLButtonElement>;
   onClick?: () => void;
 }
 
-export function ActionButton({ icon, label, active, compact, onClick }: ActionButtonProps) {
+export function ActionButton({ icon, label, ariaLabel, active, compact, dataUI, buttonRef, onClick }: ActionButtonProps) {
   return (
-    <button className={`rail-button ${active ? "active" : ""} ${compact ? "compact" : ""}`} onClick={onClick}>
-      <span className={`material-symbols-outlined ${active ? "filled" : ""}`}>{icon}</span>
+    <button
+      aria-label={ariaLabel}
+      aria-pressed={active === undefined ? undefined : active}
+      className={`rail-button ${active ? "active" : ""} ${compact ? "compact" : ""}`}
+      data-ui={dataUI}
+      ref={buttonRef}
+      type="button"
+      onClick={onClick}
+    >
+      <span className="rail-icon"><Icon name={icon} filled={active} /></span>
       {label && <strong>{label}</strong>}
     </button>
   );

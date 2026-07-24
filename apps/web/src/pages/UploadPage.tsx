@@ -5,6 +5,7 @@ import { createVideo } from "../api/account";
 import { apiErrorMessage, uploadFile } from "../api/client";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
+import { Icon } from "../components/Icon";
 
 interface UploadForm {
   title: string;
@@ -66,13 +67,13 @@ export function UploadPage() {
 
   if (!session.token) {
     return (
-      <main className="upload-page">
+      <main className="upload-page" data-ui="upload-page">
         <section className="upload-card">
           <div className="upload-empty">
-            <span className="material-symbols-outlined">lock</span>
+            <span className="status-icon"><Icon name="lock" /></span>
             <h1>登录后发布视频</h1>
             <button className="primary-button" onClick={() => navigate("/auth")}>
-              <span className="material-symbols-outlined">login</span>
+              <Icon name="login" size={18} />
               登录
             </button>
           </div>
@@ -82,7 +83,7 @@ export function UploadPage() {
   }
 
   return (
-    <main className="upload-page">
+    <main className="upload-page" data-ui="upload-page">
       <section className="upload-card">
         <header>
           <div>
@@ -90,7 +91,7 @@ export function UploadPage() {
             <h1>发布视频</h1>
           </div>
           <button className="ghost-button compact" onClick={() => navigate("/timeline")}>
-            <span className="material-symbols-outlined">home</span>
+            <Icon name="home" size={17} />
             最新视频
           </button>
         </header>
@@ -117,7 +118,7 @@ export function UploadPage() {
             <label>
               <span>视频</span>
               <span className="file-picker">
-                <span className="material-symbols-outlined">movie</span>
+                <span className="file-picker-icon"><Icon name="film" /></span>
                 <span className="file-picker-copy">
                   <strong>{videoFile ? videoFile.name : "选择视频文件"}</strong>
                   <small>本地视频上传</small>
@@ -128,7 +129,7 @@ export function UploadPage() {
             <label>
               <span>封面</span>
               <span className="file-picker">
-                <span className="material-symbols-outlined">image</span>
+                <span className="file-picker-icon"><Icon name="image" /></span>
                 <span className="file-picker-copy">
                   <strong>{coverFile ? coverFile.name : "选择封面文件"}</strong>
                   <small>本地图片上传</small>
@@ -138,14 +139,14 @@ export function UploadPage() {
             </label>
             {status && <p className={`form-message ${status === "发布成功" ? "success" : ""}`}>{status}</p>}
             <button className="primary-button" disabled={submitting}>
-              <span className="material-symbols-outlined">publish</span>
+              <Icon name="publish" size={18} />
               {submitting ? "发布中" : "发布"}
             </button>
           </form>
 
           <aside className="upload-preview">
             <div className="preview-frame">
-              {coverPreview ? <img src={coverPreview} alt="" /> : <span className="material-symbols-outlined">movie</span>}
+              {coverPreview ? <img src={coverPreview} alt="" /> : <Icon name="film" size={44} />}
             </div>
             <div>
               <h2>{form.title || "视频预览"}</h2>

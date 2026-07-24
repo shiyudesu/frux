@@ -8,6 +8,7 @@ import { image } from "../constants";
 import { useNavigate } from "../router";
 import type { StoredPublicProfile, Video } from "../types";
 import { formatOptionalMetric, normalizePublicProfile, readPublicProfile, savePublicProfile } from "../utils";
+import { Icon } from "../components/Icon";
 
 export function PublicProfilePage({ userID }: { userID: number }) {
   const navigate = useNavigate();
@@ -70,8 +71,8 @@ export function PublicProfilePage({ userID }: { userID: number }) {
   };
 
   return (
-    <main className="profile-page">
-      <section className="profile-hero">
+    <main className="profile-page" data-ui="profile-page">
+      <section className="profile-hero" data-ui="profile-hero">
         <div className="profile-summary public-profile-summary">
           <img className="profile-avatar" src={displayProfile.avatar_url || image.currentUser} alt="" />
           <div>
@@ -97,11 +98,17 @@ export function PublicProfilePage({ userID }: { userID: number }) {
             </button>
           </div>
           <button className="ghost-button compact public-back-button" type="button" onClick={() => navigate("/timeline")}>
-            <span className="material-symbols-outlined">home</span>
+            <Icon name="home" size={17} />
             最新视频
           </button>
         </div>
       </section>
+
+      <nav className="profile-tabs" aria-label="用户主页内容">
+        <button className="active" type="button">
+          作品 <span>{formatOptionalMetric(displayProfile.work_count)}</span>
+        </button>
+      </nav>
 
       <section className="profile-grid">
         <section className="profile-card works-card">

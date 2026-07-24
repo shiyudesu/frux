@@ -5,9 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiErrorMessage, isUnauthorized } from "../api/client";
 import { reportPlaybackQoS as reportPlaybackQoSRequest } from "../api/feed";
 import { favoriteVideo, followUser, likeVideo, loadFollowingMap } from "../api/social";
-import { CommentPanel } from "../components/CommentPanel";
+import { FeedDetailsPanel } from "../components/FeedDetailsPanel";
 import { FeedMessage } from "../components/StatusMessages";
 import { VideoStage } from "../components/VideoStage";
+import type { VideoStageHandle } from "../components/VideoStage";
 import { emptyProfile, getFeedSceneMeta } from "../constants";
 import { useComments } from "../hooks/useComments";
 import { useFeed } from "../hooks/useFeed";
@@ -22,6 +23,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const session = useSession();
   const navigate = useNavigate();
   const feedMainRef = useRef<HTMLElement | null>(null);
+  const activeStageRef = useRef<VideoStageHandle | null>(null);
+  const commentButtonRef = useRef<HTMLButtonElement | null>(null);
 
   // useFeed 的 loadFeed 需要重置 swipe/评论面板，而这两个 state 由下方
   // useSwipe/useComments 持有（调用顺序在后），故通过 ref 转发稳定回调。
@@ -187,14 +190,39 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     }
   }, [current, following, navigate, requireLogin, session, swipe]);
 
-  // 键盘导航：上下切换、l 点赞、f 收藏、r 关注、c 评论、Esc 关闭评论
+  const openComments = useCallback(() => {
+    setCommentsOpen(true);
+  }, [setCommentsOpen]);
+
+  const closeCommentsWithFocus = useCallback(() => {
+    setCommentsOpen(false);
+    window.requestAnimationFrame(() => commentButtonRef.current?.focus());
+  }, [setCommentsOpen]);
+
+  // 键盘导航：上下切换、Space 播放、l 点赞、f 收藏、r 关注、c 评论、Esc 关闭评论
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeCommentsWithFocus();
+        return;
+      }
+      const target = event.target;
+      const editable =
+        target instanceof HTMLElement &&
+        Boolean(target.closest("input, textarea, select, button, a, [contenteditable='true']"));
+      if (editable) return;
+
       if (["ArrowDown", "j", "J"].includes(event.key)) {
+        event.preventDefault();
         moveTo(Math.min(items.length - 1, index + 1));
       }
       if (["ArrowUp", "k", "K"].includes(event.key)) {
+        event.preventDefault();
         moveTo(Math.max(0, index - 1));
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        activeStageRef.current?.togglePlayback();
       }
       if (event.key === "l" || event.key === "L") {
         setLike();
@@ -206,24 +234,22 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
         setFollow();
       }
       if (event.key === "c" || event.key === "C") {
-        setCommentsOpen(true);
-      }
-      if (event.key === "Escape") {
-        setCommentsOpen(false);
+        openComments();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [index, items.length, setFavorite, setFollow, setLike, swipe]);
+  }, [closeCommentsWithFocus, index, items.length, moveTo, openComments, setFavorite, setFollow, setLike]);
 
   const visibleCurrent = swipe ? items[swipe.fromIndex] : current;
   const visibleNext = swipe ? items[swipe.toIndex] : null;
   const trackStyle = getFeedTrackStyle(swipe);
 
   return (
-    <main className="feed-layout">
+    <main className={`feed-layout ${commentsOpen ? "details-open" : ""}`} data-ui="feed-layout">
       <section
         className="feed-main"
+        data-ui="feed-main"
         ref={feedMainRef}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
@@ -231,15 +257,15 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
         onPointerUp={handlePointerEnd}
         onPointerCancel={handlePointerEnd}
       >
-        {feedState === "loading" && <FeedMessage icon="hourglass_top" title={`正在加载${currentFeedScene.label}`} />}
+        {feedState === "loading" && <FeedMessage icon="hourglass" title={`正在加载${currentFeedScene.label}`} />}
         {feedState === "auth" && (
           <FeedMessage icon="lock" title={`登录后查看${currentFeedScene.label}`} action="登录" onAction={() => navigate("/auth")} />
         )}
         {feedState === "error" && (
-          <FeedMessage icon="sync_problem" title={feedError} action="重新加载" onAction={loadFeed} />
+          <FeedMessage icon="alert" title={feedError} action="重新加载" onAction={loadFeed} />
         )}
         {feedState === "ready" && items.length === 0 && (
-          <FeedMessage icon="video_library" title={`${currentFeedScene.label}暂无视频`} action="刷新" onAction={loadFeed} />
+          <FeedMessage icon="video" title={`${currentFeedScene.label}暂无视频`} action="刷新" onAction={loadFeed} />
         )}
         {visibleCurrent && (
           <div className={`feed-stage-wrap ${swipe ? `swiping ${swipe.direction} ${swipe.settling ? "settling" : "dragging"}` : ""}`}>
@@ -255,7 +281,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     followBusy={followBusyID === visibleNext.author_id}
                     ownVideo={visibleNext.author_id === session.user?.id}
                     onLike={setLike}
-                    onComment={() => setCommentsOpen(true)}
+                    onComment={openComments}
                     onFavorite={setFavorite}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
@@ -266,6 +292,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
               )}
               <div className="feed-stage-layer">
                 <VideoStage
+                  ref={activeStageRef}
                   item={visibleCurrent}
                   active={!swipe}
                   liked={Boolean(liked[visibleCurrent.video_id])}
@@ -274,7 +301,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   followBusy={followBusyID === visibleCurrent.author_id}
                   ownVideo={visibleCurrent.author_id === session.user?.id}
                   onLike={setLike}
-                  onComment={() => setCommentsOpen(true)}
+                  commentButtonRef={commentButtonRef}
+                  onComment={openComments}
                   onFavorite={setFavorite}
                   onFollow={setFollow}
                   onPlaybackQoS={reportPlaybackQoS}
@@ -293,7 +321,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     followBusy={followBusyID === visibleNext.author_id}
                     ownVideo={visibleNext.author_id === session.user?.id}
                     onLike={setLike}
-                    onComment={() => setCommentsOpen(true)}
+                    onComment={openComments}
                     onFavorite={setFavorite}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
@@ -310,11 +338,12 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
           <div className="feed-loading-pill">已到末尾</div>
         )}
       </section>
-      <CommentPanel
+      <FeedDetailsPanel
+        item={current}
         open={commentsOpen}
         value={commentText}
         onChange={setCommentText}
-        onClose={() => setCommentsOpen(false)}
+        onClose={closeCommentsWithFocus}
         onSubmit={submitComment}
         user={session.user || emptyProfile}
         count={current?.comment_count || 0}

@@ -11,8 +11,10 @@ import { WorkViewer } from "../components/WorkViewer";
 import { emptyProfile, image } from "../constants";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import type { RelationUser, SessionUser, Video } from "../types";
 import { formatMetric } from "../utils";
+import { Icon } from "../components/Icon";
 
 interface ProfileForm {
   nickname: string;
@@ -47,6 +49,7 @@ export function ProfilePage() {
   const [relationError, setRelationError] = useState("");
   const [relationFollowing, setRelationFollowing] = useState<Record<number, boolean>>({});
   const [relationBusyID, setRelationBusyID] = useState(0);
+  const editCloseButtonRef = useDialogFocus<HTMLButtonElement>(editing, () => setEditing(false));
   const followingCount = baseUser.following_count ?? baseUser.followingCount ?? 0;
   // SessionUser 没有 followerCount camelCase 副本（迁移前读取恒为 undefined），行为等价
   const followerCount = baseUser.follower_count ?? 0;
@@ -227,8 +230,8 @@ export function ProfilePage() {
   }
 
   return (
-    <main className="profile-page">
-      <section className="profile-hero">
+    <main className="profile-page" data-ui="profile-page">
+      <section className="profile-hero" data-ui="profile-hero">
         <div className="profile-summary">
           <img className="profile-avatar" src={avatarPreview || form.avatar_url || image.currentUser} alt="" />
           <div>
@@ -259,17 +262,29 @@ export function ProfilePage() {
             </button>
           </div>
           <button className="profile-edit-button" onClick={() => setEditing(true)} aria-label="编辑资料">
-            <span className="material-symbols-outlined">manage_accounts</span>
+            <Icon name="user-edit" />
           </button>
         </div>
       </section>
+
+      <nav className="profile-tabs" aria-label="个人主页内容">
+        <button className="active" type="button">
+          作品 <span>{formatMetric(videos.length)}</span>
+        </button>
+        <button type="button" onClick={() => openRelationModal("following")}>
+          关系
+        </button>
+        <button type="button" onClick={() => setEditing(true)}>
+          编辑资料
+        </button>
+      </nav>
 
       <section className="profile-grid">
         <section className="profile-card works-card">
           <header>
             <h2>我的作品</h2>
             <button className="ghost-button compact" onClick={() => navigate("/timeline")}>
-              <span className="material-symbols-outlined">home</span>
+              <Icon name="home" size={17} />
               最新视频
             </button>
           </header>
@@ -296,11 +311,17 @@ export function ProfilePage() {
       {selectedWork && <WorkViewer video={selectedWork} onClose={() => setSelectedWork(null)} />}
       {editing && (
         <div className="modal-backdrop" role="presentation">
-          <form className="profile-modal profile-form" onSubmit={handleSave}>
+          <form aria-modal="true" className="profile-modal profile-form" role="dialog" onSubmit={handleSave}>
             <header>
               <h2>资料编辑</h2>
-              <button className="icon-button small" type="button" onClick={() => setEditing(false)} aria-label="关闭">
-                <span className="material-symbols-outlined">close</span>
+              <button
+                ref={editCloseButtonRef}
+                className="icon-button small"
+                type="button"
+                onClick={() => setEditing(false)}
+                aria-label="关闭"
+              >
+                <Icon name="close" size={19} />
               </button>
             </header>
             <label>
@@ -314,7 +335,7 @@ export function ProfilePage() {
                   {avatarPreview || form.avatar_url ? (
                     <img src={avatarPreview || form.avatar_url} alt="" />
                   ) : (
-                    <span className="material-symbols-outlined">person</span>
+                    <Icon name="user" />
                   )}
                 </span>
                 <span className="file-picker-copy">
@@ -330,7 +351,7 @@ export function ProfilePage() {
             </label>
             {status && <p className={`form-message ${status === "已保存" ? "success" : ""}`}>{status}</p>}
             <button className="primary-button">
-              <span className="material-symbols-outlined">save</span>
+              <Icon name="save" size={18} />
               保存
             </button>
           </form>

@@ -1,6 +1,7 @@
 // 全局常量：localStorage 键、Feed 场景、默认播放配置、占位图片。
 // 值与迁移前 LegacyApp.jsx 顶部常量完全一致。
 import type { PlaybackConfig, SessionUser } from "./types";
+import type { IconName } from "./components/Icon";
 
 export const TOKEN_KEY = "gcfeed.accessToken";
 export const USER_KEY = "gcfeed.user";
@@ -23,14 +24,14 @@ export interface FeedSceneMeta {
   key: FeedSceneKey;
   label: string;
   route: FeedSceneRoute;
-  icon: string;
+  icon: IconName;
 }
 
 export const FEED_SCENES: FeedSceneMeta[] = [
-  { key: "timeline", label: "最新视频", route: "/timeline", icon: "home" },
-  { key: "recommend", label: "推荐流", route: "/recommend", icon: "auto_awesome" },
-  { key: "following", label: "关注流", route: "/following", icon: "subscriptions" },
-  { key: "hot", label: "热门榜单", route: "/hotfeed", icon: "local_fire_department" }
+  { key: "timeline", label: "最新", route: "/timeline", icon: "discover" },
+  { key: "recommend", label: "推荐", route: "/recommend", icon: "sparkles" },
+  { key: "following", label: "关注", route: "/following", icon: "users" },
+  { key: "hot", label: "热门", route: "/hotfeed", icon: "flame" }
 ];
 
 /** LegacyApp 中 `FEED_SCENES.find(...) || FEED_SCENES[0]` 的等价封装 */
