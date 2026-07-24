@@ -42,6 +42,13 @@ openspec validate --all --strict
 
 Both Go binaries load `./configs/config.yaml` using a relative path, so direct `go run` commands must be executed from `apps/api`. The local startup script starts processes only; it does not provision MySQL, Redis, or RabbitMQ.
 
+## OpenSpec Skills in Copilot CLI
+
+- Files under `.github/skills/openspec-*` are agent skills, not standalone CLI slash commands.
+- Invoke a skill inside a normal-language prompt, for example: `Use the /openspec-propose skill to plan add-dark-mode.`
+- Do not tell users to enter `/opsx:*` or a bare `/openspec-*` as the first token. Copilot CLI treats those as built-in slash commands and reports them as unknown.
+- After adding or updating skills during a session, use `/skills reload`. Use `/skills list` and `/skills info <skill-name>` to inspect loaded skills.
+
 ## Architecture
 
 - `apps/api/cmd/feed` is the HTTP process. `internal/interfaces/http/router/router.go` is the main composition root: it opens GORM over the shared `database/sql` pool, runs migrations, builds repositories/services/handlers, registers middleware, and exposes `/api`, `/internal`, `/uploads`, `/health`, and `/metrics`.
