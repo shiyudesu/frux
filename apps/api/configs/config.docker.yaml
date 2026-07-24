@@ -7,11 +7,13 @@ internal:
   token: "replace-with-internal-token"
 
 database:
-  host: "mysql"
-  port: 3306
-  user: "root"
+  host: "postgres"
+  port: 5432
+  user: "gcfeed"
   password: "sealos123"
-  name: "GCFeed"
+  name: "gcfeed"
+  ssl_mode: "disable"
+  time_zone: "UTC"
 
 redis:
   addr: "redis:6379"

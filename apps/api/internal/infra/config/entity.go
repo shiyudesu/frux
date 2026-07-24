@@ -21,13 +21,15 @@ type InternalConfig struct {
 	Token string `yaml:"token"`
 }
 
-// DatabaseConfig 保存 MySQL 连接参数。
+// DatabaseConfig 保存 PostgreSQL 连接参数。
 type DatabaseConfig struct {
 	Host     string `yaml:"host"`
 	Port     int    `yaml:"port"`
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	Name     string `yaml:"name"`
+	SSLMode  string `yaml:"ssl_mode"`
+	TimeZone string `yaml:"time_zone"`
 }
 
 // RedisConfig 保存 Redis 连接参数，用于 Feed 读缓存。

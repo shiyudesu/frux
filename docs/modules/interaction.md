@@ -128,7 +128,7 @@ apps/api/internal/interfaces/http/interaction/
 
 ### 3.3 异步落库
 
-点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再写入 Redis 行为状态与实时计数，随后投递 `ActionChangedEvent` 到 RabbitMQ。Worker 消费事件并调用仓储写入 MySQL 行为表和 `video_stat`，消费端依赖 `user_id + video_id + action_type` 与幂等键保持重复消息安全。
+点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再写入 Redis 行为状态与实时计数，随后投递 `ActionChangedEvent` 到 RabbitMQ。Worker 消费事件并调用仓储写入 PostgreSQL 行为表和 `video_stat`，消费端依赖 `user_id + video_id + action_type` 与幂等键保持重复消息安全。
 
 核心键和队列：
 

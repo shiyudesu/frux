@@ -218,10 +218,10 @@ func (r *Repository) SaveExposures(ctx context.Context, writes []*domainrecommen
 					{Name: "video_id"},
 				},
 				DoUpdates: clause.Assignments(map[string]any{
-					"last_exposed_at": gorm.Expr("VALUES(last_exposed_at)"),
-					"exposure_count":  gorm.Expr("exposure_count + 1"),
-					"last_scene":      gorm.Expr("VALUES(last_scene)"),
-					"updated_at":      gorm.Expr("VALUES(updated_at)"),
+					"last_exposed_at": gorm.Expr("EXCLUDED.last_exposed_at"),
+					"exposure_count":  gorm.Expr("exposures.exposure_count + 1"),
+					"last_scene":      gorm.Expr("EXCLUDED.last_scene"),
+					"updated_at":      gorm.Expr("EXCLUDED.updated_at"),
 				}),
 			}).Create(&model).Error; err != nil {
 				return err

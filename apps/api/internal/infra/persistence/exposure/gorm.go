@@ -3,11 +3,11 @@ package infraexposure
 import (
 	domainexposure "GCFeed/internal/domain/exposure"
 	domainvideo "GCFeed/internal/domain/video"
+	infrapersistence "GCFeed/internal/infra/persistence"
 	infravideo "GCFeed/internal/infra/persistence/video"
 	"context"
 	"errors"
 
-	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -60,10 +60,10 @@ func (r *Repository) SaveViewEvent(ctx context.Context, event *domainexposure.Vi
 				{Name: "video_id"},
 			},
 			DoUpdates: clause.Assignments(map[string]any{
-				"last_exposed_at": gorm.Expr("VALUES(last_exposed_at)"),
-				"exposure_count":  gorm.Expr("exposure_count + 1"),
-				"last_scene":      gorm.Expr("VALUES(last_scene)"),
-				"updated_at":      gorm.Expr("VALUES(updated_at)"),
+				"last_exposed_at": gorm.Expr("EXCLUDED.last_exposed_at"),
+				"exposure_count":  gorm.Expr("exposures.exposure_count + 1"),
+				"last_scene":      gorm.Expr("EXCLUDED.last_scene"),
+				"updated_at":      gorm.Expr("EXCLUDED.updated_at"),
 			}),
 		}).Create(&exposureModel).Error; err != nil {
 			return err
@@ -144,16 +144,8 @@ func mapExposureError(err error) error {
 	if errors.Is(err, domainexposure.ErrVideoNotFound) {
 		return err
 	}
-	if isDuplicateKeyError(err) {
+	if infrapersistence.IsDuplicatedKeyError(err) {
 		return err
 	}
 	return err
-}
-
-func isDuplicateKeyError(err error) bool {
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }

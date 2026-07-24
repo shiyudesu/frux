@@ -10,27 +10,18 @@ import (
 	infraplayback "GCFeed/internal/infra/persistence/playback"
 	infrarelation "GCFeed/internal/infra/persistence/relation"
 	infravideo "GCFeed/internal/infra/persistence/video"
-	"errors"
-	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
-func AutoMigrate(db *gorm.DB) error {
-	if err := autoMigrateModels(db); err != nil {
-		return err
-	}
-	if err := infravideo.EnsureStats(db); err != nil {
-		return err
-	}
-	return infrafeed.EnsureTimelineIndex(db)
-}
+const advisoryLockKey int64 = 0x474346656564
 
-func autoMigrateModels(db *gorm.DB) error {
-	var err error
-	for attempt := 0; attempt < 4; attempt++ {
-		err = db.AutoMigrate(
+func AutoMigrate(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", advisoryLockKey).Error; err != nil {
+			return err
+		}
+		if err := tx.AutoMigrate(
 			&infraaccount.UserModel{},
 			&infraembedding.VideoEmbeddingModel{},
 			&infravideo.VideoModel{},
@@ -45,27 +36,12 @@ func autoMigrateModels(db *gorm.DB) error {
 			&infraplayback.QoSLogModel{},
 			&infrarelation.FollowModel{},
 			&infrarelation.RelationStatModel{},
-		)
-		if err == nil {
-			return nil
-		}
-		if !isConcurrentMigrationError(err) {
+		); err != nil {
 			return err
 		}
-		time.Sleep(time.Duration(attempt+1) * 150 * time.Millisecond)
-	}
-	return err
-}
-
-func isConcurrentMigrationError(err error) bool {
-	var mysqlErr *mysql.MySQLError
-	if !errors.As(err, &mysqlErr) {
-		return false
-	}
-	switch mysqlErr.Number {
-	case 1050, 1060, 1061:
-		return true
-	default:
-		return false
-	}
+		if err := infravideo.EnsureStats(tx); err != nil {
+			return err
+		}
+		return infrafeed.EnsureTimelineIndex(tx)
+	})
 }

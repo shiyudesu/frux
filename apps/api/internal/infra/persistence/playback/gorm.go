@@ -3,6 +3,7 @@ package infraplayback
 import (
 	domainplayback "GCFeed/internal/domain/playback"
 	domainvideo "GCFeed/internal/domain/video"
+	infrapersistence "GCFeed/internal/infra/persistence"
 	"context"
 	"errors"
 	"strings"
@@ -92,7 +93,7 @@ func (r *Repository) CreateQoSReport(ctx context.Context, report *domainplayback
 	if err == nil {
 		return restoreQoSReport(model), true, nil
 	}
-	if !isDuplicateKeyError(err) {
+	if !infrapersistence.IsDuplicatedKeyError(err) {
 		return nil, false, err
 	}
 
@@ -170,11 +171,4 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
-}
-
-func isDuplicateKeyError(err error) bool {
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "duplicate")
 }

@@ -2,11 +2,11 @@ package infravideo
 
 import (
 	domainvideo "GCFeed/internal/domain/video"
+	infrapersistence "GCFeed/internal/infra/persistence"
 	"context"
 	"errors"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -64,7 +64,7 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 		}
 
 		if err := tx.Create(&model).Error; err != nil {
-			if isDuplicateKeyError(err) {
+			if infrapersistence.IsDuplicatedKeyError(err) {
 				return domainvideo.ErrDuplicateIdempotencyKey
 			}
 			return err
@@ -234,13 +234,4 @@ func idempotencyKeyValue(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-// isDuplicateKeyError 兼容 GORM 标准错误和 MySQL 1062 唯一键冲突。
-func isDuplicateKeyError(err error) bool {
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }

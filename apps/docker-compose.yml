@@ -1,16 +1,17 @@
 services:
-  mysql:
-    image: mysql:8.4
-    container_name: gcfeed-mysql
+  postgres:
+    image: postgres:17.5-alpine
+    container_name: gcfeed-postgres
     environment:
-      MYSQL_ROOT_PASSWORD: sealos123
-      MYSQL_DATABASE: GCFeed
+      POSTGRES_DB: gcfeed
+      POSTGRES_USER: gcfeed
+      POSTGRES_PASSWORD: sealos123
     ports:
-      - "3307:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -49,7 +50,7 @@ services:
         GOPROXY: https://goproxy.cn,direct
     container_name: gcfeed-api
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -76,7 +77,7 @@ services:
     container_name: gcfeed-worker
     command: ["./gcfeed-worker"]
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -131,7 +132,7 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
 volumes:
-  mysql_data:
+  postgres_data:
   redis_data:
   rabbitmq_data:
   api_uploads:

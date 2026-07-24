@@ -12,11 +12,11 @@
 
 2. 这个项目的后端、前端、数据库、缓存和消息队列分别用了什么技术？
 
-   答：后端使用 Go、Hertz 和 GORM，前端使用 React 和 Vite，数据库使用 MySQL，缓存使用 Redis，消息队列使用 RabbitMQ。鉴权使用 JWT，监控使用 Prometheus 和 Grafana，本地编排使用 Docker Compose。代码按 `Domain / Application / Infrastructure / Interfaces` 四层组织，适合讲清业务边界和技术实现边界。
+   答：后端使用 Go、Hertz 和 GORM，前端使用 React 和 Vite，数据库使用 PostgreSQL，缓存使用 Redis，消息队列使用 RabbitMQ。鉴权使用 JWT，监控使用 Prometheus 和 Grafana，本地编排使用 Docker Compose。代码按 `Domain / Application / Infrastructure / Interfaces` 四层组织，适合讲清业务边界和技术实现边界。
 
 3. 从用户发布视频到另一个用户刷到视频，完整链路有哪些步骤？
 
-   答：用户先上传媒体文件，拿到视频和封面 URL，再调用 `POST /api/videos` 创建公开视频，视频和统计数据写入 MySQL。发布成功后会投递视频发布事件，Worker 进行 Feed 预热、关注流 fanout 或 Author Outbox 写入。其他用户请求 `/api/feed-items` 时，Feed Service 根据 scene 读取轻量页，再批量组装视频卡片、作者信息和计数，最后返回游标分页结果。
+   答：用户先上传媒体文件，拿到视频和封面 URL，再调用 `POST /api/videos` 创建公开视频，视频和统计数据写入 PostgreSQL。发布成功后会投递视频发布事件，Worker 进行 Feed 预热、关注流 fanout 或 Author Outbox 写入。其他用户请求 `/api/feed-items` 时，Feed Service 根据 scene 读取轻量页，再批量组装视频卡片、作者信息和计数，最后返回游标分页结果。
 
 4. 项目里有哪些 Feed 场景？`timeline`、`hot`、`following`、`recommend` 的差异是什么？
 
@@ -30,11 +30,11 @@
 
 1. 如果让你用 2 分钟介绍这个项目，你会怎么组织答案？
 
-   答：先用一句话说明 GCFeed 是短视频 Feed 系统，覆盖发布、分发、消费、互动和推荐。然后讲核心链路：视频发布写 MySQL 并投递事件，Worker 做缓存预热和关注流分发，Feed 请求按 scene 读取页并批量组装详情。最后讲技术亮点：稳定游标分页、ID-Detail 分离、Redis 缓存、RabbitMQ 异步落库、热榜分钟桶、推荐排序和 Prometheus 监控。
+   答：先用一句话说明 GCFeed 是短视频 Feed 系统，覆盖发布、分发、消费、互动和推荐。然后讲核心链路：视频发布写 PostgreSQL 并投递事件，Worker 做缓存预热和关注流分发，Feed 请求按 scene 读取页并批量组装详情。最后讲技术亮点：稳定游标分页、ID-Detail 分离、Redis 缓存、RabbitMQ 异步落库、热榜分钟桶、推荐排序和 Prometheus 监控。
 
-2. 当前系统的性能瓶颈可能出现在 API、MySQL、Redis、RabbitMQ 哪一层？你怎么判断？
+2. 当前系统的性能瓶颈可能出现在 API、PostgreSQL、Redis、RabbitMQ 哪一层？你怎么判断？
 
-   答：判断顺序看指标：API 看 HTTP P95 和 5xx，MySQL 看慢查询和连接池，Redis 看缓存命中率和命令耗时，RabbitMQ 看队列积压和 Worker 成功率。Feed 读慢通常先看页缓存、卡片缓存和计数缓存命中率，再看批量回源 SQL。互动链路慢则看 Redis `WATCH` 更新、RabbitMQ 投递和 Worker 消费耗时。
+   答：判断顺序看指标：API 看 HTTP P95 和 5xx，PostgreSQL 看慢查询和连接池，Redis 看缓存命中率和命令耗时，RabbitMQ 看队列积压和 Worker 成功率。Feed 读慢通常先看页缓存、卡片缓存和计数缓存命中率，再看批量回源 SQL。互动链路慢则看 Redis `WATCH` 更新、RabbitMQ 投递和 Worker 消费耗时。
 
 3. 如果访问量扩大 10 倍，你会先优化哪条链路？
 
@@ -122,7 +122,7 @@
 
 2. Feed 卡片组装阶段如何避免 N+1 查询？
 
-   答：先从 pageItems 提取 videoIDs，然后 Redis 使用 MGET 批量读 `video:card` 和 `video:stat`。缺失的卡片和计数分别通过 `BatchGetFeedCards`、`BatchGetFeedStats` 一次性回源 MySQL。最后把回源结果写回 Redis，后续请求可以直接命中缓存。
+   答：先从 pageItems 提取 videoIDs，然后 Redis 使用 MGET 批量读 `video:card` 和 `video:stat`。缺失的卡片和计数分别通过 `BatchGetFeedCards`、`BatchGetFeedStats` 一次性回源 PostgreSQL。最后把回源结果写回 Redis，后续请求可以直接命中缓存。
 
 3. 如果视频详情缓存命中，但计数缓存缺失，系统应该怎么处理？
 
@@ -130,11 +130,11 @@
 
 4. 如果 Redis 故障，timeline Feed 怎么降级？
 
-   答：`loadFeedPage` 读取页缓存失败时会走 Repository 回源，`assembleFeedItems` 读取卡片或计数缓存失败时也会批量回源 MySQL。用户仍然能拿到 Feed，只是数据库压力和响应时间会上升。监控上会看到 cache error、Feed P95 上升和 MySQL 查询量增加。
+   答：`loadFeedPage` 读取页缓存失败时会走 Repository 回源，`assembleFeedItems` 读取卡片或计数缓存失败时也会批量回源 PostgreSQL。用户仍然能拿到 Feed，只是数据库压力和响应时间会上升。监控上会看到 cache error、Feed P95 上升和 PostgreSQL 查询量增加。
 
 5. `ErrLoadFeedFailed` 这类应用层错误为什么要封装底层错误？
 
-   答：应用层错误给 Handler 一个稳定的错误语义，便于统一映射 HTTP 响应。底层可能来自 MySQL、Redis、JSON 解析或推荐服务，直接暴露会让接口层耦合具体实现。封装后日志仍可记录底层细节，客户端看到的是稳定的业务错误。
+   答：应用层错误给 Handler 一个稳定的错误语义，便于统一映射 HTTP 响应。底层可能来自 PostgreSQL、Redis、JSON 解析或推荐服务，直接暴露会让接口层耦合具体实现。封装后日志仍可记录底层细节，客户端看到的是稳定的业务错误。
 
 ## 4. 游标分页
 
@@ -214,19 +214,19 @@
 
 2. 新视频发布后，timeline 首页缓存怎么保持可接受的一致性？
 
-   答：当前设计依靠短 TTL 和发布后的 Feed 预热来保证可接受的新鲜度。新视频写入 MySQL 后，首页缓存最多在短时间内过期并回源刷新。更高实时性场景可以在发布成功后主动删除首页页缓存或写入增量索引。
+   答：当前设计依靠短 TTL 和发布后的 Feed 预热来保证可接受的新鲜度。新视频写入 PostgreSQL 后，首页缓存最多在短时间内过期并回源刷新。更高实时性场景可以在发布成功后主动删除首页页缓存或写入增量索引。
 
 3. 为什么使用 singleflight 合并同 key 回源？
 
-   答：缓存 miss 时，同一页可能被大量请求同时访问。singleflight 能让同 key 的并发请求共享一次回源结果，降低 MySQL 瞬时压力。GCFeed 在 `loadFeedPage` 里用缓存 key 作为 singleflight key。
+   答：缓存 miss 时，同一页可能被大量请求同时访问。singleflight 能让同 key 的并发请求共享一次回源结果，降低 PostgreSQL 瞬时压力。GCFeed 在 `loadFeedPage` 里用缓存 key 作为 singleflight key。
 
 4. TTL 抖动解决什么问题？
 
    答：大量缓存如果在同一时刻过期，会导致数据库瞬时回源压力升高。TTL 抖动让过期时间分散到不同时间点。GCFeed 通过 key hash 给页缓存 TTL 增加轻微差异。
 
-5. Feed 缓存异常时，哪些错误可以忽略并回源 MySQL？
+5. Feed 缓存异常时，哪些错误可以忽略并回源 PostgreSQL？
 
-   答：页缓存读取错误、卡片缓存读取错误、计数缓存读取错误都可以走回源路径。写缓存失败也可以记录指标后继续返回业务结果。只要 MySQL 回源成功，Feed 主链路就能继续服务。
+   答：页缓存读取错误、卡片缓存读取错误、计数缓存读取错误都可以走回源路径。写缓存失败也可以记录指标后继续返回业务结果。只要 PostgreSQL 回源成功，Feed 主链路就能继续服务。
 
 6. 如果热点视频计数更新很频繁，直接更新单个 Redis key 会有什么问题？
 
@@ -330,15 +330,15 @@
 
 1. 点赞接口的主流程是什么？
 
-   答：Handler 解析用户 ID、videoId 和幂等键，调用 `InteractionService.Like`。Service 走 `setAction`，在启用异步管线时先通过 Redis `SetActionState` 更新用户行为状态和实时计数，再投递 `ActionChangedEvent` 到 RabbitMQ。Worker 消费事件后把行为事实和统计计数落到 MySQL。
+   答：Handler 解析用户 ID、videoId 和幂等键，调用 `InteractionService.Like`。Service 走 `setAction`，在启用异步管线时先通过 Redis `SetActionState` 更新用户行为状态和实时计数，再投递 `ActionChangedEvent` 到 RabbitMQ。Worker 消费事件后把行为事实和统计计数落到 PostgreSQL。
 
 2. `SetActionState` 为什么先写 Redis 状态和计数？
 
-   答：点赞收藏是高频写操作，Redis 能提供更低延迟和更高吞吐。接口可以快速返回最新 like_count 和 favorite_count，用户体验更好。MySQL 作为最终事实由 Worker 异步修正和持久化。
+   答：点赞收藏是高频写操作，Redis 能提供更低延迟和更高吞吐。接口可以快速返回最新 like_count 和 favorite_count，用户体验更好。PostgreSQL 作为最终事实由 Worker 异步修正和持久化。
 
 3. 点赞收藏事件为什么还要投递 RabbitMQ？
 
-   答：Redis 状态适合实时读写，MySQL 需要保存长期事实。RabbitMQ 把接口链路和持久化链路解耦，Worker 可以按自身能力消费并重试。它也为消息通知、统计分析和推荐反馈扩展提供事件入口。
+   答：Redis 状态适合实时读写，PostgreSQL 需要保存长期事实。RabbitMQ 把接口链路和持久化链路解耦，Worker 可以按自身能力消费并重试。它也为消息通知、统计分析和推荐反馈扩展提供事件入口。
 
 4. 评论为什么同步写数据库？
 
@@ -362,9 +362,9 @@
 
    答：热点视频会集中收到大量点赞收藏，单个计数 key 的写压力会升高。项目把计数拆成基础计数和 16 个分片增量 key，按用户维度选择分片。读取时聚合基础计数和所有分片增量。
 
-4. Redis 计数和 MySQL 计数出现短暂偏差时，系统怎么恢复？
+4. Redis 计数和 PostgreSQL 计数出现短暂偏差时，系统怎么恢复？
 
-   答：MySQL 保存最终事实，Worker 会把 Redis 事件异步落库并更新统计表。Redis 计数缓存 TTL 较短，过期后可以回源 MySQL 修正。评论这类同步写库路径会在成功后刷新计数缓存。
+   答：PostgreSQL 保存最终事实，Worker 会把 Redis 事件异步落库并更新统计表。Redis 计数缓存 TTL 较短，过期后可以回源 PostgreSQL 修正。评论这类同步写库路径会在成功后刷新计数缓存。
 
 5. RabbitMQ 投递失败时，接口应该怎么处理？
 
@@ -638,9 +638,9 @@
 
    答：timeline 查询先过滤公开视频状态，再按发布时间和 ID 倒序返回。这个组合索引的字段顺序匹配 where 和 order by，能减少排序成本和扫描范围。游标条件也能沿用 published_at 和 id 继续扫描。
 
-2. 高频计数直接更新 MySQL 会有什么瓶颈？
+2. 高频计数直接更新 PostgreSQL 会有什么瓶颈？
 
-   答：热点视频的点赞收藏会集中更新同一行 `video_stat`，造成行锁竞争和写放大。MySQL 写入延迟上升后会影响接口响应。项目用 Redis 实时计数和 RabbitMQ 异步落库来削峰。
+   答：热点视频的点赞收藏会集中更新同一行 `video_stat`，造成行锁竞争和写放大。PostgreSQL 写入延迟上升后会影响接口响应。项目用 Redis 实时计数和 RabbitMQ 异步落库来削峰。
 
 3. 幂等键应该建什么唯一索引？
 
@@ -686,7 +686,7 @@
 
 2. 消息堆积时怎么定位瓶颈？
 
-   答：先看 RabbitMQ 队列长度、入队速率和消费速率，再看 Worker job P95、错误率和下游 MySQL/Redis 指标。若消费慢，增加 Worker 副本或优化批处理；若失败多，分析错误类型和重试风暴。队列堆积还要检查是否存在单条毒消息反复重试。
+   答：先看 RabbitMQ 队列长度、入队速率和消费速率，再看 Worker job P95、错误率和下游 PostgreSQL/Redis 指标。若消费慢，增加 Worker 副本或优化批处理；若失败多，分析错误类型和重试风暴。队列堆积还要检查是否存在单条毒消息反复重试。
 
 3. 死信队列适合处理哪些失败？
 
@@ -710,7 +710,7 @@
 
 2. Grafana 面板重点看哪些指标？
 
-   答：重点看 API QPS、5xx 错误率、API P95、Feed P95、Feed 缓存命中率、上传处理耗时和 Worker 成功率。Feed 链路关注 scene 维度，Worker 链路关注 job 维度。压测时同时看 Redis、MySQL 和 RabbitMQ 状态。
+   答：重点看 API QPS、5xx 错误率、API P95、Feed P95、Feed 缓存命中率、上传处理耗时和 Worker 成功率。Feed 链路关注 scene 维度，Worker 链路关注 job 维度。压测时同时看 Redis、PostgreSQL 和 RabbitMQ 状态。
 
 3. k6 压测 Feed 时关注哪些结果？
 
@@ -728,7 +728,7 @@
 
 1. Feed P95 升高时，你会按什么顺序排查？
 
-   答：先看是否某个 scene 单独升高，再看缓存命中率和 cache error。然后看 MySQL 慢查询、Redis 命令耗时、API CPU 和连接池。最后结合最近发布、热点内容和 MQ 积压判断是否有突发写入影响读链路。
+   答：先看是否某个 scene 单独升高，再看缓存命中率和 cache error。然后看 PostgreSQL 慢查询、Redis 命令耗时、API CPU 和连接池。最后结合最近发布、热点内容和 MQ 积压判断是否有突发写入影响读链路。
 
 2. 缓存命中率下降时，可能有哪些原因？
 
@@ -738,9 +738,9 @@
 
    答：HTTP 层返回了 200，但响应内容偏离业务检查，例如 items 字段缺失、数据为空或 scene 结果异常。k6 的业务 check 可以捕捉这种问题。排查时看 handler 响应结构、Service 错误映射和测试断言。
 
-4. 如何区分 API 慢、MySQL 慢、Redis 慢和 MQ 积压？
+4. 如何区分 API 慢、PostgreSQL 慢、Redis 慢和 MQ 积压？
 
-   答：API 慢看 HTTP duration 和 CPU；MySQL 慢看慢查询、连接池和回源次数；Redis 慢看 cache read/write error 和命令耗时；MQ 积压看队列长度和 Worker duration。用请求链路指标和日志 request_id 串起来定位瓶颈。
+   答：API 慢看 HTTP duration 和 CPU；PostgreSQL 慢看慢查询、连接池和回源次数；Redis 慢看 cache read/write error 和命令耗时；MQ 积压看队列长度和 Worker duration。用请求链路指标和日志 request_id 串起来定位瓶颈。
 
 5. 本地压测结果写进简历时，怎么表述才可信？
 
@@ -798,15 +798,15 @@
 
 1. Docker Compose 启动了哪些服务？
 
-   答：Compose 启动 API、Worker、Web、MySQL、Redis、RabbitMQ、Prometheus 和 Grafana。Web 通过 Vite/Nginx 提供前端，API 暴露业务接口和指标，Worker 消费异步任务。MySQL、Redis 和 RabbitMQ 提供核心基础设施。
+   答：Compose 启动 API、Worker、Web、PostgreSQL、Redis、RabbitMQ、Prometheus 和 Grafana。Web 通过 Vite/Nginx 提供前端，API 暴露业务接口和指标，Worker 消费异步任务。PostgreSQL、Redis 和 RabbitMQ 提供核心基础设施。
 
-2. API、Worker、Web、MySQL、Redis、RabbitMQ 在部署中分别承担什么？
+2. API、Worker、Web、PostgreSQL、Redis、RabbitMQ 在部署中分别承担什么？
 
-   答：API 承接 HTTP 请求和同步业务；Worker 处理 fanout、互动落库、曝光和向量等异步任务；Web 提供用户界面；MySQL 保存最终事实；Redis 提供缓存、计数、热榜和关注索引；RabbitMQ 提供事件队列和削峰。
+   答：API 承接 HTTP 请求和同步业务；Worker 处理 fanout、互动落库、曝光和向量等异步任务；Web 提供用户界面；PostgreSQL 保存最终事实；Redis 提供缓存、计数、热榜和关注索引；RabbitMQ 提供事件队列和削峰。
 
 3. Kubernetes 清单里需要哪些 Deployment、Service 和 PVC？
 
-   答：API、Worker、Web 适合 Deployment，分别配置 Service 暴露访问或内部调用。MySQL、Redis、RabbitMQ 需要持久化存储，使用 PVC 保存数据。还需要 ConfigMap、Secret、健康检查和资源限制。
+   答：API、Worker、Web 适合 Deployment，分别配置 Service 暴露访问或内部调用。PostgreSQL、Redis、RabbitMQ 需要持久化存储，使用 PVC 保存数据。还需要 ConfigMap、Secret、健康检查和资源限制。
 
 4. 健康检查接口有什么作用？
 
@@ -826,9 +826,9 @@
 
    答：每个 API 副本的本地磁盘独立，文件可能只存在某一个 Pod 上。负载均衡到其他副本时会访问失败。生产环境适合使用对象存储或共享存储，并通过 CDN 分发媒体。
 
-3. MySQL、Redis、RabbitMQ 的数据卷怎么规划？
+3. PostgreSQL、Redis、RabbitMQ 的数据卷怎么规划？
 
-   答：MySQL 需要可靠 PVC 和备份策略，Redis 根据持久化需求配置 AOF/RDB 和容量，RabbitMQ 需要保存队列元数据和持久化消息。开发环境可以使用简单 volume，生产环境要考虑备份、恢复和扩容。监控磁盘使用率和 IO 延迟很重要。
+   答：PostgreSQL 需要可靠 PVC 和备份策略，Redis 根据持久化需求配置 AOF/RDB 和容量，RabbitMQ 需要保存队列元数据和持久化消息。开发环境可以使用简单 volume，生产环境要考虑备份、恢复和扩容。监控磁盘使用率和 IO 延迟很重要。
 
 4. 配置文件和密钥如何区分管理？
 
@@ -850,17 +850,17 @@
 
 3. 如果 Feed 首页突然被打爆，你的应急方案是什么？
 
-   答：先保护 MySQL，增加首页缓存 TTL、启用热点页预热和限流，必要时返回降级缓存。观察 Feed P95、cache hit、MySQL QPS 和 Redis CPU。中长期优化包括跨实例锁、静态热门页、缓存副本和请求合并。
+   答：先保护 PostgreSQL，增加首页缓存 TTL、启用热点页预热和限流，必要时返回降级缓存。观察 Feed P95、cache hit、PostgreSQL QPS 和 Redis CPU。中长期优化包括跨实例锁、静态热门页、缓存副本和请求合并。
 
 4. 如果 Redis 故障 10 分钟，核心功能如何降级？
 
-   答：timeline 和视频详情可以直接回源 MySQL，hot、following 的实时性能力会下降。点赞收藏可以切换同步落库或返回可重试错误，推荐曝光去重降级为基础候选。恢复后通过短 TTL、Worker 补偿和回源修正逐步恢复一致性。
+   答：timeline 和视频详情可以直接回源 PostgreSQL，hot、following 的实时性能力会下降。点赞收藏可以切换同步落库或返回可重试错误，推荐曝光去重降级为基础候选。恢复后通过短 TTL、Worker 补偿和回源修正逐步恢复一致性。
 
 5. 如果 RabbitMQ 堆积 100 万条消息，你怎么处理？
 
    答：先确认堆积队列、入队速率、消费速率和错误类型。增加 Worker 副本、提高批处理效率，修复反复失败的消息并隔离毒消息。业务侧按优先级消费关键队列，例如互动落库优先于低优先级分析任务。
 
-6. 如果 MySQL 主库 CPU 打满，你怎么定位和止血？
+6. 如果 PostgreSQL 主库 CPU 打满，你怎么定位和止血？
 
    答：先看慢查询、连接数、QPS、锁等待和当前最重 SQL。止血动作包括提高缓存 TTL、关闭低优先级回源、限流热点接口、暂停部分 Worker 写入和扩容只读能力。根因可能是缓存失效、索引缺失、N+1 回源或批量任务冲击。
 
@@ -870,7 +870,7 @@
 
 8. 如果点赞数短时间显示错误，你怎么解释最终一致性？
 
-   答：点赞接口先更新 Redis 实时状态和计数，MySQL 由 Worker 异步落库。短时间内 Redis、Feed 计数缓存和 MySQL 可能存在延迟差异，TTL 过期和 Worker 落库后会修正。核心要保证幂等和最终事实一致。
+   答：点赞接口先更新 Redis 实时状态和计数，PostgreSQL 由 Worker 异步落库。短时间内 Redis、Feed 计数缓存和 PostgreSQL 可能存在延迟差异，TTL 过期和 Worker 落库后会修正。核心要保证幂等和最终事实一致。
 
 9. 如果老板要求热榜更实时，你怎么改架构？
 

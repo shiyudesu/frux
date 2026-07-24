@@ -29,7 +29,7 @@ flowchart LR
   Web["Web App<br/>React + Vite"]
   Client["移动端 / API 调用方"]
   API["GCFeed API<br/>Go + Hertz"]
-  MySQL[("MySQL<br/>业务数据")]
+  PostgreSQL[("PostgreSQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
   MQ[("MQ<br/>异步事件")]
@@ -37,7 +37,7 @@ flowchart LR
 
   Web -->|"调用管理与浏览接口"| API
   Client -->|"调用公开 API"| API
-  API -->|"读写 account / video / video_stat"| MySQL
+  API -->|"读写 account / video / video_stat"| PostgreSQL
   API -->|"保存和读取本地文件"| Uploads
   API -.->|"缓存 Feed 与计数"| Redis
   API -.->|"投递互动和审核事件"| MQ
@@ -45,7 +45,7 @@ flowchart LR
 
   class Web,Client client;
   class API system;
-  class MySQL,Uploads store;
+  class PostgreSQL,Uploads store;
   class Redis,MQ,ObjectStorage future;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
@@ -85,8 +85,8 @@ flowchart LR
   Config["Config Loader<br/>configs/config.yaml"]
   JWT["JWT Manager<br/>签发访问令牌"]
   Repo["GORM Repository<br/>仓储实现"]
-  SQL["database/sql<br/>MySQL 连接"]
-  MySQL[("MySQL")]
+  SQL["database/sql<br/>PostgreSQL 连接"]
+  PostgreSQL[("PostgreSQL")]
   Uploads[("uploads 目录")]
 
   Entry -->|"加载配置"| Config
@@ -99,7 +99,7 @@ flowchart LR
   Services -->|"执行领域规则"| Domains
   Services -->|"读写仓储"| Repo
   Repo -->|"复用连接池"| SQL
-  SQL -->|"持久化数据"| MySQL
+  SQL -->|"持久化数据"| PostgreSQL
   Handlers -->|"保存上传文件"| Uploads
   Router -->|"暴露静态文件"| Uploads
 
@@ -108,7 +108,7 @@ flowchart LR
   class Services service;
   class Domains domain;
   class Config,JWT,Repo,SQL infra;
-  class MySQL,Uploads store;
+  class PostgreSQL,Uploads store;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
@@ -139,7 +139,7 @@ sequenceDiagram
   participant H as Handler
   participant S as Service
   participant Repo as GORM Repository
-  participant DB as MySQL
+  participant DB as PostgreSQL
   participant Redis as Redis
   participant FS as uploads
 
@@ -313,6 +313,6 @@ flowchart TB
 
 - 当前代码以 Go API 单体承载账户、视频、Feed 与上传能力，内部按接口层、应用层、领域层、基础设施层组织。
 - 对外接口统一挂载在 `/api/*`，静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
-- 数据持久化使用 MySQL，GORM 自动迁移 `account`、`video`、`video_stat` 三张表。
+- 数据持久化使用 PostgreSQL；API 和 Worker 通过 advisory transaction lock 串行执行 GORM 自动迁移、`video_stat` 补齐和 Timeline 索引初始化。
 - Feed 通过 `scene` 分发策略：`timeline` 按 `published_at DESC, id DESC` 排序，`hot` 按最近 60 分钟互动热度排序，并通过 Base64 游标分页。
 - 推荐、互动、审核、消息、治理和监控模块作为演进边界保留，后续可从单体内模块逐步扩展为异步事件和独立服务。

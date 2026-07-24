@@ -4,13 +4,13 @@ import (
 	domainaccount "GCFeed/internal/domain/account"
 	domaininteraction "GCFeed/internal/domain/interaction"
 	domainvideo "GCFeed/internal/domain/video"
+	infrapersistence "GCFeed/internal/infra/persistence"
 	infravideo "GCFeed/internal/infra/persistence/video"
 	"context"
 	"errors"
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -214,7 +214,7 @@ func (r *Repository) CreateComment(ctx context.Context, comment *domaininteracti
 		}
 		if err := tx.Create(&model).Error; err != nil {
 			// 唯一键冲突通常表示同一幂等键已创建过评论，交给外层加载已有结果。
-			if isDuplicateKeyError(err) && comment.IdempotencyKey != "" {
+			if infrapersistence.IsDuplicatedKeyError(err) && comment.IdempotencyKey != "" {
 				return domaininteraction.ErrCommentNotFound
 			}
 			return err
@@ -552,15 +552,6 @@ func mapUserError(err error) error {
 		return domaininteraction.ErrInvalidUserID
 	}
 	return err
-}
-
-// isDuplicateKeyError 兼容 GORM 标准错误和 MySQL 1062 唯一键冲突。
-func isDuplicateKeyError(err error) bool {
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
 var _ domaininteraction.Repository = (*Repository)(nil)

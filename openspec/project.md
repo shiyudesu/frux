@@ -7,7 +7,7 @@ GCFeed is a short-video Feed system. It provides a practical engineering baselin
 ## Technology
 
 - Go API with Hertz and GORM.
-- MySQL for durable data.
+- PostgreSQL for durable data.
 - Redis for Feed cache, hot ranking, counters, and short-lived state.
 - RabbitMQ for asynchronous write-behind and fanout work.
 - JWT for API authentication.
@@ -20,7 +20,7 @@ Backend code lives in `apps/api` and follows four layers:
 
 - `domain/{module}`: entities, business invariants, domain errors, repository interfaces.
 - `application/{module}`: use cases, cursors, idempotency, cross-entity workflows.
-- `infra`: MySQL, Redis, RabbitMQ, JWT, configuration, persistence models.
+- `infra`: PostgreSQL, Redis, RabbitMQ, JWT, configuration, persistence models.
 - `interfaces/http`: HTTP handlers, DTOs, middleware, and route registration.
 
 The standard dependency assembly order is:
@@ -56,5 +56,9 @@ Use these checks when relevant:
 ```bash
 openspec validate --all --strict
 cd apps/api && go test ./...
+cd apps && docker compose config
+kubectl apply --dry-run=client -f apps/deploy.yaml
 cd apps/web && pnpm run build
 ```
+
+Real PostgreSQL integration tests use `GCFEED_POSTGRES_TEST_DSN` and create isolated schemas. They skip with an explicit message when the variable is absent.

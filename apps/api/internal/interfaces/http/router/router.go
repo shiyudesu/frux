@@ -47,16 +47,16 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/adaptor"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	gormmysql "gorm.io/driver/mysql"
+	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 // Register 负责后端依赖装配：数据库模型、仓储、Service、Handler、中间件和路由。
 func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	// database/sql 连接池交给 GORM 复用，避免维护两套数据库连接。
-	gormDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
+	gormDB, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
 		Conn: db,
-	}), &gorm.Config{})
+	}), &gorm.Config{TranslateError: true})
 	if err != nil {
 		return err
 	}

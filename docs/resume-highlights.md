@@ -164,10 +164,10 @@ GCFeed 是一个面向短视频场景的高性能 Feed 流后端系统，围绕�
    启动时自动迁移数据模型，并创建 Feed 时间线索引，优化回源查询。
 
 4. **Docker Compose 本地编排**
-   支持 API、Worker、Web、MySQL、Redis、RabbitMQ 一键本地启动。
+   支持 API、Worker、Web、PostgreSQL、Redis、RabbitMQ 一键本地启动。
 
 5. **Kubernetes 部署**
-   提供 API、Worker、Web、MySQL、Redis、RabbitMQ 的部署清单、Service、PVC 和健康检查。
+   提供 API、Worker、Web、PostgreSQL、Redis、RabbitMQ 的部署清单、Service、PVC 和健康检查。
 
 6. **测试覆盖**
    覆盖 Feed、推荐、曝光、互动、播放、上传、消息、关系、视频发布 Fanout 等核心链路。

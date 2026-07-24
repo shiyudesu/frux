@@ -145,7 +145,7 @@ func TestAccountAPIFlow(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/users",
-		`{"account":"test","password":"12345678","nickname":"tester"}`,
+		`{"account":" Alice ","password":"CaseSensitivePassword","nickname":"Alice Nickname"}`,
 		"",
 	)
 	requireStatus(t, registerResponse, http.StatusCreated)
@@ -155,7 +155,7 @@ func TestAccountAPIFlow(t *testing.T) {
 	if created.ID == 0 {
 		t.Fatalf("expected created user id")
 	}
-	if created.Account != "test" || created.Nickname != "tester" || created.Status != domainaccount.StatusNormal || created.Role != domainaccount.RoleUser {
+	if created.Account != "alice" || created.Nickname != "Alice Nickname" || created.Status != domainaccount.StatusNormal || created.Role != domainaccount.RoleUser {
 		t.Fatalf("unexpected register response: %+v", created)
 	}
 
@@ -163,7 +163,7 @@ func TestAccountAPIFlow(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/users",
-		`{"account":"test","password":"12345678","nickname":"tester"}`,
+		`{"account":"ALICE","password":"CaseSensitivePassword","nickname":"duplicate"}`,
 		"",
 	)
 	requireStatus(t, duplicateResponse, http.StatusConflict)
@@ -172,7 +172,7 @@ func TestAccountAPIFlow(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/sessions",
-		`{"account":"test","password":"12345678"}`,
+		`{"account":" aLiCe ","password":"CaseSensitivePassword"}`,
 		"",
 	)
 	requireStatus(t, loginResponse, http.StatusOK)
@@ -188,7 +188,7 @@ func TestAccountAPIFlow(t *testing.T) {
 
 	var profile accountProfileResponse
 	decodeJSON(t, meResponse, &profile)
-	if profile.ID != created.ID || profile.Account != "test" || profile.Nickname != "tester" {
+	if profile.ID != created.ID || profile.Account != "alice" || profile.Nickname != "Alice Nickname" {
 		t.Fatalf("unexpected profile response: %+v", profile)
 	}
 

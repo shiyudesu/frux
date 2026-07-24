@@ -10,7 +10,7 @@ metadata:
   namespace: gcfeed
 type: Opaque
 stringData:
-  mysql-root-password: sealos123
+  postgres-password: sealos123
   api-config.yaml: |
     port: 8080
     jwt:
@@ -18,11 +18,13 @@ stringData:
       access_ttl: "15m"
 
     database:
-      host: "mysql"
-      port: 3306
-      user: "root"
+      host: "postgres"
+      port: 5432
+      user: "gcfeed"
       password: "sealos123"
-      name: "GCFeed"
+      name: "gcfeed"
+      ssl_mode: "disable"
+      time_zone: "UTC"
 
     redis:
       addr: "redis:6379"
@@ -45,7 +47,7 @@ stringData:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: mysql-data
+  name: postgres-data
   namespace: gcfeed
 spec:
   accessModes:
@@ -93,41 +95,45 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mysql
+  name: postgres
   namespace: gcfeed
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mysql
+      app: postgres
   template:
     metadata:
       labels:
-        app: mysql
+        app: postgres
     spec:
       containers:
-        - name: mysql
-          image: mysql:8.4
+        - name: postgres
+          image: postgres:17.5-alpine
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 3306
+            - containerPort: 5432
           env:
-            - name: MYSQL_ROOT_PASSWORD
+            - name: POSTGRES_DB
+              value: gcfeed
+            - name: POSTGRES_USER
+              value: gcfeed
+            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: gcfeed-secret
-                  key: mysql-root-password
-            - name: MYSQL_DATABASE
-              value: GCFeed
+                  key: postgres-password
           volumeMounts:
-            - name: mysql-data
-              mountPath: /var/lib/mysql
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
           readinessProbe:
             exec:
               command:
-                - sh
-                - -c
-                - mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} --silent
+                - pg_isready
+                - -U
+                - gcfeed
+                - -d
+                - gcfeed
             initialDelaySeconds: 20
             periodSeconds: 5
             timeoutSeconds: 3
@@ -135,30 +141,32 @@ spec:
           livenessProbe:
             exec:
               command:
-                - sh
-                - -c
-                - mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} --silent
+                - pg_isready
+                - -U
+                - gcfeed
+                - -d
+                - gcfeed
             initialDelaySeconds: 60
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
       volumes:
-        - name: mysql-data
+        - name: postgres-data
           persistentVolumeClaim:
-            claimName: mysql-data
+            claimName: postgres-data
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: mysql
+  name: postgres
   namespace: gcfeed
 spec:
   selector:
-    app: mysql
+    app: postgres
   ports:
-    - name: mysql
-      port: 3306
-      targetPort: 3306
+    - name: postgres
+      port: 5432
+      targetPort: 5432
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -1,6 +1,6 @@
 # GCFeed
 
-GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单体、React Web 客户端、MySQL、Redis 和 RabbitMQ 承载内容供给、分发、消费、互动和治理链路。
+GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单体、React Web 客户端、PostgreSQL、Redis 和 RabbitMQ 承载内容供给、分发、消费、互动和治理链路。
 
 ## 当前状态
 
@@ -8,7 +8,7 @@ GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API �
 
 - 后端分层结构：Domain、Application、Infrastructure、Interfaces。
 - Hertz HTTP 服务入口和 REST API 路由。
-- MySQL + GORM 持久化。
+- PostgreSQL + GORM 持久化。
 - JWT 登录态。
 - Redis Feed 缓存、热榜和互动计数。
 - RabbitMQ 异步互动落库、视频发布事件和向量任务。
@@ -39,6 +39,13 @@ cd apps
 docker compose up --build
 ```
 
+首次切换到 PostgreSQL 时，旧开发数据不迁移，先执行一次：
+
+```bash
+cd apps
+docker compose down -v
+```
+
 后台启动：
 
 ```bash
@@ -60,7 +67,7 @@ cd apps
 docker compose down
 ```
 
-清理数据库、Redis 和上传文件数据卷：
+清理 Compose 创建的全部数据卷：
 
 ```bash
 cd apps
@@ -74,7 +81,7 @@ docker compose down -v
 | Web | `http://127.0.0.1:5173` |
 | API 健康检查 | `http://127.0.0.1:8080/health` |
 | API 指标 | `http://127.0.0.1:8080/metrics` |
-| MySQL | `127.0.0.1:3307` |
+| PostgreSQL | `127.0.0.1:5432` |
 | Redis | `127.0.0.1:6379` |
 | RabbitMQ 管理台 | `http://127.0.0.1:15672` |
 | Prometheus | `http://127.0.0.1:9090` |
@@ -104,6 +111,16 @@ cd apps/api
 go test ./...
 ```
 
+真实 PostgreSQL 集成测试会为每个测试创建并清理独立 schema；未设置连接时会明确跳过：
+
+```bash
+cd apps
+docker compose up -d postgres
+cd api
+GCFEED_POSTGRES_TEST_DSN='postgres://gcfeed:sealos123@127.0.0.1:5432/gcfeed?sslmode=disable' \
+  go test ./internal/infra/persistence/migration -run '^TestPostgreSQL'
+```
+
 前端生产构建：
 
 ```bash
@@ -115,6 +132,12 @@ Compose 配置校验：
 ```bash
 cd apps
 docker compose config
+```
+
+Kubernetes 清单校验：
+
+```bash
+kubectl apply --dry-run=client -f apps/deploy.yaml
 ```
 
 ### Feed 压测

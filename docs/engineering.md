@@ -7,7 +7,7 @@
 | 区域 | 技术 |
 | --- | --- |
 | API | Go、Hertz、GORM |
-| 数据库 | MySQL |
+| 数据库 | PostgreSQL |
 | 缓存 | Redis |
 | 消息队列 | RabbitMQ |
 | 鉴权 | JWT |
@@ -165,6 +165,9 @@ GORM Repository 规则：
 - 写操作尽量保持事务边界清晰。
 - 列表查询使用稳定排序字段和游标。
 - 返回 Domain 实体，避免把 GORM 模型泄漏到 Application。
+- PostgreSQL 唯一约束错误由启用 `TranslateError` 的 GORM 统一映射为 `gorm.ErrDuplicatedKey`。
+- 显式索引名使用表名前缀，避免 PostgreSQL schema 级索引命名冲突。
+- API 和 Worker 的完整 schema 初始化在同一个 PostgreSQL advisory transaction lock 内执行。
 
 ## 8. Interfaces 规则
 
@@ -263,6 +266,8 @@ DELETE /api/videos/{videoId}/like
 | `idempotency_key` | 写操作幂等键 |
 
 高频计数独立成统计表，例如 `video_stat`、`user_relation_stat`。计数更新与事实写入放在同一事务中完成。缓存计数允许短暂偏差，持久化表保存最终事实。
+
+账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。
 
 ## 12. 错误处理
 

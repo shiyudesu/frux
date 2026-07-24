@@ -26,7 +26,7 @@ apps/api/
   internal/
     domain/                        # 领域层：实体、错误、仓储接口
     application/                   # 应用层：业务用例编排
-    infra/                         # 基础设施：MySQL、Redis、RabbitMQ、JWT
+    infra/                         # 基础设施：PostgreSQL、Redis、RabbitMQ、JWT
     infra/httphertz/               # Hertz 启动配置、静态文件适配
     interfaces/http/               # HTTP 层：路由、Handler、中间件、DTO
   test/                            # API 流程测试
@@ -39,7 +39,7 @@ apps/api/
 | `interfaces/http` | Handler 和 Router | 接口路径、请求参数、响应结构 |
 | `application` | Service | 一个业务动作如何编排 |
 | `domain` | Entity、Error、Repository | 业务规则和模块抽象 |
-| `infra` | Persistence、Cache、MQ | MySQL、Redis、RabbitMQ 如何实现 |
+| `infra` | Persistence、Cache、MQ | PostgreSQL、Redis、RabbitMQ 如何实现 |
 
 推荐从 HTTP 层进入，再顺着 Service、Domain、Infra 往下追。
 
@@ -84,7 +84,7 @@ POST /api/sessions
 2. `interfaces/http/account/handler.go` 看参数解析和错误映射。
 3. `application/account/service.go` 看注册、登录用例。
 4. `domain/account/entity.go` 看用户规则。
-5. `infra/persistence/account/gorm.go` 看 MySQL 写入和查询。
+5. `infra/persistence/account/gorm.go` 看 PostgreSQL 写入和查询。
 
 读完这条链路，你会理解项目的标准分层写法。
 
@@ -139,7 +139,7 @@ POST /api/feed-queries
 - Cursor 保存最后一条的排序字段，翻页稳定。
 - Redis 页缓存只保存轻量 Feed 页。
 - 视频卡片和计数通过批量 MGET 获取。
-- 缓存缺失时批量回源 MySQL。
+- 缓存缺失时批量回源 PostgreSQL。
 
 读 Feed 代码时，重点看 `application/feed/service.go` 里的组装流程，它解释了从 `video_id` 到完整 Feed Item 的全过程。
 
@@ -196,7 +196,7 @@ HTTP Handler
   -> Redis 写行为状态和实时计数
   -> RabbitMQ 投递 ActionChangedEvent
   -> ActionWorker 消费事件
-  -> MySQL 写 interaction_action 和 video_stat
+  -> PostgreSQL 写 interaction_action 和 video_stat
 ```
 
 关键 Redis key：
@@ -218,7 +218,7 @@ routing key: interaction.action_changed
 读这条链路时，重点理解两个结果：
 
 - 接口立即返回 Redis 里的最新计数。
-- MySQL 通过 Worker 最终写入。
+- PostgreSQL 通过 Worker 最终写入。
 
 ## 5. 用测试理解代码
 
@@ -306,9 +306,9 @@ curl http://127.0.0.1:8080/health
 5. 点赞视频。
 6. 查看 Hot Feed。
 7. 查看 RabbitMQ 队列是否消费完成。
-8. 查 MySQL 的 `interaction_action` 和 `video_stat`。
+8. 查 PostgreSQL 的 `interaction_action` 和 `video_stat`。
 
-这条路径能覆盖账号、视频、Feed、Redis、RabbitMQ、MySQL 的核心闭环。
+这条路径能覆盖账号、视频、Feed、Redis、RabbitMQ、PostgreSQL 的核心闭环。
 
 ## 10. 继续深入读哪些文档
 

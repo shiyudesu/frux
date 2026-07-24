@@ -17,35 +17,36 @@
 
 ## 3. 数据表设计
 
-### 3.1 `user`
+### 3.1 `account`
 
 | 字段 | 类型 | 约束 | 说明 |
 | --- | --- | --- | --- |
 | `id` | BIGINT | PK | 用户 ID |
 | `account` | VARCHAR(64) | UNIQUE, NOT NULL | 登录账号 |
-| `password_hash` | VARCHAR(255) | NOT NULL | 密码哈希 |
-| `nickname` | VARCHAR(64) | NOT NULL | 昵称 |
+| `password` | VARCHAR(255) | NOT NULL | bcrypt 密码哈希 |
+| `nickname` | VARCHAR(128) | NOT NULL | 昵称 |
 | `avatar_url` | VARCHAR(512) | NULLABLE | 头像 |
 | `bio` | VARCHAR(255) | NULLABLE | 简介 |
-| `status` | TINYINT | NOT NULL, DEFAULT 1 | 1 正常 / 2 冻结 / 3 注销 |
-| `created_at` | DATETIME | NOT NULL | 创建时间 |
-| `updated_at` | DATETIME | NOT NULL | 更新时间 |
+| `status` | SMALLINT | NOT NULL, DEFAULT 1 | 1 正常 / 2 冻结 / 3 注销 |
+| `created_at` | TIMESTAMPTZ | NOT NULL | 创建时间 |
+| `updated_at` | TIMESTAMPTZ | NOT NULL | 更新时间 |
 
 索引建议：
 
 | 索引 | 字段 | 说明 |
 | --- | --- | --- |
-| `uk_account` | `account` | 保证账号唯一 |
+| `uk_account_account` | `account` | 保证规范化账号唯一 |
 
 ## 4. 业务规则
 
 | 规则 | 说明 |
 | --- | --- |
-| 账号唯一 | 注册时同一 `account` 只能创建一个用户 |
+| 账号规范化 | 注册、恢复和登录查询前统一 trim 并转为小写 |
+| 账号唯一 | 大小写变体共享同一规范化 `account`，重复注册返回冲突 |
 | 密码只保存哈希 | 接口和数据库都不保存明文密码 |
 | 登录只允许正常账号 | 冻结和注销用户不能登录 |
 | 当前用户资料走鉴权 | `/api/users/me` 只返回当前登录用户 |
-| 公开资料隐藏敏感字段 | 公开接口不返回 `account` 和 `password_hash` |
+| 公开资料隐藏敏感字段 | 公开接口不返回 `account` 和 `password` |
 | 资料字段做长度限制 | 昵称、头像和简介由 Domain 层校验 |
 
 ## 5. 测试建议
@@ -53,8 +54,9 @@
 | 场景 | 期望 |
 | --- | --- |
 | 注册新用户 | 返回用户资料，密码哈希写入数据库 |
-| 重复账号注册 | 返回冲突或业务错误 |
-| 正确密码登录 | 返回 access token |
+| 混合大小写账号注册 | 持久化并返回小写规范账号 |
+| 重复大小写变体注册 | 返回冲突或业务错误 |
+| 大小写变体登录 | 解析到同一规范账号并返回 access token |
 | 错误密码登录 | 返回 401 或业务错误 |
 | 未登录访问当前用户 | 返回 401 |
 | 更新个人资料 | 返回更新后的昵称、头像和简介 |

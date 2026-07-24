@@ -20,7 +20,7 @@ import (
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	migration "GCFeed/internal/infra/persistence/migration"
 
-	gormmysql "gorm.io/driver/mysql"
+	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -44,7 +44,7 @@ func main() {
 	}
 	defer closeSQL(sqlDB)
 
-	gormDB, err := gorm.Open(gormmysql.New(gormmysql.Config{Conn: sqlDB}), &gorm.Config{})
+	gormDB, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{TranslateError: true})
 	if err != nil {
 		log.Fatalf("init gorm failed: %v", err)
 	}

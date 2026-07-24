@@ -2,6 +2,7 @@ package inframessage
 
 import (
 	domainmessage "GCFeed/internal/domain/message"
+	infrapersistence "GCFeed/internal/infra/persistence"
 	"context"
 	"errors"
 	"strings"
@@ -45,7 +46,7 @@ func (r *Repository) Create(ctx context.Context, message *domainmessage.Message,
 	if err == nil {
 		return restore(model), true, nil
 	}
-	if !isDuplicateKeyError(err) {
+	if !infrapersistence.IsDuplicatedKeyError(err) {
 		return nil, false, err
 	}
 
@@ -172,11 +173,4 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
-}
-
-func isDuplicateKeyError(err error) bool {
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "duplicate")
 }

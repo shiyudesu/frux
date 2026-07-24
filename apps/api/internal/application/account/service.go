@@ -4,7 +4,6 @@ import (
 	domainaccount "GCFeed/internal/domain/account"
 	"context"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -72,7 +71,7 @@ func (s *Service) Register(ctx context.Context, account, password, nickname stri
 
 // Login 完成账号密码登录，认证通过后签发访问 token。
 func (s *Service) Login(ctx context.Context, account, password string) (*LoginResult, error) {
-	account = strings.TrimSpace(account)
+	account = domainaccount.NormalizeAccount(account)
 	if account == "" {
 		return nil, domainaccount.ErrEmptyAccount
 	}

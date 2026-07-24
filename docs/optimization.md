@@ -15,11 +15,11 @@
 ```mermaid
 flowchart LR
     Client["Web Client"] --> API["Hertz API"]
-    API --> MySQL["MySQL"]
+    API --> PostgreSQL["PostgreSQL"]
     API --> Redis["Redis"]
     API --> RabbitMQ["RabbitMQ"]
     RabbitMQ --> Worker["Worker"]
-    Worker --> MySQL
+    Worker --> PostgreSQL
     Worker --> Redis
 
     API --> FeedService["Feed Service"]
@@ -28,7 +28,7 @@ flowchart LR
     FeedService --> StatCache["Video Stat Cache"]
 ```
 
-Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，MySQL 保存最终事实。
+Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，PostgreSQL 保存最终事实。
 
 ## 3. P0 优化清单
 
@@ -40,11 +40,11 @@ Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，My
 | P0-04 | 数据库缓存一致性偏差 | 写事实表，缓存短 TTL，异步更新 | 计数最终一致，缓存异常可回源 |
 | P0-05 | 并发点赞收藏评论 | Redis 快速状态、RabbitMQ 异步落库、幂等键 | 重复请求计数稳定 |
 | P0-06 | 大 V 发布放大 | 粉丝数阈值、异步 fanout、懒加载补偿 | 发布接口不被粉丝量线性拖慢 |
-| P0-07 | 热门视频热 key | 分钟桶 ZSET、窗口合并、短期窗口缓存 | Hot 查询避免集中打 MySQL |
+| P0-07 | 热门视频热 key | 分钟桶 ZSET、窗口合并、短期窗口缓存 | Hot 查询避免集中打 PostgreSQL |
 
 ## 4. Timeline 访问
 
-问题：Timeline 首页访问频率高，直接查询 MySQL 会把压力集中到 `video` 和 `video_stat`。
+问题：Timeline 首页访问频率高，直接查询 PostgreSQL 会把压力集中到 `video` 和 `video_stat`。
 
 优化：
 
@@ -71,7 +71,7 @@ Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，My
 
 1. 页查询得到视频 ID 列表。
 2. Redis 批量读取视频卡片和计数。
-3. 缺失项批量回源 MySQL。
+3. 缺失项批量回源 PostgreSQL。
 4. 回源结果写回 Redis。
 5. 按原始排序组装响应。
 
@@ -103,7 +103,7 @@ Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，My
 
 原则：
 
-- MySQL 保存最终事实。
+- PostgreSQL 保存最终事实。
 - Redis 保存短期状态、热榜和读缓存。
 - 写路径优先保证事实安全。
 - 读路径允许短 TTL 偏差。
@@ -116,14 +116,14 @@ HTTP Handler
   -> Redis 行为状态和实时计数
   -> RabbitMQ ActionChangedEvent
   -> Worker
-  -> MySQL interaction_action / interaction_comment / video_stat
+  -> PostgreSQL interaction_action / interaction_comment / video_stat
 ```
 
 异常处理：
 
 | 异常 | 处理 |
 | --- | --- |
-| Redis 不可用 | 降级为 MySQL 路径或返回可识别错误 |
+| Redis 不可用 | 降级为 PostgreSQL 路径或返回可识别错误 |
 | RabbitMQ 投递失败 | 保留同步写入能力或记录失败任务 |
 | Worker 重复消费 | 使用唯一键和幂等键保证安全 |
 | 缓存计数偏差 | TTL 过期后回源修正 |
@@ -179,7 +179,7 @@ feed:hot:window:v1:{windowEndUnix}
 | `video_card_cache_hit_ratio` | 视频卡片缓存命中率 |
 | `interaction_queue_lag` | 互动队列积压 |
 | `interaction_worker_error_count` | Worker 错误数 |
-| `mysql_query_p95_ms` | MySQL 查询 P95 |
+| `postgres_query_p95_ms` | PostgreSQL 查询 P95 |
 | `redis_error_count` | Redis 错误数 |
 | `rabbitmq_publish_error_count` | MQ 投递错误数 |
 

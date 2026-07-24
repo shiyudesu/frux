@@ -136,7 +136,7 @@ video:card:v1:{video_id}
 video:stat:v1:{video_id}
 ```
 
-页缓存只保存 `video_id` 和排序字段。Feed Service 读取页后使用 Redis MGET 批量读取 `video:card` 和 `video:stat`，缓存缺失时批量回源 MySQL。页缓存未命中时使用 singleflight 合并同 key 回源请求。
+页缓存只保存 `video_id` 和排序字段。Feed Service 读取页后使用 Redis MGET 批量读取 `video:card` 和 `video:stat`，缓存缺失时批量回源 PostgreSQL。页缓存未命中时使用 singleflight 合并同 key 回源请求。
 
 ## 5. Hot 访问优化
 

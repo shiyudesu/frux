@@ -28,9 +28,14 @@ type User struct {
 	WorkCount      int
 }
 
+// NormalizeAccount returns the canonical identity used for storage and lookup.
+func NormalizeAccount(account string) string {
+	return strings.ToLower(strings.TrimSpace(account))
+}
+
 // New 创建新用户，负责输入清洗、必填校验和密码哈希。
 func New(account, password, nickname string) (*User, error) {
-	account = strings.TrimSpace(account)
+	account = NormalizeAccount(account)
 	password = strings.TrimSpace(password)
 	nickname = strings.TrimSpace(nickname)
 
@@ -66,7 +71,7 @@ func RestoreUser(id int64, account, password, nickname, avatarURL, bio string, s
 
 // RestoreUserWithStats 从数据库记录恢复领域对象，并带上关系统计。
 func RestoreUserWithStats(id int64, account, password, nickname, avatarURL, bio string, status int, role string, followingCount int, followerCount int, workCount int) *User {
-	account = strings.TrimSpace(account)
+	account = NormalizeAccount(account)
 	password = strings.TrimSpace(password)
 	nickname = strings.TrimSpace(nickname)
 	avatarURL = strings.TrimSpace(avatarURL)

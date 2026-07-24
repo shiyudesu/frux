@@ -354,7 +354,7 @@ func (r *memoryFeedRepo) ListHotPage(ctx context.Context, cursor *domainfeed.Hot
 	return items[:limit], nil
 }
 
-// ListFollowingPage 模拟关注流 MySQL 兜底：按关注关系读取公开视频。
+// ListFollowingPage 模拟关注流 PostgreSQL 兜底：按关注关系读取公开视频。
 func (r *memoryFeedRepo) ListFollowingPage(ctx context.Context, viewerID int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -548,7 +548,7 @@ func TestFeedIncludesViewerActionState(t *testing.T) {
 	}
 }
 
-// TestFollowingFeedScene 覆盖关注流 MySQL 兜底读取。
+// TestFollowingFeedScene 覆盖关注流 PostgreSQL 兜底读取。
 func TestFollowingFeedScene(t *testing.T) {
 	repo := newMemoryFeedRepo(seedFollowingFeedItems())
 	repo.FollowForTest(42, 100)

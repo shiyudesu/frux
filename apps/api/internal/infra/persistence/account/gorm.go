@@ -2,10 +2,10 @@ package infraaccount
 
 import (
 	domainaccount "GCFeed/internal/domain/account"
+	infrapersistence "GCFeed/internal/infra/persistence"
 	"context"
 	"errors"
 
-	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -45,7 +45,7 @@ func (r *Repository) Save(ctx context.Context, user *domainaccount.User) error {
 	}
 
 	if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
-		if isDuplicateKeyError(err) {
+		if infrapersistence.IsDuplicatedKeyError(err) {
 			// account 字段有唯一索引，重复注册会转换成领域错误。
 			return domainaccount.ErrAccountAlreadyExists
 		}
@@ -59,6 +59,7 @@ func (r *Repository) Save(ctx context.Context, user *domainaccount.User) error {
 // FindByAccount 根据账号查找用户，登录流程会调用它。
 func (r *Repository) FindByAccount(ctx context.Context, account string) (*domainaccount.User, error) {
 	var user userWithStatModel
+	account = domainaccount.NormalizeAccount(account)
 	err := r.db.WithContext(ctx).
 		Table("account AS a").
 		Select(userWithStatSelect()).
@@ -140,13 +141,4 @@ func restoreUser(user userWithStatModel) *domainaccount.User {
 
 func userWithStatSelect() string {
 	return "a.id, a.account, a.password, a.nickname, a.avatar_url, a.bio, a.status, a.role, COALESCE(active_following.following_count, rs.following_count, 0) AS following_count, COALESCE(active_followers.follower_count, rs.follower_count, 0) AS follower_count, COALESCE(published_works.work_count, 0) AS work_count"
-}
-
-// isDuplicateKeyError 兼容 GORM 标准错误和 MySQL 1062 唯一键冲突。
-func isDuplicateKeyError(err error) bool {
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
