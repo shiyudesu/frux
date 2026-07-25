@@ -18,6 +18,7 @@ const defaultCommentLimit = 20
 const hotScoreLikeWeight = 3
 const hotScoreFavoriteWeight = 4
 const hotScoreCommentWeight = 5
+const actionRecoveryTimeout = 3 * time.Second
 
 var ErrLoadInteractionFailed = errors.New("failed to load interaction")
 var ErrSaveInteractionFailed = errors.New("failed to save interaction")
@@ -45,6 +46,7 @@ type StatCache interface {
 type Option func(*Service)
 
 type ActionStateResult struct {
+	UserID         int64
 	VideoID        int64
 	ActionType     string
 	Active         bool
@@ -52,11 +54,23 @@ type ActionStateResult struct {
 	FavoriteCount  int
 	Delta          int
 	IdempotencyKey string
+	Version        int64
+	EventID        string
+	OccurredAt     time.Time
+	ShouldPublish  bool
+	CanRollback    bool
+	Previous       domaininteraction.ActionStateSnapshot
+}
+
+type ActionMutation struct {
+	EventID    string
+	OccurredAt time.Time
 }
 
 // ActionStateStore 保存点赞收藏的快速状态和计数。
 type ActionStateStore interface {
-	SetActionState(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, initialStat *domaininteraction.VideoStat) (*ActionStateResult, error)
+	SetActionState(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, initialStat *domaininteraction.VideoStat, initialState *domaininteraction.ActionStateSnapshot, mutation ActionMutation) (*ActionStateResult, error)
+	RollbackActionState(ctx context.Context, state *ActionStateResult) (bool, error)
 }
 
 // ActionEventPublisher 投递点赞收藏变更事件。
@@ -81,6 +95,7 @@ type ActionChangedEvent struct {
 	ActionType     string    `json:"action_type"`
 	Active         bool      `json:"active"`
 	IdempotencyKey string    `json:"idempotency_key"`
+	Version        int64     `json:"version"`
 	OccurredAt     time.Time `json:"occurred_at"`
 }
 
@@ -225,6 +240,9 @@ func (s *Service) ListComments(ctx context.Context, videoID int64, cursor string
 	// 多查 1 条用于判断是否还有下一页，返回给客户端时再裁掉。
 	items, err := s.repo.ListComments(ctx, videoID, parsedCursor, limit+1)
 	if err != nil {
+		if errors.Is(err, domaininteraction.ErrVideoNotFound) {
+			return nil, domaininteraction.ErrVideoNotFound
+		}
 		return nil, ErrLoadInteractionFailed
 	}
 
@@ -306,17 +324,51 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		}
 		return nil, ErrUpdateInteractionFailed
 	}
-
-	state, err := s.actionStateStore.SetActionState(ctx, userID, videoID, actionType, active, idempotencyKey, initialStat)
+	initialState, err := s.repo.GetActionState(ctx, userID, videoID, actionType)
 	if err != nil {
 		return nil, ErrUpdateInteractionFailed
 	}
 
-	if state.Delta != 0 {
-		event := NewActionChangedEvent(userID, videoID, actionType, active, idempotencyKey)
-		if err := s.actionPublisher.PublishActionChanged(ctx, event); err != nil {
-			return s.setActionSync(ctx, userID, videoID, actionType, active, idempotencyKey)
+	mutation := newActionMutation()
+	state, err := s.actionStateStore.SetActionState(ctx, userID, videoID, actionType, active, idempotencyKey, initialStat, initialState, mutation)
+	if err != nil {
+		return nil, s.handleActionStateStoreFailure(ctx, state, err)
+	}
+
+	if state.ShouldPublish {
+		event := actionChangedEventFromState(userID, state)
+		if publishErr := s.actionPublisher.PublishActionChanged(ctx, event); publishErr != nil {
+			recoveryCtx, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
+			accepted, acceptedErr := acceptedActionEvent(event)
+			if acceptedErr != nil {
+				rolledBack, rollbackErr := s.rollbackActionState(recoveryCtx, state)
+				cancelRecovery()
+				if rollbackErr != nil {
+					recoveryErr := s.ensureActionEventDurable(ctx, event)
+					return nil, actionUpdateError(publishErr, acceptedErr, rollbackErr, recoveryErr)
+				}
+				_ = rolledBack
+				return nil, actionUpdateError(publishErr, acceptedErr)
+			}
+			if persistErr := s.repo.PersistAcceptedActionEvent(recoveryCtx, accepted); persistErr != nil {
+				_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
+				cancelRecovery()
+				if rollbackErr != nil {
+					recoveryErr := s.ensureActionEventDurable(ctx, event)
+					if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
+						return nil, errors.Join(domaininteraction.ErrVideoNotFound, publishErr, persistErr, rollbackErr, recoveryErr)
+					}
+					return nil, actionUpdateError(publishErr, persistErr, rollbackErr, recoveryErr)
+				}
+				if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
+					return nil, domaininteraction.ErrVideoNotFound
+				}
+				return nil, actionUpdateError(publishErr, persistErr)
+			}
+			cancelRecovery()
 		}
+	}
+	if state.Delta != 0 {
 		s.recordActionHotScore(ctx, state.VideoID, state.ActionType, state.Delta)
 		if state.ActionType == domaininteraction.ActionTypeLike && state.Active && state.Delta > 0 {
 			s.notifyLike(ctx, &domaininteraction.Action{
@@ -335,6 +387,71 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		LikeCount:     state.LikeCount,
 		FavoriteCount: state.FavoriteCount,
 	}, nil
+}
+
+func (s *Service) handleActionStateStoreFailure(ctx context.Context, state *ActionStateResult, stateErr error) error {
+	if state == nil {
+		return actionUpdateError(stateErr)
+	}
+	if !state.CanRollback {
+		if state.ShouldPublish {
+			return actionUpdateError(stateErr, s.ensureActionEventDurable(ctx, actionChangedEventFromState(state.UserID, state)))
+		}
+		return actionUpdateError(stateErr)
+	}
+
+	recoveryCtx, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
+	rolledBack, rollbackErr := s.rollbackActionState(recoveryCtx, state)
+	cancelRecovery()
+	if rollbackErr != nil {
+		recoveryErr := s.ensureActionEventDurable(ctx, actionChangedEventFromState(state.UserID, state))
+		return actionUpdateError(stateErr, rollbackErr, recoveryErr)
+	}
+	if !rolledBack {
+		// A newer mutation owns the action now and must not be undone or replaced by this event.
+		return actionUpdateError(stateErr)
+	}
+	return actionUpdateError(stateErr)
+}
+
+func (s *Service) ensureActionEventDurable(ctx context.Context, event *ActionChangedEvent) error {
+	accepted, err := acceptedActionEvent(event)
+	if err != nil {
+		return err
+	}
+
+	publishCtx, cancelPublish := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
+	publishErr := s.actionPublisher.PublishActionChanged(publishCtx, event)
+	cancelPublish()
+	if publishErr == nil {
+		return nil
+	}
+
+	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
+	persistErr := s.repo.PersistAcceptedActionEvent(persistCtx, accepted)
+	cancelPersist()
+	if persistErr == nil {
+		return nil
+	}
+	return errors.Join(publishErr, persistErr)
+}
+
+func actionUpdateError(causes ...error) error {
+	joined := make([]error, 0, len(causes)+1)
+	joined = append(joined, ErrUpdateInteractionFailed)
+	for _, cause := range causes {
+		if cause != nil {
+			joined = append(joined, cause)
+		}
+	}
+	return errors.Join(joined...)
+}
+
+func (s *Service) rollbackActionState(ctx context.Context, state *ActionStateResult) (bool, error) {
+	if s.actionStateStore == nil || state == nil || !state.CanRollback {
+		return false, nil
+	}
+	return s.actionStateStore.RollbackActionState(ctx, state)
 }
 
 func (s *Service) setActionSync(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*ActionResult, error) {
@@ -398,15 +515,24 @@ func recordHotScore(ctx context.Context, recorder HotScoreRecorder, videoID int6
 	_ = recorder.AddHotScore(ctx, videoID, scoreDelta, time.Now())
 }
 
-func NewActionChangedEvent(userID int64, videoID int64, actionType string, active bool, idempotencyKey string) *ActionChangedEvent {
+func newActionMutation() ActionMutation {
+	occurredAt := time.Now().UTC()
+	return ActionMutation{
+		EventID:    newEventID(occurredAt),
+		OccurredAt: occurredAt,
+	}
+}
+
+func actionChangedEventFromState(userID int64, state *ActionStateResult) *ActionChangedEvent {
 	return &ActionChangedEvent{
-		EventID:        newEventID(),
+		EventID:        state.EventID,
 		UserID:         userID,
-		VideoID:        videoID,
-		ActionType:     actionType,
-		Active:         active,
-		IdempotencyKey: strings.TrimSpace(idempotencyKey),
-		OccurredAt:     time.Now().UTC(),
+		VideoID:        state.VideoID,
+		ActionType:     state.ActionType,
+		Active:         state.Active,
+		IdempotencyKey: state.IdempotencyKey,
+		Version:        state.Version,
+		OccurredAt:     state.OccurredAt,
 	}
 }
 
@@ -453,12 +579,12 @@ func (s *Service) createInteractionMessage(ctx context.Context, userID int64, me
 	_, _ = s.messageWriter.CreateFromEvent(ctx, userID, messageType, title, fmt.Sprintf("%s %s", actorName, content), eventID, eventID)
 }
 
-func newEventID() string {
+func newEventID(occurredAt time.Time) string {
 	content := make([]byte, 12)
 	if _, err := rand.Read(content); err == nil {
-		return hex.EncodeToString(content)
+		return fmt.Sprintf("%020d-%s", occurredAt.UnixNano(), hex.EncodeToString(content))
 	}
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	return fmt.Sprintf("%020d", occurredAt.UnixNano())
 }
 
 // normalizeCommentLimit 统一评论分页默认值和最大值。

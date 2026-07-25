@@ -488,11 +488,11 @@
 
 4. 视频和封面 URL 如何返回给前端？
 
-   答：上传接口保存文件后返回 `/uploads/{kind}/{filename}` 形式的 URL。Hertz 的 GET 路由通过 `http.FileServer` adaptor 暴露静态文件，HEAD 路由原生返回文件元数据。前端拿到 URL 后在发布视频或展示卡片时使用。
+   答：上传接口保存文件后返回 `/uploads/{kind}/{filename}` 形式的 URL。头像和普通文件可直接读取；发布本地媒体必须使用本人 `video` 上传，封面必须使用本人 `cover` 上传。视频和封面读取先按数据库引用、生命周期、可见性和作者身份授权，再交给文件服务 adaptor。已发布公开媒体可匿名访问；作者的 Cookie 身份必须同时携带仅限 `/uploads` 的 HttpOnly 资产 Token 和 Web 活跃标记。Web 退出会先删除活跃标记，删除或未引用保护文件返回 404。
 
 5. 静态文件服务如何支持 Range 请求？
 
-   答：HTTP Range 需要返回 206、Content-Range 和指定字节段内容。项目通过静态文件服务支持浏览器分段请求，并有 `upload_static_range_test.go` 验证行为。这样视频播放和拖动进度更稳定。
+   答：HTTP Range 需要返回 206、Content-Range 和指定字节段内容。授权 Handler 只负责准入，成功后仍复用标准静态文件服务处理 GET/HEAD、条件请求和分段读取，并由静态 Range 与受保护媒体回归测试验证。这样隐私控制不会破坏视频播放和拖动进度。
 
 ### 追问
 

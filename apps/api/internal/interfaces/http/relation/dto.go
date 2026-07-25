@@ -12,6 +12,12 @@ type followResponse struct {
 	FollowerCount  int   `json:"follower_count"`
 }
 
+type followStateResponse struct {
+	UserID       int64 `json:"user_id"`
+	TargetUserID int64 `json:"target_user_id"`
+	Following    bool  `json:"following"`
+}
+
 // relationUserResponse 是关注列表和粉丝列表中的用户项。
 type relationUserResponse struct {
 	UserID     int64     `json:"user_id"`

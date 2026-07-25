@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -23,6 +24,7 @@ type videoWithStatModel struct {
 	MediaURL       string
 	CoverURL       string
 	Status         int
+	Visibility     string
 	LikeCount      int
 	CommentCount   int
 	FavoriteCount  int
@@ -48,6 +50,26 @@ func EnsureStats(db *gorm.DB) error {
 	`).Error
 }
 
+func BackfillLocalAssets(db *gorm.DB) error {
+	return db.Exec(`
+		INSERT INTO local_upload_asset (asset_url, owner_id, kind, created_at)
+		SELECT asset_url, MIN(author_id), MIN(kind), NOW()
+		FROM (
+			SELECT media_url AS asset_url, author_id, 'video' AS kind
+			FROM video
+			WHERE media_url LIKE '/uploads/video/%'
+			UNION ALL
+			SELECT cover_url AS asset_url, author_id, 'cover' AS kind
+			FROM video
+			WHERE cover_url LIKE '/uploads/cover/%'
+		) AS referenced_assets
+		GROUP BY asset_url
+		HAVING COUNT(DISTINCT author_id) = 1
+		   AND COUNT(DISTINCT kind) = 1
+		ON CONFLICT (asset_url) DO NOTHING
+	`).Error
+}
+
 // Save 在同一事务内写入视频记录和初始统计记录。
 func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 	var model VideoModel
@@ -59,6 +81,7 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 			MediaURL:       video.MediaURL,
 			CoverURL:       video.CoverURL,
 			Status:         video.Status,
+			Visibility:     video.Visibility,
 			PublishedAt:    video.PublishedAt,
 			IdempotencyKey: idempotencyKeyPtr(video.IdempotencyKey),
 		}
@@ -78,6 +101,10 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 			FavoriteCount: video.FavoriteCount,
 		}
 		if err := tx.Create(&stat).Error; err != nil {
+			return err
+		}
+		publicDelta, privateDelta := contentWorkCounts(video.Status, video.Visibility)
+		if err := AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
 			return err
 		}
 		return nil
@@ -100,7 +127,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainvideo.Video
 		Table("video AS v").
 		Select(videoWithStatSelect()).
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
-		Where("v.id = ? AND v.status = ?", id, domainvideo.StatusPublished).
+		Where("v.id = ? AND v.status = ? AND v.visibility = ?", id, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Take(&model).
 		Error
 	if err != nil {
@@ -161,7 +188,7 @@ func (r *Repository) ListByAuthor(ctx context.Context, authorID int64, limit, of
 		Table("video AS v").
 		Select(videoWithStatSelect()).
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
-		Where("v.author_id = ? AND v.status = ?", authorID, domainvideo.StatusPublished).
+		Where("v.author_id = ? AND v.status = ? AND v.visibility = ?", authorID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Order("v.published_at DESC").
 		Order("v.id DESC").
 		Limit(limit).
@@ -182,22 +209,37 @@ func (r *Repository) ListByAuthor(ctx context.Context, authorID int64, limit, of
 
 // UpdateStatus 只更新状态字段，用于软删除。
 func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video) error {
-	result := r.db.WithContext(ctx).
-		Model(&VideoModel{}).
-		Where("id = ?", video.ID).
-		Update("status", video.Status)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return domainvideo.ErrVideoNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current VideoModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", video.ID).Take(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domainvideo.ErrVideoNotFound
+			}
+			return err
+		}
+		if current.Status == video.Status {
+			return nil
+		}
+		previousStatus := current.Status
+		if err := tx.Model(&current).Update("status", video.Status).Error; err != nil {
+			return err
+		}
+		publicDelta, privateDelta := contentWorkDeltas(previousStatus, current.Visibility, video.Status, current.Visibility)
+		receivedLikeDelta := 0
+		if previousStatus != domainvideo.StatusDeleted && video.Status == domainvideo.StatusDeleted {
+			var stat VideoStatModel
+			if err := tx.Where("video_id = ?", current.ID).Take(&stat).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			receivedLikeDelta = -stat.LikeCount
+		}
+		return AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, receivedLikeDelta, 0)
+	})
 }
 
 // restoreVideo 把联表查询结果转换成领域视频对象。
 func restoreVideo(model videoWithStatModel) *domainvideo.Video {
-	return domainvideo.RestoreVideo(
+	return domainvideo.RestoreVideoWithVisibility(
 		model.ID,
 		model.AuthorID,
 		model.Title,
@@ -205,6 +247,7 @@ func restoreVideo(model videoWithStatModel) *domainvideo.Video {
 		model.MediaURL,
 		model.CoverURL,
 		model.Status,
+		model.Visibility,
 		model.LikeCount,
 		model.CommentCount,
 		model.FavoriteCount,
@@ -217,7 +260,7 @@ func restoreVideo(model videoWithStatModel) *domainvideo.Video {
 
 // videoWithStatSelect 统一视频详情查询字段，避免多个查询写重复 SQL 字段列表。
 func videoWithStatSelect() string {
-	return "v.id, v.author_id, v.title, v.description, v.media_url, v.cover_url, v.status, COALESCE(vs.like_count, 0) AS like_count, COALESCE(vs.comment_count, 0) AS comment_count, COALESCE(vs.favorite_count, 0) AS favorite_count, v.published_at, v.idempotency_key, v.created_at, v.updated_at"
+	return "v.id, v.author_id, v.title, v.description, v.media_url, v.cover_url, v.status, v.visibility, COALESCE(vs.like_count, 0) AS like_count, COALESCE(vs.comment_count, 0) AS comment_count, COALESCE(vs.favorite_count, 0) AS favorite_count, v.published_at, v.idempotency_key, v.created_at, v.updated_at"
 }
 
 // idempotencyKeyPtr 将空幂等键存为 NULL，配合唯一索引允许普通创建多次执行。

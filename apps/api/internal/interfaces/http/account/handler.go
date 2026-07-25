@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
@@ -75,6 +76,7 @@ func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	interfaceshttpmiddleware.SetAssetTokenCookie(c, token.AccessToken, time.Now().Add(time.Duration(token.ExpiresInSeconds)*time.Second))
 	c.JSON(http.StatusOK, tokenResponse{
 		AccessToken:      token.AccessToken,
 		TokenType:        token.TokenType,
@@ -82,7 +84,7 @@ func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// Logout 当前项目使用无状态 JWT，服务端无需清理会话数据。
+// Logout 使用无状态 JWT，不写 Cookie，避免旧响应清除更新登录写入的资产 Token。
 func (h *Handler) Logout(_ context.Context, c *app.RequestContext) {
 	c.Status(http.StatusNoContent)
 }
@@ -135,42 +137,107 @@ func (h *Handler) UpdateMe(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	profile, err := h.service.UpdateProfile(ctx, userID, req.Nickname, req.AvatarURL, req.Bio)
+	var likedVisibility, favoriteVisibility *string
+	if req.ProfileSetting != nil {
+		likedVisibility = req.ProfileSetting.LikedVisibility
+		favoriteVisibility = req.ProfileSetting.FavoriteVisibility
+	}
+	profile, err := h.service.UpdateProfileAndSetting(
+		ctx,
+		userID,
+		req.Nickname,
+		req.AvatarURL,
+		req.Bio,
+		req.Gender,
+		likedVisibility,
+		favoriteVisibility,
+	)
 	if err != nil {
 		writeProfileError(c, err)
 		return
 	}
-
 	c.JSON(http.StatusOK, profileResponse(profile))
+}
+
+func (h *Handler) GetProfileSettings(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	setting, err := h.service.GetProfileSetting(ctx, userID)
+	if err != nil {
+		writeProfileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, profileSettingResponseFromApplication(setting))
+}
+
+func (h *Handler) UpdateProfileSettings(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	var req UpdateProfileSettingRequest
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	setting, err := h.service.UpdateProfileSetting(ctx, userID, req.LikedVisibility, req.FavoriteVisibility)
+	if err != nil {
+		writeProfileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, profileSettingResponseFromApplication(setting))
 }
 
 // publicProfileResponse 将应用层 Profile 转成公开 JSON 结构。
 func publicProfileResponse(profile *applicationaccount.Profile) publicUserProfileResponse {
 	return publicUserProfileResponse{
-		ID:             profile.ID,
-		Nickname:       profile.Nickname,
-		AvatarURL:      profile.AvatarURL,
-		Bio:            profile.Bio,
-		FollowingCount: profile.FollowingCount,
-		FollowerCount:  profile.FollowerCount,
-		WorkCount:      profile.WorkCount,
+		ID:                profile.ID,
+		Nickname:          profile.Nickname,
+		AvatarURL:         profile.AvatarURL,
+		Bio:               profile.Bio,
+		FollowingCount:    profile.FollowingCount,
+		FollowerCount:     profile.FollowerCount,
+		WorkCount:         profile.WorkCount,
+		Account:           profile.Account,
+		Gender:            profile.Gender,
+		PublicWorkCount:   profile.PublicWorkCount,
+		ReceivedLikeCount: profile.ReceivedLikeCount,
+		CollectionCount:   profile.CollectionCount,
+		LikedVideosPublic: profile.ProfileSettings != nil && profile.ProfileSettings.LikedVisibility == domainaccount.ProfileVisibilityPublic,
 	}
 }
 
 // profileResponse 将应用层 Profile 转成对外 JSON 结构。
 func profileResponse(profile *applicationaccount.Profile) userProfileResponse {
 	return userProfileResponse{
-		ID:             profile.ID,
-		Account:        profile.Account,
-		Nickname:       profile.Nickname,
-		AvatarURL:      profile.AvatarURL,
-		Bio:            profile.Bio,
-		Status:         profile.Status,
-		Role:           profile.Role,
-		FollowingCount: profile.FollowingCount,
-		FollowerCount:  profile.FollowerCount,
-		WorkCount:      profile.WorkCount,
+		ID:                profile.ID,
+		Account:           profile.Account,
+		Nickname:          profile.Nickname,
+		AvatarURL:         profile.AvatarURL,
+		Bio:               profile.Bio,
+		Status:            profile.Status,
+		Role:              profile.Role,
+		FollowingCount:    profile.FollowingCount,
+		FollowerCount:     profile.FollowerCount,
+		WorkCount:         profile.WorkCount,
+		Gender:            profile.Gender,
+		PublicWorkCount:   profile.PublicWorkCount,
+		PrivateWorkCount:  profile.PrivateWorkCount,
+		ReceivedLikeCount: profile.ReceivedLikeCount,
+		CollectionCount:   profile.CollectionCount,
+		ProfileSettings:   profileSettingResponseFromApplication(profile.ProfileSettings),
 	}
+}
+
+func profileSettingResponseFromApplication(setting *applicationaccount.ProfileSetting) *profileSettingResponse {
+	if setting == nil {
+		return nil
+	}
+	return &profileSettingResponse{LikedVisibility: setting.LikedVisibility, FavoriteVisibility: setting.FavoriteVisibility}
 }
 
 // userIDFromContext 从 JWT 中间件写入的上下文中读取登录用户 ID。
@@ -210,5 +277,8 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainaccount.ErrEmptyPassword) ||
 		errors.Is(err, domainaccount.ErrEmptyNickname) ||
 		errors.Is(err, domainaccount.ErrInvalidUserID) ||
-		errors.Is(err, domainaccount.ErrEmptyProfileUpdate)
+		errors.Is(err, domainaccount.ErrEmptyProfileUpdate) ||
+		errors.Is(err, domainaccount.ErrInvalidGender) ||
+		errors.Is(err, domainaccount.ErrEmptyProfileSettingUpdate) ||
+		errors.Is(err, domainaccount.ErrInvalidProfileVisibility)
 }

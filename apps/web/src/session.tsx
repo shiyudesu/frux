@@ -4,11 +4,11 @@
 // 说明：未读数拆为独立 UnreadContext，是为了让 Session 对象保持与迁移前
 // 相同的身份语义（仅在 token/user 变化时重建），避免 unreadCount 变化
 // 导致依赖 session 对象的 effect 额外重跑。
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { isUnauthorized } from "./api/client";
 import { fetchUnreadStat } from "./api/messages";
-import { TOKEN_KEY, USER_KEY } from "./constants";
+import { ASSET_ACTIVE_COOKIE_NAME, TOKEN_KEY, USER_KEY } from "./constants";
 import { useRoute } from "./router";
 import { parseStoredUser } from "./types";
 import type { SessionUser } from "./types";
@@ -17,6 +17,7 @@ export interface Session {
   token: string;
   user: SessionUser | null;
   setAuth: (nextToken: string, nextUser: SessionUser | null) => void;
+  updateUser: (expectedToken: string, nextUser: SessionUser) => void;
   clearAuth: () => void;
 }
 
@@ -32,7 +33,41 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const route = useRoute();
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
   const [user, setUser] = useState<SessionUser | null>(() => parseStoredUser(localStorage.getItem(USER_KEY)));
+  const tokenRef = useRef(token);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  const setAuth = useCallback((nextToken: string, nextUser: SessionUser | null) => {
+    tokenRef.current = nextToken;
+    setToken(nextToken);
+    setUser(nextUser);
+    if (nextToken) {
+      localStorage.setItem(TOKEN_KEY, nextToken);
+      setAssetAccessActive(true);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+      setAssetAccessActive(false);
+    }
+    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+  }, []);
+
+  const updateUser = useCallback((expectedToken: string, nextUser: SessionUser) => {
+    if (!expectedToken || tokenRef.current !== expectedToken) return;
+    setUser(nextUser);
+    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+  }, []);
+
+  const clearAuth = useCallback(() => {
+    tokenRef.current = "";
+    setAssetAccessActive(false);
+    setToken("");
+    setUser(null);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  }, []);
+
+  useEffect(() => {
+    setAssetAccessActive(Boolean(tokenRef.current && user));
+  }, []);
 
   const refreshUnreadCount = useCallback((): Promise<number> => {
     if (!token || !user) {
@@ -58,27 +93,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [refreshUnreadCount, route]);
 
   const session = useMemo<Session>(
-    () => ({
-      token,
-      user,
-      setAuth(nextToken, nextUser) {
-        setToken(nextToken);
-        setUser(nextUser);
-        if (nextToken) {
-          localStorage.setItem(TOKEN_KEY, nextToken);
-        } else {
-          localStorage.removeItem(TOKEN_KEY);
-        }
-        localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
-      },
-      clearAuth() {
-        setToken("");
-        setUser(null);
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
-      }
-    }),
-    [token, user]
+    () => ({ token, user, setAuth, updateUser, clearAuth }),
+    [clearAuth, setAuth, token, updateUser, user]
   );
 
   const unread = useMemo<UnreadState>(() => ({ unreadCount, refreshUnreadCount }), [unreadCount, refreshUnreadCount]);
@@ -109,9 +125,16 @@ export function useUnreadCount(): UnreadState {
 /** 关注/取关后同步会话中的关注数（保留 followingCount camelCase 副本的历史行为） */
 export function updateSessionRelationCount(session: Session, followingCount: number): void {
   if (!session.user || !Number.isFinite(Number(followingCount))) return;
-  session.setAuth(session.token, {
+  session.updateUser(session.token, {
     ...session.user,
     following_count: Number(followingCount),
     followingCount: Number(followingCount)
   });
+}
+
+function setAssetAccessActive(active: boolean): void {
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = active
+    ? `${ASSET_ACTIVE_COOKIE_NAME}=1; Path=/uploads; SameSite=Strict${secure}`
+    : `${ASSET_ACTIVE_COOKIE_NAME}=; Max-Age=0; Path=/uploads; SameSite=Strict${secure}`;
 }

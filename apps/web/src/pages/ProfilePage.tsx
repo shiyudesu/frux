@@ -1,45 +1,89 @@
-// 个人资料页：资料展示/编辑、头像上传、我的作品、关注/粉丝弹窗。
-import { useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
-import { fetchMyVideos, updateMyProfile } from "../api/account";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchMyProfile, updateMyProfile } from "../api/account";
 import { apiErrorMessage, isUnauthorized, uploadFile } from "../api/client";
 import { fetchRelationList, followUser, loadFollowingMap } from "../api/social";
 import type { RelationTab } from "../api/social";
+import { ProfileCollectionEditor } from "../components/ProfileCollectionEditor";
+import {
+  CreatorWorkTabs,
+  CreatorWorkToolbar,
+  ProfileCollectionGrid,
+  ProfileHero,
+  ProfilePrimaryTabs,
+  ProfileVideoGrid
+} from "../components/ProfileDashboard";
+import type { ProfileGridItem } from "../components/ProfileDashboard";
+import { ProfileEditor } from "../components/ProfileEditor";
+import type { ProfileEditorValue } from "../components/ProfileEditor";
 import { RelationModal } from "../components/RelationModal";
-import { VideoGrid } from "../components/VideoGrid";
 import { WorkViewer } from "../components/WorkViewer";
-import { emptyProfile, image } from "../constants";
+import { emptyProfile } from "../constants";
+import { useCreatorContent } from "../hooks/useCreatorContent";
+import type { CreatorFilters } from "../hooks/useCreatorContent";
+import { useProfileLibrary } from "../hooks/useProfileLibrary";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
-import { useDialogFocus } from "../hooks/useDialogFocus";
-import type { RelationUser, SessionUser, Video } from "../types";
-import { formatMetric } from "../utils";
-import { Icon } from "../components/Icon";
-
-interface ProfileForm {
-  nickname: string;
-  avatar_url: string;
-  bio: string;
-}
+import type {
+  BatchVideoAction,
+  CreatorWorkTab,
+  ProfilePrimaryTab,
+  RelationUser,
+  Video,
+  VideoCollection
+} from "../types";
 
 type RelationState = "idle" | "loading" | "loadingMore" | "ready" | "error";
+
+const primaryTabs = [
+  { id: "works", label: "作品" },
+  { id: "recommend", label: "推荐" },
+  { id: "likes", label: "喜欢" },
+  { id: "favorites", label: "收藏" },
+  { id: "history", label: "观看历史" },
+  { id: "watchLater", label: "稍后再看" }
+] satisfies Array<{ id: ProfilePrimaryTab; label: string }>;
+
+const defaultFilters: Record<"published" | "private", CreatorFilters> = {
+  published: { query: "", createdFrom: "", createdTo: "" },
+  private: { query: "", createdFrom: "", createdTo: "" }
+};
 
 export function ProfilePage() {
   const session = useSession();
   const navigate = useNavigate();
+  const { clearAuth, token, updateUser } = session;
+  const profileRequest = useRef(0);
+  const refreshCurrentProfile = useCallback(async () => {
+    if (!token) return;
+    const requestID = profileRequest.current + 1;
+    profileRequest.current = requestID;
+    try {
+      const profile = await fetchMyProfile(token);
+      if (profileRequest.current === requestID) {
+        updateUser(token, profile);
+      }
+    } catch (error) {
+      if (profileRequest.current === requestID && isUnauthorized(error)) {
+        clearAuth();
+        navigate("/auth");
+      }
+    }
+  }, [clearAuth, navigate, token, updateUser]);
   const baseUser = session.user || emptyProfile;
-  const [form, setForm] = useState<ProfileForm>({
-    nickname: baseUser.nickname || "",
-    avatar_url: baseUser.avatar_url || "",
-    bio: baseUser.bio || ""
-  });
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [avatarPreview, setAvatarPreview] = useState("");
-  const [editing, setEditing] = useState(false);
+  const creator = useCreatorContent(token, refreshCurrentProfile);
+  const library = useProfileLibrary(token);
+  const [primaryTab, setPrimaryTab] = useState<ProfilePrimaryTab>("works");
+  const [workTab, setWorkTab] = useState<CreatorWorkTab>("published");
+  const [filters, setFilters] = useState(defaultFilters);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIDs, setSelectedIDs] = useState<Set<number>>(new Set());
   const [selectedWork, setSelectedWork] = useState<Video | null>(null);
-  const [status, setStatus] = useState("");
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [videosState, setVideosState] = useState("loading");
+  const [editing, setEditing] = useState(false);
+  const [editorBusy, setEditorBusy] = useState(false);
+  const [editorMessage, setEditorMessage] = useState("");
+  const [editingCollectionID, setEditingCollectionID] = useState<number | null | "new">(null);
+  const [collectionBusy, setCollectionBusy] = useState(false);
+  const [collectionMessage, setCollectionMessage] = useState("");
   const [relationTab, setRelationTab] = useState<RelationTab>("following");
   const [relationModalOpen, setRelationModalOpen] = useState(false);
   const [relationItems, setRelationItems] = useState<RelationUser[]>([]);
@@ -49,106 +93,85 @@ export function ProfilePage() {
   const [relationError, setRelationError] = useState("");
   const [relationFollowing, setRelationFollowing] = useState<Record<number, boolean>>({});
   const [relationBusyID, setRelationBusyID] = useState(0);
-  const editCloseButtonRef = useDialogFocus<HTMLButtonElement>(editing, () => setEditing(false));
-  const followingCount = baseUser.following_count ?? baseUser.followingCount ?? 0;
-  // SessionUser 没有 followerCount camelCase 副本（迁移前读取恒为 undefined），行为等价
-  const followerCount = baseUser.follower_count ?? 0;
+  const relationRequest = useRef(0);
+  const relationFollowingRequest = useRef(0);
+  const relationTabRef = useRef<RelationTab>(relationTab);
+  const relationModalOpenRef = useRef(relationModalOpen);
+  relationTabRef.current = relationTab;
+  relationModalOpenRef.current = relationModalOpen;
 
   useEffect(() => {
-    setForm({
-      nickname: baseUser.nickname || "",
-      avatar_url: baseUser.avatar_url || "",
-      bio: baseUser.bio || ""
-    });
-    setAvatarFile(null);
-    setAvatarPreview("");
-  }, [baseUser.avatar_url, baseUser.bio, baseUser.nickname]);
+    void refreshCurrentProfile();
+    return () => {
+      profileRequest.current += 1;
+    };
+  }, [refreshCurrentProfile]);
 
   useEffect(() => {
-    if (!avatarFile) {
-      setAvatarPreview("");
-      return;
-    }
-    const objectURL = URL.createObjectURL(avatarFile);
-    setAvatarPreview(objectURL);
-    return () => URL.revokeObjectURL(objectURL);
-  }, [avatarFile]);
+    if (primaryTab === "works") creator.ensureTab(workTab);
+    else library.ensureTab(primaryTab);
+  }, [creator.ensureTab, library.ensureTab, primaryTab, workTab]);
 
   useEffect(() => {
-    if (!session.token) {
-      setVideosState("ready");
-      return;
-    }
-    setVideosState("loading");
-    fetchMyVideos(session.token)
-      .then((data) => {
-        setVideos(data.items || []);
-        setVideosState("ready");
-      })
-      .catch((error: unknown) => {
-        if (isUnauthorized(error)) {
-          session.clearAuth();
-          navigate("/auth");
-          return;
-        }
-        setVideos([]);
-        setVideosState(apiErrorMessage(error, "作品加载失败"));
-      });
-  }, [navigate, session]);
+    setSelectionMode(false);
+    setSelectedIDs(new Set());
+  }, [workTab]);
 
   useEffect(() => {
-    if (!session.token) {
-      setRelationItems([]);
-      setRelationCursor("");
-      setRelationHasMore(false);
-      setRelationFollowing({});
-      setRelationState("ready");
-      return undefined;
-    }
-
-    let live = true;
-    loadFollowingMap(session.token)
+    if (!token) return undefined;
+    const requestID = relationFollowingRequest.current + 1;
+    relationFollowingRequest.current = requestID;
+    loadFollowingMap(token)
       .then((map) => {
-        if (live) {
-          setRelationFollowing(map);
-        }
+        if (relationFollowingRequest.current === requestID) setRelationFollowing(map);
       })
       .catch((error: unknown) => {
+        if (relationFollowingRequest.current !== requestID) return;
         if (isUnauthorized(error)) {
-          session.clearAuth();
+          clearAuth();
           navigate("/auth");
         }
       });
     return () => {
-      live = false;
+      if (relationFollowingRequest.current === requestID) relationFollowingRequest.current += 1;
     };
-  }, [navigate, session]);
+  }, [clearAuth, navigate, token]);
 
   const loadRelationPage = useCallback(
     async ({ reset = false, cursor = "" }: { reset?: boolean; cursor?: string } = {}) => {
-      if (!session.token) return;
-      const requestCursor = reset ? "" : cursor;
+      if (!token || !relationModalOpenRef.current) return;
+      const tab = relationTabRef.current;
+      const requestID = relationRequest.current + 1;
+      relationRequest.current = requestID;
       setRelationState(reset ? "loading" : "loadingMore");
       setRelationError("");
       try {
-        const data = await fetchRelationList(relationTab, session.token, requestCursor);
+        const data = await fetchRelationList(tab, token, reset ? "" : cursor);
+        if (
+          relationRequest.current !== requestID
+          || !relationModalOpenRef.current
+          || relationTabRef.current !== tab
+        ) return;
         const items = data.items || [];
         setRelationItems((state) => (reset ? items : [...state, ...items]));
         setRelationCursor(data.next_cursor || "");
         setRelationHasMore(Boolean(data.has_more));
-        if (relationTab === "following") {
+        if (tab === "following") {
           setRelationFollowing((state) => {
             const next = { ...state };
-            for (const item of items) {
-              next[item.user_id] = true;
-            }
+            for (const item of items) next[item.user_id] = true;
             return next;
           });
         }
         setRelationState("ready");
       } catch (error) {
+        if (
+          relationRequest.current !== requestID
+          || !relationModalOpenRef.current
+          || relationTabRef.current !== tab
+        ) return;
         if (isUnauthorized(error)) {
-          session.clearAuth();
+          clearAuth();
           navigate("/auth");
           return;
         }
@@ -156,34 +179,49 @@ export function ProfilePage() {
         setRelationState("error");
       }
     },
-    [navigate, relationTab, session]
+    [clearAuth, navigate, token]
   );
 
   useEffect(() => {
+    relationRequest.current += 1;
     setRelationItems([]);
     setRelationCursor("");
     setRelationHasMore(false);
-    if (!session.token || !relationModalOpen) return;
-    loadRelationPage({ reset: true });
-  }, [loadRelationPage, relationModalOpen, relationTab, session.token]);
+    if (relationModalOpen) void loadRelationPage({ reset: true });
+    return () => {
+      relationRequest.current += 1;
+    };
+  }, [loadRelationPage, relationModalOpen, relationTab]);
 
   function openRelationModal(tab: RelationTab) {
+    relationRequest.current += 1;
+    relationTabRef.current = tab;
+    relationModalOpenRef.current = true;
     setRelationTab(tab);
     setRelationModalOpen(true);
   }
 
-  async function toggleRelationFollow(targetUserID: number) {
-    if (!session.token) {
-      navigate("/auth");
-      return;
-    }
-    if (!targetUserID || targetUserID === baseUser.id) return;
+  function closeRelationModal() {
+    relationRequest.current += 1;
+    relationModalOpenRef.current = false;
+    setRelationModalOpen(false);
+  }
 
+  function changeRelationTab(tab: RelationTab) {
+    if (tab === relationTabRef.current) return;
+    relationRequest.current += 1;
+    relationTabRef.current = tab;
+    setRelationTab(tab);
+  }
+
+  async function toggleRelationFollow(targetUserID: number) {
+    if (!token || targetUserID === baseUser.id) return;
     const currentFollowing = Boolean(relationFollowing[targetUserID]);
+    relationFollowingRequest.current += 1;
     setRelationBusyID(targetUserID);
     setRelationError("");
     try {
-      const data = await followUser(session.token, targetUserID, !currentFollowing, "web-profile-follow");
+      const data = await followUser(token, targetUserID, !currentFollowing, "web-profile-follow");
       setRelationFollowing((state) => ({ ...state, [targetUserID]: Boolean(data.following) }));
       if (relationTab === "following" && !data.following) {
         setRelationItems((state) => state.filter((item) => item.user_id !== targetUserID));
@@ -191,11 +229,6 @@ export function ProfilePage() {
       updateSessionRelationCount(session, data.following_count);
       setRelationState("ready");
     } catch (error) {
-      if (isUnauthorized(error)) {
-        session.clearAuth();
-        navigate("/auth");
-        return;
-      }
       setRelationError(apiErrorMessage(error, "关注操作失败"));
       setRelationState("error");
     } finally {
@@ -203,159 +236,336 @@ export function ProfilePage() {
     }
   }
 
-  async function handleSave(event: FormEvent) {
-    event.preventDefault();
-    setStatus("保存中");
+  const hero = {
+    account: baseUser.account,
+    nickname: baseUser.nickname,
+    avatarURL: baseUser.avatar_url,
+    bio: baseUser.bio,
+    gender: baseUser.gender,
+    followingCount: baseUser.following_count ?? baseUser.followingCount ?? 0,
+    followerCount: baseUser.follower_count,
+    workCount: baseUser.public_work_count,
+    receivedLikeCount: baseUser.received_like_count
+  };
+
+  const editorValue = useMemo<ProfileEditorValue>(() => ({
+    nickname: baseUser.nickname,
+    avatarURL: baseUser.avatar_url,
+    bio: baseUser.bio,
+    gender: baseUser.gender,
+    settings: {
+      liked_visibility: baseUser.profile_settings?.liked_visibility || "private",
+      favorite_visibility: "private"
+    }
+  }), [
+    baseUser.avatar_url,
+    baseUser.bio,
+    baseUser.gender,
+    baseUser.nickname,
+    baseUser.profile_settings?.liked_visibility
+  ]);
+
+  async function saveProfile(value: ProfileEditorValue, avatarFile: File | null) {
+    if (!token) return;
+    setEditorBusy(true);
+    setEditorMessage("");
     try {
-      let avatarURL = form.avatar_url;
-      if (avatarFile && session.token) {
-        const uploaded = await uploadFile(avatarFile, "avatar", session.token);
-        avatarURL = uploaded.url;
+      let avatarURL = value.avatarURL;
+      if (avatarFile) {
+        avatarURL = (await uploadFile(avatarFile, "avatar", token)).url;
       }
-      let profile: SessionUser = { ...baseUser, ...form };
-      if (session.token) {
-        profile = await updateMyProfile(session.token, {
-          nickname: form.nickname,
-          avatar_url: avatarURL,
-          bio: form.bio
-        });
-      }
-      session.setAuth(session.token, profile);
-      setAvatarFile(null);
-      setStatus("已保存");
+      const profile = await updateMyProfile(token, {
+        nickname: value.nickname,
+        avatar_url: avatarURL,
+        bio: value.bio,
+        gender: value.gender,
+        profile_settings: {
+          liked_visibility: value.settings.liked_visibility,
+          favorite_visibility: "private"
+        }
+      });
+      profileRequest.current += 1;
+      updateUser(token, profile);
       setEditing(false);
     } catch (error) {
-      setStatus(apiErrorMessage(error, "保存失败"));
+      setEditorMessage(apiErrorMessage(error, "保存失败"));
+    } finally {
+      setEditorBusy(false);
     }
+  }
+
+  function updateFilter(field: keyof CreatorFilters, value: string) {
+    if (workTab === "collections") return;
+    setFilters((state) => ({ ...state, [workTab]: { ...state[workTab], [field]: value } }));
+  }
+
+  function applyFilters() {
+    if (workTab === "collections") return;
+    void creator.loadVideos(workTab, { reset: true, filters: filters[workTab] });
+  }
+
+  function toggleSelected(videoID: number) {
+    setSelectedIDs((current) => {
+      const next = new Set(current);
+      if (next.has(videoID)) next.delete(videoID);
+      else next.add(videoID);
+      return next;
+    });
+  }
+
+  async function runBatch(action: BatchVideoAction) {
+    if (workTab === "collections" || selectedIDs.size === 0) return;
+    if (action === "delete" && !window.confirm("确定删除所选作品吗？")) return;
+    await creator.runBatchAction(workTab, [...selectedIDs], action);
+    setSelectedIDs(new Set());
+    setSelectionMode(false);
+  }
+
+  const collectionEditor = useMemo<VideoCollection | null>(() => {
+    if (editingCollectionID === null || editingCollectionID === "new") return null;
+    return creator.collections.items.find((collection) => collection.id === editingCollectionID) || null;
+  }, [creator.collections.items, editingCollectionID]);
+
+  async function saveCollection(body: {
+    title?: string;
+    description?: string;
+    visibility?: "public" | "private";
+  }) {
+    setCollectionBusy(true);
+    setCollectionMessage("");
+    try {
+      if (editingCollectionID === "new") {
+        await creator.createCollection({
+          title: body.title || "",
+          description: body.description || "",
+          visibility: body.visibility || "public"
+        });
+      } else if (collectionEditor) {
+        await creator.editCollection(collectionEditor.id, body);
+      }
+      setEditingCollectionID(null);
+    } catch (error) {
+      setCollectionMessage(apiErrorMessage(error, "合集保存失败"));
+    } finally {
+      setCollectionBusy(false);
+    }
+  }
+
+  async function deleteCollection() {
+    if (!collectionEditor || !window.confirm("确定删除这个合集吗？")) return;
+    setCollectionBusy(true);
+    try {
+      await creator.removeCollection(collectionEditor.id);
+      setEditingCollectionID(null);
+    } catch (error) {
+      setCollectionMessage(apiErrorMessage(error, "合集删除失败"));
+    } finally {
+      setCollectionBusy(false);
+    }
+  }
+
+  function openCollectionEditor(collection: VideoCollection | null) {
+    setCollectionMessage("");
+    setEditingCollectionID(collection ? collection.id : "new");
+    if (collection) void creator.loadCollectionVideos("", true);
+  }
+
+  function renderWorks() {
+    if (workTab === "collections") {
+      return (
+        <ProfileCollectionGrid
+          collections={creator.collections.items}
+          error={creator.collections.error}
+          hasMore={creator.collections.hasMore}
+          owner
+          state={creator.collections.state}
+          onCreate={() => openCollectionEditor(null)}
+          onLoadMore={() => void creator.loadCollections(false)}
+          onManage={openCollectionEditor}
+          onOpenVideo={setSelectedWork}
+          onRetry={() => void creator.loadCollections(true)}
+        />
+      );
+    }
+    const current = creator.videos[workTab];
+    const draft = filters[workTab];
+    return (
+      <>
+        <CreatorWorkToolbar
+          busy={current.state === "mutating"}
+          createdFrom={draft.createdFrom}
+          createdTo={draft.createdTo}
+          query={draft.query}
+          selectedCount={selectedIDs.size}
+          selectionMode={selectionMode}
+          onBatchDelete={() => void runBatch("delete")}
+          onBatchPrivate={() => void runBatch("make_private")}
+          onBatchPublic={() => void runBatch("make_public")}
+          onCreatedFromChange={(value) => updateFilter("createdFrom", value)}
+          onCreatedToChange={(value) => updateFilter("createdTo", value)}
+          onQueryChange={(value) => updateFilter("query", value)}
+          onSubmit={applyFilters}
+          onToggleSelection={() => {
+            setSelectionMode((value) => !value);
+            setSelectedIDs(new Set());
+          }}
+        />
+        <ProfileVideoGrid
+          emptyDescription={workTab === "published" ? "发布后的作品会显示在这里" : "设为私密的作品会显示在这里"}
+          emptyTitle={workTab === "published" ? "暂无已发布作品" : "暂无私密作品"}
+          error={current.error}
+          hasMore={current.hasMore}
+          items={current.items.map((video) => ({ video }))}
+          selectedIDs={selectedIDs}
+          selectionMode={selectionMode}
+          state={current.state}
+          statusLabels
+          onLoadMore={() => void creator.loadVideos(workTab)}
+          onRetry={() => void creator.loadVideos(workTab, { reset: true })}
+          onSelect={setSelectedWork}
+          onToggleSelected={toggleSelected}
+        />
+      </>
+    );
+  }
+
+  function renderLibrary() {
+    if (primaryTab === "works") return null;
+    const current = library.tabs[primaryTab];
+    const labels: Record<typeof primaryTab, [string, string]> = {
+      recommend: ["暂无推荐内容", "推荐内容会在这里持续更新"],
+      likes: ["暂无喜欢作品", "点赞过的作品会显示在这里"],
+      favorites: ["暂无收藏作品", "收藏过的作品会显示在这里"],
+      history: ["暂无观看历史", "观看过的作品会显示在这里"],
+      watchLater: ["暂无稍后再看", "加入稍后再看的作品会显示在这里"]
+    };
+    const action =
+      primaryTab === "history"
+        ? (item: ProfileGridItem) => void library.removeHistory(item.video.id)
+        : primaryTab === "watchLater"
+          ? (item: ProfileGridItem) => void library.removeWatchLater(item.video.id)
+          : undefined;
+    return (
+      <ProfileVideoGrid
+        emptyDescription={labels[primaryTab][1]}
+        emptyTitle={labels[primaryTab][0]}
+        error={current.error}
+        hasMore={current.hasMore}
+        itemAction={action}
+        itemActionLabel={primaryTab === "history" ? "从观看历史移除" : "从稍后再看移除"}
+        items={current.items}
+        state={current.state}
+        onLoadMore={() => void library.loadTab(primaryTab)}
+        onRetry={() => void library.loadTab(primaryTab, true)}
+        onSelect={setSelectedWork}
+      />
+    );
   }
 
   return (
     <main className="profile-page" data-ui="profile-page">
-      <section className="profile-hero" data-ui="profile-hero">
-        <div className="profile-summary">
-          <img className="profile-avatar" src={avatarPreview || form.avatar_url || image.currentUser} alt="" />
-          <div>
-            <p className="eyebrow">创作者资料</p>
-            <h1>{form.nickname || baseUser.account}</h1>
-            <p>{form.bio || "作品、关注和互动资料会显示在这里。"}</p>
-          </div>
-          <div className="profile-stats" aria-label="资料统计">
-            <button
-              className={relationModalOpen && relationTab === "following" ? "active" : ""}
-              type="button"
-              onClick={() => openRelationModal("following")}
-            >
-              <strong>{formatMetric(followingCount)}</strong>
-              关注
-            </button>
-            <button
-              className={relationModalOpen && relationTab === "followers" ? "active" : ""}
-              type="button"
-              onClick={() => openRelationModal("followers")}
-            >
-              <strong>{formatMetric(followerCount)}</strong>
-              粉丝
-            </button>
-            <button type="button">
-              <strong>{formatMetric(videos.length)}</strong>
-              作品
-            </button>
-          </div>
-          <button className="profile-edit-button" onClick={() => setEditing(true)} aria-label="编辑资料">
-            <Icon name="user-edit" />
-          </button>
-        </div>
-      </section>
-
-      <nav className="profile-tabs" aria-label="个人主页内容">
-        <button className="active" type="button">
-          作品 <span>{formatMetric(videos.length)}</span>
-        </button>
-        <button type="button" onClick={() => openRelationModal("following")}>
-          关系
-        </button>
-        <button type="button" onClick={() => setEditing(true)}>
-          编辑资料
-        </button>
-      </nav>
-
-      <section className="profile-grid">
-        <section className="profile-card works-card">
-          <header>
-            <h2>我的作品</h2>
-            <button className="ghost-button compact" onClick={() => navigate("/timeline")}>
-              <Icon name="home" size={17} />
-              最新视频
-            </button>
-          </header>
-          <VideoGrid videos={videos} state={videosState} onSelect={setSelectedWork} />
+      <ProfileHero
+        owner
+        profile={hero}
+        onEdit={() => setEditing(true)}
+        onOpenFollowers={() => openRelationModal("followers")}
+        onOpenFollowing={() => openRelationModal("following")}
+      />
+      <section className="profile-content">
+        <ProfilePrimaryTabs
+          active={primaryTab}
+          tabs={primaryTabs.map((tab) => tab.id === "works" ? { ...tab, count: baseUser.public_work_count } : tab)}
+          actions={
+            primaryTab === "history" && library.tabs.history.items.length > 0 ? (
+              <button className="profile-manage-button" type="button" onClick={() => void library.clearHistory()}>
+                清空历史
+              </button>
+            ) : undefined
+          }
+          onChange={setPrimaryTab}
+        />
+        <section
+          id={`profile-panel-${primaryTab}`}
+          aria-labelledby={`profile-tab-${primaryTab}`}
+          className="profile-tab-panel"
+          role="tabpanel"
+          tabIndex={0}
+        >
+          {primaryTab === "works" ? (
+            <>
+              <CreatorWorkTabs active={workTab} onChange={setWorkTab} />
+              {renderWorks()}
+            </>
+          ) : renderLibrary()}
         </section>
       </section>
       {relationModalOpen && (
         <RelationModal
-          tab={relationTab}
-          items={relationItems}
-          state={relationState}
-          error={relationError}
-          hasMore={relationHasMore}
-          following={relationFollowing}
           busyID={relationBusyID}
           currentUserID={baseUser.id}
-          onTabChange={setRelationTab}
-          onClose={() => setRelationModalOpen(false)}
-          onRetry={() => loadRelationPage({ reset: true })}
-          onLoadMore={() => loadRelationPage({ reset: false, cursor: relationCursor })}
-          onToggleFollow={toggleRelationFollow}
+          error={relationError}
+          following={relationFollowing}
+          hasMore={relationHasMore}
+          items={relationItems}
+          state={relationState}
+          tab={relationTab}
+          onClose={closeRelationModal}
+          onLoadMore={() => void loadRelationPage({ cursor: relationCursor })}
+          onRetry={() => void loadRelationPage({ reset: true })}
+          onTabChange={changeRelationTab}
+          onToggleFollow={(userID) => void toggleRelationFollow(userID)}
         />
       )}
       {selectedWork && <WorkViewer video={selectedWork} onClose={() => setSelectedWork(null)} />}
       {editing && (
-        <div className="modal-backdrop" role="presentation">
-          <form aria-modal="true" className="profile-modal profile-form" role="dialog" onSubmit={handleSave}>
-            <header>
-              <h2>资料编辑</h2>
-              <button
-                ref={editCloseButtonRef}
-                className="icon-button small"
-                type="button"
-                onClick={() => setEditing(false)}
-                aria-label="关闭"
-              >
-                <Icon name="close" size={19} />
-              </button>
-            </header>
-            <label>
-              <span>昵称</span>
-              <input value={form.nickname} onChange={(event) => setForm({ ...form, nickname: event.target.value })} />
-            </label>
-            <label>
-              <span>头像</span>
-              <span className="file-picker avatar-picker">
-                <span className="avatar-upload-preview">
-                  {avatarPreview || form.avatar_url ? (
-                    <img src={avatarPreview || form.avatar_url} alt="" />
-                  ) : (
-                    <Icon name="user" />
-                  )}
-                </span>
-                <span className="file-picker-copy">
-                  <strong>{avatarFile ? avatarFile.name : "选择头像文件"}</strong>
-                  <small>本地图片上传</small>
-                </span>
-                <input type="file" accept="image/*" onChange={(event) => setAvatarFile(event.target.files?.[0] || null)} />
-              </span>
-            </label>
-            <label>
-              <span>简介</span>
-              <textarea value={form.bio} onChange={(event) => setForm({ ...form, bio: event.target.value })} rows={4} />
-            </label>
-            {status && <p className={`form-message ${status === "已保存" ? "success" : ""}`}>{status}</p>}
-            <button className="primary-button">
-              <Icon name="save" size={18} />
-              保存
-            </button>
-          </form>
-        </div>
+        <ProfileEditor
+          key={baseUser.id}
+          busy={editorBusy}
+          message={editorMessage}
+          value={editorValue}
+          onClose={() => setEditing(false)}
+          onSave={saveProfile}
+        />
+      )}
+      {editingCollectionID !== null && (
+        <ProfileCollectionEditor
+          availableVideos={creator.collectionVideos.items}
+          availableVideosError={creator.collectionVideos.error}
+          availableVideosHasMore={
+            creator.collectionVideos.pages.public.hasMore
+            || creator.collectionVideos.pages.private.hasMore
+          }
+          availableVideosLoading={
+            creator.collectionVideos.state === "loading"
+            || creator.collectionVideos.state === "loadingMore"
+          }
+          busy={collectionBusy}
+          collection={collectionEditor}
+          message={collectionMessage}
+          onClose={() => setEditingCollectionID(null)}
+          onDelete={collectionEditor ? deleteCollection : undefined}
+          onLoadMoreAvailableVideos={async () => {
+            await creator.loadCollectionVideos();
+          }}
+          onSave={saveCollection}
+          onSearchAvailableVideos={async (query) => {
+            await creator.loadCollectionVideos(query, true);
+          }}
+          onSetMembership={
+            collectionEditor
+              ? async (videoID, active) => {
+                  setCollectionBusy(true);
+                  try {
+                    await creator.setMembership(collectionEditor.id, videoID, active);
+                  } catch (error) {
+                    setCollectionMessage(apiErrorMessage(error, "合集作品更新失败"));
+                  } finally {
+                    setCollectionBusy(false);
+                  }
+                }
+              : undefined
+          }
+        />
       )}
     </main>
   );

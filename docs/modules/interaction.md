@@ -2,7 +2,7 @@
 
 ## 1. 模块职责
 
-互动模块负责用户对视频的点赞、收藏和评论能力，并同步维护视频统计表。
+互动模块负责用户对视频的点赞、收藏和评论能力，同步维护视频统计表，并向个人内容库提供按行为更新时间排序的有效喜欢/收藏索引。点赞持久化还会维护视频作者的获赞聚合。
 
 模块边界：
 
@@ -12,6 +12,8 @@
 | `video` | 保存视频主体信息 |
 | `video_stat` | 保存 `like_count`、`favorite_count`、`comment_count` 统计字段 |
 | `account` | 提供登录用户身份，评论响应展示用户昵称和头像 |
+| `library` | 通过 `ActionIndex` 读取有效喜欢/收藏视频 ID，不直接读取互动 GORM 模型 |
+| `user_content_stat` | 保存作者 `received_like_count` |
 
 ## 2. 实现结构
 
@@ -128,7 +130,21 @@ apps/api/internal/interfaces/http/interaction/
 
 ### 3.3 异步落库
 
-点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再写入 Redis 行为状态与实时计数，随后投递 `ActionChangedEvent` 到 RabbitMQ。Worker 消费事件并调用仓储写入 PostgreSQL 行为表和 `video_stat`，消费端依赖 `user_id + video_id + action_type` 与幂等键保持重复消息安全。
+点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本，随后使用 RabbitMQ publisher confirm 投递 `ActionChangedEvent`。Worker 消费事件并调用仓储写入 PostgreSQL 行为表和 `video_stat`。
+
+发布确认失败或确认结果不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。发布与同步持久化都失败时，只在 Redis 当前仍是该事件版本时回滚状态和计数；版本计数器不回退，因此重试分配更高版本。若并发更新已经写入更高版本，旧请求不得回滚新状态。相同幂等键的重试会重发原事件，确保 Redis 已接受但尚未持久化的状态不会因 `delta=0` 被跳过。
+
+Redis 事务提交后若响应计数读取失败，缓存层会把已提交版本和原事件元数据一并返回给应用层。应用层使用有超时且脱离请求取消/截止时间的上下文做条件回滚；回滚只匹配仍未变化的 `state_version + event_id`。回滚报错时不会静默丢弃，而是重新按 publisher confirm 投递原事件，投递失败再同步写入事件回执；若这些恢复尝试同时失败，Redis 中保留的原事件仍可由相同幂等键重试重新投递。并发更高版本使条件回滚返回未命中时，旧事件不会覆盖或替代新状态。
+
+同步请求和已接收事件使用不同的持久化入口：
+
+- `SetAction` 服务于新 HTTP 请求，必须在事务内再次锁定并验证视频仍为 `published + public`。
+- `PersistAcceptedActionEvent` 仅供 Worker 使用，表示事件已在入队前通过公开可读校验；视频之后变为私密或下架时仍写入互动事实和统计，但已删除或不存在的视频作为终止事件丢弃。
+- `interaction_action_event` 按 `event_id` 保存版本和完整已处理载荷。同一事件重复投递不再次改变 `interaction_action`、`video_stat` 或作者 `received_like_count`；相同事件 ID 携带不同载荷视为终止冲突。
+- `interaction_action` 为每个 `user_id + video_id + action_type` 保存最新 `latest_event_version + latest_event_occurred_at + latest_event_id`。Worker 首先比较版本；仅在版本相同的兼容事件中使用时间和事件 ID 确定顺序。延迟旧事件与精确重复事件写入/命中回执后成功确认，但不改变状态或聚合。
+- Worker 将格式错误、无效字段、事件 ID 冲突、视频不存在和视频已删除分类为不可重试错误，RabbitMQ 不重新入队；数据库连接等瞬时错误仍重新入队。
+
+私密或下架视频的互动事实不会放宽任何读取规则：Feed、公开视频详情、公开主页和个人内容库补齐仍按当前可读性过滤内容。
 
 核心键和队列：
 
@@ -178,6 +194,8 @@ apps/api/internal/interfaces/http/interaction/
 ### 3.5 评论列表
 
 #### GET `/api/videos/{videoId}/comments`
+
+匿名评论列表仅在父视频同时满足 `status=published` 和 `visibility=public` 时返回；私密、下架、删除或不存在的视频统一返回 404，不返回历史评论内容。评论作者、视频作者和管理员原有的评论删除权限不受父视频后续状态变化影响。
 
 请求参数：
 
@@ -263,6 +281,9 @@ apps/api/internal/interfaces/http/interaction/
 | `action_type` | VARCHAR(16) | NOT NULL | `LIKE` / `FAVORITE` |
 | `status` | TINYINT | NOT NULL, DEFAULT 1 | 1有效/2取消 |
 | `idempotency_key` | VARCHAR(128) | NULLABLE | 最近一次写入幂等键 |
+| `latest_event_version` | BIGINT | NOT NULL, DEFAULT 0 | 最新已应用行为版本；新 Redis 事件从持久基线继续递增 |
+| `latest_event_occurred_at` | TIMESTAMPTZ | NULLABLE（迁移后回填） | 最新已应用异步事件发生时间 |
+| `latest_event_id` | VARCHAR(128) | NULLABLE（迁移后回填） | 同时间事件的确定性排序键 |
 | `created_at` | DATETIME | NOT NULL | 创建时间 |
 | `updated_at` | DATETIME | NOT NULL | 更新时间 |
 
@@ -273,8 +294,13 @@ apps/api/internal/interfaces/http/interaction/
 | `uk_user_video_type` | `user_id, video_id, action_type` | 保证同一用户对同一视频的同类行为只有一条记录 |
 | `idx_video_type_status` | `video_id, action_type, status` | 支持按视频统计有效行为 |
 | `idx_user_type_status` | `user_id, action_type, status` | 支持后续我的点赞、我的收藏列表 |
+| `idx_interaction_action_user_type_status_updated` | `user_id, action_type, status, updated_at, video_id` | 支持个人内容库稳定游标 |
 
-### 4.2 `interaction_comment`
+### 4.2 `interaction_action_event`
+
+`interaction_action_event` 保存 Worker 已处理的异步行为事件回执。`event_id` 是主键，`version` 保存 Redis 原子分配的行为版本；事件载荷和回执写入与行为事实、视频统计及作者获赞聚合位于同一事务。
+
+### 4.3 `interaction_comment`
 
 `interaction_comment` 保存评论内容，删除采用状态更新。
 
@@ -327,12 +353,14 @@ apps/api/internal/interfaces/http/interaction/
 处理流程：
 
 1. 校验登录用户和 `video_id`。
-2. 查询视频，视频状态为 `Published` 时允许互动。
+2. 查询并锁定视频，只有 `status=Published AND visibility=public` 时允许互动。
 3. 按 `user_id + video_id + action_type` 查询行为记录。
 4. `PUT` 请求将行为记录更新为 `status = 1`，首次生效时对应计数字段加 1。
 5. `DELETE` 请求将行为记录更新为 `status = 2`，首次取消时对应计数字段减 1。
 6. 记录缺失且收到 `DELETE` 请求时创建 `status = 2` 记录，计数保持稳定。
 7. 在同一事务内提交行为记录和 `video_stat` 计数更新。
+8. `LIKE` 的真实状态发生变化时，同事务增减作者 `user_content_stat.received_like_count`；Worker 异步落库与无 Redis 的同步路径都复用同一仓储逻辑。
+9. Worker 事件先按 `version` 排序；版本相同才按 `occurred_at`、`event_id` 兼容排序。不大于行为行已保存顺序的事件为成功 no-op，不更新行为、视频计数、作者获赞或行为 `updated_at`。
 
 计数字段映射：
 
@@ -349,12 +377,14 @@ apps/api/internal/interfaces/http/interaction/
 | 取消 | `max(count - 1, 0)` |
 | 幂等命中 | 返回已有结果 |
 
+个人内容库读取只选择 `status=1` 的行为，按 `updated_at DESC, video_id DESC` 排序。取消后的行为事实保留，但不会出现在喜欢或收藏列表。
+
 ### 6.2 评论创建
 
 处理流程：
 
 1. 校验登录用户、`video_id` 和 `content`。
-2. 查询视频，视频状态为 `Published` 时允许评论。
+2. 查询视频，只有已发布公开状态时允许评论。
 3. 创建 `interaction_comment`，状态为 `1`。
 4. 在同一事务内将 `video_stat.comment_count` 加 1。
 5. 返回评论详情和最新评论数。
@@ -405,18 +435,31 @@ apps/api/internal/interfaces/http/interaction/
 | 登录用户取消点赞同一视频 | 返回 `active=false`，`like_count - 1` |
 | 登录用户首次收藏公开视频 | 返回 `active=true`，`favorite_count + 1` |
 | 登录用户取消收藏同一视频 | 返回 `active=false`，`favorite_count - 1` |
+| 点赞状态真实变化 | 作者 `received_like_count` 同步变化且不小于 0 |
+| 查询有效喜欢/收藏索引 | 按 `updated_at, video_id` 稳定倒序，取消行为不返回 |
+| 对私密视频互动 | 按视频不存在处理，不泄露内容 |
 | 登录用户发表评论 | 返回评论详情，`comment_count + 1` |
 | 匿名用户查询评论列表 | 返回状态为正常的评论，按创建时间倒序 |
+| 视频转为私密、下架或删除后查询评论列表 | 返回 404 且不返回评论；恢复已发布公开后评论重新可见 |
 | 评论作者删除评论 | 返回 `status=2`，`comment_count - 1` |
 | 视频作者删除视频下评论 | 返回 `status=2`，`comment_count - 1` |
 | 普通用户删除他人评论 | 返回 403 |
 | 重复删除同一评论 | 返回 `status=2`，评论计数保持稳定 |
+| 新取消事件先于旧点赞事件落库 | 保持取消状态，视频和作者获赞计数不回增 |
+| 并发 Worker 收到点赞/取消点赞 | Redis 版本较大者确定最终状态，即使时间戳更早 |
+| 相同版本和发生时间的兼容事件 | `event_id` 较大者确定最终状态 |
+| 发布失败且同步落库失败后重试 | 原版本被条件回滚或由更高版本覆盖；重试仍会发布可持久化事件 |
+| 发布确认不确定 | 同步落库与后续重复投递只产生一次事实和聚合变化 |
+| Redis 事务提交后计数读取失败 | 脱离请求取消做有界条件回滚；回滚失败时原事件进入确认投递或同步持久化恢复路径 |
+| 计数读取失败时发生并发更高版本 | 旧请求不回滚、不发布旧版本，新版本保持最终状态 |
+| 旧事件或相同事件重复投递 | 成功确认，行为与所有聚合保持不变 |
 
 ## 10. 前端接入点
 
 | 页面 | 接入能力 |
 | --- | --- |
 | Feed 视频右侧操作栏 | 调用点赞和收藏状态接口，使用接口返回计数刷新按钮文案 |
+| 个人主页喜欢/收藏 Tab | 由 library 模块聚合本模块的有效行为索引并补齐视频卡片 |
 | Feed 评论抽屉 | 按当前 `video_id` 拉取评论列表 |
 | 评论输入框 | 登录用户提交评论，成功后插入列表顶部 |
 | 未登录用户互动 | 引导到登录页 |

@@ -11,6 +11,9 @@ const (
 	StatusOffline   = 3
 	StatusDeleted   = 4
 
+	VisibilityPublic  = "public"
+	VisibilityPrivate = "private"
+
 	MaxTitleLength          = 128
 	MaxDescriptionLength    = 512
 	MaxIdempotencyKeyLength = 128
@@ -25,6 +28,7 @@ type Video struct {
 	MediaURL       string
 	CoverURL       string
 	Status         int
+	Visibility     string
 	LikeCount      int
 	CommentCount   int
 	FavoriteCount  int
@@ -74,6 +78,7 @@ func NewPublished(authorID int64, title, description, mediaURL, coverURL, idempo
 		MediaURL:       mediaURL,
 		CoverURL:       coverURL,
 		Status:         StatusPublished,
+		Visibility:     VisibilityPublic,
 		PublishedAt:    &now,
 		IdempotencyKey: idempotencyKey,
 	}, nil
@@ -96,6 +101,26 @@ func RestoreVideo(
 	updatedAt time.Time,
 	idempotencyKey string,
 ) *Video {
+	return RestoreVideoWithVisibility(id, authorID, title, description, mediaURL, coverURL, status, VisibilityPublic, likeCount, commentCount, favoriteCount, publishedAt, createdAt, updatedAt, idempotencyKey)
+}
+
+func RestoreVideoWithVisibility(
+	id int64,
+	authorID int64,
+	title string,
+	description string,
+	mediaURL string,
+	coverURL string,
+	status int,
+	visibility string,
+	likeCount int,
+	commentCount int,
+	favoriteCount int,
+	publishedAt *time.Time,
+	createdAt time.Time,
+	updatedAt time.Time,
+	idempotencyKey string,
+) *Video {
 	title = strings.TrimSpace(title)
 	description = strings.TrimSpace(description)
 	mediaURL = strings.TrimSpace(mediaURL)
@@ -103,6 +128,10 @@ func RestoreVideo(
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	if status == 0 {
 		status = StatusPublished
+	}
+	visibility = strings.ToLower(strings.TrimSpace(visibility))
+	if !ValidVisibility(visibility) {
+		visibility = VisibilityPublic
 	}
 
 	return &Video{
@@ -113,6 +142,7 @@ func RestoreVideo(
 		MediaURL:       mediaURL,
 		CoverURL:       coverURL,
 		Status:         status,
+		Visibility:     visibility,
 		LikeCount:      likeCount,
 		CommentCount:   commentCount,
 		FavoriteCount:  favoriteCount,
@@ -120,6 +150,37 @@ func RestoreVideo(
 		CreatedAt:      createdAt,
 		UpdatedAt:      updatedAt,
 		IdempotencyKey: idempotencyKey,
+	}
+}
+
+func (v *Video) SetVisibilityBy(authorID int64, visibility string) error {
+	if authorID <= 0 {
+		return ErrInvalidAuthorID
+	}
+	if v.AuthorID != authorID {
+		return ErrVideoPermissionDenied
+	}
+	visibility = strings.ToLower(strings.TrimSpace(visibility))
+	if !ValidVisibility(visibility) {
+		return ErrInvalidVisibility
+	}
+	if v.Status == StatusDeleted || v.Status == StatusOffline {
+		return ErrVideoStateNotAllowed
+	}
+	v.Visibility = visibility
+	return nil
+}
+
+func (v *Video) IsPubliclyReadable() bool {
+	return v != nil && v.Status == StatusPublished && v.Visibility == VisibilityPublic
+}
+
+func ValidVisibility(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case VisibilityPublic, VisibilityPrivate:
+		return true
+	default:
+		return false
 	}
 }
 

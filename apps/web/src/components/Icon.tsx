@@ -4,6 +4,7 @@ export type IconName =
   | "alert"
   | "bell"
   | "bookmark"
+  | "camera"
   | "check-all"
   | "chevron-down"
   | "chevron-up"
@@ -25,6 +26,7 @@ export type IconName =
   | "more"
   | "pause"
   | "play"
+  | "plus"
   | "publish"
   | "refresh"
   | "save"
@@ -83,6 +85,13 @@ function renderIcon(name: IconName, filled: boolean) {
       );
     case "bookmark":
       return <path d="M6.5 4.5h11v15l-5.5-3.4-5.5 3.4v-15Z" fill={fill} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />;
+    case "camera":
+      return (
+        <>
+          <path d="M7.5 7 9 4.8h6L16.5 7H20v11H4V7h3.5Z" fill={fill} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.7" />
+          <circle cx="12" cy="12.5" r="3.2" stroke="currentColor" strokeWidth="1.7" />
+        </>
+      );
     case "check-all":
       return (
         <>
@@ -179,6 +188,8 @@ function renderIcon(name: IconName, filled: boolean) {
           <rect fill="currentColor" height="14" rx="1" width="3.5" x="14" y="5" />
         </>
       );
+    case "plus":
+      return <path d="M12 5v14M5 12h14" stroke="currentColor" strokeLinecap="round" strokeWidth="1.9" />;
     case "play":
       return <path d="m8 5 11 7-11 7V5Z" fill="currentColor" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.2" />;
     case "publish":

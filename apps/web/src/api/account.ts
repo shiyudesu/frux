@@ -2,10 +2,12 @@
 import type {
   CreateVideoRequest,
   LoginRequest,
+  ProfileSettings,
   PublicUserProfile,
   RegisterRequest,
   TokenResponse,
   UpdateProfileRequest,
+  UpdateProfileSettingsRequest,
   UserProfile,
   VideoListResponse
 } from "../types";
@@ -25,8 +27,8 @@ export function login(body: LoginRequest): Promise<TokenResponse> {
   });
 }
 
-export function logoutSession(token: string): Promise<unknown> {
-  return apiRequest("/api/sessions/current", {
+export function logoutSession(token?: string): Promise<void> {
+  return apiRequest<void>("/api/sessions/current", {
     method: "DELETE",
     token
   });
@@ -38,6 +40,21 @@ export function fetchMyProfile(token: string): Promise<UserProfile> {
 
 export function updateMyProfile(token: string, body: UpdateProfileRequest): Promise<UserProfile> {
   return apiRequest<UserProfile>("/api/users/me", {
+    method: "PATCH",
+    token,
+    body
+  });
+}
+
+export function fetchProfileSettings(token: string): Promise<ProfileSettings> {
+  return apiRequest<ProfileSettings>("/api/users/me/profile-settings", { token });
+}
+
+export function updateProfileSettings(
+  token: string,
+  body: UpdateProfileSettingsRequest
+): Promise<ProfileSettings> {
+  return apiRequest<ProfileSettings>("/api/users/me/profile-settings", {
     method: "PATCH",
     token,
     body

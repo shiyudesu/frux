@@ -6,6 +6,7 @@ import type { IconName } from "./components/Icon";
 export const TOKEN_KEY = "gcfeed.accessToken";
 export const USER_KEY = "gcfeed.user";
 export const PUBLIC_PROFILE_KEY = "gcfeed.publicProfiles";
+export const ASSET_ACTIVE_COOKIE_NAME = "gcfeed_asset_active";
 export const FEED_TRANSITION_MS = 320;
 
 export const DEFAULT_PLAYBACK_CONFIG: PlaybackConfig = {
@@ -68,5 +69,10 @@ export const emptyProfile: SessionUser = {
   status: 0,
   following_count: 0,
   follower_count: 0,
-  work_count: 0
+  work_count: 0,
+  gender: 0,
+  public_work_count: 0,
+  private_work_count: 0,
+  received_like_count: 0,
+  collection_count: 0
 };

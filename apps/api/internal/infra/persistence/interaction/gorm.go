@@ -49,7 +49,7 @@ func (r *Repository) GetVideoStat(ctx context.Context, videoID int64) (*domainin
 		Table("video_stat AS vs").
 		Select("vs.video_id, vs.like_count, vs.comment_count, vs.favorite_count, vs.created_at, vs.updated_at").
 		Joins("JOIN video AS v ON v.id = vs.video_id").
-		Where("vs.video_id = ? AND v.status = ?", videoID, domainvideo.StatusPublished).
+		Where("vs.video_id = ? AND v.status = ? AND v.visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Take(&stat).
 		Error
 	if err != nil {
@@ -63,11 +63,42 @@ func (r *Repository) GetVideoStat(ctx context.Context, videoID int64) (*domainin
 	}, nil
 }
 
+// GetActionState reads the durable action/version baseline for Redis initialization.
+func (r *Repository) GetActionState(ctx context.Context, userID int64, videoID int64, actionType string) (*domaininteraction.ActionStateSnapshot, error) {
+	actionType, err := domaininteraction.NormalizeActionType(actionType)
+	if err != nil {
+		return nil, err
+	}
+	var action ActionModel
+	err = r.db.WithContext(ctx).
+		Where("user_id = ? AND video_id = ? AND action_type = ?", userID, videoID, actionType).
+		Take(&action).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &domaininteraction.ActionStateSnapshot{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	snapshot := &domaininteraction.ActionStateSnapshot{
+		Exists:         true,
+		Active:         action.Status == domaininteraction.ActionStatusActive,
+		IdempotencyKey: idempotencyKeyValue(action.IdempotencyKey),
+		Version:        action.LatestEventVersion,
+		EventID:        idempotencyKeyValue(action.LatestEventID),
+		UpdatedAt:      action.UpdatedAt,
+	}
+	if action.LatestEventOccurredAt != nil {
+		snapshot.OccurredAt = *action.LatestEventOccurredAt
+	}
+	return snapshot, nil
+}
+
 // GetVideoAuthorID 读取公开视频作者 ID，用于互动消息通知。
 func (r *Repository) GetVideoAuthorID(ctx context.Context, videoID int64) (int64, error) {
 	var video infravideo.VideoModel
 	err := r.db.WithContext(ctx).
-		Where("id = ? AND status = ?", videoID, domainvideo.StatusPublished).
+		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Take(&video).
 		Error
 	if err != nil {
@@ -108,83 +139,193 @@ func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64,
 	var statDelta int
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 先锁定公开视频，保证互动只发生在可互动的视频上。
-		if err := lockPublishedVideo(tx, videoID); err != nil {
+		video, err := lockPublishedVideo(tx, videoID)
+		if err != nil {
 			return err
 		}
-
-		// 锁定用户在该视频上的同类行为记录，避免并发请求同时改计数。
-		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND video_id = ? AND action_type = ?", userID, videoID, actionType).
-			Take(&action).
-			Error
-		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
-			return findErr
-		}
-
-		delta := 0
-		nextStatus := actionStatusFromActive(active)
-		if errors.Is(findErr, gorm.ErrRecordNotFound) {
-			// 首次 DELETE 会创建取消态记录，保证后续 PUT/DELETE 都有稳定幂等基准。
-			action = ActionModel{
-				UserID:         userID,
-				VideoID:        videoID,
-				ActionType:     actionType,
-				Status:         nextStatus,
-				IdempotencyKey: idempotencyKeyPtr(idempotencyKey),
-			}
-			if err := tx.Create(&action).Error; err != nil {
-				return err
-			}
-			if active {
-				delta = 1
-			}
-		} else {
-			// 同一幂等键直接返回当前计数，避免客户端重试重复变更统计。
-			if idempotencyKey != "" && idempotencyKeyValue(action.IdempotencyKey) == idempotencyKey {
-				currentCount, err := currentActionCount(tx, videoID, actionType)
-				if err != nil {
-					return err
-				}
-				count = currentCount
-				return nil
-			}
-
-			// 只有状态真正变化时才更新 video_stat，重复 PUT 或 DELETE 保持计数稳定。
-			previousStatus := action.Status
-			previousIdempotencyKey := idempotencyKeyValue(action.IdempotencyKey)
-			if action.Status != nextStatus {
-				if active {
-					delta = 1
-				} else {
-					delta = -1
-				}
-			}
-			action.Status = nextStatus
-			action.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
-			if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey {
-				if err := tx.Save(&action).Error; err != nil {
-					return err
-				}
-			}
-		}
-
-		if delta == 0 {
-			currentCount, err := currentActionCount(tx, videoID, actionType)
-			if err != nil {
-				return err
-			}
-			count = currentCount
-			return nil
-		}
-
-		count, err = updateActionStat(tx, videoID, actionType, delta)
-		statDelta = delta
+		action, count, statDelta, err = persistActionState(tx, video.AuthorID, userID, videoID, actionType, active, idempotencyKey, nil)
 		return err
 	})
 	if err != nil {
 		return nil, 0, 0, mapVideoError(err)
 	}
 	return restoreAction(action), count, statDelta, nil
+}
+
+// PersistAcceptedActionEvent persists an interaction already accepted while the video was publicly readable.
+func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *domaininteraction.AcceptedActionEvent) error {
+	if event == nil {
+		return domaininteraction.ErrInvalidActionEvent
+	}
+	normalized, err := domaininteraction.NewAcceptedActionEvent(
+		event.EventID,
+		event.UserID,
+		event.VideoID,
+		event.ActionType,
+		event.Active,
+		event.IdempotencyKey,
+		event.Version,
+		event.OccurredAt,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		receipt := actionEventModelFromDomain(normalized)
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&receipt)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			var existing ActionEventModel
+			if err := tx.Where("event_id = ?", normalized.EventID).Take(&existing).Error; err != nil {
+				return err
+			}
+			if !sameAcceptedActionEvent(existing, receipt) {
+				return domaininteraction.ErrActionEventConflict
+			}
+			return nil
+		}
+
+		// The API already validated public readability before publishing. Visibility or non-deleted
+		// lifecycle changes after acceptance must not erase the durable interaction fact.
+		video, err := lockAcceptedActionVideo(tx, normalized.VideoID)
+		if err != nil {
+			return err
+		}
+		_, _, _, err = persistActionState(
+			tx,
+			video.AuthorID,
+			normalized.UserID,
+			normalized.VideoID,
+			normalized.ActionType,
+			normalized.Active,
+			normalized.IdempotencyKey,
+			normalized,
+		)
+		return err
+	})
+	return mapVideoError(err)
+}
+
+func persistActionState(tx *gorm.DB, authorID int64, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, event *domaininteraction.AcceptedActionEvent) (ActionModel, int, int, error) {
+	var action ActionModel
+	findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ? AND video_id = ? AND action_type = ?", userID, videoID, actionType).
+		Take(&action).
+		Error
+	if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+		return ActionModel{}, 0, 0, findErr
+	}
+
+	delta := 0
+	nextStatus := actionStatusFromActive(active)
+	if errors.Is(findErr, gorm.ErrRecordNotFound) {
+		action = ActionModel{
+			UserID:         userID,
+			VideoID:        videoID,
+			ActionType:     actionType,
+			Status:         nextStatus,
+			IdempotencyKey: idempotencyKeyPtr(idempotencyKey),
+		}
+		setLatestActionOrder(&action, event)
+		if err := tx.Create(&action).Error; err != nil {
+			return ActionModel{}, 0, 0, err
+		}
+		if active {
+			delta = 1
+		}
+	} else {
+		if event != nil && !actionEventComesAfter(action, event) {
+			count, err := currentActionCount(tx, videoID, actionType)
+			return action, count, 0, err
+		}
+		if event == nil && idempotencyKey != "" && idempotencyKeyValue(action.IdempotencyKey) == idempotencyKey {
+			count, err := currentActionCount(tx, videoID, actionType)
+			return action, count, 0, err
+		}
+
+		previousStatus := action.Status
+		previousIdempotencyKey := idempotencyKeyValue(action.IdempotencyKey)
+		if action.Status != nextStatus {
+			if active {
+				delta = 1
+			} else {
+				delta = -1
+			}
+		}
+		action.Status = nextStatus
+		action.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
+		setLatestActionOrder(&action, event)
+		if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey || event != nil {
+			if err := tx.Save(&action).Error; err != nil {
+				return ActionModel{}, 0, 0, err
+			}
+		}
+	}
+
+	if delta == 0 {
+		count, err := currentActionCount(tx, videoID, actionType)
+		return action, count, 0, err
+	}
+
+	count, err := updateActionStat(tx, videoID, actionType, delta)
+	if err == nil && actionType == domaininteraction.ActionTypeLike {
+		err = infravideo.AdjustContentStat(tx, authorID, 0, 0, delta, 0)
+	}
+	if err != nil {
+		return ActionModel{}, 0, 0, err
+	}
+	return action, count, delta, nil
+}
+
+func actionEventComesAfter(action ActionModel, event *domaininteraction.AcceptedActionEvent) bool {
+	if event == nil {
+		return false
+	}
+	latestOccurredAt := time.Time{}
+	if action.LatestEventOccurredAt != nil {
+		latestOccurredAt = *action.LatestEventOccurredAt
+	}
+	return domaininteraction.ActionEventComesAfter(
+		event.Version,
+		event.OccurredAt,
+		event.EventID,
+		action.LatestEventVersion,
+		latestOccurredAt,
+		idempotencyKeyValue(action.LatestEventID),
+	)
+}
+
+func setLatestActionOrder(action *ActionModel, event *domaininteraction.AcceptedActionEvent) {
+	if action == nil {
+		return
+	}
+	if event != nil {
+		occurredAt := event.OccurredAt.UTC().Truncate(time.Microsecond)
+		eventID := event.EventID
+		action.LatestEventVersion = event.Version
+		action.LatestEventOccurredAt = &occurredAt
+		action.LatestEventID = &eventID
+		return
+	}
+	occurredAt := time.Now().UTC().Truncate(time.Microsecond)
+	eventID := ""
+	action.LatestEventVersion++
+	action.LatestEventOccurredAt = &occurredAt
+	action.LatestEventID = &eventID
+}
+
+// BackfillActionEventOrder preserves existing action state as newer than delayed pre-migration events.
+func BackfillActionEventOrder(db *gorm.DB) error {
+	return db.Exec(`
+		UPDATE interaction_action
+		SET latest_event_version = COALESCE(latest_event_version, 0),
+		    latest_event_occurred_at = COALESCE(latest_event_occurred_at, updated_at),
+		    latest_event_id = COALESCE(latest_event_id, '')
+		WHERE latest_event_version IS NULL OR latest_event_occurred_at IS NULL OR latest_event_id IS NULL
+	`).Error
 }
 
 // actionStatusFromActive 将接口目标状态转换为数据库状态枚举。
@@ -201,7 +342,7 @@ func (r *Repository) CreateComment(ctx context.Context, comment *domaininteracti
 	var count int
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 评论只能写入已发布视频，锁定视频行可以避免状态变化时写入脏数据。
-		if err := lockPublishedVideo(tx, comment.VideoID); err != nil {
+		if _, err := lockPublishedVideo(tx, comment.VideoID); err != nil {
 			return err
 		}
 
@@ -294,12 +435,23 @@ func (r *Repository) FindCommentByID(ctx context.Context, commentID int64) (*dom
 
 // ListComments 按 created_at 和 id 倒序查询视频评论，支持稳定游标分页。
 func (r *Repository) ListComments(ctx context.Context, videoID int64, cursor *domaininteraction.CommentCursor, limit int) ([]*domaininteraction.Comment, error) {
+	if err := r.requirePublicPublishedVideo(ctx, videoID); err != nil {
+		return nil, err
+	}
+
 	var models []commentWithUserModel
 	query := r.db.WithContext(ctx).
 		Table("interaction_comment AS c").
 		Select(commentWithUserSelect()).
 		Joins("LEFT JOIN account AS a ON a.id = c.user_id").
-		Where("c.video_id = ? AND c.status = ?", videoID, domaininteraction.CommentStatusNormal)
+		Joins("JOIN video AS v ON v.id = c.video_id").
+		Where(
+			"c.video_id = ? AND c.status = ? AND v.status = ? AND v.visibility = ?",
+			videoID,
+			domaininteraction.CommentStatusNormal,
+			domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic,
+		)
 
 	if cursor != nil {
 		// 游标条件和排序字段一致，保证翻页时没有重复项。
@@ -320,6 +472,16 @@ func (r *Repository) ListComments(ctx context.Context, videoID int64, cursor *do
 		comments = append(comments, restoreComment(model))
 	}
 	return comments, nil
+}
+
+func (r *Repository) requirePublicPublishedVideo(ctx context.Context, videoID int64) error {
+	var video infravideo.VideoModel
+	err := r.db.WithContext(ctx).
+		Select("id").
+		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Take(&video).
+		Error
+	return mapVideoError(err)
 }
 
 // DeleteComment 软删除评论，并根据操作者身份校验删除权限。
@@ -401,13 +563,45 @@ func (r *Repository) commentCount(ctx context.Context, videoID int64) (int, erro
 }
 
 // lockPublishedVideo 校验并锁定已发布视频，互动写入前都会经过这里。
-func lockPublishedVideo(tx *gorm.DB, videoID int64) error {
+func lockPublishedVideo(tx *gorm.DB, videoID int64) (*infravideo.VideoModel, error) {
 	var video infravideo.VideoModel
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND status = ?", videoID, domainvideo.StatusPublished).
+		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Take(&video).
 		Error
-	return mapVideoError(err)
+	if err != nil {
+		return nil, mapVideoError(err)
+	}
+	return &video, nil
+}
+
+func lockAcceptedActionVideo(tx *gorm.DB, videoID int64) (*infravideo.VideoModel, error) {
+	var video infravideo.VideoModel
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND status <> ?", videoID, domainvideo.StatusDeleted).
+		Take(&video).
+		Error
+	if err != nil {
+		return nil, mapVideoError(err)
+	}
+	return &video, nil
+}
+
+func (r *Repository) ListActiveActionVideoIDs(ctx context.Context, userID int64, actionType string, cursor *domaininteraction.ActionCursor, limit int) ([]domaininteraction.ActionVideo, error) {
+	var models []ActionModel
+	query := r.db.WithContext(ctx).
+		Where("user_id = ? AND action_type = ? AND status = ?", userID, actionType, domaininteraction.ActionStatusActive)
+	if cursor != nil {
+		query = query.Where("(updated_at < ? OR (updated_at = ? AND video_id < ?))", cursor.UpdatedAt, cursor.UpdatedAt, cursor.VideoID)
+	}
+	if err := query.Order("updated_at DESC").Order("video_id DESC").Limit(limit).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	items := make([]domaininteraction.ActionVideo, 0, len(models))
+	for _, model := range models {
+		items = append(items, domaininteraction.ActionVideo{VideoID: model.VideoID, UpdatedAt: model.UpdatedAt})
+	}
+	return items, nil
 }
 
 // updateActionStat 根据行为类型选择要更新的统计字段。
@@ -532,6 +726,30 @@ func idempotencyKeyValue(value *string) string {
 	return *value
 }
 
+func actionEventModelFromDomain(event *domaininteraction.AcceptedActionEvent) ActionEventModel {
+	return ActionEventModel{
+		EventID:        event.EventID,
+		UserID:         event.UserID,
+		VideoID:        event.VideoID,
+		ActionType:     event.ActionType,
+		Active:         event.Active,
+		IdempotencyKey: idempotencyKeyPtr(event.IdempotencyKey),
+		Version:        event.Version,
+		OccurredAt:     event.OccurredAt,
+	}
+}
+
+func sameAcceptedActionEvent(left ActionEventModel, right ActionEventModel) bool {
+	return left.EventID == right.EventID &&
+		left.UserID == right.UserID &&
+		left.VideoID == right.VideoID &&
+		left.ActionType == right.ActionType &&
+		left.Active == right.Active &&
+		idempotencyKeyValue(left.IdempotencyKey) == idempotencyKeyValue(right.IdempotencyKey) &&
+		left.Version == right.Version &&
+		left.OccurredAt.Equal(right.OccurredAt)
+}
+
 // mapVideoError 把 GORM 找不到记录转换为互动领域的视频不存在错误。
 func mapVideoError(err error) error {
 	if err == nil {
@@ -555,3 +773,4 @@ func mapUserError(err error) error {
 }
 
 var _ domaininteraction.Repository = (*Repository)(nil)
+var _ domaininteraction.AcceptedActionEventRepository = (*Repository)(nil)

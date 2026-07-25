@@ -243,6 +243,12 @@ export interface PublicProfileInput {
   followingCount?: number;
   follower_count?: number;
   followerCount?: number;
+  account?: string;
+  gender?: 0 | 1 | 2 | 3;
+  public_work_count?: number;
+  received_like_count?: number;
+  collection_count?: number;
+  liked_videos_public?: boolean;
 }
 
 export function openPublicProfile(profile: PublicProfileInput | null | undefined, onNavigate: (path: Route) => void): void {
@@ -260,10 +266,16 @@ export function normalizePublicProfile(profile: PublicProfileInput | null | unde
   const followerCount = valueOrUndefined(profile.follower_count ?? profile.followerCount);
   return {
     id,
+    account: profile.account,
     nickname: profile.nickname || profile.author || profile.user_nickname || `用户_${id}`,
     avatar_url: profile.avatar_url || profile.user_avatar_url || profile.author_avatar_url || image.currentUser,
     bio: profile.bio || profile.description || "",
     work_count: valueOrUndefined(profile.work_count ?? profile.workCount),
+    gender: profile.gender,
+    public_work_count: valueOrUndefined(profile.public_work_count),
+    received_like_count: valueOrUndefined(profile.received_like_count),
+    collection_count: valueOrUndefined(profile.collection_count),
+    liked_videos_public: profile.liked_videos_public,
     ...(followingCount === undefined ? {} : { following_count: followingCount }),
     ...(followerCount === undefined ? {} : { follower_count: followerCount })
   };

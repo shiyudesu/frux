@@ -43,7 +43,7 @@ func (r *Repository) ListPreloadVideos(ctx context.Context, currentVideoID int64
 	query := r.db.WithContext(ctx).
 		Table("video AS v").
 		Select("v.id AS video_id, v.media_url, v.cover_url").
-		Where("v.status = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished)
+		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic)
 
 	if currentVideoID > 0 {
 		current, err := r.findCurrentVideo(ctx, currentVideoID)
@@ -109,7 +109,7 @@ func (r *Repository) findCurrentVideo(ctx context.Context, videoID int64) (*curr
 	err := r.db.WithContext(ctx).
 		Table("video AS v").
 		Select("v.id AS video_id, v.published_at").
-		Where("v.id = ? AND v.status = ? AND v.published_at IS NOT NULL", videoID, domainvideo.StatusPublished).
+		Where("v.id = ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Take(&model).
 		Error
 	if err != nil {

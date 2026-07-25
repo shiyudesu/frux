@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	applicationaccount "GCFeed/internal/application/account"
 	domainaccount "GCFeed/internal/domain/account"
@@ -14,21 +17,29 @@ import (
 	interfaceshttpaccount "GCFeed/internal/interfaces/http/account"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 type accountProfileResponse struct {
-	ID             int64  `json:"id"`
-	Account        string `json:"account"`
-	Nickname       string `json:"nickname"`
-	AvatarURL      string `json:"avatar_url"`
-	Bio            string `json:"bio"`
-	Status         int    `json:"status"`
-	Role           string `json:"role"`
-	FollowingCount int    `json:"following_count"`
-	FollowerCount  int    `json:"follower_count"`
-	WorkCount      int    `json:"work_count"`
+	ID                int64  `json:"id"`
+	Account           string `json:"account"`
+	Nickname          string `json:"nickname"`
+	AvatarURL         string `json:"avatar_url"`
+	Bio               string `json:"bio"`
+	Status            int    `json:"status"`
+	Role              string `json:"role"`
+	FollowingCount    int    `json:"following_count"`
+	FollowerCount     int    `json:"follower_count"`
+	WorkCount         int    `json:"work_count"`
+	Gender            int    `json:"gender"`
+	ReceivedLikeCount int    `json:"received_like_count"`
+	PublicWorkCount   int    `json:"public_work_count"`
+	ProfileSettings   *struct {
+		LikedVisibility    string `json:"liked_visibility"`
+		FavoriteVisibility string `json:"favorite_visibility"`
+	} `json:"profile_settings"`
 }
 
 type accountTokenResponse struct {
@@ -49,10 +60,14 @@ type publicAccountProfileResponse struct {
 
 // memoryAccountRepo 是账号测试用的内存仓储，模拟真实 Repository 的唯一账号索引。
 type memoryAccountRepo struct {
-	mu        sync.Mutex
-	nextID    int64
-	byID      map[int64]*domainaccount.User
-	byAccount map[string]int64
+	mu               sync.Mutex
+	nextID           int64
+	byID             map[int64]*domainaccount.User
+	byAccount        map[string]int64
+	settings         map[int64]*domainaccount.ProfileSetting
+	failAtomicUpdate bool
+	atomicReady      *sync.WaitGroup
+	atomicRelease    <-chan struct{}
 }
 
 func newMemoryAccountRepo() *memoryAccountRepo {
@@ -60,6 +75,7 @@ func newMemoryAccountRepo() *memoryAccountRepo {
 		nextID:    1,
 		byID:      map[int64]*domainaccount.User{},
 		byAccount: map[string]int64{},
+		settings:  map[int64]*domainaccount.ProfileSetting{},
 	}
 }
 
@@ -76,6 +92,7 @@ func (r *memoryAccountRepo) Save(ctx context.Context, user *domainaccount.User) 
 	r.nextID++
 	r.byID[user.ID] = cloneUser(user)
 	r.byAccount[user.Account] = user.ID
+	r.settings[user.ID], _ = domainaccount.NewDefaultProfileSetting(user.ID)
 	return nil
 }
 
@@ -104,18 +121,100 @@ func (r *memoryAccountRepo) FindByID(ctx context.Context, id int64) (*domainacco
 }
 
 // UpdateProfile 只更新资料字段，与真实仓储保持同样的行为边界。
-func (r *memoryAccountRepo) UpdateProfile(ctx context.Context, user *domainaccount.User) error {
+func (r *memoryAccountRepo) UpdateProfile(_ context.Context, update domainaccount.ProfileUpdate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	stored, exists := r.byID[user.ID]
+	stored, exists := r.byID[update.UserID]
 	if !exists {
 		return domainaccount.ErrUserNotFound
 	}
-	stored.Nickname = user.Nickname
-	stored.AvatarURL = user.AvatarURL
-	stored.Bio = user.Bio
+	applyProfileUpdate(stored, update)
 	return nil
+}
+
+func (r *memoryAccountRepo) UpdateProfileAndSetting(_ context.Context, profile *domainaccount.ProfileUpdate, setting *domainaccount.ProfileSettingUpdate) error {
+	if r.atomicReady != nil {
+		r.atomicReady.Done()
+		<-r.atomicRelease
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failAtomicUpdate {
+		return errors.New("forced atomic update failure")
+	}
+	if profile != nil {
+		if _, exists := r.byID[profile.UserID]; !exists {
+			return domainaccount.ErrUserNotFound
+		}
+	}
+	if setting != nil {
+		if _, exists := r.byID[setting.UserID]; !exists {
+			return domainaccount.ErrUserNotFound
+		}
+	}
+	if profile != nil {
+		applyProfileUpdate(r.byID[profile.UserID], *profile)
+	}
+	if setting != nil {
+		stored := r.settings[setting.UserID]
+		if stored == nil {
+			stored, _ = domainaccount.NewDefaultProfileSetting(setting.UserID)
+			r.settings[setting.UserID] = stored
+		}
+		applyProfileSettingUpdate(stored, *setting)
+	}
+	return nil
+}
+
+func (r *memoryAccountRepo) GetProfileSetting(ctx context.Context, userID int64) (*domainaccount.ProfileSetting, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	setting, exists := r.settings[userID]
+	if !exists {
+		return domainaccount.NewDefaultProfileSetting(userID)
+	}
+	cloned := *setting
+	return &cloned, nil
+}
+
+func (r *memoryAccountRepo) UpdateProfileSetting(_ context.Context, update domainaccount.ProfileSettingUpdate) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.byID[update.UserID]; !exists {
+		return domainaccount.ErrUserNotFound
+	}
+	stored := r.settings[update.UserID]
+	if stored == nil {
+		stored, _ = domainaccount.NewDefaultProfileSetting(update.UserID)
+		r.settings[update.UserID] = stored
+	}
+	applyProfileSettingUpdate(stored, update)
+	return nil
+}
+
+func applyProfileUpdate(user *domainaccount.User, update domainaccount.ProfileUpdate) {
+	if update.Nickname != nil {
+		user.Nickname = *update.Nickname
+	}
+	if update.AvatarURL != nil {
+		user.AvatarURL = *update.AvatarURL
+	}
+	if update.Bio != nil {
+		user.Bio = *update.Bio
+	}
+	if update.Gender != nil {
+		user.Gender = *update.Gender
+	}
+}
+
+func applyProfileSettingUpdate(setting *domainaccount.ProfileSetting, update domainaccount.ProfileSettingUpdate) {
+	if update.LikedVisibility != nil {
+		setting.LikedVisibility = *update.LikedVisibility
+	}
+	if update.FavoriteVisibility != nil {
+		setting.FavoriteVisibility = *update.FavoriteVisibility
+	}
 }
 
 func (r *memoryAccountRepo) SetStatsForTest(userID int64, followingCount int, followerCount int, workCount int) {
@@ -182,9 +281,11 @@ func TestAccountAPIFlow(t *testing.T) {
 	if token.AccessToken == "" || token.TokenType != "Bearer" || token.ExpiresInSeconds != 900 {
 		t.Fatalf("unexpected login response: %+v", token)
 	}
+	assertOnlyAssetTokenCookieSet(t, loginResponse)
 
 	meResponse := performJSONRequest(router, http.MethodGet, "/api/users/me", "", token.AccessToken)
 	requireStatus(t, meResponse, http.StatusOK)
+	assertNoAssetCookiesSet(t, meResponse)
 
 	var profile accountProfileResponse
 	decodeJSON(t, meResponse, &profile)
@@ -200,6 +301,7 @@ func TestAccountAPIFlow(t *testing.T) {
 		token.AccessToken,
 	)
 	requireStatus(t, updateResponse, http.StatusOK)
+	assertNoAssetCookiesSet(t, updateResponse)
 
 	var updated accountProfileResponse
 	decodeJSON(t, updateResponse, &updated)
@@ -209,6 +311,78 @@ func TestAccountAPIFlow(t *testing.T) {
 
 	logoutResponse := performJSONRequest(router, http.MethodDelete, "/api/sessions/current", "", token.AccessToken)
 	requireStatus(t, logoutResponse, http.StatusNoContent)
+	assertNoAssetCookiesSet(t, logoutResponse)
+
+	logoutWithoutToken := performJSONRequest(router, http.MethodDelete, "/api/sessions/current", "", "")
+	requireStatus(t, logoutWithoutToken, http.StatusNoContent)
+	assertNoAssetCookiesSet(t, logoutWithoutToken)
+
+	logoutWithExpiredToken := performJSONRequest(router, http.MethodDelete, "/api/sessions/current", "", "expired-token")
+	requireStatus(t, logoutWithExpiredToken, http.StatusNoContent)
+	assertNoAssetCookiesSet(t, logoutWithExpiredToken)
+}
+
+func TestStaleLogoutResponseCannotClearNewerLoginAssetCookie(t *testing.T) {
+	router := server.New()
+	jwtManager, err := infrajwt.NewManager("late-response-secret", "15m")
+	if err != nil {
+		t.Fatalf("new jwt manager: %v", err)
+	}
+	handler := interfaceshttpaccount.New(applicationaccount.New(newMemoryAccountRepo(), jwtManager))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	router.DELETE("/api/sessions/current", func(ctx context.Context, c *app.RequestContext) {
+		close(entered)
+		<-release
+		handler.Logout(ctx, c)
+	})
+	router.POST("/api/sessions", func(_ context.Context, c *app.RequestContext) {
+		interfaceshttpmiddleware.SetAssetTokenCookie(c, "newer-login-token", time.Now().Add(15*time.Minute))
+		c.Status(http.StatusOK)
+	})
+
+	token, err := jwtManager.SignAccessToken(42, domainaccount.RoleUser)
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	logoutDone := make(chan *ut.ResponseRecorder, 1)
+	go func() {
+		logoutDone <- performJSONRequest(router, http.MethodDelete, "/api/sessions/current", "", token)
+	}()
+	<-entered
+
+	newerLogin := performJSONRequest(router, http.MethodPost, "/api/sessions", "", "")
+	requireStatus(t, newerLogin, http.StatusOK)
+	assertOnlyAssetTokenCookieSet(t, newerLogin)
+	close(release)
+
+	staleLogout := <-logoutDone
+	requireStatus(t, staleLogout, http.StatusNoContent)
+	assertNoAssetCookiesSet(t, staleLogout)
+}
+
+func assertOnlyAssetTokenCookieSet(t *testing.T, response *ut.ResponseRecorder) {
+	t.Helper()
+	cookies := response.Header().GetAll("Set-Cookie")
+	if len(cookies) != 1 || !strings.Contains(cookies[0], interfaceshttpmiddleware.AssetTokenCookieName+"=") {
+		t.Fatalf("login did not set exactly the HttpOnly asset token cookie: %v", cookies)
+	}
+	if !strings.Contains(strings.ToLower(cookies[0]), "httponly") {
+		t.Fatalf("asset token cookie is not HttpOnly: %v", cookies)
+	}
+	if strings.Contains(cookies[0], interfaceshttpmiddleware.AssetActiveCookieName+"=") {
+		t.Fatalf("server must not activate the client-controlled asset marker: %v", cookies)
+	}
+}
+
+func assertNoAssetCookiesSet(t *testing.T, response *ut.ResponseRecorder) {
+	t.Helper()
+	for _, cookie := range response.Header().GetAll("Set-Cookie") {
+		if strings.Contains(cookie, interfaceshttpmiddleware.AssetTokenCookieName+"=") ||
+			strings.Contains(cookie, interfaceshttpmiddleware.AssetActiveCookieName+"=") {
+			t.Fatalf("authenticated response unexpectedly refreshed asset cookies: %v", response.Header().GetAll("Set-Cookie"))
+		}
+	}
 }
 
 // TestAccountAPIValidation 覆盖账号接口的常见参数错误和未登录访问。
@@ -276,6 +450,152 @@ func TestPublicAccountProfile(t *testing.T) {
 	if profile.ID != created.ID || profile.Nickname != "creator name" || profile.FollowingCount != 7 || profile.FollowerCount != 11 || profile.WorkCount != 3 {
 		t.Fatalf("unexpected public profile response: %+v", profile)
 	}
+
+}
+
+func TestProfileGenderAndSettings(t *testing.T) {
+	router := newAccountRouter(t)
+	token := registerAndLogin(t, router)
+
+	meResponse := performJSONRequest(router, http.MethodGet, "/api/users/me", "", token)
+	requireStatus(t, meResponse, http.StatusOK)
+	var me accountProfileResponse
+	decodeJSON(t, meResponse, &me)
+	if me.ProfileSettings == nil || me.ProfileSettings.LikedVisibility != domainaccount.ProfileVisibilityPrivate || me.ProfileSettings.FavoriteVisibility != domainaccount.ProfileVisibilityPrivate {
+		t.Fatalf("unexpected default settings: %+v", me.ProfileSettings)
+	}
+
+	updateResponse := performJSONRequest(router, http.MethodPatch, "/api/users/me", `{"gender":2}`, token)
+	requireStatus(t, updateResponse, http.StatusOK)
+	var updated accountProfileResponse
+	decodeJSON(t, updateResponse, &updated)
+	if updated.Gender != domainaccount.GenderFemale {
+		t.Fatalf("unexpected gender: %d", updated.Gender)
+	}
+
+	invalidGender := performJSONRequest(router, http.MethodPatch, "/api/users/me", `{"gender":9}`, token)
+	requireStatus(t, invalidGender, http.StatusBadRequest)
+
+	settingsResponse := performJSONRequest(router, http.MethodPatch, "/api/users/me/profile-settings", `{"liked_visibility":"public"}`, token)
+	requireStatus(t, settingsResponse, http.StatusOK)
+	var settings map[string]string
+	decodeJSON(t, settingsResponse, &settings)
+	if settings["liked_visibility"] != domainaccount.ProfileVisibilityPublic || settings["favorite_visibility"] != domainaccount.ProfileVisibilityPrivate {
+		t.Fatalf("unexpected updated settings: %+v", settings)
+	}
+	favoriteResponse := performJSONRequest(router, http.MethodPatch, "/api/users/me/profile-settings", `{"favorite_visibility":"public"}`, token)
+	requireStatus(t, favoriteResponse, http.StatusOK)
+	likedResponse := performJSONRequest(router, http.MethodPatch, "/api/users/me/profile-settings", `{"liked_visibility":"private"}`, token)
+	requireStatus(t, likedResponse, http.StatusOK)
+	decodeJSON(t, likedResponse, &settings)
+	if settings["liked_visibility"] != domainaccount.ProfileVisibilityPrivate || settings["favorite_visibility"] != domainaccount.ProfileVisibilityPublic {
+		t.Fatalf("partial settings update overwrote an unrelated field: %+v", settings)
+	}
+
+	invalidSetting := performJSONRequest(router, http.MethodPatch, "/api/users/me/profile-settings", `{"favorite_visibility":"friends"}`, token)
+	requireStatus(t, invalidSetting, http.StatusBadRequest)
+
+	atomicUpdate := performJSONRequest(
+		router,
+		http.MethodPatch,
+		"/api/users/me",
+		`{"nickname":"atomic nickname","bio":"atomic bio","gender":3,"profile_settings":{"liked_visibility":"private","favorite_visibility":"private"}}`,
+		token,
+	)
+	requireStatus(t, atomicUpdate, http.StatusOK)
+	var atomicProfile accountProfileResponse
+	decodeJSON(t, atomicUpdate, &atomicProfile)
+	if atomicProfile.Nickname != "atomic nickname" || atomicProfile.Bio != "atomic bio" || atomicProfile.Gender != domainaccount.GenderOther {
+		t.Fatalf("unexpected atomic profile response: %+v", atomicProfile)
+	}
+	if atomicProfile.ProfileSettings == nil || atomicProfile.ProfileSettings.LikedVisibility != domainaccount.ProfileVisibilityPrivate {
+		t.Fatalf("unexpected atomic settings response: %+v", atomicProfile.ProfileSettings)
+	}
+
+	publicResponse := performJSONRequest(router, http.MethodGet, "/api/users/1", "", "")
+	requireStatus(t, publicResponse, http.StatusOK)
+	var publicPayload map[string]json.RawMessage
+	decodeJSON(t, publicResponse, &publicPayload)
+	if _, exists := publicPayload["profile_settings"]; exists {
+		t.Fatalf("public response exposed profile settings: %s", publicResponse.Body.String())
+	}
+}
+
+func TestAtomicProfileUpdateRollsBackOnFailure(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	token := registerAndLogin(t, router)
+	repo.failAtomicUpdate = true
+
+	response := performJSONRequest(
+		router,
+		http.MethodPatch,
+		"/api/users/me",
+		`{"nickname":"must not persist","profile_settings":{"liked_visibility":"public"}}`,
+		token,
+	)
+	requireStatus(t, response, http.StatusInternalServerError)
+
+	repo.failAtomicUpdate = false
+	profileResponse := performJSONRequest(router, http.MethodGet, "/api/users/me", "", token)
+	requireStatus(t, profileResponse, http.StatusOK)
+	var profile accountProfileResponse
+	decodeJSON(t, profileResponse, &profile)
+	if profile.Nickname != "login tester" {
+		t.Fatalf("profile changed after failed atomic update: %+v", profile)
+	}
+	if profile.ProfileSettings == nil || profile.ProfileSettings.LikedVisibility != domainaccount.ProfileVisibilityPrivate {
+		t.Fatalf("settings changed after failed atomic update: %+v", profile.ProfileSettings)
+	}
+}
+
+func TestConcurrentPartialProfileUpdatesPreserveUnrelatedFields(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	token := registerAndLogin(t, router)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	release := make(chan struct{})
+	repo.atomicReady = &ready
+	repo.atomicRelease = release
+
+	responses := make(chan *ut.ResponseRecorder, 2)
+	go func() {
+		responses <- performJSONRequest(
+			router,
+			http.MethodPatch,
+			"/api/users/me",
+			`{"nickname":"concurrent nickname","profile_settings":{"liked_visibility":"public"}}`,
+			token,
+		)
+	}()
+	go func() {
+		responses <- performJSONRequest(
+			router,
+			http.MethodPatch,
+			"/api/users/me",
+			`{"bio":"concurrent bio","profile_settings":{"favorite_visibility":"public"}}`,
+			token,
+		)
+	}()
+	ready.Wait()
+	close(release)
+	for range 2 {
+		requireStatus(t, <-responses, http.StatusOK)
+	}
+	repo.atomicReady = nil
+	repo.atomicRelease = nil
+
+	response := performJSONRequest(router, http.MethodGet, "/api/users/me", "", token)
+	requireStatus(t, response, http.StatusOK)
+	var profile accountProfileResponse
+	decodeJSON(t, response, &profile)
+	if profile.Nickname != "concurrent nickname" || profile.Bio != "concurrent bio" {
+		t.Fatalf("concurrent partial profile update lost a field: %+v", profile)
+	}
+	if profile.ProfileSettings == nil ||
+		profile.ProfileSettings.LikedVisibility != domainaccount.ProfileVisibilityPublic ||
+		profile.ProfileSettings.FavoriteVisibility != domainaccount.ProfileVisibilityPublic {
+		t.Fatalf("concurrent partial settings update lost a field: %+v", profile.ProfileSettings)
+	}
 }
 
 // registerAndLogin 为需要登录态的测试准备可用 access token。
@@ -324,7 +644,7 @@ func newAccountRouterWithRepo(t *testing.T) (*server.Hertz, *memoryAccountRepo) 
 		t.Fatalf("new jwt manager: %v", err)
 	}
 	repo := newMemoryAccountRepo()
-	service := applicationaccount.New(repo, jwtManager)
+	service := applicationaccount.New(repo, jwtManager, applicationaccount.WithProfileSettingRepository(repo))
 	handler := interfaceshttpaccount.New(service)
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 
@@ -332,12 +652,14 @@ func newAccountRouterWithRepo(t *testing.T) (*server.Hertz, *memoryAccountRepo) 
 	// 测试路由保持和正式 RESTful 路由一致，便于测试覆盖真实接口路径。
 	sessions := api.Group("/sessions")
 	sessions.POST("", handler.Login)
-	sessions.DELETE("/current", authMiddleware, handler.Logout)
+	sessions.DELETE("/current", handler.Logout)
 
 	users := api.Group("/users")
 	users.POST("", handler.Register)
 	users.GET("/me", authMiddleware, handler.Me)
 	users.PATCH("/me", authMiddleware, handler.UpdateMe)
+	users.GET("/me/profile-settings", authMiddleware, handler.GetProfileSettings)
+	users.PATCH("/me/profile-settings", authMiddleware, handler.UpdateProfileSettings)
 	users.GET("/:userId", handler.Get)
 
 	return router, repo

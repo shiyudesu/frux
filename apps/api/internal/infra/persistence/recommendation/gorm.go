@@ -53,7 +53,7 @@ func (r *Repository) ListCandidatePool(ctx context.Context, userID int64, limit 
 			userID,
 			time.Now().Add(-domainrecommendation.RecentExposureWindow),
 		).
-		Where("v.status = ? AND v.published_at IS NOT NULL AND e.video_id IS NULL", domainvideo.StatusPublished).
+		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL AND e.video_id IS NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Order("hot_score DESC").
 		Order("v.published_at DESC").
 		Order("v.id DESC").
@@ -280,7 +280,7 @@ func ensurePublishedVideo(tx *gorm.DB, videoID int64) error {
 	}
 	err := tx.Table("video").
 		Select("id").
-		Where("id = ? AND status = ?", videoID, domainvideo.StatusPublished).
+		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Take(&item).
 		Error
 	if err != nil {

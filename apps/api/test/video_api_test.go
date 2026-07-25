@@ -54,6 +54,19 @@ type memoryVideoPublisher struct {
 	events []*applicationvideo.PublishedEvent
 }
 
+type localAssetOwnershipStub map[string]struct {
+	ownerID int64
+	kind    string
+}
+
+func (s localAssetOwnershipStub) ValidateLocalAssetOwner(_ context.Context, ownerID int64, assetURL, kind string) error {
+	asset, exists := s[assetURL]
+	if !exists || asset.ownerID != ownerID || asset.kind != kind {
+		return domainvideo.ErrLocalAssetPermissionDenied
+	}
+	return nil
+}
+
 func newMemoryVideoRepo() *memoryVideoRepo {
 	return &memoryVideoRepo{
 		nextID:        1,
@@ -346,6 +359,77 @@ func TestVideoAPIValidation(t *testing.T) {
 	requireStatus(t, badPaginationResponse, http.StatusBadRequest)
 }
 
+func TestVideoCreateEnforcesLocalUploadOwnership(t *testing.T) {
+	ownership := localAssetOwnershipStub{
+		"/uploads/video/owned.mp4": {ownerID: 42, kind: domainvideo.LocalAssetKindVideo},
+		"/uploads/cover/owned.jpg": {ownerID: 42, kind: domainvideo.LocalAssetKindCover},
+	}
+	router, jwtManager, repo := newVideoRouterWithOptions(
+		t,
+		applicationvideo.WithLocalAssetOwnership(ownership),
+	)
+	ownerToken := signTestToken(t, jwtManager, 42)
+	attackerToken := signTestToken(t, jwtManager, 77)
+	body := `{"title":"owned local upload","media_url":"/uploads/video/owned.mp4","cover_url":"/uploads/cover/owned.jpg"}`
+
+	ownerResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos", body, ownerToken, "owned-local")
+	requireStatus(t, ownerResponse, http.StatusCreated)
+
+	attackerResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos", body, attackerToken, "attacker-local")
+	requireStatus(t, attackerResponse, http.StatusForbidden)
+
+	rejections := []struct {
+		name   string
+		body   string
+		status int
+	}{
+		{
+			name:   "legacy unowned path",
+			body:   `{"title":"legacy","media_url":"/uploads/legacy.mp4","cover_url":"/uploads/legacy.jpg"}`,
+			status: http.StatusBadRequest,
+		},
+		{
+			name:   "file kind",
+			body:   `{"title":"file","media_url":"/uploads/file/owned.mp4","cover_url":"/uploads/cover/owned.jpg"}`,
+			status: http.StatusBadRequest,
+		},
+		{
+			name:   "avatar kind",
+			body:   `{"title":"avatar","media_url":"/uploads/video/owned.mp4","cover_url":"/uploads/avatar/owned.jpg"}`,
+			status: http.StatusBadRequest,
+		},
+		{
+			name:   "swapped kinds",
+			body:   `{"title":"swapped","media_url":"/uploads/cover/owned.jpg","cover_url":"/uploads/video/owned.mp4"}`,
+			status: http.StatusBadRequest,
+		},
+		{
+			name:   "unowned protected paths",
+			body:   `{"title":"unowned","media_url":"/uploads/video/unowned.mp4","cover_url":"/uploads/cover/unowned.jpg"}`,
+			status: http.StatusForbidden,
+		},
+	}
+	for index, testCase := range rejections {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := performVideoJSONRequest(
+				router,
+				http.MethodPost,
+				"/api/videos",
+				testCase.body,
+				ownerToken,
+				fmt.Sprintf("local-rejection-%d", index),
+			)
+			requireStatus(t, response, testCase.status)
+		})
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if len(repo.byID) != 1 {
+		t.Fatalf("rejected local upload created a video; stored videos=%d", len(repo.byID))
+	}
+}
+
 // newVideoRouter 只装配视频相关路由，便于视频模块独立测试。
 func newVideoRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	router, jwtManager, _ := newVideoRouterWithPublisher(t, nil)
@@ -353,6 +437,14 @@ func newVideoRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 }
 
 func newVideoRouterWithPublisher(t *testing.T, publisher applicationvideo.PublishedEventPublisher) (*server.Hertz, *infrajwt.Manager, *memoryVideoRepo) {
+	options := []applicationvideo.Option{}
+	if publisher != nil {
+		options = append(options, applicationvideo.WithPublishedEventPublisher(publisher))
+	}
+	return newVideoRouterWithOptions(t, options...)
+}
+
+func newVideoRouterWithOptions(t *testing.T, options ...applicationvideo.Option) (*server.Hertz, *infrajwt.Manager, *memoryVideoRepo) {
 	t.Helper()
 
 	router := server.New()
@@ -363,10 +455,6 @@ func newVideoRouterWithPublisher(t *testing.T, publisher applicationvideo.Publis
 	}
 
 	repo := newMemoryVideoRepo()
-	options := []applicationvideo.Option{}
-	if publisher != nil {
-		options = append(options, applicationvideo.WithPublishedEventPublisher(publisher))
-	}
 	service := applicationvideo.New(repo, options...)
 	handler := interfaceshttpvideo.New(service)
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)

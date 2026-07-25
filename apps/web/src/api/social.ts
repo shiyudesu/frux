@@ -3,6 +3,7 @@ import type {
   Comment,
   CommentListResponse,
   FollowResponse,
+  FollowStateResponse,
   InteractionActionResponse,
   RelationListResponse
 } from "../types";
@@ -77,6 +78,10 @@ export function followUser(
       "Idempotency-Key": `${keyPrefix}-${targetUserID}-${Date.now()}`
     }
   });
+}
+
+export function fetchFollowState(token: string, targetUserID: number): Promise<FollowStateResponse> {
+  return apiRequest<FollowStateResponse>(`/api/users/me/following/${targetUserID}`, { token });
 }
 
 export function fetchComments(videoID: number): Promise<CommentListResponse> {

@@ -56,6 +56,12 @@ type FollowResult struct {
 	FollowerCount  int
 }
 
+type FollowStateResult struct {
+	UserID       int64
+	TargetUserID int64
+	Following    bool
+}
+
 // ListResult 是关注列表或粉丝列表的游标分页结果。
 type ListResult struct {
 	Items      []*domainrelation.UserItem
@@ -99,6 +105,21 @@ func (s *Service) Follow(ctx context.Context, userID int64, targetUserID int64, 
 // Unfollow 设置当前用户取消关注目标用户。
 func (s *Service) Unfollow(ctx context.Context, userID int64, targetUserID int64, idempotencyKey string) (*FollowResult, error) {
 	return s.setFollow(ctx, userID, targetUserID, false, idempotencyKey)
+}
+
+// GetFollowState directly reads the current user's relationship to one target.
+func (s *Service) GetFollowState(ctx context.Context, userID int64, targetUserID int64) (*FollowStateResult, error) {
+	if _, err := domainrelation.NewFollow(userID, targetUserID, ""); err != nil {
+		return nil, err
+	}
+	following, err := s.repo.IsFollowing(ctx, userID, targetUserID)
+	if err != nil {
+		if errors.Is(err, domainrelation.ErrTargetUserNotFound) {
+			return nil, domainrelation.ErrTargetUserNotFound
+		}
+		return nil, ErrLoadRelationFailed
+	}
+	return &FollowStateResult{UserID: userID, TargetUserID: targetUserID, Following: following}, nil
 }
 
 // ListFollowing 查询当前用户的关注列表。

@@ -28,6 +28,12 @@ type relationFollowAPIResponse struct {
 	FollowerCount  int   `json:"follower_count"`
 }
 
+type relationFollowStateAPIResponse struct {
+	UserID       int64 `json:"user_id"`
+	TargetUserID int64 `json:"target_user_id"`
+	Following    bool  `json:"following"`
+}
+
 type relationListAPIResponse struct {
 	Items      []relationUserAPIResponse `json:"items"`
 	NextCursor string                    `json:"next_cursor"`
@@ -163,6 +169,16 @@ func (r *memoryRelationRepo) SetFollow(ctx context.Context, userID int64, target
 	return cloneFollow(follow), cloneStat(r.ensureStat(userID)), cloneStat(r.ensureStat(targetUserID)), nil
 }
 
+func (r *memoryRelationRepo) IsFollowing(ctx context.Context, userID int64, targetUserID int64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.userActive(targetUserID) {
+		return false, domainrelation.ErrTargetUserNotFound
+	}
+	follow := r.follows[memoryRelationKey(userID, targetUserID)]
+	return follow != nil && follow.Active(), nil
+}
+
 // ListFollowing 模拟关注列表游标分页。
 func (r *memoryRelationRepo) ListFollowing(ctx context.Context, userID int64, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.UserItem, error) {
 	r.mu.Lock()
@@ -228,6 +244,13 @@ func TestRelationFollowFlow(t *testing.T) {
 	if followed.UserID != 42 || followed.TargetUserID != 77 || !followed.Following || followed.FollowingCount != 1 || followed.FollowerCount != 1 {
 		t.Fatalf("unexpected follow response: %+v", followed)
 	}
+	stateResponse := performJSONRequest(router, http.MethodGet, "/api/users/me/following/77", "", token)
+	requireStatus(t, stateResponse, http.StatusOK)
+	var state relationFollowStateAPIResponse
+	decodeJSON(t, stateResponse, &state)
+	if state.UserID != 42 || state.TargetUserID != 77 || !state.Following {
+		t.Fatalf("unexpected direct follow state: %+v", state)
+	}
 
 	replayResponse := performVideoJSONRequest(router, http.MethodPut, "/api/users/me/following/77", "", token, "follow-1")
 	requireStatus(t, replayResponse, http.StatusOK)
@@ -245,6 +268,12 @@ func TestRelationFollowFlow(t *testing.T) {
 	decodeJSON(t, unfollowResponse, &unfollowed)
 	if unfollowed.Following || unfollowed.FollowingCount != 0 || unfollowed.FollowerCount != 0 {
 		t.Fatalf("unexpected unfollow response: %+v", unfollowed)
+	}
+	stateResponse = performJSONRequest(router, http.MethodGet, "/api/users/me/following/77", "", token)
+	requireStatus(t, stateResponse, http.StatusOK)
+	decodeJSON(t, stateResponse, &state)
+	if state.Following {
+		t.Fatalf("direct follow state remained active after unfollow: %+v", state)
 	}
 
 	repeatUnfollowResponse := performVideoJSONRequest(router, http.MethodDelete, "/api/users/me/following/77", "", token, "unfollow-2")
@@ -419,6 +448,7 @@ func newRelationRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	users := api.Group("/users")
 	users.PUT("/me/following/:targetUserId", authMiddleware, handler.Follow)
 	users.DELETE("/me/following/:targetUserId", authMiddleware, handler.Unfollow)
+	users.GET("/me/following/:targetUserId", authMiddleware, handler.GetFollowState)
 	users.GET("/me/following", authMiddleware, handler.ListFollowing)
 	users.GET("/me/followers", authMiddleware, handler.ListFollowers)
 

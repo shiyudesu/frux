@@ -1,9 +1,11 @@
 package infracache
 
 import (
+	applicationinteraction "GCFeed/internal/application/interaction"
 	domaininteraction "GCFeed/internal/domain/interaction"
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,18 +13,23 @@ import (
 )
 
 type actionStatFakeRedis struct {
-	hashes map[string]map[string]string
-	values map[string]string
+	hashes     map[string]map[string]string
+	hashErrors map[string]error
+	values     map[string]string
 }
 
 func newActionStatFakeRedis() *actionStatFakeRedis {
 	return &actionStatFakeRedis{
-		hashes: map[string]map[string]string{},
-		values: map[string]string{},
+		hashes:     map[string]map[string]string{},
+		hashErrors: map[string]error{},
+		values:     map[string]string{},
 	}
 }
 
 func (r *actionStatFakeRedis) HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd {
+	if err := r.hashErrors[key]; err != nil {
+		return redis.NewMapStringStringResult(nil, err)
+	}
 	values := r.hashes[key]
 	if values == nil {
 		values = map[string]string{}
@@ -179,5 +186,39 @@ func TestActionStatBaseInitUsesInitialStat(t *testing.T) {
 	stat := actionStatBaseInit(videoID, initial)
 	if stat != initial {
 		t.Fatalf("unexpected stat: %+v", stat)
+	}
+}
+
+func TestCompleteActionStateResultReturnsCommittedMutationOnCountReadFailure(t *testing.T) {
+	videoID := int64(1006)
+	countReadErr := errors.New("count read failed")
+	redisClient := newActionStatFakeRedis()
+	counterBaseKey := interactionStatCounterBaseKey(videoID)
+	redisClient.hashErrors[counterBaseKey] = countReadErr
+	committed := &applicationinteraction.ActionStateResult{
+		UserID:        42,
+		VideoID:       videoID,
+		ActionType:    domaininteraction.ActionTypeLike,
+		Active:        true,
+		Delta:         1,
+		Version:       3,
+		EventID:       "event-3",
+		ShouldPublish: true,
+		CanRollback:   true,
+	}
+
+	result, err := completeActionStateResult(
+		context.Background(),
+		redisClient,
+		committed,
+		counterBaseKey,
+		feedStatKey(videoID),
+		&domaininteraction.VideoStat{VideoID: videoID},
+	)
+	if !errors.Is(err, countReadErr) {
+		t.Fatalf("expected count read failure, got %v", err)
+	}
+	if result != committed || result.Version != 3 || !result.CanRollback {
+		t.Fatalf("committed mutation metadata was lost: %+v", result)
 	}
 }

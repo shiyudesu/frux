@@ -72,6 +72,10 @@ type FeedCache interface {
 	ListHotWindowPage(ctx context.Context, windowEnd time.Time, offset int, limit int) ([]*domainfeed.FeedPageItem, error)
 }
 
+type PublicVideoValidator interface {
+	BatchPublicVideoIDs(ctx context.Context, videoIDs []int64) (map[int64]struct{}, error)
+}
+
 type FollowingIndexCache interface {
 	ListFollowingIndexPage(ctx context.Context, viewerID int64, authorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error)
 }
@@ -604,6 +608,17 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 		}
 		if cachedStats, err := cache.GetStats(ctx, videoIDs); err == nil {
 			stats = cachedStats
+		}
+	}
+	if validator, ok := repo.(PublicVideoValidator); ok {
+		publicIDs, err := validator.BatchPublicVideoIDs(ctx, videoIDs)
+		if err != nil {
+			return nil, err
+		}
+		for videoID := range cards {
+			if _, readable := publicIDs[videoID]; !readable {
+				delete(cards, videoID)
+			}
 		}
 	}
 

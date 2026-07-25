@@ -41,6 +41,24 @@ type Exposure struct {
 	UpdatedAt      time.Time
 }
 
+type ViewHistory struct {
+	UserID         int64
+	VideoID        int64
+	LastScene      string
+	LastEventType  string
+	LastWatchMs    int
+	Completed      bool
+	FirstWatchedAt time.Time
+	LastWatchedAt  time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type HistoryCursor struct {
+	LastWatchedAt time.Time
+	VideoID       int64
+}
+
 // NewViewEvent 创建观看事件并完成基础参数清洗。
 func NewViewEvent(userID int64, videoID int64, scene string, requestID string, eventType string, watchMs int, completed bool) (*ViewEvent, error) {
 	if userID <= 0 {
@@ -113,6 +131,27 @@ func RestoreExposure(id int64, userID int64, videoID int64, firstExposedAt time.
 // CountsAsExposure 判断当前事件是否写入曝光聚合索引。
 func (e *ViewEvent) CountsAsExposure() bool {
 	return e != nil && e.EventType == EventTypeExposed
+}
+
+func (e *ViewEvent) CountsAsHistory() bool {
+	if e == nil {
+		return false
+	}
+	switch e.EventType {
+	case EventTypePlay, EventTypeComplete, EventTypeSkip:
+		return true
+	default:
+		return false
+	}
+}
+
+func RestoreViewHistory(userID, videoID int64, lastScene, lastEventType string, lastWatchMs int, completed bool, firstWatchedAt, lastWatchedAt, createdAt, updatedAt time.Time) *ViewHistory {
+	return &ViewHistory{
+		UserID: userID, VideoID: videoID, LastScene: strings.TrimSpace(lastScene),
+		LastEventType: strings.TrimSpace(lastEventType), LastWatchMs: lastWatchMs,
+		Completed: completed, FirstWatchedAt: firstWatchedAt, LastWatchedAt: lastWatchedAt,
+		CreatedAt: createdAt, UpdatedAt: updatedAt,
+	}
 }
 
 func isSupportedEventType(eventType string) bool {

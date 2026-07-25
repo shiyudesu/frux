@@ -5,6 +5,7 @@ import (
 	applicationexposure "GCFeed/internal/application/exposure"
 	applicationfeed "GCFeed/internal/application/feed"
 	applicationinteraction "GCFeed/internal/application/interaction"
+	applicationlibrary "GCFeed/internal/application/library"
 	applicationmessage "GCFeed/internal/application/message"
 	applicationplayback "GCFeed/internal/application/playback"
 	applicationrecommendation "GCFeed/internal/application/recommendation"
@@ -20,6 +21,7 @@ import (
 	infraexposure "GCFeed/internal/infra/persistence/exposure"
 	infrafeed "GCFeed/internal/infra/persistence/feed"
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
+	infralibrary "GCFeed/internal/infra/persistence/library"
 	inframessage "GCFeed/internal/infra/persistence/message"
 	migration "GCFeed/internal/infra/persistence/migration"
 	infraplayback "GCFeed/internal/infra/persistence/playback"
@@ -30,6 +32,7 @@ import (
 	interfaceshttpexposure "GCFeed/internal/interfaces/http/exposure"
 	interfaceshttpfeed "GCFeed/internal/interfaces/http/feed"
 	interfaceshttpinteraction "GCFeed/internal/interfaces/http/interaction"
+	interfaceshttplibrary "GCFeed/internal/interfaces/http/library"
 	interfaceshttpmessage "GCFeed/internal/interfaces/http/message"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	interfaceshttpplayback "GCFeed/internal/interfaces/http/playback"
@@ -74,7 +77,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 
 	// 下面按领域模块组装依赖：Repository -> Service -> Handler。
 	accountRepo := infraaccount.New(gormDB)
-	accountService := applicationaccount.New(accountRepo, jwtManager)
+	accountService := applicationaccount.New(accountRepo, jwtManager, applicationaccount.WithProfileSettingRepository(accountRepo))
 	accountHandler := interfaceshttpaccount.New(accountService)
 	videoRepo := infravideo.New(gormDB)
 	feedRepo := infrafeed.New(gormDB)
@@ -93,6 +96,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
+		videoOptions = append(videoOptions, applicationvideo.WithVideoCacheInvalidator(feedCache))
 	}
 	feedService := applicationfeed.New(feedRepo, feedOptions...)
 	feedHandler := interfaceshttpfeed.New(feedService)
@@ -118,53 +122,81 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	messageWriter := NewMessageWriter(messageService)
 	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
 	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
+	videoManagementService := applicationvideo.NewManagement(videoRepo, feedCache)
+	videoOptions = append(videoOptions, applicationvideo.WithLocalAssetOwnership(videoManagementService))
 	videoService := applicationvideo.New(videoRepo, videoOptions...)
-	videoHandler := interfaceshttpvideo.New(videoService)
+	videoHandler := interfaceshttpvideo.New(videoService, videoManagementService)
 	interactionService := applicationinteraction.New(interactionRepo, interactionOptions...)
 	interactionHandler := interfaceshttpinteraction.New(interactionService)
 	exposureRepo := infraexposure.New(gormDB)
 	exposureService := applicationexposure.New(exposureRepo, exposureOptions...)
 	exposureHandler := interfaceshttpexposure.New(exposureService)
+	libraryRepo := infralibrary.New(gormDB)
+	libraryService := applicationlibrary.New(
+		actionIndexAdapter{source: interactionRepo},
+		historyIndexAdapter{source: exposureRepo},
+		libraryRepo,
+		videoCatalogAdapter{source: videoRepo},
+		privacyReaderAdapter{source: accountRepo},
+	)
+	libraryHandler := interfaceshttplibrary.New(libraryService)
 	relationRepo := infrarelation.New(gormDB)
 	if feedCache != nil {
 		relationOptions = append(relationOptions, applicationrelation.WithFollowFeedBackfiller(NewFollowFeedBackfiller(feedRepo, feedCache)))
 	}
 	relationService := applicationrelation.New(relationRepo, relationOptions...)
 	relationHandler := interfaceshttprelation.New(relationService)
-	uploadHandler := interfaceshttpupload.New("./uploads")
-
-	h.GET("/health", HealthCheck)
-	h.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
-	// GET 通过标准库文件服务保留 Range 语义；HEAD 原生返回正确的文件元数据。
-	staticGetHandler, staticHeadHandler, err := infrahttphertz.StaticHandlers("./uploads", "/uploads")
+	uploadHandler := interfaceshttpupload.New("./uploads", interfaceshttpupload.WithOwnershipRecorder(videoManagementService))
+	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
+	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
+	assetHandler, err := interfaceshttpupload.NewAssetHandler("./uploads", "/uploads", videoManagementService)
 	if err != nil {
 		return err
 	}
-	h.GET("/uploads/*filepath", staticGetHandler)
-	h.HEAD("/uploads/*filepath", staticHeadHandler)
 
-	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
-	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
+	h.GET("/health", HealthCheck)
+	h.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
+	h.GET("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Get)
+	h.HEAD("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Head)
 	api := h.Group("/api")
 
 	// RESTful 路由约定：路径表达资源，HTTP 方法表达动作。
 	// 会话资源用于登录态：创建会话表示登录，删除当前会话表示登出。
 	sessions := api.Group("/sessions")
 	sessions.POST("", accountHandler.Login)
-	sessions.DELETE("/current", authMiddleware, accountHandler.Logout)
+	sessions.DELETE("/current", accountHandler.Logout)
 
 	// 用户资源承载注册、当前用户资料和用户作品列表。
 	users := api.Group("/users")
 	users.POST("", accountHandler.Register)
 	users.GET("/me", authMiddleware, accountHandler.Me)
 	users.PATCH("/me", authMiddleware, accountHandler.UpdateMe)
+	users.GET("/me/profile-settings", authMiddleware, accountHandler.GetProfileSettings)
+	users.PATCH("/me/profile-settings", authMiddleware, accountHandler.UpdateProfileSettings)
 	users.GET("/me/videos", authMiddleware, videoHandler.ListMine)
+	users.POST("/me/video-queries", authMiddleware, videoHandler.QueryMine)
+	users.POST("/me/video-batch-actions", authMiddleware, videoHandler.BatchAction)
+	users.GET("/me/video-collections", authMiddleware, videoHandler.ListMineCollections)
+	users.POST("/me/video-collections", authMiddleware, videoHandler.CreateCollection)
+	users.PATCH("/me/video-collections/:collectionId", authMiddleware, videoHandler.UpdateCollection)
+	users.DELETE("/me/video-collections/:collectionId", authMiddleware, videoHandler.DeleteCollection)
+	users.PUT("/me/video-collections/:collectionId/videos/:videoId", authMiddleware, videoHandler.AddCollectionVideo)
+	users.DELETE("/me/video-collections/:collectionId/videos/:videoId", authMiddleware, videoHandler.RemoveCollectionVideo)
+	users.GET("/me/liked-videos", authMiddleware, libraryHandler.ListLiked)
+	users.GET("/me/favorite-videos", authMiddleware, libraryHandler.ListFavorites)
+	users.GET("/me/watch-history", authMiddleware, libraryHandler.ListHistory)
+	users.DELETE("/me/watch-history/:videoId", authMiddleware, libraryHandler.DeleteHistory)
+	users.DELETE("/me/watch-history", authMiddleware, libraryHandler.ClearHistory)
+	users.GET("/me/watch-later", authMiddleware, libraryHandler.ListWatchLater)
 	users.PUT("/me/following/:targetUserId", authMiddleware, relationHandler.Follow)
 	users.DELETE("/me/following/:targetUserId", authMiddleware, relationHandler.Unfollow)
+	users.GET("/me/following/:targetUserId", authMiddleware, relationHandler.GetFollowState)
 	users.GET("/me/following", authMiddleware, relationHandler.ListFollowing)
 	users.GET("/me/followers", authMiddleware, relationHandler.ListFollowers)
 	users.GET("/:userId", accountHandler.Get)
 	users.GET("/:userId/videos", videoHandler.ListByAuthor)
+	users.GET("/:userId/video-collections", videoHandler.ListPublicCollections)
+	users.GET("/:userId/liked-videos", libraryHandler.ListPublicLiked)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。
 	videos := api.Group("/videos")
@@ -175,6 +207,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videos.DELETE("/:videoId/like", authMiddleware, interactionHandler.Unlike)
 	videos.PUT("/:videoId/favorite", authMiddleware, interactionHandler.Favorite)
 	videos.DELETE("/:videoId/favorite", authMiddleware, interactionHandler.Unfavorite)
+	videos.PUT("/:videoId/watch-later", authMiddleware, libraryHandler.AddWatchLater)
+	videos.DELETE("/:videoId/watch-later", authMiddleware, libraryHandler.RemoveWatchLater)
 	videos.POST("/:videoId/comments", authMiddleware, interactionHandler.CreateComment)
 	videos.GET("/:videoId/comments", interactionHandler.ListComments)
 

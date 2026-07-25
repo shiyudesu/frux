@@ -1,0 +1,431 @@
+package test
+
+import (
+	applicationlibrary "GCFeed/internal/application/library"
+	applicationvideo "GCFeed/internal/application/video"
+	domainlibrary "GCFeed/internal/domain/library"
+	domainvideo "GCFeed/internal/domain/video"
+	infrajwt "GCFeed/internal/infra/jwt"
+	interfaceshttplibrary "GCFeed/internal/interfaces/http/library"
+	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	interfaceshttpvideo "GCFeed/internal/interfaces/http/video"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
+)
+
+type managementMemoryRepo struct {
+	mu               sync.Mutex
+	videos           map[int64]*domainvideo.Video
+	operations       map[string]*domainvideo.BatchOperation
+	collections      map[int64]*domainvideo.Collection
+	nextCollectionID int64
+}
+
+func newManagementMemoryRepo() *managementMemoryRepo {
+	now := time.Now().UTC()
+	return &managementMemoryRepo{
+		videos: map[int64]*domainvideo.Video{
+			1: domainvideo.RestoreVideoWithVisibility(1, 42, "public work", "", "media-1", "cover-1", domainvideo.StatusPublished, domainvideo.VisibilityPublic, 1, 0, 0, &now, now.Add(-time.Minute), now, ""),
+			2: domainvideo.RestoreVideoWithVisibility(2, 42, "private work", "", "media-2", "cover-2", domainvideo.StatusPublished, domainvideo.VisibilityPrivate, 2, 0, 0, &now, now, now, ""),
+			3: domainvideo.RestoreVideoWithVisibility(3, 77, "other work", "", "media-3", "cover-3", domainvideo.StatusPublished, domainvideo.VisibilityPublic, 0, 0, 0, &now, now, now, ""),
+		},
+		operations:       map[string]*domainvideo.BatchOperation{},
+		collections:      map[int64]*domainvideo.Collection{},
+		nextCollectionID: 1,
+	}
+}
+
+func (r *managementMemoryRepo) QueryCreatorVideos(_ context.Context, filter domainvideo.CreatorVideoFilter) ([]*domainvideo.Video, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items := make([]*domainvideo.Video, 0)
+	for _, video := range r.videos {
+		if video.AuthorID != filter.AuthorID || video.Status == domainvideo.StatusDeleted {
+			continue
+		}
+		if filter.Visibility != "" && video.Visibility != filter.Visibility {
+			continue
+		}
+		items = append(items, cloneVideo(video))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	if len(items) > filter.Limit {
+		items = items[:filter.Limit]
+	}
+	return items, nil
+}
+
+func (r *managementMemoryRepo) ApplyBatch(_ context.Context, userID int64, action string, videoIDs []int64, key, fingerprint string) (*domainvideo.BatchOperation, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	operationKey := fmt.Sprintf("%d:%s", userID, key)
+	if existing := r.operations[operationKey]; existing != nil {
+		if existing.Fingerprint != fingerprint {
+			return nil, false, domainvideo.ErrBatchIdempotencyConflict
+		}
+		cloned := *existing
+		cloned.VideoIDs = append([]int64(nil), existing.VideoIDs...)
+		return &cloned, true, nil
+	}
+	for _, id := range videoIDs {
+		video := r.videos[id]
+		if video == nil {
+			return nil, false, domainvideo.ErrVideoNotFound
+		}
+		if video.AuthorID != userID {
+			return nil, false, domainvideo.ErrVideoPermissionDenied
+		}
+	}
+	for _, id := range videoIDs {
+		video := r.videos[id]
+		switch action {
+		case domainvideo.BatchActionMakePublic:
+			video.Visibility = domainvideo.VisibilityPublic
+		case domainvideo.BatchActionMakePrivate:
+			video.Visibility = domainvideo.VisibilityPrivate
+		case domainvideo.BatchActionDelete:
+			video.Status = domainvideo.StatusDeleted
+		}
+	}
+	operation := &domainvideo.BatchOperation{UserID: userID, Key: key, Fingerprint: fingerprint, Action: action, VideoIDs: append([]int64(nil), videoIDs...)}
+	r.operations[operationKey] = operation
+	return operation, false, nil
+}
+
+func (r *managementMemoryRepo) CreateCollection(_ context.Context, collection *domainvideo.Collection) (*domainvideo.Collection, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, existing := range r.collections {
+		if existing.OwnerID == collection.OwnerID && existing.IdempotencyKey == collection.IdempotencyKey {
+			return cloneCollection(existing), false, nil
+		}
+	}
+	collection.ID = r.nextCollectionID
+	r.nextCollectionID++
+	collection.CreatedAt = time.Now().UTC()
+	collection.UpdatedAt = collection.CreatedAt
+	r.collections[collection.ID] = cloneCollection(collection)
+	return cloneCollection(collection), true, nil
+}
+
+func (r *managementMemoryRepo) ListCollections(_ context.Context, ownerID int64, publicOnly bool, _ *domainvideo.CollectionCursor, limit int) ([]*domainvideo.Collection, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items := make([]*domainvideo.Collection, 0)
+	for _, collection := range r.collections {
+		if collection.OwnerID != ownerID || collection.Status != domainvideo.CollectionStatusActive || (publicOnly && collection.Visibility != domainvideo.VisibilityPublic) {
+			continue
+		}
+		cloned := cloneCollection(collection)
+		cloned.Items = nil
+		for _, item := range collection.Items {
+			video := r.videos[item.VideoID]
+			if video == nil || video.Status == domainvideo.StatusDeleted || (publicOnly && !video.IsPubliclyReadable()) {
+				continue
+			}
+			clonedItem := *item
+			clonedItem.Video = cloneVideo(video)
+			cloned.Items = append(cloned.Items, &clonedItem)
+		}
+		cloned.MemberCount = len(cloned.Items)
+		items = append(items, cloned)
+	}
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (r *managementMemoryRepo) GetCollection(_ context.Context, id int64) (*domainvideo.Collection, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	collection := r.collections[id]
+	if collection == nil {
+		return nil, domainvideo.ErrCollectionNotFound
+	}
+	return cloneCollection(collection), nil
+}
+
+func (r *managementMemoryRepo) UpdateCollection(_ context.Context, collection *domainvideo.Collection, update domainvideo.CollectionUpdate) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.collections[collection.ID]
+	if update.Title != nil {
+		current.Title = collection.Title
+	}
+	if update.Description != nil {
+		current.Description = collection.Description
+	}
+	if update.Visibility != nil {
+		current.Visibility = collection.Visibility
+	}
+	return nil
+}
+
+func (r *managementMemoryRepo) DeleteCollection(_ context.Context, collection *domainvideo.Collection) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.collections[collection.ID].Status = domainvideo.CollectionStatusDeleted
+	return nil
+}
+
+func (r *managementMemoryRepo) SetCollectionItem(_ context.Context, ownerID, collectionID, videoID int64, active bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	collection := r.collections[collectionID]
+	if collection == nil || collection.OwnerID != ownerID {
+		return domainvideo.ErrCollectionPermissionDenied
+	}
+	video := r.videos[videoID]
+	if video == nil || video.AuthorID != ownerID {
+		return domainvideo.ErrVideoPermissionDenied
+	}
+	for index, item := range collection.Items {
+		if item.VideoID != videoID {
+			continue
+		}
+		if active {
+			return nil
+		}
+		collection.Items = append(collection.Items[:index], collection.Items[index+1:]...)
+		return nil
+	}
+	if active {
+		collection.Items = append(collection.Items, &domainvideo.CollectionItem{CollectionID: collectionID, VideoID: videoID, Position: len(collection.Items) + 1})
+	}
+	return nil
+}
+
+func (r *managementMemoryRepo) ListCollectionItems(_ context.Context, collectionID int64, publicOnly bool) ([]*domainvideo.CollectionItem, error) {
+	collection, err := r.GetCollection(context.Background(), collectionID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*domainvideo.CollectionItem, 0)
+	for _, item := range collection.Items {
+		video := r.videos[item.VideoID]
+		if video == nil || (publicOnly && !video.IsPubliclyReadable()) {
+			continue
+		}
+		cloned := *item
+		cloned.Video = cloneVideo(video)
+		items = append(items, &cloned)
+	}
+	return items, nil
+}
+
+func (r *managementMemoryRepo) BatchGetReadable(_ context.Context, viewerID int64, ids []int64, publicOnly bool) (map[int64]*domainvideo.Video, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := map[int64]*domainvideo.Video{}
+	for _, id := range ids {
+		video := r.videos[id]
+		if video == nil || video.Status != domainvideo.StatusPublished {
+			continue
+		}
+		if publicOnly && video.Visibility != domainvideo.VisibilityPublic {
+			continue
+		}
+		if !publicOnly && video.Visibility == domainvideo.VisibilityPrivate && video.AuthorID != viewerID {
+			continue
+		}
+		result[id] = cloneVideo(video)
+	}
+	return result, nil
+}
+
+func (r *managementMemoryRepo) ListAssetReferences(_ context.Context, assetURL string) ([]domainvideo.AssetReference, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	references := make([]domainvideo.AssetReference, 0)
+	for _, video := range r.videos {
+		if video.MediaURL == assetURL || video.CoverURL == assetURL {
+			references = append(references, domainvideo.AssetReference{
+				AuthorID: video.AuthorID, Status: video.Status, Visibility: video.Visibility,
+			})
+		}
+	}
+	return references, nil
+}
+
+func (r *managementMemoryRepo) CreateLocalAsset(_ context.Context, asset *domainvideo.LocalAsset) error {
+	return nil
+}
+
+func (r *managementMemoryRepo) FindLocalAsset(_ context.Context, assetURL string) (*domainvideo.LocalAsset, error) {
+	return nil, domainvideo.ErrLocalAssetNotFound
+}
+
+func TestCreatorManagementAPIFlow(t *testing.T) {
+	router := server.New()
+	jwtManager, _ := infrajwt.NewManager("test-secret", "15m")
+	auth := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
+	repo := newManagementMemoryRepo()
+	baseService := applicationvideo.New(newMemoryVideoRepo())
+	handler := interfaceshttpvideo.New(baseService, applicationvideo.NewManagement(repo, nil))
+	users := router.Group("/api/users")
+	users.POST("/me/video-queries", auth, handler.QueryMine)
+	users.POST("/me/video-batch-actions", auth, handler.BatchAction)
+	users.GET("/me/video-collections", auth, handler.ListMineCollections)
+	users.POST("/me/video-collections", auth, handler.CreateCollection)
+	users.PATCH("/me/video-collections/:collectionId", auth, handler.UpdateCollection)
+	users.PUT("/me/video-collections/:collectionId/videos/:videoId", auth, handler.AddCollectionVideo)
+	users.GET("/:userId/video-collections", handler.ListPublicCollections)
+	token := signTestToken(t, jwtManager, 42)
+
+	query := performJSONRequest(router, http.MethodPost, "/api/users/me/video-queries", `{"visibility":"private","limit":20}`, token)
+	requireStatus(t, query, http.StatusOK)
+	var queryPayload struct {
+		Items []videoAPIResponse `json:"items"`
+	}
+	decodeJSON(t, query, &queryPayload)
+	if len(queryPayload.Items) != 1 || queryPayload.Items[0].ID != 2 {
+		t.Fatalf("unexpected private query: %s", query.Body.String())
+	}
+
+	mixed := performJSONRequestWithHeaders(router, http.MethodPost, "/api/users/me/video-batch-actions", `{"video_ids":[1,3],"action":"make_private"}`,
+		utHeader("Authorization", "Bearer "+token), utHeader("Idempotency-Key", "mixed"))
+	requireStatus(t, mixed, http.StatusForbidden)
+	if repo.videos[1].Visibility != domainvideo.VisibilityPublic {
+		t.Fatal("mixed ownership batch partially applied")
+	}
+	success := performJSONRequestWithHeaders(router, http.MethodPost, "/api/users/me/video-batch-actions", `{"video_ids":[1],"action":"make_private"}`,
+		utHeader("Authorization", "Bearer "+token), utHeader("Idempotency-Key", "privacy"))
+	requireStatus(t, success, http.StatusOK)
+	replay := performJSONRequestWithHeaders(router, http.MethodPost, "/api/users/me/video-batch-actions", `{"video_ids":[1],"action":"make_private"}`,
+		utHeader("Authorization", "Bearer "+token), utHeader("Idempotency-Key", "privacy"))
+	requireStatus(t, replay, http.StatusOK)
+	var replayPayload map[string]json.RawMessage
+	decodeJSON(t, replay, &replayPayload)
+	var replayed bool
+	_ = json.Unmarshal(replayPayload["replayed"], &replayed)
+	if !replayed {
+		t.Fatal("expected batch replay marker")
+	}
+	conflict := performJSONRequestWithHeaders(router, http.MethodPost, "/api/users/me/video-batch-actions", `{"video_ids":[2],"action":"delete"}`,
+		utHeader("Authorization", "Bearer "+token), utHeader("Idempotency-Key", "privacy"))
+	requireStatus(t, conflict, http.StatusConflict)
+
+	createCollection := performJSONRequestWithHeaders(router, http.MethodPost, "/api/users/me/video-collections", `{"title":"series","visibility":"public"}`,
+		utHeader("Authorization", "Bearer "+token), utHeader("Idempotency-Key", "series"))
+	requireStatus(t, createCollection, http.StatusCreated)
+	var collection struct {
+		ID int64 `json:"id"`
+	}
+	decodeJSON(t, createCollection, &collection)
+	add := performJSONRequest(router, http.MethodPut, fmt.Sprintf("/api/users/me/video-collections/%d/videos/1", collection.ID), "", token)
+	requireStatus(t, add, http.StatusNoContent)
+	update := performJSONRequest(
+		router,
+		http.MethodPatch,
+		fmt.Sprintf("/api/users/me/video-collections/%d", collection.ID),
+		`{"description":"updated"}`,
+		token,
+	)
+	requireStatus(t, update, http.StatusOK)
+	var updatedCollection struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Items       []struct {
+			VideoID int64            `json:"video_id"`
+			Video   videoAPIResponse `json:"video"`
+		} `json:"items"`
+	}
+	decodeJSON(t, update, &updatedCollection)
+	if updatedCollection.Title != "series" || updatedCollection.Description != "updated" ||
+		len(updatedCollection.Items) != 1 || updatedCollection.Items[0].VideoID != 1 || updatedCollection.Items[0].Video.ID != 1 {
+		t.Fatalf("collection PATCH did not hydrate membership: %s", update.Body.String())
+	}
+	public := performJSONRequest(router, http.MethodGet, "/api/users/42/video-collections", "", "")
+	requireStatus(t, public, http.StatusOK)
+	if string(public.Body.Bytes()) == "" {
+		t.Fatal("expected public collection response")
+	}
+}
+
+type librarySource struct {
+	items  []domainlibrary.VideoCandidate
+	cards  map[int64]*domainlibrary.VideoCard
+	public bool
+	watch  map[int64]*domainlibrary.WatchLater
+}
+
+func (s *librarySource) ListActionVideos(context.Context, int64, string, *domainlibrary.Cursor, int) ([]domainlibrary.VideoCandidate, error) {
+	return append([]domainlibrary.VideoCandidate(nil), s.items...), nil
+}
+func (s *librarySource) ListHistoryVideos(context.Context, int64, *domainlibrary.Cursor, int) ([]domainlibrary.HistoryCandidate, error) {
+	return nil, nil
+}
+func (s *librarySource) DeleteHistory(context.Context, int64, int64) error { return nil }
+func (s *librarySource) ClearHistory(context.Context, int64) error         { return nil }
+func (s *librarySource) SetWatchLater(_ context.Context, fact *domainlibrary.WatchLater) (*domainlibrary.WatchLater, error) {
+	fact.UpdatedAt = time.Now().UTC()
+	s.watch[fact.VideoID] = fact
+	return fact, nil
+}
+func (s *librarySource) ListWatchLater(context.Context, int64, *domainlibrary.Cursor, int) ([]domainlibrary.VideoCandidate, error) {
+	return nil, nil
+}
+func (s *librarySource) BatchGetReadable(_ context.Context, _ int64, ids []int64, publicOnly bool) (map[int64]*domainlibrary.VideoCard, error) {
+	result := map[int64]*domainlibrary.VideoCard{}
+	for _, id := range ids {
+		card := s.cards[id]
+		if card != nil && (!publicOnly || card.Visibility == domainvideo.VisibilityPublic) {
+			result[id] = card
+		}
+	}
+	return result, nil
+}
+func (s *librarySource) LikedVideosPublic(context.Context, int64) (bool, error) { return s.public, nil }
+
+func TestLibraryAPIAuthenticationAndPrivacy(t *testing.T) {
+	router := server.New()
+	jwtManager, _ := infrajwt.NewManager("test-secret", "15m")
+	auth := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
+	source := &librarySource{
+		items: []domainlibrary.VideoCandidate{{VideoID: 1, UpdatedAt: time.Now().UTC()}},
+		cards: map[int64]*domainlibrary.VideoCard{1: {ID: 1, Visibility: domainvideo.VisibilityPublic}},
+		watch: map[int64]*domainlibrary.WatchLater{},
+	}
+	handler := interfaceshttplibrary.New(applicationlibrary.New(source, source, source, source, source))
+	users := router.Group("/api/users")
+	users.GET("/me/liked-videos", auth, handler.ListLiked)
+	users.GET("/:userId/liked-videos", handler.ListPublicLiked)
+	videos := router.Group("/api/videos")
+	videos.PUT("/:videoId/watch-later", auth, handler.AddWatchLater)
+
+	unauthorized := performJSONRequest(router, http.MethodGet, "/api/users/me/liked-videos", "", "")
+	requireStatus(t, unauthorized, http.StatusUnauthorized)
+	private := performJSONRequest(router, http.MethodGet, "/api/users/42/liked-videos", "", "")
+	requireStatus(t, private, http.StatusForbidden)
+	source.public = true
+	public := performJSONRequest(router, http.MethodGet, "/api/users/42/liked-videos", "", "")
+	requireStatus(t, public, http.StatusOK)
+	token := signTestToken(t, jwtManager, 42)
+	watch := performJSONRequest(router, http.MethodPut, "/api/videos/1/watch-later", "", token)
+	requireStatus(t, watch, http.StatusOK)
+}
+
+func cloneCollection(collection *domainvideo.Collection) *domainvideo.Collection {
+	cloned := *collection
+	cloned.Items = append([]*domainvideo.CollectionItem(nil), collection.Items...)
+	return &cloned
+}
+
+func utHeader(key, value string) ut.Header {
+	return ut.Header{Key: key, Value: value}
+}

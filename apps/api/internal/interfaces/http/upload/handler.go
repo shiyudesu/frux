@@ -3,6 +3,7 @@ package interfaceshttpupload
 import (
 	infrahttphertz "GCFeed/internal/infra/httphertz"
 	inframetrics "GCFeed/internal/infra/metrics"
+	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -93,6 +94,19 @@ type UploadProcessor interface {
 type Handler struct {
 	root      string
 	processor UploadProcessor
+	ownership UploadOwnershipRecorder
+}
+
+type UploadOwnershipRecorder interface {
+	RecordLocalUpload(ctx context.Context, ownerID int64, assetURL, kind string) error
+}
+
+type Option func(*Handler)
+
+func WithOwnershipRecorder(recorder UploadOwnershipRecorder) Option {
+	return func(handler *Handler) {
+		handler.ownership = recorder
+	}
 }
 
 // uploadResponse 是上传成功后返回给前端的文件访问地址和元信息。
@@ -104,16 +118,20 @@ type uploadResponse struct {
 }
 
 // New 创建上传 Handler，root 是文件保存根目录。
-func New(root string) *Handler {
-	return NewWithProcessor(root, defaultUploadProcessor{})
+func New(root string, options ...Option) *Handler {
+	return NewWithProcessor(root, defaultUploadProcessor{}, options...)
 }
 
 // NewWithProcessor 创建可注入视频处理器的上传 Handler，便于测试和替换实现。
-func NewWithProcessor(root string, processor UploadProcessor) *Handler {
+func NewWithProcessor(root string, processor UploadProcessor, options ...Option) *Handler {
 	if processor == nil {
 		processor = defaultUploadProcessor{}
 	}
-	return &Handler{root: root, processor: processor}
+	handler := &Handler{root: root, processor: processor}
+	for _, option := range options {
+		option(handler)
+	}
+	return handler
 }
 
 // Create 接收 multipart/form-data 文件，并按 kind 保存到不同子目录。
@@ -185,12 +203,38 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 		}
 	}
 
+	assetURL := "/uploads/" + kind + "/" + filename
+	if kind == "video" || kind == "cover" {
+		userID, ok := uploadUserID(c)
+		if !ok || h.ownership == nil {
+			resultErr = errors.New("upload ownership is unavailable")
+			_ = os.Remove(targetPath)
+			c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to record upload"})
+			return
+		}
+		if err := h.ownership.RecordLocalUpload(ctx, userID, assetURL, kind); err != nil {
+			resultErr = err
+			_ = os.Remove(targetPath)
+			c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to record upload"})
+			return
+		}
+	}
+
 	c.JSON(http.StatusCreated, uploadResponse{
-		URL:      "/uploads/" + kind + "/" + filename,
+		URL:      assetURL,
 		Kind:     kind,
 		Filename: filename,
 		Size:     file.Size,
 	})
+}
+
+func uploadUserID(c *app.RequestContext) (int64, bool) {
+	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
+	if !exists {
+		return 0, false
+	}
+	userID, ok := value.(int64)
+	return userID, ok && userID > 0
 }
 
 func readUploadForm(c *app.RequestContext, maxBytes int64) (*multipart.Form, *multipart.FileHeader, string, error) {

@@ -2,24 +2,45 @@
 
 ## 1. 模块职责
 
-视频模块负责视频发布、详情读取、作品列表、上传入口和软删除。互动计数由互动模块维护，视频模块负责读取展示。
+视频模块负责视频发布、详情读取、作品列表、独立可见性、创作者查询、原子批量操作、创作者合集、上传入口和软删除。互动计数由互动模块维护；视频模块同时维护用户内容聚合统计，并为个人内容库提供可读视频批量补齐。
 
 ## 2. 接口设计
 
 | 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
 | --- | --- | --- | --- | --- |
-| POST | `/api/videos` | 创建并发布视频 | Bearer JWT | 支持 |
-| GET | `/api/videos/{videoId}` | 查询视频详情 | 可匿名 | 无 |
-| DELETE | `/api/videos/{videoId}` | 删除视频 | Bearer JWT | 支持 |
-| GET | `/api/users/{userId}/videos` | 查询用户公开视频列表 | 可匿名 | 无 |
-| GET | `/api/users/me/videos` | 查询我的作品列表 | Bearer JWT | 无 |
-| POST | `/api/uploads` | 上传媒体文件 | Bearer JWT | 支持 |
+| POST | `/api/videos` | 创建并发布公开视频 | 登录 | 支持 |
+| GET | `/api/videos/{videoId}` | 查询已发布公开视频详情 | 可匿名 | 无 |
+| DELETE | `/api/videos/{videoId}` | 软删除自己的视频 | 登录 | 支持 |
+| GET | `/api/users/{userId}/videos` | 查询用户已发布公开视频 | 可匿名 | 无 |
+| GET | `/api/users/me/videos` | 兼容的我的作品列表 | 登录 | 无 |
+| POST | `/api/users/me/video-queries` | 按可见性、关键词和创建日期查询自己的非删除作品 | 登录 | 无 |
+| POST | `/api/users/me/video-batch-actions` | 批量公开、私密或删除作品 | 登录 | 必须 |
+| GET | `/api/users/me/video-collections` | 游标分页查询自己的合集 | 登录 | 无 |
+| POST | `/api/users/me/video-collections` | 创建合集 | 登录 | 必须 |
+| PATCH | `/api/users/me/video-collections/{collectionId}` | 部分更新合集 | 登录 | 无 |
+| DELETE | `/api/users/me/video-collections/{collectionId}` | 软删除合集 | 登录 | 无 |
+| PUT | `/api/users/me/video-collections/{collectionId}/videos/{videoId}` | 将自己的作品加入合集 | 登录 | 自然幂等 |
+| DELETE | `/api/users/me/video-collections/{collectionId}/videos/{videoId}` | 从合集移除作品 | 登录 | 自然幂等 |
+| GET | `/api/users/{userId}/video-collections` | 游标分页查询公开合集 | 可匿名 | 无 |
+| POST | `/api/uploads` | 上传媒体文件 | 登录 | 支持 |
+
+复杂作品查询请求使用 `visibility`、`query`、`created_from`、`created_to`、`cursor`、`limit`，响应为 `items`、`next_cursor`、`has_more`。日期接受 RFC 3339 或 `YYYY-MM-DD`；仅日期形式的结束日期包含当天末尾。默认 `limit=20`，范围 1–100，排序为 `created_at DESC, id DESC`。
+
+批量接口支持 `make_public`、`make_private`、`delete`，先去重并按 ID 排序，最多 100 个正整数 ID。成功返回：
+
+```json
+{"action":"make_private","video_ids":[12,18],"replayed":false}
+```
+
+同一用户用同一 `Idempotency-Key` 重放相同规范化请求时返回 `replayed=true`；同键不同请求返回 409。任一视频不存在或不属于当前用户时整批回滚。
+
+合集列表按 `updated_at DESC, id DESC` 使用稳定游标。列表响应包含 `member_count` 和有序 `items`：公开列表的 `member_count` 只统计当前已发布公开成员，`items` 只返回最多 3 张主页预览卡；本人列表返回全部未删除成员，保证合集编辑器能识别完整成员关系。合集页、成员关系和视频卡分别批量查询，不随合集数量形成 N+1；即使匿名请求 `limit=100`，最多也只补齐 300 张公开预览卡。创建首次返回 201，幂等重放返回已有合集和 200；更新返回 200 并补齐当前真实成员卡片；删除和成员增删返回 204。成员真正增加或移除时才更新合集 `updated_at`，重复 PUT/DELETE 不改变排序时间。
+
+`GET/HEAD /uploads/*` 保留标准 Range/条件请求语义，但视频和封面不再作为无条件静态文件暴露。认证上传会把 `/uploads/video/*` 和 `/uploads/cover/*` 的不可变上传者写入 `local_upload_asset`；发布时只有上传者可以引用这些保护 URL。已发布公开作品只有在视频作者等于资产上传者时才可匿名读取；非删除私密/下架作品仅资产上传者本人可读。删除作品、未引用文件、无所有权记录文件和跨作者引用都返回 404。登录成功时服务端写入仅限 `/uploads` 的 HttpOnly、SameSite=Strict 短期资产 Cookie；Cookie 身份还要求 Web 会话维护的同路径活跃标记。普通鉴权响应不续期 Cookie，Web 退出时先移除活跃标记，因此旧慢响应或离线登出都不能重新开放私有媒体。
 
 ## 3. 数据表设计
 
 ### 3.1 `video`
-
-`video` 保存视频主体信息和生命周期状态。
 
 | 字段 | 类型 | 约束 | 说明 |
 | --- | --- | --- | --- |
@@ -29,64 +50,107 @@
 | `description` | VARCHAR(512) | NULLABLE | 视频简介 |
 | `media_url` | VARCHAR(512) | NOT NULL | 视频地址 |
 | `cover_url` | VARCHAR(512) | NOT NULL | 封面地址 |
-| `status` | TINYINT | NOT NULL, DEFAULT 2 | 1 草稿 / 2 上线 / 3 下架 / 4 删除 |
-| `published_at` | DATETIME | NULLABLE | 发布时间 |
-| `created_at` | DATETIME | NOT NULL | 创建时间 |
-| `updated_at` | DATETIME | NOT NULL | 更新时间 |
+| `status` | SMALLINT | NOT NULL, DEFAULT 2 | 1 草稿 / 2 已发布 / 3 下架 / 4 删除 |
+| `visibility` | VARCHAR(16) | NOT NULL, DEFAULT `public` | `public` / `private`，独立于生命周期 |
+| `published_at` | TIMESTAMPTZ | NULLABLE | 发布时间 |
+| `idempotency_key` | VARCHAR(128) | NULLABLE | 发布幂等键，与作者组成唯一约束 |
+| `created_at` | TIMESTAMPTZ | NOT NULL | 创建时间 |
+| `updated_at` | TIMESTAMPTZ | NOT NULL | 更新时间 |
 
-索引建议：
+主要索引：
 
 | 索引 | 字段 | 说明 |
 | --- | --- | --- |
-| `idx_author_status` | `author_id, status, created_at` | 作者作品列表 |
-| `idx_status_published` | `status, published_at, id` | Timeline Feed |
+| `idx_video_author_visibility_created` | `author_id, visibility, created_at, id` | 创作者管理查询 |
+| `idx_video_public_timeline` | `status, visibility, published_at, id` | 公开 Timeline |
 
 ### 3.2 `video_stat`
 
-`video_stat` 保存视频高频统计数据。
+以 `video_id` 为主键，保存 `like_count`、`comment_count`、`favorite_count` 和时间字段。
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| `video_id` | BIGINT | PK | 视频 ID |
-| `like_count` | INT | NOT NULL, DEFAULT 0 | 点赞数 |
-| `comment_count` | INT | NOT NULL, DEFAULT 0 | 评论数 |
-| `favorite_count` | INT | NOT NULL, DEFAULT 0 | 收藏数 |
-| `created_at` | DATETIME | NOT NULL | 创建时间 |
-| `updated_at` | DATETIME | NOT NULL | 更新时间 |
+### 3.3 `local_upload_asset`
+
+| 字段 | 说明 |
+| --- | --- |
+| `asset_url` | 主键；保护本地视频或封面的规范化 `/uploads/{kind}/{filename}` URL |
+| `owner_id` | 首次认证上传者，写入后不可转移 |
+| `kind` | `video` / `cover` |
+| `created_at` | 上传所有权记录时间 |
+
+迁移从现有受保护本地 URL 引用回填唯一作者资产；同一 URL 若被多个作者引用则不猜测所有者并保持不可读。重复迁移使用 `ON CONFLICT DO NOTHING`，不会覆盖已有不可变所有权。
+
+### 3.4 `user_content_stat`
+
+| 字段 | 说明 |
+| --- | --- |
+| `user_id` | 主键 |
+| `public_work_count` | `status=published AND visibility=public` 的作品数 |
+| `private_work_count` | 非删除、`visibility=private` 的作品数 |
+| `received_like_count` | 非删除作品当前持久化点赞数之和 |
+| `collection_count` | 状态为有效的合集总数，包含公开和私密合集 |
+
+计数通过事务增量更新，并在统一迁移中从 `video`、`video_stat`、`video_collection` 事实幂等校正；更新表达式使用 `GREATEST(..., 0)` 防止负数。发布、下架、恢复、删除和可见性变化都会按旧/新状态贡献差更新。迁移校正以“事实值与语句快照基线之差”叠加到当前聚合，避免覆盖校正期间已经提交的并发增量。
+
+### 3.5 `video_collection`
+
+保存 `owner_id`、标题、描述、`visibility`、软删除 `status`、可选幂等键和时间字段。标题最长 128，描述最长 512；未传可见性时 Domain 默认 `private`。HTTP 创建接口要求 `Idempotency-Key`，重放不比较请求指纹。
+
+### 3.6 `video_collection_item`
+
+以 `(collection_id, video_id)` 为主键/唯一成员约束，保存追加生成的 `position` 和 `created_at`。读取按 `position ASC, video_id ASC`。
+
+### 3.7 `video_batch_operation`
+
+以 `(user_id, idempotency_key)` 唯一，保存规范化请求指纹、动作、排序后的视频 ID JSON、结果 JSON和创建时间。
 
 ## 4. 业务规则
 
 | 规则 | 说明 |
 | --- | --- |
-| 创建即发布 | 当前发布成功后状态为上线 |
-| 创建统计行 | 发布视频时同步创建 `video_stat` |
-| 作者可删除 | 作者删除视频时更新为删除状态 |
-| 公开视频可读 | 匿名用户可查看上线视频 |
-| 作品列表过滤状态 | 公开列表只返回上线视频，我的作品可返回作者自己的有效视频 |
-| Feed 只读取上线视频 | Feed 查询只使用 `status=2` 视频 |
-| 上传格式校验 | 视频限制扩展名、MIME、大小、时长、分辨率和编码 |
-| MP4 首帧优化 | MP4/MOV 上传后执行 faststart，让播放元数据前置 |
+| 创建即发布 | 发布成功后 `status=2`、`visibility=public` |
+| 历史视频默认公开 | 迁移将空可见性补为 `public` |
+| 生命周期与可见性分离 | 设为私密不会改变 `status` 或 `published_at` |
+| 创建统计行 | 发布视频时同步创建 `video_stat` 并增加公开作品计数 |
+| 本地上传所有权 | 认证上传视频/封面后持久化不可变 owner；记录失败会删除已写入文件 |
+| 发布 URL 规则 | `http/https` 远程 URL 可用；本地媒体只接受属于作者的 `/uploads/video/*`，本地封面只接受属于作者的 `/uploads/cover/*`；`file`、`avatar`、类型互换和无所有权路径均拒绝 |
+| 公开视频可读 | 视频详情、公开作者作品、Feed、推荐、预加载和公开合集只返回 `status=2 AND visibility=public` |
+| 旧列表兼容 | `/users/me/videos` 与 `/users/{userId}/videos` 保留 offset 响应 |
+| 创作者查询语义 | `/video-queries` 查询作者自己的所有非删除作品；公开/私密过滤按 `visibility`，不额外限制为已发布状态 |
+| 关键词安全 | 标题和描述使用参数化 `ILIKE`，并转义 `\`、`%`、`_` |
+| 批量原子性 | 事务内锁定全部视频并验证所有权；公开/私密动作拒绝下架或删除视频 |
+| 缓存防泄露 | 可见性、删除和生命周期变化清除视频卡片/统计缓存；Feed 组装还会用数据库重新校验缓存 ID 的公开可读性 |
+| 本地媒体防泄露 | `/uploads` 视频/封面同时验证不可变上传所有权、同所有者视频引用、生命周期、可见性和当前身份；他人公开重引用不能授权资产，保护资源禁用缓存 |
+| 合集所有权 | 只能管理自己的有效合集，并只能加入自己未删除的作品 |
+| 合集公开读取 | 只返回有效公开合集，成员只保留已发布公开作品 |
+| 合集本人读取 | 返回有效公开/私密合集，成员过滤已删除作品但可包含草稿或下架作品 |
+| 合集预览边界 | 公开列表每个合集最多补齐 3 张成员卡，按 `position ASC, video_id ASC`；`member_count` 保留公开可读成员总数 |
+| 删除统计 | 删除视频扣减对应可见性计数和该视频当前获赞；删除合集扣减合集数 |
 
 ## 5. 测试建议
 
 | 场景 | 期望 |
 | --- | --- |
-| 登录用户发布视频 | 返回视频详情并创建 `video_stat` |
-| 未登录发布视频 | 返回 401 |
-| 查询上线视频详情 | 返回视频和计数 |
-| 查询不存在视频 | 返回 404 |
-| 作者删除视频 | 状态变为删除 |
-| 非作者删除视频 | 返回权限错误 |
-| 查询作者作品 | 只返回公开可见视频 |
+| 登录用户发布视频 | 返回视频详情并创建统计行 |
+| 查询私密视频详情 | 匿名接口返回 404 |
+| 查询私密作品 | 创作者查询只返回自己的非删除私密作品并稳定翻页 |
+| 批量混入他人视频 | 返回权限错误，所有视频保持原状 |
+| 批量同键异载荷 | 返回 409 |
+| 公开合集读取 | 私密合集和不可公开读取的成员均不返回 |
+| 100 个公开合集 | 固定批量查询次数，每个合集最多 3 张预览卡，合集与成员顺序稳定 |
+| 重复添加合集成员 | 不产生重复成员 |
+| 重复增删合集成员 | 不改变合集 `updated_at`；真实增删会改变并影响合集排序 |
+| 更新合集响应 | PATCH 返回当前真实、已补齐视频卡的成员数组 |
+| 直接读取私密/下架/删除媒体 | 匿名返回 404；作者可读取非删除媒体，删除媒体对作者也返回 404 |
+| 他人重引用保护 URL | 发布返回 403，且伪造的公开引用不能让资产对匿名用户可读 |
+| 历史资产回填 | 唯一作者引用的保护 URL 获得该作者所有权并继续按公开视频/本人规则读取 |
 | 上传非法媒体 | 返回 400 并清理失败文件 |
-| 上传 MP4 视频 | 校验元数据并执行 faststart |
 
 ## 6. 前端接入点
 
 | 页面 | 接入能力 |
 | --- | --- |
-| 发布页 | 上传文件、填写标题和简介、发布视频 |
-| Feed 页 | 展示视频标题、作者、封面、播放地址和计数 |
-| 视频详情页 | 展示单条视频详情 |
-| 我的作品 | 展示当前用户发布的视频 |
-| 公开主页 | 展示作者公开视频 |
+| 发布页 | 上传文件、填写标题和简介、发布公开视频 |
+| Feed/详情 | 展示已发布公开视频 |
+| 个人主页作品 Tab | “已发布”当前对应公开可见性，“私密作品”对应私密可见性；支持关键词、日期、游标加载和批量操作 |
+| 个人主页合集 Tab | 创建、编辑、删除合集并管理成员；编辑器独立搜索和游标加载全部公开/私密候选作品 |
+| 公开主页 | 展示已发布公开作品和公开合集 |

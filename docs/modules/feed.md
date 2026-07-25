@@ -1,7 +1,7 @@
 # Feed 模块设计
 
 ## 1. 模块职责
-负责刷视频主链路，输出游标分页结果并记录观看行为。
+负责刷视频主链路，输出游标分页结果并记录观看行为。所有 Feed 场景和缓存卡片回源都只允许已发布公开视频；观看历史投影由曝光模块维护。
 
 ## 2. 接口设计
 
@@ -12,7 +12,7 @@
 
 ### 2.1 Feed Items API
 
-用于返回已上线视频，支持时间线和热榜 Feed。
+用于返回已发布且 `visibility=public` 的视频，支持时间线和热榜 Feed。
 
 #### GET `/api/feed-items`
 
@@ -84,7 +84,7 @@
 
 ## 3. 数据表设计
 
-Feed 依赖已有 `video` 和 `video_stat` 表读取已上线视频与互动计数。曝光上报写入 `video_view_events` 行为流水，并在 `event_type=exposed` 时维护 `exposures` 聚合索引。
+Feed 依赖 `video` 和 `video_stat` 读取已发布公开视频与互动计数。曝光上报写入 `video_view_events` 行为流水；`event_type=exposed` 维护 `exposures`，`play/complete/skip` 同事务维护 `video_view_history`。完整投影规则见 [exposure.md](exposure.md)。
 
 `video_view_events`：
 
@@ -109,6 +109,8 @@ Feed 依赖已有 `video` 和 `video_stat` 表读取已上线视频与互动计�
 | `last_exposed_at` | 最近曝光时间 |
 | `exposure_count` | 重复曝光次数 |
 | `last_scene` | 最近曝光场景 |
+
+`video_view_history` 以 `(user_id, video_id)` 唯一，记录最近场景、事件、观看时长、完播状态和最近观看时间；纯曝光事件不会进入历史。
 
 推荐索引：
 
@@ -136,7 +138,7 @@ video:card:v1:{video_id}
 video:stat:v1:{video_id}
 ```
 
-页缓存只保存 `video_id` 和排序字段。Feed Service 读取页后使用 Redis MGET 批量读取 `video:card` 和 `video:stat`，缓存缺失时批量回源 PostgreSQL。页缓存未命中时使用 singleflight 合并同 key 回源请求。
+页缓存只保存 `video_id` 和排序字段。Feed Service 读取页后使用 Redis MGET 批量读取 `video:card` 和 `video:stat`，缓存缺失时批量回源 PostgreSQL。即使卡片来自 Redis，也会批量查询数据库重新确认 `status=published AND visibility=public`，因此旧页或旧卡片中的私密/下架 ID 会在组装阶段被丢弃。可见性、删除或生命周期变化会删除对应卡片和统计缓存；页缓存中的旧 ID 依靠上述校验安全失效。
 
 ## 5. Hot 访问优化
 

@@ -33,6 +33,30 @@ func (h *Handler) Unfollow(ctx context.Context, c *app.RequestContext) {
 	h.setFollow(ctx, c, false)
 }
 
+// GetFollowState reads the authenticated user's relationship to one target.
+func (h *Handler) GetFollowState(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	targetUserID, err := parsePositiveInt64(c.Param("targetUserId"), domainrelation.ErrInvalidTargetUserID)
+	if err != nil {
+		writeRelationError(c, err)
+		return
+	}
+	result, err := h.service.GetFollowState(ctx, userID, targetUserID)
+	if err != nil {
+		writeRelationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, followStateResponse{
+		UserID:       result.UserID,
+		TargetUserID: result.TargetUserID,
+		Following:    result.Following,
+	})
+}
+
 // ListFollowing 查询当前用户关注列表。
 func (h *Handler) ListFollowing(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)

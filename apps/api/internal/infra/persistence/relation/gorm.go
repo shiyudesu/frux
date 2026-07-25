@@ -32,6 +32,11 @@ type relationUserProfileModel struct {
 	Bio       string
 }
 
+type followStateModel struct {
+	TargetExists bool
+	Following    bool
+}
+
 // New 创建关系仓储实现。
 func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
@@ -133,6 +138,31 @@ func (r *Repository) SetFollow(ctx context.Context, userID int64, targetUserID i
 	}
 
 	return restoreFollow(follow), restoreStat(userStat), restoreStat(targetStat), nil
+}
+
+// IsFollowing reads one relationship with constant work instead of scanning a following list.
+func (r *Repository) IsFollowing(ctx context.Context, userID int64, targetUserID int64) (bool, error) {
+	var state followStateModel
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			EXISTS (
+				SELECT 1 FROM account
+				WHERE id = ? AND status = ?
+			) AS target_exists,
+			EXISTS (
+				SELECT 1 FROM user_follow
+				WHERE user_id = ? AND target_user_id = ? AND status = ?
+			) AS following
+	`, targetUserID, domainaccount.StatusNormal, userID, targetUserID, domainrelation.FollowStatusActive).
+		Scan(&state).
+		Error
+	if err != nil {
+		return false, err
+	}
+	if !state.TargetExists {
+		return false, domainrelation.ErrTargetUserNotFound
+	}
+	return state.Following, nil
 }
 
 // ListFollowing 查询当前用户关注的人。

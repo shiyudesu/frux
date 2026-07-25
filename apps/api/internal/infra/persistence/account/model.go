@@ -11,10 +11,23 @@ type UserModel struct {
 	Nickname  string    `gorm:"column:nickname;size:128;not null"`
 	AvatarURL string    `gorm:"column:avatar_url;size:512"`
 	Bio       string    `gorm:"column:bio;size:255"`
+	Gender    int       `gorm:"column:gender;type:smallint;not null;default:0"`
 	Status    int       `gorm:"column:status;type:smallint;not null;default:1"`
 	Role      string    `gorm:"column:role;size:32;not null"`
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+type ProfileSettingModel struct {
+	UserID             int64     `gorm:"column:user_id;primaryKey"`
+	LikedVisibility    string    `gorm:"column:liked_visibility;size:16;not null;default:private"`
+	FavoriteVisibility string    `gorm:"column:favorite_visibility;size:16;not null;default:private"`
+	CreatedAt          time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt          time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (ProfileSettingModel) TableName() string {
+	return "account_profile_setting"
 }
 
 // TableName 指定数据库表名，避免 GORM 使用默认复数表名。

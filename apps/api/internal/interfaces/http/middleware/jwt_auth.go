@@ -6,13 +6,17 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
+	"github.com/cloudwego/hertz/pkg/protocol"
 )
 
 const ContextUserIDKey = "auth_user_id"
 const ContextRoleKey = "auth_role"
+const AssetTokenCookieName = "gcfeed_asset_token"
+const AssetActiveCookieName = "gcfeed_asset_active"
 
 // NewJWTAuth validates access tokens and stores identity in the request context.
 func NewJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
@@ -79,18 +83,20 @@ func NewInternalTokenAuth(token string) app.HandlerFunc {
 func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 	return func(ctx context.Context, c *app.RequestContext) {
 		header := strings.TrimSpace(string(c.GetHeader("Authorization")))
-		if header == "" {
+		token := ""
+		if header != "" {
+			parts := strings.SplitN(header, " ", 2)
+			if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
+				token = strings.TrimSpace(parts[1])
+			}
+		} else if assetCookieActive(c) {
+			token = strings.TrimSpace(string(c.Cookie(AssetTokenCookieName)))
+		}
+		if token == "" {
 			c.Next(ctx)
 			return
 		}
 
-		parts := strings.SplitN(header, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
-			c.Next(ctx)
-			return
-		}
-
-		token := strings.TrimSpace(parts[1])
 		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
 		if err == nil {
 			c.Set(ContextUserIDKey, claims.UserID)
@@ -98,4 +104,32 @@ func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 		}
 		c.Next(ctx)
 	}
+}
+
+func SetAssetTokenCookie(c *app.RequestContext, token string, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	c.SetCookie(
+		AssetTokenCookieName,
+		token,
+		maxAge,
+		"/uploads",
+		"",
+		protocol.CookieSameSiteStrictMode,
+		requestIsHTTPS(c),
+		true,
+	)
+}
+
+func requestIsHTTPS(c *app.RequestContext) bool {
+	return strings.EqualFold(strings.TrimSpace(string(c.GetHeader("X-Forwarded-Proto"))), "https")
+}
+
+func assetCookieActive(c *app.RequestContext) bool {
+	return subtle.ConstantTimeCompare(
+		[]byte(strings.TrimSpace(string(c.Cookie(AssetActiveCookieName)))),
+		[]byte("1"),
+	) == 1
 }

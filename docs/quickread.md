@@ -4,16 +4,17 @@
 
 ## 1. 先建立项目模型
 
-GCFeed 是一个短视频 Feed 系统。你可以把它理解成四条主线：
+GCFeed 是一个短视频 Feed 系统。你可以把它理解成五条主线：
 
 | 主线 | 负责什么 | 当前代码里的模块 |
 | --- | --- | --- |
-| 用户 | 注册、登录、资料、关注关系 | `account`、`relation` |
-| 内容 | 发布视频、上传文件、视频详情 | `video`、`upload` |
-| 分发 | Timeline Feed、Hot Feed、分页、缓存 | `feed`、Redis |
-| 互动 | 点赞、收藏、评论、热度、异步落库 | `interaction`、Redis、RabbitMQ |
+| 用户 | 注册、登录、资料、隐私、关注关系 | `account`、`relation` |
+| 内容 | 发布、可见性、批量管理、合集、上传 | `video`、`upload` |
+| 分发 | Timeline、Hot、推荐、分页、缓存 | `feed`、`recommendation`、Redis |
+| 互动与观看 | 点赞、收藏、评论、曝光、观看历史 | `interaction`、`exposure`、Redis、RabbitMQ |
+| 个人内容中心 | 喜欢、收藏、历史、稍后再看聚合 | `library` + account/video/interaction/exposure 适配器 |
 
-读代码时优先围绕这四条主线理解项目。每条主线都有独立的 domain、application、infra、http 代码，模块边界比较清晰。
+读代码时优先围绕这五条主线理解项目。个人内容中心是跨模块聚合，但仍通过 Domain 窄接口保持所有权边界。
 
 ## 2. 先看目录分层
 
@@ -220,6 +221,40 @@ routing key: interaction.action_changed
 - 接口立即返回 Redis 里的最新计数。
 - PostgreSQL 通过 Worker 最终写入。
 
+### 4.6 个人主页与内容库链路
+
+入口：
+
+```text
+GET/PATCH /api/users/me/profile-settings
+POST      /api/users/me/video-queries
+POST      /api/users/me/video-batch-actions
+GET/POST  /api/users/me/video-collections
+GET       /api/users/me/liked-videos
+GET       /api/users/me/favorite-videos
+GET       /api/users/me/watch-history
+GET       /api/users/me/watch-later
+```
+
+阅读顺序：
+
+1. `interfaces/http/router/router.go` 看新增路由和依赖装配。
+2. `interfaces/http/router/library_adapters.go` 看跨模块接口转换。
+3. `application/library/service.go` 看行为候选、隐私检查、可读视频补齐和稳定游标。
+4. `application/video/management_service.go` 看创作者查询、批量幂等和合集用例。
+5. `infra/persistence/video/management_gorm.go` 看事务锁、查询过滤、合集顺序。
+6. `infra/persistence/exposure/gorm.go` 看观看历史投影 upsert 与删除。
+7. Web 侧读 `hooks/useCreatorContent.ts`、`hooks/useProfileLibrary.ts` 和两个 Profile 页面。
+
+关键点：
+
+- 视频生命周期 `status` 与 `visibility` 独立。
+- 创作者作品按 `created_at DESC, id DESC`；合集按 `updated_at DESC, id DESC`。
+- 喜欢、收藏、稍后再看按 `updated_at DESC, video_id DESC`；历史按 `last_watched_at DESC, video_id DESC`。
+- library 先取有序事实 ID，再由 video catalog 过滤删除、下架和不可读私密视频。
+- `play/complete/skip` 更新 `video_view_history`，`exposed` 只更新曝光聚合。
+- 公开主页只有作品、公开合集和隐私允许的喜欢；没有短剧和预约能力。
+
 ## 5. 用测试理解代码
 
 `apps/api/test` 是很好的代码阅读入口。测试里用内存仓储搭出真实接口流程，可以快速理解每个模块的行为。
@@ -233,6 +268,7 @@ routing key: interaction.action_changed
 | `feed_api_test.go` | Timeline、Hot Feed、缓存、分页 |
 | `interaction_api_test.go` | 点赞、收藏、评论、异步落库 |
 | `relation_api_test.go` | 关注关系 |
+| `profile_backend_api_test.go` | 资料隐私、创作者查询/批量、合集、喜欢/收藏、历史、稍后再看 |
 
 运行测试：
 
@@ -255,6 +291,9 @@ go test ./...
 | 看 Redis 缓存 | `apps/api/internal/infra/cache/feed_cache.go` |
 | 看 RabbitMQ | `apps/api/internal/infra/mq/rabbitmq.go` |
 | 看数据库模型 | `apps/api/internal/infra/persistence/*/model.go` |
+| 看个人内容聚合 | `apps/api/internal/application/library/service.go` |
+| 看创作者管理 | `apps/api/internal/application/video/management_service.go` |
+| 看 Profile 前端状态 | `apps/web/src/hooks/useCreatorContent.ts`、`useProfileLibrary.ts` |
 | 看 API 测试 | `apps/api/test/*_api_test.go` |
 
 ## 7. 读模块时的固定方法
@@ -277,6 +316,10 @@ go test ./...
 | 幂等 | Service + Repository | `Idempotency-Key` 如何保证重试稳定 |
 | 游标分页 | Feed、Comment | cursor 如何保存排序字段 |
 | 计数表 | `video_stat` | 高频计数如何集中更新 |
+| 内容聚合 | `user_content_stat` | 作品、获赞、合集计数如何事务更新和重建 |
+| 最新投影 | `video_view_history` | 原始流水与可删除历史如何分离 |
+| 可见性 | `video.visibility` | 公开读取为何同时检查生命周期和可见性 |
+| 跨模块适配 | `router/library_adapters.go` | library 如何不依赖其他模块 Infrastructure |
 | Redis 缓存 | `infra/cache/feed_cache.go` | Feed 页、卡片、计数、热榜如何缓存 |
 | RabbitMQ | `infra/mq/rabbitmq.go` | 事件如何发布、消费、确认 |
 | Worker | `application/interaction/worker.go` | 异步事件如何落库 |
@@ -306,7 +349,8 @@ curl http://127.0.0.1:8080/health
 5. 点赞视频。
 6. 查看 Hot Feed。
 7. 查看 RabbitMQ 队列是否消费完成。
-8. 查 PostgreSQL 的 `interaction_action` 和 `video_stat`。
+8. 打开 `/profile`，验证公开/私密作品、喜欢、收藏、历史和稍后再看。
+9. 查 PostgreSQL 的 `interaction_action`、`video_stat`、`user_content_stat`、`video_view_history`、`user_watch_later`。
 
 这条路径能覆盖账号、视频、Feed、Redis、RabbitMQ、PostgreSQL 的核心闭环。
 
@@ -320,8 +364,11 @@ curl http://127.0.0.1:8080/health
 | `docs/engineering.md` | 新增代码前看工程规范 |
 | `docs/modules/feed.md` | 深入 Feed、分页、热榜 |
 | `docs/modules/interaction.md` | 深入点赞、收藏、评论、异步落库 |
+| `docs/modules/exposure.md` | 深入观看事件、曝光聚合和历史投影 |
+| `docs/modules/library.md` | 深入个人内容库聚合、隐私和游标 |
+| `docs/modules/video.md` | 深入可见性、批量管理、内容统计和合集 |
 | `docs/optimization.md` | 理解高并发优化路线 |
 
 ## 11. 当前最值得关注的下一步
 
-下一步适合实现曝光/播放事件批量落库。建议按“接口批量接收 -> RabbitMQ 投递 -> Worker 批量写库 -> 聚合更新统计”的路径阅读和扩展现有代码。
+当前最值得关注的是公开可读性的一致性：沿视频可见性变化，检查详情、Feed、推荐、预加载、公开主页、公开喜欢和公开合集是否都要求 `status=published AND visibility=public`，并确认缓存命中后仍会重新验证数据库状态。

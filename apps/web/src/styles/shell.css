@@ -231,6 +231,15 @@
   gap: 6px;
 }
 
+.top-nav-error {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--color-danger);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .top-action-button {
   min-height: 38px;
   padding: 0 12px;

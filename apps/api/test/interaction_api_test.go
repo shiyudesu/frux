@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	applicationinteraction "GCFeed/internal/application/interaction"
 	domainaccount "GCFeed/internal/domain/account"
 	domaininteraction "GCFeed/internal/domain/interaction"
+	domainvideo "GCFeed/internal/domain/video"
 	infrajwt "GCFeed/internal/infra/jwt"
 	interfaceshttpinteraction "GCFeed/internal/interfaces/http/interaction"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
@@ -52,9 +54,10 @@ type interactionDeleteCommentAPIResponse struct {
 }
 
 type memoryInteractionVideo struct {
-	ID       int64
-	AuthorID int64
-	Status   int
+	ID         int64
+	AuthorID   int64
+	Status     int
+	Visibility string
 }
 
 type memoryInteractionStat struct {
@@ -65,14 +68,19 @@ type memoryInteractionStat struct {
 
 // memoryInteractionRepo 是互动测试用内存仓储，模拟点赞、收藏、评论和计数。
 type memoryInteractionRepo struct {
-	mu            sync.Mutex
-	nextActionID  int64
-	nextCommentID int64
-	videos        map[int64]memoryInteractionVideo
-	stats         map[int64]memoryInteractionStat
-	actions       map[string]*domaininteraction.Action
-	comments      map[int64]*domaininteraction.Comment
-	commentIdem   map[string]int64
+	mu             sync.Mutex
+	nextActionID   int64
+	nextCommentID  int64
+	videos         map[int64]memoryInteractionVideo
+	stats          map[int64]memoryInteractionStat
+	actions        map[string]*domaininteraction.Action
+	actionEvents   map[string]*domaininteraction.AcceptedActionEvent
+	latestEvents   map[string]*domaininteraction.AcceptedActionEvent
+	persistErrors  []error
+	persistCtxErr  error
+	persistBounded bool
+	comments       map[int64]*domaininteraction.Comment
+	commentIdem    map[string]int64
 }
 
 type memoryHotScoreRecorder struct {
@@ -82,10 +90,21 @@ type memoryHotScoreRecorder struct {
 }
 
 type memoryActionPipeline struct {
-	mu     sync.Mutex
-	states map[string]*applicationinteraction.ActionStateResult
-	stats  map[int64]memoryInteractionStat
-	events []*applicationinteraction.ActionChangedEvent
+	mu                    sync.Mutex
+	states                map[string]*applicationinteraction.ActionStateResult
+	stats                 map[int64]memoryInteractionStat
+	events                []*applicationinteraction.ActionChangedEvent
+	publishErr            error
+	versionCounters       map[string]int64
+	enqueueOnPublishError bool
+	countReadErrors       []error
+	countReadHook         func()
+	rollbackHook          func()
+	rollbackErr           error
+	rollbackContextErr    error
+	rollbackHasDeadline   bool
+	publishContextErr     error
+	publishHasDeadline    bool
 }
 
 type memoryInteractionMessageWriter struct {
@@ -135,13 +154,25 @@ func newMemoryInteractionRepo() *memoryInteractionRepo {
 		nextActionID:  1,
 		nextCommentID: 1,
 		videos: map[int64]memoryInteractionVideo{
-			1001: {ID: 1001, AuthorID: 42, Status: 2},
-			1002: {ID: 1002, AuthorID: 77, Status: 2},
+			1001: {
+				ID:         1001,
+				AuthorID:   42,
+				Status:     domainvideo.StatusPublished,
+				Visibility: domainvideo.VisibilityPublic,
+			},
+			1002: {
+				ID:         1002,
+				AuthorID:   77,
+				Status:     domainvideo.StatusPublished,
+				Visibility: domainvideo.VisibilityPublic,
+			},
 		},
-		stats:       map[int64]memoryInteractionStat{1001: {}, 1002: {}},
-		actions:     map[string]*domaininteraction.Action{},
-		comments:    map[int64]*domaininteraction.Comment{},
-		commentIdem: map[string]int64{},
+		stats:        map[int64]memoryInteractionStat{1001: {}, 1002: {}},
+		actions:      map[string]*domaininteraction.Action{},
+		actionEvents: map[string]*domaininteraction.AcceptedActionEvent{},
+		latestEvents: map[string]*domaininteraction.AcceptedActionEvent{},
+		comments:     map[int64]*domaininteraction.Comment{},
+		commentIdem:  map[string]int64{},
 	}
 }
 
@@ -160,6 +191,28 @@ func (r *memoryInteractionRepo) GetVideoStat(ctx context.Context, videoID int64)
 		CommentCount:  stat.CommentCount,
 		FavoriteCount: stat.FavoriteCount,
 	}, nil
+}
+
+func (r *memoryInteractionRepo) GetActionState(ctx context.Context, userID int64, videoID int64, actionType string) (*domaininteraction.ActionStateSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := memoryInteractionActionKey(userID, videoID, actionType)
+	action := r.actions[key]
+	if action == nil {
+		return &domaininteraction.ActionStateSnapshot{}, nil
+	}
+	snapshot := &domaininteraction.ActionStateSnapshot{
+		Exists:         true,
+		Active:         action.Active(),
+		IdempotencyKey: action.IdempotencyKey,
+		UpdatedAt:      action.UpdatedAt,
+	}
+	if latest := r.latestEvents[key]; latest != nil {
+		snapshot.Version = latest.Version
+		snapshot.EventID = latest.EventID
+		snapshot.OccurredAt = latest.OccurredAt
+	}
+	return snapshot, nil
 }
 
 // GetVideoAuthorID 模拟读取公开视频作者。
@@ -193,10 +246,61 @@ func (r *memoryInteractionRepo) SetAction(ctx context.Context, userID int64, vid
 	if !r.videoPublished(videoID) {
 		return nil, 0, 0, domaininteraction.ErrVideoNotFound
 	}
+	return r.setActionLocked(userID, videoID, actionType, active, idempotencyKey, true)
+}
 
+func (r *memoryInteractionRepo) PersistAcceptedActionEvent(ctx context.Context, event *domaininteraction.AcceptedActionEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.persistCtxErr = ctx.Err()
+	_, r.persistBounded = ctx.Deadline()
+	if len(r.persistErrors) > 0 {
+		err := r.persistErrors[0]
+		r.persistErrors = r.persistErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
+	if event == nil {
+		return domaininteraction.ErrInvalidActionEvent
+	}
+	if existing := r.actionEvents[event.EventID]; existing != nil {
+		if !sameMemoryAcceptedActionEvent(existing, event) {
+			return domaininteraction.ErrActionEventConflict
+		}
+		return nil
+	}
+	video, exists := r.videos[event.VideoID]
+	if !exists || video.Status == domainvideo.StatusDeleted {
+		return domaininteraction.ErrVideoNotFound
+	}
+	key := memoryInteractionActionKey(event.UserID, event.VideoID, event.ActionType)
+	if latest := r.latestEvents[key]; latest != nil && !domaininteraction.ActionEventComesAfter(
+		event.Version,
+		event.OccurredAt,
+		event.EventID,
+		latest.Version,
+		latest.OccurredAt,
+		latest.EventID,
+	) {
+		cloned := *event
+		r.actionEvents[event.EventID] = &cloned
+		return nil
+	}
+	if _, _, _, err := r.setActionLocked(event.UserID, event.VideoID, event.ActionType, event.Active, event.IdempotencyKey, false); err != nil {
+		return err
+	}
+	cloned := *event
+	r.actionEvents[event.EventID] = &cloned
+	r.latestEvents[key] = &cloned
+	return nil
+}
+
+func (r *memoryInteractionRepo) setActionLocked(userID int64, videoID int64, actionType string, active bool, idempotencyKey string, respectIdempotency bool) (*domaininteraction.Action, int, int, error) {
 	key := memoryInteractionActionKey(userID, videoID, actionType)
 	action, exists := r.actions[key]
-	if exists && idempotencyKey != "" && action.IdempotencyKey == strings.TrimSpace(idempotencyKey) {
+	if respectIdempotency && exists && idempotencyKey != "" && action.IdempotencyKey == strings.TrimSpace(idempotencyKey) {
 		// 幂等键命中时直接返回当前状态和计数，模拟真实仓储重放逻辑。
 		return cloneInteractionAction(action), r.actionCount(videoID, actionType), 0, nil
 	}
@@ -293,6 +397,10 @@ func (r *memoryInteractionRepo) ListComments(ctx context.Context, videoID int64,
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if !r.videoPublished(videoID) {
+		return nil, domaininteraction.ErrVideoNotFound
+	}
+
 	comments := make([]*domaininteraction.Comment, 0)
 	for _, comment := range r.comments {
 		if comment.VideoID != videoID || comment.Status != domaininteraction.CommentStatusNormal {
@@ -313,6 +421,50 @@ func (r *memoryInteractionRepo) ListComments(ctx context.Context, videoID int64,
 		limit = len(comments)
 	}
 	return comments[:limit], nil
+}
+
+func TestInteractionCommentListFollowsVideoVisibility(t *testing.T) {
+	router, jwtManager, repo := newInteractionRouterWithRepo(t)
+	commenterToken := signTestToken(t, jwtManager, 77)
+	authorToken := signTestToken(t, jwtManager, 42)
+
+	createResponse := performVideoJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/videos/1001/comments",
+		`{"content":"visibility comment"}`,
+		commenterToken,
+		"comment-visibility-1",
+	)
+	requireStatus(t, createResponse, http.StatusCreated)
+
+	assertCommentListStatus := func(want int) {
+		t.Helper()
+		response := performJSONRequest(router, http.MethodGet, "/api/videos/1001/comments", "", "")
+		requireStatus(t, response, want)
+		if want == http.StatusOK {
+			var list interactionCommentListAPIResponse
+			decodeJSON(t, response, &list)
+			if len(list.Items) != 1 || list.Items[0].Content != "visibility comment" {
+				t.Fatalf("unexpected visible comments: %+v", list)
+			}
+		}
+	}
+
+	assertCommentListStatus(http.StatusOK)
+	repo.setVideoVisibilityForTest(1001, domainvideo.VisibilityPrivate)
+	assertCommentListStatus(http.StatusNotFound)
+	repo.setVideoVisibilityForTest(1001, domainvideo.VisibilityPublic)
+	assertCommentListStatus(http.StatusOK)
+	repo.setVideoStatusForTest(1001, domainvideo.StatusOffline)
+	assertCommentListStatus(http.StatusNotFound)
+	repo.setVideoStatusForTest(1001, domainvideo.StatusPublished)
+	assertCommentListStatus(http.StatusOK)
+	repo.setVideoStatusForTest(1001, domainvideo.StatusDeleted)
+	assertCommentListStatus(http.StatusNotFound)
+
+	deleteResponse := performJSONRequest(router, http.MethodDelete, "/api/comments/1", "", authorToken)
+	requireStatus(t, deleteResponse, http.StatusOK)
 }
 
 // DeleteComment 模拟评论软删除，以及评论作者、视频作者、管理员三种删除权限。
@@ -580,7 +732,7 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("like replay: %v", err)
 	}
-	if replayed.LikeCount != 1 || pipeline.EventCount() != 1 {
+	if replayed.LikeCount != 1 || pipeline.EventCount() != 2 {
 		t.Fatalf("unexpected async replay: result=%+v events=%d", replayed, pipeline.EventCount())
 	}
 
@@ -588,8 +740,12 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unlike replay: %v", err)
 	}
-	if !replayedUnlike.Active || replayedUnlike.LikeCount != 1 || pipeline.EventCount() != 1 {
+	if !replayedUnlike.Active || replayedUnlike.LikeCount != 1 || pipeline.EventCount() != 3 {
 		t.Fatalf("unexpected async reverse replay: result=%+v events=%d", replayedUnlike, pipeline.EventCount())
+	}
+	replayedEvents := pipeline.EventsForTest()
+	if replayedEvents[0].EventID != replayedEvents[1].EventID || replayedEvents[0].EventID != replayedEvents[2].EventID {
+		t.Fatalf("idempotent retry must republish the same recoverable event: %+v", replayedEvents)
 	}
 
 	worker := applicationinteraction.NewActionWorker(repo, pipeline)
@@ -601,8 +757,399 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 	}
 }
 
+func TestInteractionAcceptedActionPersistsAfterPrivacyChange(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	pipeline := newMemoryActionPipeline()
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(context.Background(), 7, 1001, "accepted-like"); err != nil {
+		t.Fatalf("accept public like: %v", err)
+	}
+	repo.setVideoVisibilityForTest(1001, domainvideo.VisibilityPrivate)
+	if _, err := service.Like(context.Background(), 8, 1001, "private-like"); !errors.Is(err, domaininteraction.ErrVideoNotFound) {
+		t.Fatalf("new private-video interaction should be rejected, got %v", err)
+	}
+	if got := pipeline.EventCount(); got != 1 {
+		t.Fatalf("private-video request published an event: %d", got)
+	}
+
+	worker := applicationinteraction.NewActionWorker(repo, pipeline)
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("persist accepted event after privacy change: %v", err)
+	}
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("replay accepted event: %v", err)
+	}
+	if got := repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike); got != 1 {
+		t.Fatalf("duplicate delivery changed durable like count: %d", got)
+	}
+	if got := repo.ActionEventCountForTest(); got != 1 {
+		t.Fatalf("expected one durable event receipt, got %d", got)
+	}
+}
+
+func TestInteractionAsyncActionEventsKeepNewestStateWhenDeliveredOutOfOrder(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	pipeline := newMemoryActionPipeline()
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(context.Background(), 7, 1001, "ordered-like"); err != nil {
+		t.Fatalf("accept like: %v", err)
+	}
+	if _, err := service.Unlike(context.Background(), 7, 1001, "ordered-unlike"); err != nil {
+		t.Fatalf("accept unlike: %v", err)
+	}
+	events := pipeline.EventsForTest()
+	if len(events) != 2 {
+		t.Fatalf("expected two action events, got %+v", events)
+	}
+	if !domaininteraction.ActionEventComesAfter(
+		events[1].Version,
+		events[1].OccurredAt,
+		events[1].EventID,
+		events[0].Version,
+		events[0].OccurredAt,
+		events[0].EventID,
+	) {
+		t.Fatalf("service did not emit an ordered unlike after like: %+v", events)
+	}
+	if events[0].Version != 1 || events[1].Version != 2 {
+		t.Fatalf("expected atomic monotonic versions, got %+v", events)
+	}
+
+	worker := applicationinteraction.NewActionWorker(repo, nil)
+	if err := worker.HandleActionChanged(context.Background(), events[1]); err != nil {
+		t.Fatalf("persist newer unlike: %v", err)
+	}
+	if err := worker.HandleActionChanged(context.Background(), events[0]); err != nil {
+		t.Fatalf("acknowledge stale like: %v", err)
+	}
+	if err := worker.HandleActionChanged(context.Background(), events[1]); err != nil {
+		t.Fatalf("acknowledge duplicate unlike: %v", err)
+	}
+
+	if repo.ActionActiveForTest(7, 1001, domaininteraction.ActionTypeLike) {
+		t.Fatal("stale like reverted the newer unlike")
+	}
+	if got := repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike); got != 0 {
+		t.Fatalf("stale or duplicate event changed the like aggregate: %d", got)
+	}
+	if got := repo.ActionEventCountForTest(); got != 2 {
+		t.Fatalf("expected receipts for both distinct events, got %d", got)
+	}
+}
+
+func TestInteractionAsyncPublishFailurePersistsAcceptedEventOnce(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	pipeline := newMemoryActionPipeline()
+	pipeline.publishErr = errors.New("publish result unknown")
+	pipeline.enqueueOnPublishError = true
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	result, err := service.Like(context.Background(), 7, 1001, "publish-fallback-like")
+	if err != nil {
+		t.Fatalf("persist accepted event after publish failure: %v", err)
+	}
+	if !result.Active || result.LikeCount != 1 {
+		t.Fatalf("unexpected publish fallback result: %+v", result)
+	}
+	if got := repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike); got != 1 {
+		t.Fatalf("publish fallback did not persist durable aggregate: %d", got)
+	}
+	if got := repo.ActionEventCountForTest(); got != 1 {
+		t.Fatalf("publish fallback did not persist one receipt: %d", got)
+	}
+
+	pipeline.publishErr = nil
+	worker := applicationinteraction.NewActionWorker(repo, pipeline)
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("consume ambiguously published duplicate: %v", err)
+	}
+	if got := repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike); got != 1 {
+		t.Fatalf("duplicate delivery changed publish fallback aggregate: %d", got)
+	}
+}
+
+func TestInteractionAsyncPublishAndPersistenceFailureRollsBackForRetry(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	repo.persistErrors = []error{errors.New("database unavailable")}
+	pipeline := newMemoryActionPipeline()
+	pipeline.publishErr = errors.New("publish failed")
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(context.Background(), 7, 1001, "retryable-like"); !errors.Is(err, applicationinteraction.ErrUpdateInteractionFailed) {
+		t.Fatalf("expected failed accepted write, got %v", err)
+	}
+	pipeline.publishErr = nil
+	result, err := service.Like(context.Background(), 7, 1001, "retryable-like")
+	if err != nil {
+		t.Fatalf("retry like: %v", err)
+	}
+	if !result.Active || result.LikeCount != 1 {
+		t.Fatalf("retry did not restore accepted Redis state: %+v", result)
+	}
+	events := pipeline.EventsForTest()
+	if len(events) != 1 || events[0].Version != 2 {
+		t.Fatalf("retry should publish the next monotonic version after rollback: %+v", events)
+	}
+	worker := applicationinteraction.NewActionWorker(repo, pipeline)
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("consume retry event: %v", err)
+	}
+	if !repo.ActionActiveForTest(7, 1001, domaininteraction.ActionTypeLike) {
+		t.Fatal("retry event was not durably persisted")
+	}
+	if got := repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike); got != 1 {
+		t.Fatalf("retry corrupted durable count: %d", got)
+	}
+}
+
+func TestInteractionAsyncCountReadFailureRollsBackWithDetachedContext(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	pipeline := newMemoryActionPipeline()
+	countReadErr := errors.New("count read failed")
+	pipeline.countReadErrors = []error{countReadErr}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	pipeline.countReadHook = cancelRequest
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(requestCtx, 7, 1001, "count-read-like"); !errors.Is(err, countReadErr) ||
+		!errors.Is(err, applicationinteraction.ErrUpdateInteractionFailed) {
+		t.Fatalf("expected count-read failure, got %v", err)
+	}
+	if pipeline.rollbackContextErr != nil {
+		t.Fatalf("rollback inherited canceled request context: %v", pipeline.rollbackContextErr)
+	}
+	if !pipeline.rollbackHasDeadline {
+		t.Fatal("rollback compensation context was not bounded")
+	}
+	if got := pipeline.EventCount(); got != 0 {
+		t.Fatalf("rolled-back mutation was published: %d", got)
+	}
+
+	result, err := service.Like(context.Background(), 7, 1001, "count-read-like")
+	if err != nil {
+		t.Fatalf("retry rolled-back mutation: %v", err)
+	}
+	if !result.Active || result.LikeCount != 1 {
+		t.Fatalf("rollback did not restore the pre-mutation state: %+v", result)
+	}
+	events := pipeline.EventsForTest()
+	if len(events) != 1 || events[0].Version != 2 {
+		t.Fatalf("retry should publish the next version after rollback: %+v", events)
+	}
+}
+
+func TestInteractionAsyncCountReadFailurePersistsRecoveryWhenRollbackFails(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	pipeline := newMemoryActionPipeline()
+	countReadErr := errors.New("count read failed")
+	rollbackErr := errors.New("rollback unavailable")
+	pipeline.countReadErrors = []error{countReadErr}
+	pipeline.rollbackErr = rollbackErr
+	pipeline.publishErr = errors.New("recovery publish failed")
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	pipeline.countReadHook = cancelRequest
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(requestCtx, 7, 1001, "recovery-like"); !errors.Is(err, countReadErr) ||
+		!errors.Is(err, rollbackErr) ||
+		!errors.Is(err, applicationinteraction.ErrUpdateInteractionFailed) {
+		t.Fatalf("expected visible count-read and rollback failures, got %v", err)
+	}
+	if pipeline.rollbackContextErr != nil || !pipeline.rollbackHasDeadline {
+		t.Fatalf("unexpected rollback context: err=%v deadline=%v", pipeline.rollbackContextErr, pipeline.rollbackHasDeadline)
+	}
+	if pipeline.publishContextErr != nil || !pipeline.publishHasDeadline {
+		t.Fatalf("unexpected recovery publish context: err=%v deadline=%v", pipeline.publishContextErr, pipeline.publishHasDeadline)
+	}
+	if repo.persistCtxErr != nil || !repo.persistBounded {
+		t.Fatalf("unexpected recovery persistence context: err=%v deadline=%v", repo.persistCtxErr, repo.persistBounded)
+	}
+	if got := pipeline.EventCount(); got != 0 {
+		t.Fatalf("failed recovery publish unexpectedly queued an event: %d", got)
+	}
+	if got := repo.ActionEventCountForTest(); got != 1 {
+		t.Fatalf("rollback and publish failure did not persist one recovery receipt: %d", got)
+	}
+	if !repo.ActionActiveForTest(7, 1001, domaininteraction.ActionTypeLike) {
+		t.Fatal("recovery persistence did not preserve the committed Redis state")
+	}
+	if got := repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike); got != 1 {
+		t.Fatalf("recovery persistence corrupted durable count: %d", got)
+	}
+}
+
+func TestInteractionAsyncCountReadFailureRetainsOriginalEventForRetry(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	persistErr := errors.New("recovery persistence failed")
+	repo.persistErrors = []error{persistErr}
+	pipeline := newMemoryActionPipeline()
+	countReadErr := errors.New("count read failed")
+	retryCountReadErr := errors.New("retry count read failed")
+	rollbackErr := errors.New("rollback unavailable")
+	publishErr := errors.New("recovery publish failed")
+	pipeline.countReadErrors = []error{countReadErr, retryCountReadErr}
+	pipeline.rollbackErr = rollbackErr
+	pipeline.publishErr = publishErr
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(context.Background(), 7, 1001, "retry-recovery-like"); !errors.Is(err, countReadErr) ||
+		!errors.Is(err, rollbackErr) ||
+		!errors.Is(err, publishErr) ||
+		!errors.Is(err, persistErr) {
+		t.Fatalf("expected all first recovery failures, got %v", err)
+	}
+	if got := pipeline.EventCount(); got != 0 {
+		t.Fatalf("failed first recovery unexpectedly queued an event: %d", got)
+	}
+	if got := repo.ActionEventCountForTest(); got != 0 {
+		t.Fatalf("failed first recovery unexpectedly persisted an event: %d", got)
+	}
+
+	pipeline.publishErr = nil
+	if _, err := service.Like(context.Background(), 7, 1001, "retry-recovery-like"); !errors.Is(err, retryCountReadErr) {
+		t.Fatalf("expected retry count-read failure after event recovery, got %v", err)
+	}
+	events := pipeline.EventsForTest()
+	if len(events) != 1 || events[0].Version != 1 || events[0].EventID == "" {
+		t.Fatalf("retry did not republish the original committed event: %+v", events)
+	}
+
+	worker := applicationinteraction.NewActionWorker(repo, pipeline)
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("persist retried recovery event: %v", err)
+	}
+	if !repo.ActionActiveForTest(7, 1001, domaininteraction.ActionTypeLike) {
+		t.Fatal("retried recovery event did not persist the committed state")
+	}
+}
+
+func TestInteractionAsyncCountReadFailureDoesNotRollbackConcurrentNewerMutation(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	pipeline := newMemoryActionPipeline()
+	countReadErr := errors.New("count read failed")
+	pipeline.countReadErrors = []error{countReadErr}
+	pipeline.rollbackHook = func() {
+		_, err := pipeline.SetActionState(
+			context.Background(),
+			7,
+			1001,
+			domaininteraction.ActionTypeLike,
+			false,
+			"newer-unlike",
+			&domaininteraction.VideoStat{VideoID: 1001},
+			&domaininteraction.ActionStateSnapshot{},
+			applicationinteraction.ActionMutation{EventID: "newer-unlike-event", OccurredAt: time.Now().UTC().Add(time.Second)},
+		)
+		if err != nil {
+			t.Fatalf("create concurrent newer mutation: %v", err)
+		}
+	}
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(context.Background(), 7, 1001, "failed-count-like"); !errors.Is(err, countReadErr) {
+		t.Fatalf("expected failed older count read, got %v", err)
+	}
+	if got := pipeline.EventCount(); got != 0 {
+		t.Fatalf("superseded older mutation was recovered: %d", got)
+	}
+
+	result, err := service.Unlike(context.Background(), 7, 1001, "newer-unlike")
+	if err != nil {
+		t.Fatalf("publish concurrent newer mutation: %v", err)
+	}
+	if result.Active || result.LikeCount != 0 {
+		t.Fatalf("older compensation overwrote newer state: %+v", result)
+	}
+	events := pipeline.EventsForTest()
+	if len(events) != 1 || events[0].Version != 2 || events[0].Active {
+		t.Fatalf("expected only the newer unlike event, got %+v", events)
+	}
+}
+
+func TestInteractionAsyncFailureDoesNotRollbackConcurrentNewerMutation(t *testing.T) {
+	repo := newMemoryInteractionRepo()
+	repo.persistErrors = []error{errors.New("database unavailable")}
+	pipeline := newMemoryActionPipeline()
+	pipeline.publishErr = errors.New("publish failed")
+	pipeline.rollbackHook = func() {
+		_, err := pipeline.SetActionState(
+			context.Background(),
+			7,
+			1001,
+			domaininteraction.ActionTypeLike,
+			false,
+			"newer-unlike",
+			&domaininteraction.VideoStat{VideoID: 1001},
+			&domaininteraction.ActionStateSnapshot{},
+			applicationinteraction.ActionMutation{EventID: "newer-unlike-event", OccurredAt: time.Now().UTC().Add(time.Second)},
+		)
+		if err != nil {
+			t.Fatalf("create concurrent newer mutation: %v", err)
+		}
+	}
+	service := applicationinteraction.New(
+		repo,
+		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
+	)
+
+	if _, err := service.Like(context.Background(), 7, 1001, "failed-like"); !errors.Is(err, applicationinteraction.ErrUpdateInteractionFailed) {
+		t.Fatalf("expected failed older mutation, got %v", err)
+	}
+	pipeline.publishErr = nil
+	result, err := service.Unlike(context.Background(), 7, 1001, "newer-unlike")
+	if err != nil {
+		t.Fatalf("publish newer mutation: %v", err)
+	}
+	if result.Active || result.LikeCount != 0 {
+		t.Fatalf("older rollback overwrote newer mutation: %+v", result)
+	}
+	events := pipeline.EventsForTest()
+	if len(events) != 1 || events[0].Version != 2 || events[0].Active {
+		t.Fatalf("expected only the newer unlike event, got %+v", events)
+	}
+	worker := applicationinteraction.NewActionWorker(repo, pipeline)
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("consume newer mutation: %v", err)
+	}
+	if repo.ActionActiveForTest(7, 1001, domaininteraction.ActionTypeLike) {
+		t.Fatal("durable action did not keep newer unlike")
+	}
+}
+
 // newInteractionRouter 只装配互动相关 RESTful 路由。
 func newInteractionRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
+	t.Helper()
+	router, jwtManager, _ := newInteractionRouterWithRepo(t)
+	return router, jwtManager
+}
+
+func newInteractionRouterWithRepo(t *testing.T) (*server.Hertz, *infrajwt.Manager, *memoryInteractionRepo) {
 	t.Helper()
 
 	router := server.New()
@@ -627,13 +1174,31 @@ func newInteractionRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	videos.GET("/:videoId/comments", handler.ListComments)
 	api.DELETE("/comments/:commentId", authMiddleware, handler.DeleteComment)
 
-	return router, jwtManager
+	return router, jwtManager, repo
 }
 
 // videoPublished 模拟互动前校验视频是否可互动。
 func (r *memoryInteractionRepo) videoPublished(videoID int64) bool {
 	video, exists := r.videos[videoID]
-	return exists && video.Status == 2
+	return exists &&
+		video.Status == domainvideo.StatusPublished &&
+		video.Visibility == domainvideo.VisibilityPublic
+}
+
+func (r *memoryInteractionRepo) setVideoVisibilityForTest(videoID int64, visibility string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	video := r.videos[videoID]
+	video.Visibility = visibility
+	r.videos[videoID] = video
+}
+
+func (r *memoryInteractionRepo) setVideoStatusForTest(videoID int64, status int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	video := r.videos[videoID]
+	video.Status = status
+	r.videos[videoID] = video
 }
 
 // addActionCount 根据行为类型增加或减少点赞/收藏数。
@@ -660,6 +1225,30 @@ func (r *memoryInteractionRepo) ActionCountForTest(videoID int64, actionType str
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.actionCount(videoID, actionType)
+}
+
+func (r *memoryInteractionRepo) ActionEventCountForTest() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.actionEvents)
+}
+
+func (r *memoryInteractionRepo) ActionActiveForTest(userID int64, videoID int64, actionType string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	action := r.actions[memoryInteractionActionKey(userID, videoID, actionType)]
+	return action != nil && action.Active()
+}
+
+func sameMemoryAcceptedActionEvent(left *domaininteraction.AcceptedActionEvent, right *domaininteraction.AcceptedActionEvent) bool {
+	return left.EventID == right.EventID &&
+		left.UserID == right.UserID &&
+		left.VideoID == right.VideoID &&
+		left.ActionType == right.ActionType &&
+		left.Active == right.Active &&
+		left.IdempotencyKey == right.IdempotencyKey &&
+		left.Version == right.Version &&
+		left.OccurredAt.Equal(right.OccurredAt)
 }
 
 // memoryInteractionActionKey 模拟 user_id + video_id + action_type 唯一索引。
@@ -743,9 +1332,10 @@ func (r *memoryHotScoreRecorder) EventCount() int {
 
 func newMemoryActionPipeline() *memoryActionPipeline {
 	return &memoryActionPipeline{
-		states: map[string]*applicationinteraction.ActionStateResult{},
-		stats:  map[int64]memoryInteractionStat{},
-		events: []*applicationinteraction.ActionChangedEvent{},
+		states:          map[string]*applicationinteraction.ActionStateResult{},
+		stats:           map[int64]memoryInteractionStat{},
+		events:          []*applicationinteraction.ActionChangedEvent{},
+		versionCounters: map[string]int64{},
 	}
 }
 
@@ -791,7 +1381,7 @@ func (w *memoryInteractionMessageWriter) Messages() []memoryInteractionMessage {
 	return items
 }
 
-func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, initialStat *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
+func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, initialStat *domaininteraction.VideoStat, initialState *domaininteraction.ActionStateSnapshot, mutation applicationinteraction.ActionMutation) (*applicationinteraction.ActionStateResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -804,23 +1394,54 @@ func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64,
 			FavoriteCount: initialStat.FavoriteCount,
 		}
 	}
+	previous := domaininteraction.ActionStateSnapshot{}
+	if state != nil {
+		previous = domaininteraction.ActionStateSnapshot{
+			Exists:         true,
+			Active:         state.Active,
+			IdempotencyKey: state.IdempotencyKey,
+			Version:        state.Version,
+			EventID:        state.EventID,
+			OccurredAt:     state.OccurredAt,
+			UpdatedAt:      state.OccurredAt,
+		}
+	} else if initialState != nil {
+		previous = *initialState
+	}
+	if previous.Exists && idempotencyKey != "" && previous.IdempotencyKey == strings.TrimSpace(idempotencyKey) {
+		result := &applicationinteraction.ActionStateResult{
+			UserID:         userID,
+			VideoID:        videoID,
+			ActionType:     actionType,
+			Active:         previous.Active,
+			IdempotencyKey: previous.IdempotencyKey,
+			Version:        previous.Version,
+			EventID:        previous.EventID,
+			OccurredAt:     previous.OccurredAt,
+			ShouldPublish:  state != nil && previous.EventID != "",
+		}
+		stat := p.stats[videoID]
+		result.LikeCount = stat.LikeCount
+		result.FavoriteCount = stat.FavoriteCount
+		return p.finishActionStateResultLocked(result)
+	}
+
 	delta := 0
-	if state == nil {
+	if !previous.Exists {
 		if active {
 			delta = 1
 		}
-	} else if state.Active != active {
+	} else if previous.Active != active {
 		if active {
 			delta = 1
 		} else {
 			delta = -1
 		}
 	}
-	effectiveActive := active
-	if state != nil && idempotencyKey != "" && state.IdempotencyKey == strings.TrimSpace(idempotencyKey) {
-		effectiveActive = state.Active
-		delta = 0
+	if initialState != nil && initialState.Version > p.versionCounters[key] {
+		p.versionCounters[key] = initialState.Version
 	}
+	p.versionCounters[key]++
 
 	stat := p.stats[videoID]
 	if actionType == domaininteraction.ActionTypeLike {
@@ -831,25 +1452,97 @@ func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64,
 	p.stats[videoID] = stat
 
 	result := &applicationinteraction.ActionStateResult{
+		UserID:         userID,
 		VideoID:        videoID,
 		ActionType:     actionType,
-		Active:         effectiveActive,
+		Active:         active,
 		LikeCount:      stat.LikeCount,
 		FavoriteCount:  stat.FavoriteCount,
 		Delta:          delta,
 		IdempotencyKey: strings.TrimSpace(idempotencyKey),
+		Version:        p.versionCounters[key],
+		EventID:        mutation.EventID,
+		OccurredAt:     mutation.OccurredAt,
+		ShouldPublish:  true,
+		CanRollback:    true,
+		Previous:       previous,
 	}
 	p.states[key] = result
-	return cloneActionStateResult(result), nil
+	return p.finishActionStateResultLocked(result)
+}
+
+func (p *memoryActionPipeline) RollbackActionState(ctx context.Context, state *applicationinteraction.ActionStateResult) (bool, error) {
+	p.mu.Lock()
+	hook := p.rollbackHook
+	p.rollbackHook = nil
+	rollbackErr := p.rollbackErr
+	p.rollbackContextErr = ctx.Err()
+	_, p.rollbackHasDeadline = ctx.Deadline()
+	p.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	if rollbackErr != nil {
+		return false, rollbackErr
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := memoryInteractionActionKey(state.UserID, state.VideoID, state.ActionType)
+	current := p.states[key]
+	if current == nil || current.Version != state.Version || current.EventID != state.EventID {
+		return false, nil
+	}
+	stat := p.stats[state.VideoID]
+	if state.ActionType == domaininteraction.ActionTypeLike {
+		stat.LikeCount = clampMemoryCount(stat.LikeCount - state.Delta)
+	} else {
+		stat.FavoriteCount = clampMemoryCount(stat.FavoriteCount - state.Delta)
+	}
+	p.stats[state.VideoID] = stat
+	if state.Previous.Exists {
+		p.states[key] = &applicationinteraction.ActionStateResult{
+			UserID:         state.UserID,
+			VideoID:        state.VideoID,
+			ActionType:     state.ActionType,
+			Active:         state.Previous.Active,
+			LikeCount:      stat.LikeCount,
+			FavoriteCount:  stat.FavoriteCount,
+			IdempotencyKey: state.Previous.IdempotencyKey,
+			Version:        state.Previous.Version,
+			EventID:        state.Previous.EventID,
+			OccurredAt:     state.Previous.OccurredAt,
+		}
+	} else {
+		delete(p.states, key)
+	}
+	return true, nil
 }
 
 func (p *memoryActionPipeline) PublishActionChanged(ctx context.Context, event *applicationinteraction.ActionChangedEvent) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	cloned := *event
-	p.events = append(p.events, &cloned)
-	return nil
+	p.publishContextErr = ctx.Err()
+	_, p.publishHasDeadline = ctx.Deadline()
+	err := p.publishErr
+	if err == nil || p.enqueueOnPublishError {
+		p.events = append(p.events, &cloned)
+	}
+	p.mu.Unlock()
+	return err
+}
+
+func (p *memoryActionPipeline) finishActionStateResultLocked(result *applicationinteraction.ActionStateResult) (*applicationinteraction.ActionStateResult, error) {
+	if len(p.countReadErrors) == 0 {
+		return cloneActionStateResult(result), nil
+	}
+	err := p.countReadErrors[0]
+	p.countReadErrors = p.countReadErrors[1:]
+	if p.countReadHook != nil {
+		hook := p.countReadHook
+		p.countReadHook = nil
+		hook()
+	}
+	return cloneActionStateResult(result), err
 }
 
 func (p *memoryActionPipeline) ConsumeActionChanged(ctx context.Context, handler func(context.Context, *applicationinteraction.ActionChangedEvent) error) error {
@@ -873,6 +1566,17 @@ func (p *memoryActionPipeline) EventCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.events)
+}
+
+func (p *memoryActionPipeline) EventsForTest() []*applicationinteraction.ActionChangedEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	events := make([]*applicationinteraction.ActionChangedEvent, 0, len(p.events))
+	for _, event := range p.events {
+		cloned := *event
+		events = append(events, &cloned)
+	}
+	return events
 }
 
 func cloneActionStateResult(result *applicationinteraction.ActionStateResult) *applicationinteraction.ActionStateResult {

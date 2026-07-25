@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 )
@@ -22,6 +24,27 @@ type stubUploadProcessor struct {
 	faststartCalls int
 	validateErr    error
 	faststartErr   error
+}
+
+type stubUploadOwnershipRecorder struct {
+	records []struct {
+		ownerID  int64
+		assetURL string
+		kind     string
+	}
+	err error
+}
+
+func (r *stubUploadOwnershipRecorder) RecordLocalUpload(_ context.Context, ownerID int64, assetURL, kind string) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.records = append(r.records, struct {
+		ownerID  int64
+		assetURL string
+		kind     string
+	}{ownerID: ownerID, assetURL: assetURL, kind: kind})
+	return nil
 }
 
 func (p *stubUploadProcessor) ValidateVideo(ctx context.Context, path string) error {
@@ -48,13 +71,16 @@ func (p *stubUploadProcessor) Faststart(ctx context.Context, path string) error 
 }
 
 func TestUploadVideoValidationAndFaststart(t *testing.T) {
-	router, root, processor := newUploadRouter(t)
+	router, root, processor, ownership := newUploadRouter(t)
 
 	resp := performMultipartUpload(router, "/api/uploads", "video", "clip.mp4", sampleMP4Bytes())
 	requireStatus(t, resp, http.StatusCreated)
 
 	if processor.validateCalls != 1 || processor.faststartCalls != 1 {
 		t.Fatalf("expected video validate and faststart once, got validate=%d faststart=%d", processor.validateCalls, processor.faststartCalls)
+	}
+	if len(ownership.records) != 1 || ownership.records[0].ownerID != 42 || ownership.records[0].kind != "video" {
+		t.Fatalf("unexpected ownership records: %+v", ownership.records)
 	}
 
 	var payload struct {
@@ -79,7 +105,7 @@ func TestUploadVideoValidationAndFaststart(t *testing.T) {
 }
 
 func TestUploadValidationRejectsBadFiles(t *testing.T) {
-	router, _, processor := newUploadRouter(t)
+	router, _, processor, ownership := newUploadRouter(t)
 
 	badExt := performMultipartUpload(router, "/api/uploads", "video", "clip.exe", sampleMP4Bytes())
 	requireStatus(t, badExt, http.StatusBadRequest)
@@ -99,10 +125,13 @@ func TestUploadValidationRejectsBadFiles(t *testing.T) {
 	if processor.validateCalls != 0 || processor.faststartCalls != 0 {
 		t.Fatalf("expected image uploads to skip video processor, got validate=%d faststart=%d", processor.validateCalls, processor.faststartCalls)
 	}
+	if len(ownership.records) != 1 || ownership.records[0].kind != "cover" {
+		t.Fatalf("expected cover ownership record, got %+v", ownership.records)
+	}
 }
 
 func TestUploadProcessingFailureRemovesTarget(t *testing.T) {
-	router, root, processor := newUploadRouter(t)
+	router, root, processor, _ := newUploadRouter(t)
 	processor.validateErr = errors.New("invalid video metadata")
 
 	resp := performMultipartUpload(router, "/api/uploads", "video", "clip.mp4", sampleMP4Bytes())
@@ -117,17 +146,40 @@ func TestUploadProcessingFailureRemovesTarget(t *testing.T) {
 	}
 }
 
-func newUploadRouter(t *testing.T) (*server.Hertz, string, *stubUploadProcessor) {
+func TestUploadOwnershipFailureRemovesTarget(t *testing.T) {
+	router, root, _, ownership := newUploadRouter(t)
+	ownership.err = errors.New("database unavailable")
+
+	resp := performMultipartUpload(router, "/api/uploads", "cover", "cover.png", samplePNGBytes())
+	requireStatus(t, resp, http.StatusInternalServerError)
+	entries, err := os.ReadDir(filepath.Join(root, "cover"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read cover directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatal("ownership failure should remove the uploaded file")
+	}
+}
+
+func newUploadRouter(t *testing.T) (*server.Hertz, string, *stubUploadProcessor, *stubUploadOwnershipRecorder) {
 	t.Helper()
 
 	root := t.TempDir()
 	processor := &stubUploadProcessor{}
-	handler := interfaceshttpupload.NewWithProcessor(root, processor)
+	ownership := &stubUploadOwnershipRecorder{}
+	handler := interfaceshttpupload.NewWithProcessor(
+		root,
+		processor,
+		interfaceshttpupload.WithOwnershipRecorder(ownership),
+	)
 
 	router := server.New(server.WithDisablePreParseMultipartForm(true))
 	api := router.Group("/api")
-	api.POST("/uploads", handler.Create)
-	return router, root, processor
+	api.POST("/uploads", func(ctx context.Context, c *app.RequestContext) {
+		c.Set(interfaceshttpmiddleware.ContextUserIDKey, int64(42))
+		c.Next(ctx)
+	}, handler.Create)
+	return router, root, processor, ownership
 }
 
 func performMultipartUpload(router *server.Hertz, path string, kind string, filename string, content []byte) *ut.ResponseRecorder {

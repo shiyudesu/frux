@@ -12,12 +12,22 @@ var ErrSaveVideoFailed = errors.New("failed to save video")
 var ErrUpdateVideoFailed = errors.New("failed to update video")
 
 type Service struct {
-	repo      domainvideo.Repository
-	publisher PublishedEventPublisher
+	repo             domainvideo.Repository
+	publisher        PublishedEventPublisher
+	cacheInvalidator VideoCacheInvalidator
+	localAssets      LocalAssetOwnership
 }
 
 type PublishedEventPublisher interface {
 	PublishVideoPublished(ctx context.Context, event *PublishedEvent) error
+}
+
+type VideoCacheInvalidator interface {
+	InvalidateVideo(ctx context.Context, videoID int64) error
+}
+
+type LocalAssetOwnership interface {
+	ValidateLocalAssetOwner(ctx context.Context, ownerID int64, assetURL, kind string) error
 }
 
 type Option func(*Service)
@@ -42,6 +52,18 @@ func WithPublishedEventPublisher(publisher PublishedEventPublisher) Option {
 	}
 }
 
+func WithVideoCacheInvalidator(invalidator VideoCacheInvalidator) Option {
+	return func(s *Service) {
+		s.cacheInvalidator = invalidator
+	}
+}
+
+func WithLocalAssetOwnership(ownership LocalAssetOwnership) Option {
+	return func(s *Service) {
+		s.localAssets = ownership
+	}
+}
+
 // CreatePublished 创建已发布视频；Idempotency-Key 命中时返回已有视频。
 func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, description, mediaURL, coverURL, idempotencyKey string) (*CreateResult, error) {
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
@@ -62,6 +84,12 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, de
 
 	video, err := domainvideo.NewPublished(authorID, title, description, mediaURL, coverURL, idempotencyKey)
 	if err != nil {
+		return nil, err
+	}
+	if err := validatePublishAsset(ctx, s.localAssets, authorID, video.MediaURL, domainvideo.LocalAssetKindVideo); err != nil {
+		return nil, err
+	}
+	if err := validatePublishAsset(ctx, s.localAssets, authorID, video.CoverURL, domainvideo.LocalAssetKindCover); err != nil {
 		return nil, err
 	}
 
@@ -160,6 +188,44 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 			return domainvideo.ErrVideoNotFound
 		}
 		return ErrUpdateVideoFailed
+	}
+	if s.cacheInvalidator != nil {
+		_ = s.cacheInvalidator.InvalidateVideo(ctx, video.ID)
+	}
+	return nil
+}
+
+func (s *Service) SetOffline(ctx context.Context, videoID int64) error {
+	return s.setLifecycleStatus(ctx, videoID, domainvideo.StatusOffline)
+}
+
+func (s *Service) RestorePublished(ctx context.Context, videoID int64) error {
+	return s.setLifecycleStatus(ctx, videoID, domainvideo.StatusPublished)
+}
+
+func (s *Service) setLifecycleStatus(ctx context.Context, videoID int64, status int) error {
+	if videoID <= 0 {
+		return domainvideo.ErrInvalidVideoID
+	}
+	video, err := s.repo.FindByIDAnyStatus(ctx, videoID)
+	if err != nil {
+		if errors.Is(err, domainvideo.ErrVideoNotFound) {
+			return domainvideo.ErrVideoNotFound
+		}
+		return ErrLoadVideoFailed
+	}
+	if video.Status == domainvideo.StatusDeleted {
+		return domainvideo.ErrVideoStateNotAllowed
+	}
+	if video.Status == status {
+		return nil
+	}
+	video.Status = status
+	if err := s.repo.UpdateStatus(ctx, video); err != nil {
+		return ErrUpdateVideoFailed
+	}
+	if s.cacheInvalidator != nil {
+		_ = s.cacheInvalidator.InvalidateVideo(ctx, video.ID)
 	}
 	return nil
 }

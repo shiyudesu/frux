@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
@@ -18,12 +19,208 @@ import (
 const defaultListLimit = 20
 
 type Handler struct {
-	service *applicationvideo.Service
+	service    *applicationvideo.Service
+	management *applicationvideo.ManagementService
 }
 
 // New 注入视频应用服务。
-func New(service *applicationvideo.Service) *Handler {
-	return &Handler{service: service}
+func New(service *applicationvideo.Service, management ...*applicationvideo.ManagementService) *Handler {
+	handler := &Handler{service: service}
+	if len(management) > 0 {
+		handler.management = management[0]
+	}
+	return handler
+}
+
+func (h *Handler) QueryMine(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	var req CreatorVideoQueryRequest
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	createdFrom, err := parseOptionalDateTime(req.CreatedFrom, false)
+	if err != nil {
+		writeVideoError(c, domainvideo.ErrInvalidDateRange)
+		return
+	}
+	createdTo, err := parseOptionalDateTime(req.CreatedTo, true)
+	if err != nil {
+		writeVideoError(c, domainvideo.ErrInvalidDateRange)
+		return
+	}
+	result, err := h.management.QueryCreatorVideos(ctx, userID, applicationvideo.CreatorQueryRequest{
+		Visibility: req.Visibility, Query: req.Query, CreatedFrom: createdFrom,
+		CreatedTo: createdTo, Cursor: req.Cursor, Limit: req.Limit,
+	})
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	items := make([]videoResponse, 0, len(result.Items))
+	for _, video := range result.Items {
+		items = append(items, videoResponseFromDomain(video))
+	}
+	c.JSON(http.StatusOK, cursorVideoListResponse{Items: items, NextCursor: result.NextCursor, HasMore: result.HasMore})
+}
+
+func (h *Handler) BatchAction(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	var req BatchVideoActionRequest
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	result, err := h.management.ApplyBatch(ctx, userID, req.Action, req.VideoIDs, string(c.GetHeader("Idempotency-Key")))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, batchVideoActionResponse{Action: result.Action, VideoIDs: result.VideoIDs, Replayed: result.Replayed})
+}
+
+func (h *Handler) CreateCollection(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	var req CreateCollectionRequest
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	collection, created, err := h.management.CreateCollection(ctx, userID, req.Title, req.Description, req.Visibility, string(c.GetHeader("Idempotency-Key")))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	c.JSON(status, collectionResponseFromDomain(collection))
+}
+
+func (h *Handler) ListMineCollections(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	h.listCollections(ctx, c, userID, false)
+}
+
+func (h *Handler) ListPublicCollections(ctx context.Context, c *app.RequestContext) {
+	userID, err := parsePositiveInt64(c.Param("userId"))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	h.listCollections(ctx, c, userID, true)
+}
+
+func (h *Handler) listCollections(ctx context.Context, c *app.RequestContext, ownerID int64, publicOnly bool) {
+	limit := 0
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			writeVideoError(c, domainvideo.ErrInvalidLimit)
+			return
+		}
+		limit = value
+	}
+	result, err := h.management.ListCollections(ctx, ownerID, publicOnly, c.Query("cursor"), limit)
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	items := make([]collectionResponse, 0, len(result.Items))
+	for _, collection := range result.Items {
+		items = append(items, collectionResponseFromDomain(collection))
+	}
+	c.JSON(http.StatusOK, collectionListResponse{Items: items, NextCursor: result.NextCursor, HasMore: result.HasMore})
+}
+
+func (h *Handler) UpdateCollection(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	var req UpdateCollectionRequest
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	collection, err := h.management.UpdateCollection(ctx, userID, collectionID, req.Title, req.Description, req.Visibility)
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, collectionResponseFromDomain(collection))
+}
+
+func (h *Handler) DeleteCollection(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	if err := h.management.DeleteCollection(ctx, userID, collectionID); err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) AddCollectionVideo(ctx context.Context, c *app.RequestContext) {
+	h.setCollectionVideo(ctx, c, true)
+}
+
+func (h *Handler) RemoveCollectionVideo(ctx context.Context, c *app.RequestContext) {
+	h.setCollectionVideo(ctx, c, false)
+}
+
+func (h *Handler) setCollectionVideo(ctx context.Context, c *app.RequestContext, active bool) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	videoID, err := parsePositiveInt64(c.Param("videoId"))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	if err := h.management.SetCollectionItem(ctx, userID, collectionID, videoID, active); err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Create 处理发布视频请求，用户身份来自 JWT，上行数据来自 JSON 请求体。
@@ -205,6 +402,7 @@ func videoResponseFromDomain(video *domainvideo.Video) videoResponse {
 		MediaURL:      video.MediaURL,
 		CoverURL:      video.CoverURL,
 		Status:        video.Status,
+		Visibility:    video.Visibility,
 		LikeCount:     video.LikeCount,
 		CommentCount:  video.CommentCount,
 		FavoriteCount: video.FavoriteCount,
@@ -212,6 +410,39 @@ func videoResponseFromDomain(video *domainvideo.Video) videoResponse {
 		CreatedAt:     video.CreatedAt,
 		UpdatedAt:     video.UpdatedAt,
 	}
+}
+
+func collectionResponseFromDomain(collection *domainvideo.Collection) collectionResponse {
+	items := make([]collectionItemResponse, 0, len(collection.Items))
+	for _, item := range collection.Items {
+		if item == nil || item.Video == nil {
+			continue
+		}
+		items = append(items, collectionItemResponse{VideoID: item.VideoID, Position: item.Position, Video: videoResponseFromDomain(item.Video)})
+	}
+	return collectionResponse{
+		ID: collection.ID, OwnerID: collection.OwnerID, Title: collection.Title,
+		Description: collection.Description, Visibility: collection.Visibility, Status: collection.Status,
+		Items: items, MemberCount: collection.MemberCount, CreatedAt: collection.CreatedAt, UpdatedAt: collection.UpdatedAt,
+	}
+}
+
+func parseOptionalDateTime(raw string, endOfDay bool) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if value, err := time.Parse(time.RFC3339, raw); err == nil {
+		return &value, nil
+	}
+	value, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return nil, err
+	}
+	if endOfDay {
+		value = value.Add(24*time.Hour - time.Nanosecond)
+	}
+	return &value, nil
 }
 
 // videoListResponseFromDomain 组装列表响应，并回显本次分页参数。
@@ -241,6 +472,22 @@ func writeVideoError(c *app.RequestContext, err error) {
 		c.JSON(http.StatusForbidden, utils.H{"error": "video permission denied"})
 		return
 	}
+	if errors.Is(err, domainvideo.ErrLocalAssetPermissionDenied) {
+		c.JSON(http.StatusForbidden, utils.H{"error": "local asset permission denied"})
+		return
+	}
+	if errors.Is(err, domainvideo.ErrCollectionNotFound) {
+		c.JSON(http.StatusNotFound, utils.H{"error": "video collection not found"})
+		return
+	}
+	if errors.Is(err, domainvideo.ErrCollectionPermissionDenied) {
+		c.JSON(http.StatusForbidden, utils.H{"error": "video collection permission denied"})
+		return
+	}
+	if errors.Is(err, domainvideo.ErrBatchIdempotencyConflict) {
+		c.JSON(http.StatusConflict, utils.H{"error": "idempotency key conflict"})
+		return
+	}
 	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
@@ -255,5 +502,17 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainvideo.ErrEmptyCoverURL) ||
 		errors.Is(err, domainvideo.ErrIdempotencyKeyTooLong) ||
 		errors.Is(err, domainvideo.ErrInvalidLimit) ||
-		errors.Is(err, domainvideo.ErrInvalidOffset)
+		errors.Is(err, domainvideo.ErrInvalidOffset) ||
+		errors.Is(err, domainvideo.ErrInvalidVisibility) ||
+		errors.Is(err, domainvideo.ErrVideoStateNotAllowed) ||
+		errors.Is(err, domainvideo.ErrInvalidCursor) ||
+		errors.Is(err, domainvideo.ErrInvalidDateRange) ||
+		errors.Is(err, domainvideo.ErrInvalidBatchAction) ||
+		errors.Is(err, domainvideo.ErrTooManyVideoIDs) ||
+		errors.Is(err, domainvideo.ErrEmptyVideoIDs) ||
+		errors.Is(err, domainvideo.ErrEmptyCollectionTitle) ||
+		errors.Is(err, domainvideo.ErrCollectionTitleTooLong) ||
+		errors.Is(err, domainvideo.ErrCollectionDescriptionTooLong) ||
+		errors.Is(err, domainvideo.ErrIdempotencyKeyRequired) ||
+		errors.Is(err, domainvideo.ErrInvalidLocalAsset)
 }

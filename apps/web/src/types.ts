@@ -47,6 +47,25 @@ export interface UserProfile {
   following_count: number;
   follower_count: number;
   work_count: number;
+  gender: Gender;
+  public_work_count: number;
+  private_work_count: number;
+  received_like_count: number;
+  collection_count: number;
+  profile_settings?: ProfileSettings;
+}
+
+export type Gender = 0 | 1 | 2 | 3;
+export type ProfileVisibility = "private" | "public";
+
+export interface ProfileSettings {
+  liked_visibility: ProfileVisibility;
+  favorite_visibility: ProfileVisibility;
+}
+
+export interface UpdateProfileSettingsRequest {
+  liked_visibility?: ProfileVisibility;
+  favorite_visibility?: ProfileVisibility;
 }
 
 /**
@@ -60,29 +79,43 @@ export interface SessionUser extends UserProfile {
 /** GET /api/users/{id} 公开用户结构 */
 export interface PublicUserProfile {
   id: number;
+  account: string;
   nickname: string;
   avatar_url: string;
   bio: string;
   following_count: number;
   follower_count: number;
   work_count: number;
+  gender: Gender;
+  public_work_count: number;
+  received_like_count: number;
+  collection_count: number;
+  liked_videos_public: boolean;
 }
 
 export interface UpdateProfileRequest {
   nickname?: string;
   avatar_url?: string;
   bio?: string;
+  gender?: Gender;
+  profile_settings?: UpdateProfileSettingsRequest;
 }
 
 /** localStorage 中缓存的公开资料（normalizePublicProfile 的输出形状） */
 export interface StoredPublicProfile {
   id: number;
+  account?: string;
   nickname: string;
   avatar_url: string;
   bio: string;
   work_count?: number;
   following_count?: number;
   follower_count?: number;
+  gender?: Gender;
+  public_work_count?: number;
+  received_like_count?: number;
+  collection_count?: number;
+  liked_videos_public?: boolean;
 }
 
 // ---------- 视频 ----------
@@ -95,11 +128,98 @@ export interface Video {
   media_url: string;
   cover_url: string;
   status: number;
+  visibility: VideoVisibility;
   like_count: number;
   comment_count: number;
   favorite_count: number;
   published_at?: string;
   created_at: string;
+  updated_at: string;
+}
+
+export type VideoVisibility = "public" | "private";
+export type CreatorWorkTab = "published" | "private" | "collections";
+export type ProfilePrimaryTab = "works" | "recommend" | "likes" | "favorites" | "history" | "watchLater";
+export type PublicProfileTab = "works" | "likes" | "collections";
+export type BatchVideoAction = "make_public" | "make_private" | "delete";
+export type AsyncState = "idle" | "loading" | "loadingMore" | "ready" | "error" | "mutating";
+
+export interface CreatorVideoQueryRequest {
+  visibility: VideoVisibility;
+  query: string;
+  created_from: string;
+  created_to: string;
+  cursor: string;
+  limit: number;
+}
+
+export type CreatorVideoPage = CursorPage<Video>;
+
+export interface BatchVideoActionRequest {
+  video_ids: number[];
+  action: BatchVideoAction;
+}
+
+export interface BatchVideoActionResponse {
+  action: BatchVideoAction;
+  video_ids: number[];
+  replayed: boolean;
+}
+
+export type CollectionVisibility = "public" | "private";
+
+export interface VideoCollectionItem {
+  video_id: number;
+  position: number;
+  video: Video;
+}
+
+export interface VideoCollection {
+  id: number;
+  owner_id: number;
+  title: string;
+  description: string;
+  visibility: CollectionVisibility;
+  status: number;
+  items: VideoCollectionItem[];
+  member_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type VideoCollectionPage = CursorPage<VideoCollection>;
+
+export interface CreateVideoCollectionRequest {
+  title: string;
+  description: string;
+  visibility: CollectionVisibility;
+}
+
+export interface UpdateVideoCollectionRequest {
+  title?: string;
+  description?: string;
+  visibility?: CollectionVisibility;
+}
+
+export interface HistoryMetadata {
+  last_scene: string;
+  last_event_type: string;
+  last_watch_ms: number;
+  completed: boolean;
+  last_watched_at: string;
+}
+
+export interface LibraryVideoItem {
+  video: Video;
+  updated_at: string;
+  history?: HistoryMetadata;
+}
+
+export type LibraryVideoPage = CursorPage<LibraryVideoItem>;
+
+export interface WatchLaterStateResponse {
+  video_id: number;
+  active: boolean;
   updated_at: string;
 }
 
@@ -225,6 +345,12 @@ export interface FollowResponse {
   following: boolean;
   following_count: number;
   follower_count: number;
+}
+
+export interface FollowStateResponse {
+  user_id: number;
+  target_user_id: number;
+  following: boolean;
 }
 
 export interface RelationUser {

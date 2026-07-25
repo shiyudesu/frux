@@ -6,19 +6,39 @@ import "time"
 type ActionModel struct {
 	ID int64 `gorm:"column:id;primaryKey;autoIncrement"`
 	// user_id + video_id + action_type 唯一，保证同一用户对同一视频只有一条同类行为记录。
-	UserID     int64  `gorm:"column:user_id;not null;uniqueIndex:uk_interaction_action_user_video_type,priority:1;index:idx_interaction_action_user_type_status,priority:1"`
-	VideoID    int64  `gorm:"column:video_id;not null;uniqueIndex:uk_interaction_action_user_video_type,priority:2;index:idx_interaction_action_video_type_status,priority:1"`
-	ActionType string `gorm:"column:action_type;size:16;not null;uniqueIndex:uk_interaction_action_user_video_type,priority:3;index:idx_interaction_action_video_type_status,priority:2;index:idx_interaction_action_user_type_status,priority:2"`
-	Status     int    `gorm:"column:status;type:smallint;not null;default:1;index:idx_interaction_action_video_type_status,priority:3;index:idx_interaction_action_user_type_status,priority:3"`
+	UserID     int64  `gorm:"column:user_id;not null;uniqueIndex:uk_interaction_action_user_video_type,priority:1;index:idx_interaction_action_user_type_status,priority:1;index:idx_interaction_action_user_type_status_updated,priority:1"`
+	VideoID    int64  `gorm:"column:video_id;not null;uniqueIndex:uk_interaction_action_user_video_type,priority:2;index:idx_interaction_action_video_type_status,priority:1;index:idx_interaction_action_user_type_status_updated,priority:5"`
+	ActionType string `gorm:"column:action_type;size:16;not null;uniqueIndex:uk_interaction_action_user_video_type,priority:3;index:idx_interaction_action_video_type_status,priority:2;index:idx_interaction_action_user_type_status,priority:2;index:idx_interaction_action_user_type_status_updated,priority:2"`
+	Status     int    `gorm:"column:status;type:smallint;not null;default:1;index:idx_interaction_action_video_type_status,priority:3;index:idx_interaction_action_user_type_status,priority:3;index:idx_interaction_action_user_type_status_updated,priority:3"`
 	// IdempotencyKey 保存最近一次请求键，用于重复请求返回稳定结果。
-	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128"`
-	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	IdempotencyKey        *string    `gorm:"column:idempotency_key;size:128"`
+	LatestEventVersion    int64      `gorm:"column:latest_event_version;not null;default:0"`
+	LatestEventOccurredAt *time.Time `gorm:"column:latest_event_occurred_at"`
+	LatestEventID         *string    `gorm:"column:latest_event_id;size:128"`
+	CreatedAt             time.Time  `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt             time.Time  `gorm:"column:updated_at;autoUpdateTime;index:idx_interaction_action_user_type_status_updated,priority:4"`
 }
 
 // TableName 指定互动行为表名。
 func (ActionModel) TableName() string {
 	return "interaction_action"
+}
+
+// ActionEventModel records accepted asynchronous events for durable duplicate-delivery detection.
+type ActionEventModel struct {
+	EventID        string    `gorm:"column:event_id;size:128;primaryKey"`
+	UserID         int64     `gorm:"column:user_id;not null"`
+	VideoID        int64     `gorm:"column:video_id;not null;index:idx_interaction_action_event_video"`
+	ActionType     string    `gorm:"column:action_type;size:16;not null"`
+	Active         bool      `gorm:"column:active;not null"`
+	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128"`
+	Version        int64     `gorm:"column:version;not null;default:0"`
+	OccurredAt     time.Time `gorm:"column:occurred_at;not null"`
+	ProcessedAt    time.Time `gorm:"column:processed_at;not null;autoCreateTime"`
+}
+
+func (ActionEventModel) TableName() string {
+	return "interaction_action_event"
 }
 
 // CommentModel 映射 interaction_comment 表，评论采用软删除状态。

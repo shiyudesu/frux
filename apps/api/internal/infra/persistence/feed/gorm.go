@@ -101,7 +101,7 @@ func (r *Repository) ListFollowingPage(ctx context.Context, viewerID int64, curs
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, v.published_at").
 		Joins("JOIN user_follow AS f ON f.target_user_id = v.author_id").
-		Where("f.user_id = ? AND f.status = ? AND v.status = ? AND v.published_at IS NOT NULL", viewerID, domainrelation.FollowStatusActive, domainvideo.StatusPublished)
+		Where("f.user_id = ? AND f.status = ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", viewerID, domainrelation.FollowStatusActive, domainvideo.StatusPublished, domainvideo.VisibilityPublic)
 
 	if cursor != nil {
 		query = query.Where(
@@ -178,7 +178,7 @@ func (r *Repository) ListAuthorRecentVideos(ctx context.Context, authorID int64,
 	err := r.db.WithContext(ctx).
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, v.published_at").
-		Where("v.author_id = ? AND v.status = ? AND v.published_at IS NOT NULL", authorID, domainvideo.StatusPublished).
+		Where("v.author_id = ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", authorID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Order("v.published_at DESC").
 		Order("v.id DESC").
 		Limit(limit).
@@ -202,7 +202,7 @@ func (r *Repository) BatchGetFeedCards(ctx context.Context, videoIDs []int64) (m
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, a.nickname AS author_nickname, a.avatar_url AS author_avatar_url, v.title, v.description, v.media_url, v.cover_url, v.published_at").
 		Joins("LEFT JOIN account AS a ON a.id = v.author_id").
-		Where("v.id IN ? AND v.status = ? AND v.published_at IS NOT NULL", videoIDs, domainvideo.StatusPublished).
+		Where("v.id IN ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", videoIDs, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
 		Scan(&models).
 		Error
 	if err != nil {
@@ -212,6 +212,23 @@ func (r *Repository) BatchGetFeedCards(ctx context.Context, videoIDs []int64) (m
 		cards[models[index].VideoID] = &models[index]
 	}
 	return cards, nil
+}
+
+func (r *Repository) BatchPublicVideoIDs(ctx context.Context, videoIDs []int64) (map[int64]struct{}, error) {
+	result := make(map[int64]struct{}, len(videoIDs))
+	if len(videoIDs) == 0 {
+		return result, nil
+	}
+	var ids []int64
+	if err := r.db.WithContext(ctx).Table("video").
+		Where("id IN ? AND status = ? AND visibility = ?", videoIDs, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		result[id] = struct{}{}
+	}
+	return result, nil
 }
 
 // BatchGetFeedStats 批量读取互动计数，缺失统计记录时按 0 处理。
@@ -281,7 +298,7 @@ func (r *Repository) basePageQuery(ctx context.Context) *gorm.DB {
 	return r.db.WithContext(ctx).
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, v.published_at").
-		Where("v.status = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished)
+		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic)
 }
 
 func (r *Repository) baseHotPageQuery(ctx context.Context) *gorm.DB {
@@ -289,7 +306,7 @@ func (r *Repository) baseHotPageQuery(ctx context.Context) *gorm.DB {
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, ("+hotScoreExpression+") AS hot_score, v.published_at").
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
-		Where("v.status = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished)
+		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic)
 }
 
 func feedPageItemsFromModels(models []domainfeed.FeedPageItem) []*domainfeed.FeedPageItem {

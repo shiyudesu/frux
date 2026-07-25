@@ -27,12 +27,15 @@ const defaultViewEventRecordedQueue = "gcfeed.exposure.view_event_recorded"
 const defaultViewEventRecordedRouting = "exposure.view_event_recorded"
 
 var ErrEmptyRabbitMQURL = errors.New("rabbitmq url is empty")
+var ErrPublisherConfirmUnavailable = errors.New("rabbitmq publisher confirm unavailable")
+var ErrPublishNotAcknowledged = errors.New("rabbitmq publish not acknowledged")
 
 type RabbitMQ struct {
-	conn            *amqp.Connection
-	publishChannel  *amqp.Channel
-	consumerChannel *amqp.Channel
-	config          infraconfig.RabbitMQConfig
+	conn                 *amqp.Connection
+	publishChannel       *amqp.Channel
+	actionPublishChannel *amqp.Channel
+	consumerChannel      *amqp.Channel
+	config               infraconfig.RabbitMQConfig
 }
 
 func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
@@ -50,18 +53,32 @@ func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	actionPublishChannel, err := conn.Channel()
+	if err != nil {
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := actionPublishChannel.Confirm(false); err != nil {
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
 	consumerChannel, err := conn.Channel()
 	if err != nil {
+		_ = actionPublishChannel.Close()
 		_ = channel.Close()
 		_ = conn.Close()
 		return nil, err
 	}
 
 	client := &RabbitMQ{
-		conn:            conn,
-		publishChannel:  channel,
-		consumerChannel: consumerChannel,
-		config:          cfg,
+		conn:                 conn,
+		publishChannel:       channel,
+		actionPublishChannel: actionPublishChannel,
+		consumerChannel:      consumerChannel,
+		config:               cfg,
 	}
 	if err := client.ensureTopology(); err != nil {
 		_ = client.Close()
@@ -76,6 +93,9 @@ func (r *RabbitMQ) Close() error {
 	}
 	if r.publishChannel != nil {
 		_ = r.publishChannel.Close()
+	}
+	if r.actionPublishChannel != nil {
+		_ = r.actionPublishChannel.Close()
 	}
 	if r.consumerChannel != nil {
 		_ = r.consumerChannel.Close()
@@ -94,7 +114,7 @@ func (r *RabbitMQ) PublishActionChanged(ctx context.Context, event *applicationi
 	if err != nil {
 		return err
 	}
-	return r.publishChannel.PublishWithContext(
+	confirmation, err := r.actionPublishChannel.PublishWithDeferredConfirmWithContext(
 		ctx,
 		r.config.InteractionExchange,
 		r.config.ActionChangedRouting,
@@ -108,6 +128,20 @@ func (r *RabbitMQ) PublishActionChanged(ctx context.Context, event *applicationi
 			Body:         content,
 		},
 	)
+	if err != nil {
+		return err
+	}
+	if confirmation == nil {
+		return ErrPublisherConfirmUnavailable
+	}
+	acknowledged, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		return err
+	}
+	if !acknowledged {
+		return ErrPublishNotAcknowledged
+	}
+	return nil
 }
 
 func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *applicationvideo.PublishedEvent) error {
@@ -184,7 +218,7 @@ func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(contex
 			}
 			if err := handler(ctx, &event); err != nil {
 				inframetrics.ObserveWorkerJob("mq_action_changed_consume", time.Since(start), err)
-				_ = delivery.Nack(false, true)
+				_ = delivery.Nack(false, !applicationinteraction.IsTerminalActionEventError(err))
 				continue
 			}
 			inframetrics.ObserveWorkerJob("mq_action_changed_consume", time.Since(start), nil)

@@ -41,9 +41,13 @@ type redisActionStatWriter interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 }
 
-type redisStatCacheClient interface {
+type redisActionStatReadWriter interface {
 	redisActionStatReader
 	redisActionStatWriter
+}
+
+type redisStatCacheClient interface {
+	redisActionStatReadWriter
 	MGet(ctx context.Context, keys ...string) *redis.SliceCmd
 }
 
@@ -142,6 +146,13 @@ func (c *FeedCache) SetCards(ctx context.Context, cards map[int64]*domainfeed.Fe
 	_, err := pipe.Exec(ctx)
 	inframetrics.ObserveCacheWrite("card", len(cards), err)
 	return err
+}
+
+func (c *FeedCache) InvalidateVideo(ctx context.Context, videoID int64) error {
+	if c == nil || videoID <= 0 {
+		return nil
+	}
+	return c.client.Del(ctx, feedCardKey(videoID), feedStatKey(videoID)).Err()
 }
 
 // GetStats 批量读取视频计数缓存。
@@ -434,12 +445,15 @@ func (c *FeedCache) listHotWindowPage(ctx context.Context, windowKey string, off
 }
 
 // SetActionState 写入 Redis 行为状态和实时计数，供点赞收藏接口快速返回。
-func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, initialStat *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
+func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, initialStat *domaininteraction.VideoStat, initialState *domaininteraction.ActionStateSnapshot, mutation applicationinteraction.ActionMutation) (*applicationinteraction.ActionStateResult, error) {
 	actionType, err := domaininteraction.NormalizeActionType(actionType)
 	if err != nil {
 		return nil, err
 	}
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if strings.TrimSpace(mutation.EventID) == "" || mutation.OccurredAt.IsZero() {
+		return nil, domaininteraction.ErrInvalidActionEvent
+	}
 
 	actionKey := interactionActionKey(userID, videoID, actionType)
 	counterBaseKey := interactionStatCounterBaseKey(videoID)
@@ -457,36 +471,53 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 			return err
 		}
 
-		storedStatus, _ := strconv.Atoi(values["status"])
-		storedIDKey := values["idempotency_key"]
-		effectiveActive := active
-		effectiveStatus := targetStatus
+		previous, cached := actionStateSnapshotFromRedis(values)
+		if initialState != nil && (!cached || initialState.Version > previous.Version) {
+			previous = *initialState
+			cached = false
+		}
+		if previous.Exists && idempotencyKey != "" && previous.IdempotencyKey == idempotencyKey {
+			result = &applicationinteraction.ActionStateResult{
+				UserID:         userID,
+				VideoID:        videoID,
+				ActionType:     actionType,
+				Active:         previous.Active,
+				IdempotencyKey: previous.IdempotencyKey,
+				Version:        previous.Version,
+				EventID:        previous.EventID,
+				OccurredAt:     previous.OccurredAt,
+				ShouldPublish:  cached && previous.EventID != "" && !previous.OccurredAt.IsZero(),
+			}
+			return nil
+		}
+
 		delta := 0
-		if storedIDKey == idempotencyKey && idempotencyKey != "" {
-			effectiveActive = storedStatus == domaininteraction.ActionStatusActive
-			effectiveStatus = storedStatus
-			delta = 0
-		} else {
-			if storedStatus == 0 {
-				if active {
-					delta = 1
-				}
-			} else if storedStatus != targetStatus {
-				if active {
-					delta = 1
-				} else {
-					delta = -1
-				}
+		if !previous.Exists {
+			if active {
+				delta = 1
+			}
+		} else if previous.Active != active {
+			if active {
+				delta = 1
+			} else {
+				delta = -1
 			}
 		}
 
 		baseStat := actionStatBaseInit(videoID, initialStat)
+		versionCounter := maxActionVersion(parseActionVersion(values["version_counter"]), previous.Version)
+		nextVersion := versionCounter + 1
+		occurredAt := mutation.OccurredAt.UTC().Format(time.RFC3339Nano)
 
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.HSet(ctx, actionKey, map[string]any{
-				"status":          effectiveStatus,
+				"status":          targetStatus,
 				"idempotency_key": idempotencyKey,
-				"updated_at":      time.Now().UTC().Format(time.RFC3339Nano),
+				"version_counter": nextVersion,
+				"state_version":   nextVersion,
+				"event_id":        mutation.EventID,
+				"occurred_at":     occurredAt,
+				"updated_at":      occurredAt,
 			})
 			pipe.Expire(ctx, actionKey, actionStateTTL)
 			queueActionStatBaseInit(ctx, pipe, counterBaseKey, baseStat)
@@ -502,11 +533,18 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 		}
 
 		result = &applicationinteraction.ActionStateResult{
+			UserID:         userID,
 			VideoID:        videoID,
 			ActionType:     actionType,
-			Active:         effectiveActive,
+			Active:         active,
 			Delta:          delta,
 			IdempotencyKey: idempotencyKey,
+			Version:        nextVersion,
+			EventID:        mutation.EventID,
+			OccurredAt:     mutation.OccurredAt.UTC(),
+			ShouldPublish:  true,
+			CanRollback:    true,
+			Previous:       previous,
 		}
 		return nil
 	}, actionKey)
@@ -514,14 +552,115 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 		return nil, err
 	}
 
-	stat, err := actionStat(ctx, c.client, counterBaseKey, interactionStatCounterShardKeys(videoID), jsonKey, videoID, initialStat)
+	return completeActionStateResult(ctx, c.client, result, counterBaseKey, jsonKey, initialStat)
+}
+
+func completeActionStateResult(ctx context.Context, client redisActionStatReadWriter, result *applicationinteraction.ActionStateResult, counterBaseKey string, jsonKey string, initialStat *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
+	stat, err := actionStat(ctx, client, counterBaseKey, interactionStatCounterShardKeys(result.VideoID), jsonKey, result.VideoID, initialStat)
 	if err != nil {
-		return nil, err
+		return result, fmt.Errorf("read interaction counts after Redis mutation: %w", err)
 	}
 	result.LikeCount = stat.LikeCount
 	result.FavoriteCount = stat.FavoriteCount
-	_ = setActionStatJSON(ctx, c.client, jsonKey, stat)
+	_ = setActionStatJSON(ctx, client, jsonKey, stat)
 	return result, nil
+}
+
+// RollbackActionState reverses only the mutation that still owns the Redis state version.
+func (c *FeedCache) RollbackActionState(ctx context.Context, state *applicationinteraction.ActionStateResult) (bool, error) {
+	if state == nil || !state.CanRollback || state.UserID <= 0 || state.VideoID <= 0 || state.Version <= 0 {
+		return false, nil
+	}
+	actionKey := interactionActionKey(state.UserID, state.VideoID, state.ActionType)
+	counterShardKey := interactionStatCounterShardKey(state.VideoID, interactionStatCounterShardIndex(state.UserID))
+	jsonKey := feedStatKey(state.VideoID)
+	rolledBack := false
+	err := c.client.Watch(ctx, func(tx *redis.Tx) error {
+		values, err := tx.HGetAll(ctx, actionKey).Result()
+		if err != nil {
+			return err
+		}
+		if parseActionVersion(values["state_version"]) != state.Version || values["event_id"] != state.EventID {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			if state.Previous.Exists {
+				pipe.HSet(ctx, actionKey, map[string]any{
+					"status":          actionStatusValue(state.Previous.Active),
+					"idempotency_key": state.Previous.IdempotencyKey,
+					"state_version":   state.Previous.Version,
+					"event_id":        state.Previous.EventID,
+					"occurred_at":     formatOptionalActionTime(state.Previous.OccurredAt),
+					"updated_at":      formatOptionalActionTime(state.Previous.UpdatedAt),
+				})
+			} else {
+				pipe.HDel(ctx, actionKey, "status", "idempotency_key", "state_version", "event_id", "occurred_at", "updated_at")
+			}
+			pipe.Expire(ctx, actionKey, actionStateTTL)
+			if state.Delta != 0 {
+				pipe.HIncrBy(ctx, counterShardKey, interactionStatField(state.ActionType), int64(-state.Delta))
+				pipe.Expire(ctx, counterShardKey, actionStatTTL)
+			}
+			pipe.Del(ctx, jsonKey)
+			return nil
+		})
+		if err == nil {
+			rolledBack = true
+		}
+		return err
+	}, actionKey)
+	return rolledBack, err
+}
+
+func actionStateSnapshotFromRedis(values map[string]string) (domaininteraction.ActionStateSnapshot, bool) {
+	status, err := strconv.Atoi(values["status"])
+	if err != nil || (status != domaininteraction.ActionStatusActive && status != domaininteraction.ActionStatusCanceled) {
+		return domaininteraction.ActionStateSnapshot{}, false
+	}
+	snapshot := domaininteraction.ActionStateSnapshot{
+		Exists:         true,
+		Active:         status == domaininteraction.ActionStatusActive,
+		IdempotencyKey: strings.TrimSpace(values["idempotency_key"]),
+		Version:        parseActionVersion(values["state_version"]),
+		EventID:        strings.TrimSpace(values["event_id"]),
+		OccurredAt:     parseOptionalActionTime(values["occurred_at"]),
+		UpdatedAt:      parseOptionalActionTime(values["updated_at"]),
+	}
+	return snapshot, true
+}
+
+func parseActionVersion(value string) int64 {
+	version, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || version < 0 {
+		return 0
+	}
+	return version
+}
+
+func maxActionVersion(left int64, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func actionStatusValue(active bool) int {
+	if active {
+		return domaininteraction.ActionStatusActive
+	}
+	return domaininteraction.ActionStatusCanceled
+}
+
+func parseOptionalActionTime(value string) time.Time {
+	parsed, _ := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	return parsed
+}
+
+func formatOptionalActionTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func actionStat(ctx context.Context, client redisActionStatReader, counterBaseKey string, counterShardKeys []string, jsonKey string, videoID int64, initialStat *domaininteraction.VideoStat) (*domainfeed.FeedStat, error) {

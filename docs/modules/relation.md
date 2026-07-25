@@ -2,7 +2,7 @@
 
 ## 1. 模块职责
 
-关系模块负责用户之间的关注关系，提供关注、取关、关注列表和粉丝列表能力。
+关系模块负责用户之间的关注关系，提供关注、取关、单目标关系状态、关注列表和粉丝列表能力。
 
 模块边界：
 
@@ -31,6 +31,7 @@ apps/api/internal/interfaces/http/relation/
 | DELETE | `/api/users/me/following/{targetUserId}` | 取消关注 | Bearer JWT | 支持 |
 | GET | `/api/users/me/following` | 我的关注列表 | Bearer JWT | - |
 | GET | `/api/users/me/followers` | 我的粉丝列表 | Bearer JWT | - |
+| GET | `/api/users/me/following/{targetUserId}` | 直接读取当前用户是否关注目标 | 登录 | - |
 
 ### 3.1 关注用户
 
@@ -109,7 +110,23 @@ apps/api/internal/interfaces/http/relation/
 
 取关操作只更新关系状态，历史记录保留用于审计和反作弊分析。
 
-### 3.3 我的关注列表
+### 3.3 单目标关系状态
+
+#### GET `/api/users/me/following/{targetUserId}`
+
+该接口通过目标用户和唯一关系键直接查询，不扫描关注列表：
+
+```json
+{
+  "user_id": 1001,
+  "target_user_id": 1002,
+  "following": true
+}
+```
+
+公开主页使用该接口初始化按钮状态；前端关注/取关开始时会使尚未完成的状态读取失效，避免旧读取覆盖成功写入。
+
+### 3.4 我的关注列表
 
 #### GET `/api/users/me/following`
 
@@ -152,7 +169,7 @@ apps/api/internal/interfaces/http/relation/
 | `followed_at` | 当前页最后一条关注关系的更新时间 |
 | `user_id` | 当前页最后一个被关注用户ID |
 
-### 3.4 我的粉丝列表
+### 3.5 我的粉丝列表
 
 #### GET `/api/users/me/followers`
 
@@ -249,6 +266,7 @@ apps/api/internal/interfaces/http/relation/
 | 关注目标必须是其他正常用户 | `user_id` 和 `target_user_id` 必须指向两个不同的正常用户 |
 | 关注关系使用软状态 | 取关通过 `status=2` 表示，保留历史记录 |
 | 写操作支持幂等 | 相同幂等键重复提交返回同一业务结果 |
+| 单目标读取为直接查询 | 使用唯一关系键判断状态，不通过最多若干页列表推断 |
 | 列表只返回有效关系 | 关注列表和粉丝列表查询 `status=1` 的记录 |
 | 列表使用游标分页 | 按 `updated_at DESC, user_id DESC` 或 `updated_at DESC, target_user_id DESC` 稳定翻页 |
 
@@ -297,6 +315,7 @@ apps/api/internal/interfaces/http/relation/
 | 重复关注同一用户 | 返回当前关注状态，计数保持稳定 |
 | 取关已关注用户 | 返回 `following=false`，双方计数减少 |
 | 重复取关 | 返回当前取关状态，计数保持稳定 |
+| 直接读取单目标状态 | 关注后为 `true`，取关后为 `false`，不依赖列表规模 |
 | 关注当前用户 | 返回 `400 FOLLOW_SELF_FORBIDDEN` |
 | 关注异常目标用户 | 返回 `404 TARGET_USER_NOT_FOUND` |
 | 查询关注列表 | 按最近关注时间倒序返回 |

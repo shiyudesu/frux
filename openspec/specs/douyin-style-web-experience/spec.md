@@ -81,18 +81,22 @@ The login/register route SHALL use a dimmed short-video backdrop and a centered 
 - **THEN** every displayed method is supported by the existing GCFeed API and no fake QR or phone login control is shown
 
 ### Requirement: Profile and work presentation
-Own and public profile routes SHALL use a banner-style header, circular avatar, inline relation/work counts, compact actions, route-appropriate tabs, and a dense portrait work grid. Existing profile editing, relation lists, follow actions, public navigation, and work viewing SHALL remain functional.
+Own and public profile routes SHALL use a full-width banner-style header, circular avatar, inline relation/work/received-like counts, compact actions, route-appropriate primary and secondary tabs, profile filters, and a dense portrait work grid. Own-profile tabs SHALL be backed by real profile-dashboard, personal-video-library, and creator-content-management APIs. Existing profile editing, relation lists, follow actions, public navigation, and work viewing SHALL remain functional.
 
 #### Scenario: Public profile renders
 - **WHEN** a public user profile loads successfully
-- **THEN** the redesigned header displays the available avatar, nickname, bio, counts, actions, and work grid without exposing private controls
+- **THEN** the redesigned header displays the available avatar, nickname, bio, public counts, actions, public tabs, public collections, and work grid without exposing private controls or content
 
 #### Scenario: Own profile remains editable
 - **WHEN** the authenticated user opens and saves profile editing
-- **THEN** the existing profile update and avatar upload requests succeed and the redesigned profile reflects the saved values
+- **THEN** profile and avatar upload requests succeed and the full-width profile header reflects the saved nickname, avatar, bio, and gender
+
+#### Scenario: Own profile content tabs render
+- **WHEN** the authenticated user opens their profile
+- **THEN** Works, Recommend, Likes, Favorites, Watch History, and Watch Later tabs render with real data while Short Drama and Appointments are absent
 
 #### Scenario: Work viewer opens
-- **WHEN** a user selects a work card
+- **WHEN** a user selects a readable work card
 - **THEN** the work viewer opens with the correct media, title, counts, and close behavior
 
 ### Requirement: Consistent messages, upload, and relation surfaces
@@ -141,12 +145,12 @@ The redesigned controls SHALL expose accessible names, visible keyboard focus, l
 - **THEN** nonessential transitions and decorative motion are removed or shortened without preventing navigation or state changes
 
 ### Requirement: Existing frontend contracts remain stable
-The redesign SHALL NOT add or change backend endpoints, response shapes, local-storage formats, route-library dependencies, or the TypeScript strictness requirements.
+The redesigned frontend SHALL preserve existing typed routes, local-storage validation, strict TypeScript, authentication redirects, and existing API functions while using additive profile, personal-library, creator-management, and privacy APIs. Existing endpoint response shapes MUST remain compatible unless a new endpoint is used for the expanded behavior.
 
 #### Scenario: Production build succeeds
-- **WHEN** the redesigned frontend is built with the existing build script
-- **THEN** `tsc --noEmit` and `vite build` complete without type suppressions or explicit `any`
+- **WHEN** the redesigned page and new typed API modules are built with the existing build script
+- **THEN** `tsc --noEmit` and `vite build` complete without type suppressions, explicit `any`, or a routing-library dependency
 
-#### Scenario: API boundaries are unchanged
-- **WHEN** a developer compares the redesigned page workflows with the existing API modules
-- **THEN** the same typed API functions and response interfaces are used for authentication, Feed, interactions, messages, profiles, relations, and upload
+#### Scenario: Existing API boundaries remain compatible
+- **WHEN** an existing client continues using authentication, Feed, interactions, messages, simple profile, relations, upload, and simple video-list APIs
+- **THEN** those calls remain valid while new profile capabilities use additive typed endpoints and fields

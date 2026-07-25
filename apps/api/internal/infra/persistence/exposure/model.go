@@ -37,3 +37,21 @@ type ExposureModel struct {
 func (ExposureModel) TableName() string {
 	return "exposures"
 }
+
+type ViewHistoryModel struct {
+	UserID         int64     `gorm:"column:user_id;primaryKey;index:idx_video_view_history_user_last,priority:1"`
+	VideoID        int64     `gorm:"column:video_id;primaryKey;index:idx_video_view_history_user_last,priority:3"`
+	LastScene      string    `gorm:"column:last_scene;size:32;not null"`
+	LastEventType  string    `gorm:"column:last_event_type;size:32;not null"`
+	LastWatchMs    int       `gorm:"column:last_watch_ms;not null;default:0"`
+	Completed      bool      `gorm:"column:completed;not null;default:false"`
+	FirstWatchedAt time.Time `gorm:"column:first_watched_at;not null"`
+	LastWatchedAt  time.Time `gorm:"column:last_watched_at;not null;index:idx_video_view_history_user_last,priority:2"`
+	LastEventID    int64     `gorm:"column:last_event_id;not null;default:0"`
+	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (ViewHistoryModel) TableName() string {
+	return "video_view_history"
+}

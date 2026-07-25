@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { logoutSession } from "../api/account";
 import { image } from "../constants";
 import { useNavigate } from "../router";
@@ -9,14 +10,22 @@ export function TopNav() {
   const { token, user, clearAuth } = useSession();
   const { unreadCount } = useUnreadCount();
   const navigate = useNavigate();
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const authenticated = Boolean(token && user);
 
-  function handleLogout() {
-    if (token) {
-      logoutSession(token).catch(() => {});
-    }
+  async function handleLogout() {
+    if (logoutBusy) return;
+    setLogoutBusy(true);
+    const currentToken = token;
     clearAuth();
     navigate("/timeline");
+    try {
+      await logoutSession(currentToken || undefined);
+    } catch {
+      // Local logout and private-asset deactivation are authoritative when offline.
+    } finally {
+      setLogoutBusy(false);
+    }
   }
 
   return (
@@ -52,9 +61,17 @@ export function TopNav() {
           )}
         </button>
         {authenticated && (
-          <button className="icon-button desktop-logout" type="button" onClick={handleLogout} aria-label="退出登录">
-            <Icon name="logout" />
-          </button>
+          <>
+            <button
+              className="icon-button desktop-logout"
+              disabled={logoutBusy}
+              type="button"
+              onClick={() => void handleLogout()}
+              aria-label={logoutBusy ? "正在退出登录" : "退出登录"}
+            >
+              <Icon name="logout" />
+            </button>
+          </>
         )}
       </div>
     </header>

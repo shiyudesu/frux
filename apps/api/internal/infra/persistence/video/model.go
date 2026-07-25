@@ -4,18 +4,86 @@ import "time"
 
 // VideoModel 映射 video 表，保存视频主体信息和发布状态。
 type VideoModel struct {
-	ID          int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_video_timeline,priority:3"`
+	ID          int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_video_timeline,priority:3;index:idx_video_public_timeline,priority:4;index:idx_video_author_visibility_created,priority:4"`
 	AuthorID    int64      `gorm:"column:author_id;not null;index:idx_video_author_status,priority:1;uniqueIndex:uk_video_author_idempotency,priority:1"`
 	Title       string     `gorm:"column:title;size:128;not null"`
 	Description string     `gorm:"column:description;size:512"`
 	MediaURL    string     `gorm:"column:media_url;size:512;not null"`
 	CoverURL    string     `gorm:"column:cover_url;size:512;not null"`
-	Status      int        `gorm:"column:status;type:smallint;not null;default:2;index:idx_video_author_status,priority:2;index:idx_video_status_published,priority:1;index:idx_video_timeline,priority:1"`
-	PublishedAt *time.Time `gorm:"column:published_at;index:idx_video_status_published,priority:2;index:idx_video_timeline,priority:2"`
+	Status      int        `gorm:"column:status;type:smallint;not null;default:2;index:idx_video_author_status,priority:2;index:idx_video_status_published,priority:1;index:idx_video_timeline,priority:1;index:idx_video_public_timeline,priority:1"`
+	Visibility  string     `gorm:"column:visibility;size:16;not null;default:public;index:idx_video_public_timeline,priority:2;index:idx_video_author_visibility_created,priority:2"`
+	PublishedAt *time.Time `gorm:"column:published_at;index:idx_video_status_published,priority:2;index:idx_video_timeline,priority:2;index:idx_video_public_timeline,priority:3"`
 	// IdempotencyKey 与 AuthorID 组成唯一索引，用于发布接口的安全重试。
 	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128;uniqueIndex:uk_video_author_idempotency,priority:2"`
-	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime;index:idx_video_author_status,priority:3"`
+	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime;index:idx_video_author_status,priority:3;index:idx_video_author_visibility_created,priority:3"`
 	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+type LocalAssetModel struct {
+	AssetURL  string    `gorm:"column:asset_url;size:512;primaryKey"`
+	OwnerID   int64     `gorm:"column:owner_id;not null;index:idx_local_upload_asset_owner"`
+	Kind      string    `gorm:"column:kind;size:16;not null"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+func (LocalAssetModel) TableName() string {
+	return "local_upload_asset"
+}
+
+type UserContentStatModel struct {
+	UserID            int64     `gorm:"column:user_id;primaryKey"`
+	PublicWorkCount   int       `gorm:"column:public_work_count;not null;default:0"`
+	PrivateWorkCount  int       `gorm:"column:private_work_count;not null;default:0"`
+	ReceivedLikeCount int       `gorm:"column:received_like_count;not null;default:0"`
+	CollectionCount   int       `gorm:"column:collection_count;not null;default:0"`
+	CreatedAt         time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt         time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (UserContentStatModel) TableName() string {
+	return "user_content_stat"
+}
+
+type CollectionModel struct {
+	ID             int64     `gorm:"column:id;primaryKey;autoIncrement;index:idx_video_collection_owner_updated,priority:3"`
+	OwnerID        int64     `gorm:"column:owner_id;not null;index:idx_video_collection_owner_updated,priority:1;uniqueIndex:uk_video_collection_owner_idempotency,priority:1"`
+	Title          string    `gorm:"column:title;size:128;not null"`
+	Description    string    `gorm:"column:description;size:512"`
+	Visibility     string    `gorm:"column:visibility;size:16;not null;default:private"`
+	Status         int       `gorm:"column:status;type:smallint;not null;default:1"`
+	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128;uniqueIndex:uk_video_collection_owner_idempotency,priority:2"`
+	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime;index:idx_video_collection_owner_updated,priority:2"`
+}
+
+func (CollectionModel) TableName() string {
+	return "video_collection"
+}
+
+type CollectionItemModel struct {
+	CollectionID int64     `gorm:"column:collection_id;primaryKey;uniqueIndex:uk_video_collection_item_collection_video,priority:1;index:idx_video_collection_item_order,priority:1"`
+	VideoID      int64     `gorm:"column:video_id;primaryKey;uniqueIndex:uk_video_collection_item_collection_video,priority:2"`
+	Position     int       `gorm:"column:position;not null;index:idx_video_collection_item_order,priority:2"`
+	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+func (CollectionItemModel) TableName() string {
+	return "video_collection_item"
+}
+
+type BatchOperationModel struct {
+	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID         int64     `gorm:"column:user_id;not null;uniqueIndex:uk_video_batch_operation_user_key,priority:1"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;size:128;not null;uniqueIndex:uk_video_batch_operation_user_key,priority:2"`
+	Fingerprint    string    `gorm:"column:fingerprint;size:64;not null"`
+	Action         string    `gorm:"column:action;size:32;not null"`
+	VideoIDsJSON   string    `gorm:"column:video_ids_json;type:text;not null"`
+	ResultJSON     string    `gorm:"column:result_json;type:text;not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+func (BatchOperationModel) TableName() string {
+	return "video_batch_operation"
 }
 
 // TableName 指定数据库表名。
