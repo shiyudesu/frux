@@ -1,6 +1,7 @@
 package infrarecommendation
 
 import (
+	applicationexposure "GCFeed/internal/application/exposure"
 	domainembedding "GCFeed/internal/domain/embedding"
 	domainexposure "GCFeed/internal/domain/exposure"
 	domainrecommendation "GCFeed/internal/domain/recommendation"
@@ -81,12 +82,20 @@ func (r *Repository) ListCandidatePool(ctx context.Context, userID int64, limit 
 }
 
 func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) ([]float64, bool, error) {
+	since := time.Now().Add(-positiveEventWindow)
 	rows, err := r.db.WithContext(ctx).
-		Table("video_view_events AS ev").
-		Select("ve.embedding_json, ev.event_type, ev.watch_ms, ev.completed").
+		Table(`(
+			SELECT DISTINCT ON (
+				user_id, video_id, event_type, COALESCE(playback_session_id, event_id)
+			) *
+			FROM recommendation_behavior_event
+			WHERE user_id = ? AND occurred_at >= ? AND event_type IN ?
+			ORDER BY user_id, video_id, event_type, COALESCE(playback_session_id, event_id),
+				sequence DESC NULLS LAST, occurred_at DESC, event_id DESC
+		) AS ev`, userID, since, positiveEventTypes()).
+		Select("ve.embedding_json, ev.event_type, ev.position_ms, ev.watch_ms, ev.duration_ms, ev.completed").
 		Joins("JOIN video_embedding AS ve ON ve.video_id = ev.video_id AND ve.model = ?", domainembedding.HashNgramModel).
-		Where("ev.user_id = ? AND ev.created_at >= ? AND ev.event_type IN ?", userID, time.Now().Add(-positiveEventWindow), positiveEventTypes()).
-		Order("ev.created_at DESC").
+		Order("ev.occurred_at DESC").
 		Limit(200).
 		Rows()
 	if err != nil {
@@ -99,9 +108,11 @@ func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) (
 	for rows.Next() {
 		var embeddingJSON string
 		var eventType string
+		var positionMs int
 		var watchMs int
+		var durationMs *int
 		var completed bool
-		if err := rows.Scan(&embeddingJSON, &eventType, &watchMs, &completed); err != nil {
+		if err := rows.Scan(&embeddingJSON, &eventType, &positionMs, &watchMs, &durationMs, &completed); err != nil {
 			return nil, false, err
 		}
 		vector, err := decodeVector(embeddingJSON)
@@ -114,7 +125,7 @@ func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) (
 		if len(vector) != len(sum) {
 			continue
 		}
-		weight := eventWeight(eventType, watchMs, completed)
+		weight := eventWeight(eventType, positionMs, watchMs, durationMs, completed)
 		for i := range vector {
 			sum[i] += vector[i] * weight
 		}
@@ -130,6 +141,20 @@ func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) (
 		sum[i] = sum[i] / totalWeight
 	}
 	return sum, true, nil
+}
+
+func (r *Repository) ApplyBehaviorEvent(ctx context.Context, event *applicationexposure.ViewEventRecordedEvent) (bool, error) {
+	if event == nil || event.EventID == "" {
+		return false, nil
+	}
+	model := BehaviorEventModel{
+		EventID: event.EventID, ViewEventID: event.ViewEventID, UserID: event.UserID, VideoID: event.VideoID,
+		EventType: event.EventType, PlaybackSessionID: stringPtr(event.PlaybackSessionID),
+		Sequence: int64Ptr(event.Sequence), PositionMs: event.PositionMs, WatchMs: event.WatchMs,
+		DurationMs: cloneInt(event.DurationMs), Completed: event.Completed, OccurredAt: event.OccurredAt,
+	}
+	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&model)
+	return result.RowsAffected > 0, result.Error
 }
 
 func (r *Repository) LoadVideoVectors(ctx context.Context, videoIDs []int64) (map[int64][]float64, error) {
@@ -252,14 +277,27 @@ func decodeVector(content string) ([]float64, error) {
 func positiveEventTypes() []string {
 	return []string{
 		domainexposure.EventTypePlay,
+		domainexposure.EventTypeProgress,
 		domainexposure.EventTypeComplete,
 	}
 }
 
-func eventWeight(eventType string, watchMs int, completed bool) float64 {
+func eventWeight(eventType string, positionMs int, watchMs int, durationMs *int, completed bool) float64 {
 	switch eventType {
 	case domainexposure.EventTypeComplete:
 		return 3
+	case domainexposure.EventTypeProgress:
+		progress := float64(maxInt(positionMs, watchMs)) / 30000
+		if durationMs != nil && *durationMs > 0 {
+			progress = float64(positionMs) / float64(*durationMs)
+		}
+		if progress < 0.25 {
+			progress = 0.25
+		}
+		if progress > 1.5 {
+			progress = 1.5
+		}
+		return progress
 	case domainexposure.EventTypePlay:
 		weight := 1 + float64(watchMs)/30000
 		if weight > 2 {
@@ -316,4 +354,40 @@ func stringPtr(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func int64Ptr(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func cloneInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func EnsureBehaviorEvents(db *gorm.DB) error {
+	return db.Exec(`
+		INSERT INTO recommendation_behavior_event (
+			event_id, view_event_id, user_id, video_id, event_type, playback_session_id,
+			sequence, position_ms, watch_ms, duration_ms, completed, occurred_at, created_at
+		)
+		SELECT event_id, id, user_id, video_id, event_type, playback_session_id,
+			sequence, position_ms, watch_ms, duration_ms, completed, occurred_at, NOW()
+		FROM video_view_events
+		WHERE event_type IN ('play', 'progress', 'complete')
+		ON CONFLICT (user_id, event_id) DO NOTHING
+	`).Error
 }

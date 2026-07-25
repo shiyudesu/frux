@@ -87,7 +87,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	feedOptions := []applicationfeed.Option{applicationfeed.WithRecommender(recommendationService)}
 	videoOptions := []applicationvideo.Option{}
 	interactionOptions := []applicationinteraction.Option{}
-	exposureOptions := []applicationexposure.Option{}
 	var feedCache *infracache.FeedCache
 	var rabbitMQ *inframq.RabbitMQ
 	if cfg.Redis.Addr != "" {
@@ -113,7 +112,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			log.Printf("rabbitmq disabled: %v", err)
 		} else {
 			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(rabbitMQ))
-			exposureOptions = append(exposureOptions, applicationexposure.WithViewEventPublisher(rabbitMQ))
 			if feedCache != nil {
 				interactionOptions = append(interactionOptions, applicationinteraction.WithAsyncActionPipeline(feedCache, rabbitMQ))
 			}
@@ -129,7 +127,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	interactionService := applicationinteraction.New(interactionRepo, interactionOptions...)
 	interactionHandler := interfaceshttpinteraction.New(interactionService)
 	exposureRepo := infraexposure.New(gormDB)
-	exposureService := applicationexposure.New(exposureRepo, exposureOptions...)
+	exposureService := applicationexposure.New(exposureRepo)
 	exposureHandler := interfaceshttpexposure.New(exposureService)
 	libraryRepo := infralibrary.New(gormDB)
 	libraryService := applicationlibrary.New(

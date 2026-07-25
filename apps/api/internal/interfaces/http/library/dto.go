@@ -20,11 +20,13 @@ type videoResponse struct {
 }
 
 type historyMetadataResponse struct {
-	LastScene     string    `json:"last_scene"`
-	LastEventType string    `json:"last_event_type"`
-	LastWatchMs   int       `json:"last_watch_ms"`
-	Completed     bool      `json:"completed"`
-	LastWatchedAt time.Time `json:"last_watched_at"`
+	LastScene        string    `json:"last_scene"`
+	LastEventType    string    `json:"last_event_type"`
+	LastPositionMs   int       `json:"last_position_ms"`
+	LastWatchMs      int       `json:"last_watch_ms"`
+	EffectiveWatchMs int       `json:"effective_watch_ms"`
+	Completed        bool      `json:"completed"`
+	LastWatchedAt    time.Time `json:"last_watched_at"`
 }
 
 type videoItemResponse struct {

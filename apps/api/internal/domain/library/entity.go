@@ -56,12 +56,13 @@ type VideoCandidate struct {
 }
 
 type HistoryCandidate struct {
-	VideoID       int64
-	UpdatedAt     time.Time
-	LastScene     string
-	LastEventType string
-	LastWatchMs   int
-	Completed     bool
+	VideoID        int64
+	UpdatedAt      time.Time
+	LastScene      string
+	LastEventType  string
+	LastPositionMs int
+	LastWatchMs    int
+	Completed      bool
 }
 
 type VideoItem struct {

@@ -291,3 +291,18 @@ sum(rate(gcfeed_feed_cache_requests_total{result="hit"}[5m])) by (area)
 - 至少一次推荐流访问，让推荐候选链路产生数据
 
 当 Feed 返回空数组时，延迟指标仍然有效，业务场景说服力会弱一些。
+
+## 测观看反馈闭环
+
+观看事件压测需要先登录并取得公开视频 ID。单个播放会话应按真实顺序发送 `exposed -> play -> progress -> skip/complete`，每个事件使用唯一 `event_id`，同一事件重试时保持载荷不变。
+
+重点验证：
+
+- 相同 `event_id` 重试不会增加 `video_view_events`、曝光次数、历史更新或推荐消费次数。
+- 同一 `event_id` 使用不同位置/时长时返回 409。
+- `progress` 写入后观看历史的 `last_position_ms` 前进，迟到旧事件不能回退。
+- `complete` 后到达的旧 `progress` 或 `skip` 不会取消完播状态。
+- RabbitMQ 停止时 HTTP 仍接受事实，Outbox 积压上升；恢复后积压下降且下游只应用一次。
+- 10 秒进度间隔下的写 QPS、PostgreSQL P95、Outbox 延迟和 Worker 成功率保持在目标范围。
+
+浏览器检查必须使用 Windows 真 Chrome，覆盖自动播放、手动暂停、seek、滚轮/拖拽切换、页面隐藏、`pagehide/pageshow` 和 React Strict Mode 开发环境。网络面板中同一播放会话不应出现重复 `exposed`/`complete`，退出请求应使用 keepalive。

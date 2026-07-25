@@ -252,7 +252,7 @@ GET       /api/users/me/watch-later
 - 创作者作品按 `created_at DESC, id DESC`；合集按 `updated_at DESC, id DESC`。
 - 喜欢、收藏、稍后再看按 `updated_at DESC, video_id DESC`；历史按 `last_watched_at DESC, video_id DESC`。
 - library 先取有序事实 ID，再由 video catalog 过滤删除、下架和不可读私密视频。
-- `play/complete/skip` 更新 `video_view_history`，`exposed` 只更新曝光聚合。
+- `play/progress/complete/skip` 更新 `video_view_history`，`exposed` 只更新曝光聚合；观看事实按事件 ID 幂等并通过 Outbox 可靠进入推荐反馈链路。
 - 公开主页只有作品、公开合集和隐私允许的喜欢；没有短剧和预约能力。
 
 ## 5. 用测试理解代码

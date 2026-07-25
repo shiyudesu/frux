@@ -6,9 +6,12 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
 
 	applicationembedding "GCFeed/internal/application/embedding"
+	applicationexposure "GCFeed/internal/application/exposure"
 	applicationinteraction "GCFeed/internal/application/interaction"
+	applicationrecommendation "GCFeed/internal/application/recommendation"
 	applicationvideo "GCFeed/internal/application/video"
 	infracache "GCFeed/internal/infra/cache"
 	infraconfig "GCFeed/internal/infra/config"
@@ -16,9 +19,11 @@ import (
 	inframetrics "GCFeed/internal/infra/metrics"
 	inframq "GCFeed/internal/infra/mq"
 	infraembedding "GCFeed/internal/infra/persistence/embedding"
+	infraexposure "GCFeed/internal/infra/persistence/exposure"
 	infrafeed "GCFeed/internal/infra/persistence/feed"
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	migration "GCFeed/internal/infra/persistence/migration"
+	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
 
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -81,6 +86,24 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	interactionRepo := infrainteraction.New(gormDB)
 	actionWorker := applicationinteraction.NewActionWorker(interactionRepo, rabbitMQ)
 	if err := actionWorker.Start(ctx); err != nil {
+		return err
+	}
+
+	exposureRepo := infraexposure.New(gormDB)
+	outboxDispatcher := applicationexposure.NewOutboxDispatcher(
+		exposureRepo,
+		rabbitMQ,
+		applicationexposure.WithOutboxObserver(func(stats applicationexposure.OutboxStats, err error) {
+			inframetrics.ObserveViewEventOutbox(stats.Pending, stats.OldestPending, time.Now().UTC(), err)
+		}),
+	)
+	if err := outboxDispatcher.Start(ctx); err != nil {
+		return err
+	}
+
+	recommendationRepo := infrarecommendation.New(gormDB)
+	behaviorWorker := applicationrecommendation.NewBehaviorEventWorker(recommendationRepo, rabbitMQ)
+	if err := behaviorWorker.Start(ctx); err != nil {
 		return err
 	}
 

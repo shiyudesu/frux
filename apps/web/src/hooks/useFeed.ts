@@ -1,11 +1,11 @@
 // useFeed：Feed 数据逻辑——items/index/cursor/hasMore/loadingMore/feedState，
-// 加载与翻页、播放配置、曝光上报、预加载。搬运自 LegacyApp.jsx FeedPage，逻辑不变。
+// 加载与翻页、播放配置、预加载。播放生命周期上报由 VideoStage 负责。
 //
 // 注：loadFeed 需要顺带重置 swipe 与评论面板（迁移前这些 state 同处一个组件），
 // 这两个 setter 现在属于 useSwipe/useComments，因此由容器组件通过 callbacks 注入。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiErrorMessage, isUnauthorized } from "../api/client";
-import { fetchFeedPage, fetchPlaybackConfig, fetchPreloadVideos, reportVideoViewEvent } from "../api/feed";
+import { fetchFeedPage, fetchPlaybackConfig, fetchPreloadVideos } from "../api/feed";
 import { DEFAULT_PLAYBACK_CONFIG, getFeedSceneMeta } from "../constants";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
@@ -46,12 +46,16 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
   const [feedRequestID, setFeedRequestID] = useState("");
   const loadingMoreRef = useRef(false);
   const feedRequestIDRef = useRef("");
-  const exposedRef = useRef(new Set<string>());
+  const feedGenerationRef = useRef(0);
+  const sessionTokenRef = useRef(session.token);
   const preloadedVideoRef = useRef(new Set<string>());
   const currentFeedScene = getFeedSceneMeta(feedScene);
+  sessionTokenRef.current = session.token;
 
   const loadFeed = useCallback(() => {
     let live = true;
+    const generation = ++feedGenerationRef.current;
+    const requestToken = session.token;
     if (requiresAuthFeed(feedScene) && !session.token) {
       callbacks.resetSwipe();
       setItems([]);
@@ -69,7 +73,6 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
 
     const requestID = createFeedRequestID(feedScene);
     feedRequestIDRef.current = requestID;
-    exposedRef.current = new Set<string>();
     loadingMoreRef.current = false;
     setFeedRequestID(requestID);
     setNextCursor("");
@@ -77,9 +80,9 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     setLoadingMore(false);
     setFeedState("loading");
     setFeedError("");
-    fetchFeedPage(feedScene, session.token, "", requestID)
+    fetchFeedPage(feedScene, requestToken, "", requestID)
       .then((data) => {
-        if (!live) return;
+        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
         const nextItems = (data.items || []).map((item) => mapFeedItem(item, feedScene, requestID));
         callbacks.resetSwipe();
         setItems(nextItems);
@@ -92,7 +95,7 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
         setFeedState("ready");
       })
       .catch((error: unknown) => {
-        if (!live) return;
+        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
         if (isUnauthorized(error) && requiresAuthFeed(feedScene)) {
           setItems([]);
           setIndex(0);
@@ -117,10 +120,13 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     }
 
     const requestID = feedRequestIDRef.current || feedRequestID || createFeedRequestID(feedScene);
+    const generation = feedGenerationRef.current;
+    const requestToken = session.token;
     loadingMoreRef.current = true;
     setLoadingMore(true);
-    fetchFeedPage(feedScene, session.token, nextCursor, requestID)
+    fetchFeedPage(feedScene, requestToken, nextCursor, requestID)
       .then((data) => {
+        if (generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
         const nextItems = (data.items || []).map((item) => mapFeedItem(item, feedScene, requestID));
         setItems((state) => appendFeedItems(state, nextItems));
         mergeViewerActions(nextItems, setLiked, "liked");
@@ -129,12 +135,14 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
         setHasMore(Boolean(data.has_more && data.next_cursor));
       })
       .catch((error: unknown) => {
+        if (generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
         if (isUnauthorized(error) && requiresAuthFeed(feedScene)) {
           session.clearAuth();
           navigate("/auth");
         }
       })
       .finally(() => {
+        if (generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
         loadingMoreRef.current = false;
         setLoadingMore(false);
       });
@@ -152,13 +160,15 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     }
 
     let live = true;
-    fetchPlaybackConfig(session.token)
+    const requestToken = session.token;
+    fetchPlaybackConfig(requestToken)
       .then((config) => {
-        if (live) {
+        if (live && sessionTokenRef.current === requestToken) {
           setPlaybackConfig(normalizePlaybackConfig(config));
         }
       })
       .catch((error: unknown) => {
+        if (!live || sessionTokenRef.current !== requestToken) return;
         if (isUnauthorized(error)) {
           session.clearAuth();
           navigate("/auth");
@@ -185,39 +195,19 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     setItems((state) => state.map((item) => (item.video_id === videoID ? { ...item, ...patch } : item)));
   }, []);
 
-  // 曝光上报：当前可见 item 变化时上报一次 exposed 事件
-  useEffect(() => {
-    if (!current || feedState !== "ready" || !session.token) return;
-    const scene = current.feed_scene || feedScene;
-    const requestID = current.request_id || feedRequestID;
-    const exposureKey = `${scene}:${requestID}:${current.video_id}`;
-    if (!requestID || exposedRef.current.has(exposureKey)) return;
-    exposedRef.current.add(exposureKey);
-    reportVideoViewEvent(session.token, {
-      video_id: current.video_id,
-      scene,
-      request_id: requestID,
-      event_type: "exposed",
-      watch_ms: 0,
-      completed: false
-    }).catch((error: unknown) => {
-      if (isUnauthorized(error) && requiresAuthFeed(feedScene)) {
-        session.clearAuth();
-        navigate("/auth");
-      }
-    });
-  }, [current, feedRequestID, feedScene, feedState, navigate, session]);
-
   // 预加载：拉取接下来要播的视频并预热封面/元数据
   useEffect(() => {
     if (!current || feedState !== "ready" || !session.token) return undefined;
     let live = true;
-    fetchPreloadVideos(session.token, current.video_id, playbackConfig.preload_count)
+    const requestToken = session.token;
+    const generation = feedGenerationRef.current;
+    fetchPreloadVideos(requestToken, current.video_id, playbackConfig.preload_count)
       .then((data) => {
-        if (!live) return;
+        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
         prewarmVideoAssets(data.items || [], preloadedVideoRef.current);
       })
       .catch((error: unknown) => {
+        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
         if (isUnauthorized(error) && requiresAuthFeed(feedScene)) {
           session.clearAuth();
           navigate("/auth");

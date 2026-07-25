@@ -2,8 +2,11 @@
 // 并保留互动逻辑（点赞/收藏/关注）、关注映射、QoS 上报、键盘导航。
 // 搬运自 LegacyApp.jsx FeedPage，逻辑不变。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiErrorMessage, isUnauthorized } from "../api/client";
-import { reportPlaybackQoS as reportPlaybackQoSRequest } from "../api/feed";
+import { ApiError, apiErrorMessage, isUnauthorized } from "../api/client";
+import {
+  reportPlaybackQoS as reportPlaybackQoSRequest,
+  reportVideoViewEvent as reportVideoViewEventRequest
+} from "../api/feed";
 import { favoriteVideo, followUser, likeVideo, loadFollowingMap } from "../api/social";
 import { FeedDetailsPanel } from "../components/FeedDetailsPanel";
 import { FeedMessage } from "../components/StatusMessages";
@@ -15,9 +18,10 @@ import { useFeed } from "../hooks/useFeed";
 import { getFeedTrackStyle, useSwipe } from "../hooks/useSwipe";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
-import type { FeedVideo } from "../types";
+import type { CreateViewEventRequest, FeedVideo } from "../types";
 import type { PlaybackQoSMetrics } from "../utils";
 import { buildPlaybackQoSPayload, createPlaybackQoSKey, openPublicProfile } from "../utils";
+import { enqueuePendingViewEvent, listPendingViewEvents, removePendingViewEvent } from "../viewEventDelivery";
 
 export function FeedPage({ feedScene }: { feedScene: string }) {
   const session = useSession();
@@ -25,6 +29,9 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const feedMainRef = useRef<HTMLElement | null>(null);
   const activeStageRef = useRef<VideoStageHandle | null>(null);
   const commentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const sessionTokenRef = useRef(session.token);
+  const inflightViewEventIDsRef = useRef(new Set<string>());
+  sessionTokenRef.current = session.token;
 
   // useFeed 的 loadFeed 需要重置 swipe/评论面板，而这两个 state 由下方
   // useSwipe/useComments 持有（调用顺序在后），故通过 ref 转发稳定回调。
@@ -129,6 +136,57 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     },
     [navigate, session.clearAuth, session.token]
   );
+
+  const reportVideoViewEvent = useCallback(
+    (event: CreateViewEventRequest, keepalive = false) => {
+      const requestToken = session.token;
+      const userID = session.user?.id || 0;
+      if (!requestToken || userID <= 0 || !event.video_id) return;
+      const eventID = event.event_id || "";
+      if (eventID) {
+        enqueuePendingViewEvent(userID, event);
+        if (inflightViewEventIDsRef.current.has(eventID)) return;
+        inflightViewEventIDsRef.current.add(eventID);
+      }
+      reportVideoViewEventRequest(requestToken, event, keepalive)
+        .then(() => {
+          if (eventID) removePendingViewEvent(userID, eventID);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof ApiError && isPermanentViewEventError(error.status) && eventID) {
+            removePendingViewEvent(userID, eventID);
+          }
+          if (isUnauthorized(error) && sessionTokenRef.current === requestToken) {
+            session.clearAuth();
+            navigate("/auth");
+          }
+        })
+        .finally(() => {
+          if (eventID) inflightViewEventIDsRef.current.delete(eventID);
+        });
+    },
+    [navigate, session.clearAuth, session.token, session.user?.id]
+  );
+
+  useEffect(() => {
+    if (!session.token || !session.user?.id) return undefined;
+    const userID = session.user.id;
+    const retryPending = () => {
+      if (document.visibilityState !== "visible") return;
+      for (const event of listPendingViewEvents(userID)) {
+        reportVideoViewEvent(event);
+      }
+    };
+    retryPending();
+    const retryTimer = window.setInterval(retryPending, 10_000);
+    window.addEventListener("online", retryPending);
+    document.addEventListener("visibilitychange", retryPending);
+    return () => {
+      window.clearInterval(retryTimer);
+      window.removeEventListener("online", retryPending);
+      document.removeEventListener("visibilitychange", retryPending);
+    };
+  }, [reportVideoViewEvent, session.token, session.user?.id]);
 
   const requireLogin = useCallback(() => {
     if (session.token) return true;
@@ -285,6 +343,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onFavorite={setFavorite}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
+                    onViewEvent={reportVideoViewEvent}
                     onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                     followError={followError}
                   />
@@ -306,6 +365,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   onFavorite={setFavorite}
                   onFollow={setFollow}
                   onPlaybackQoS={reportPlaybackQoS}
+                  onViewEvent={reportVideoViewEvent}
                   onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                   followError={followError}
                 />
@@ -325,6 +385,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onFavorite={setFavorite}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
+                    onViewEvent={reportVideoViewEvent}
                     onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                     followError={followError}
                   />
@@ -356,4 +417,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
       />
     </main>
   );
+}
+
+function isPermanentViewEventError(status: number): boolean {
+  return status >= 400 && status < 500 && ![401, 408, 425, 429].includes(status);
 }

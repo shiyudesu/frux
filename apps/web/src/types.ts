@@ -205,6 +205,8 @@ export interface HistoryMetadata {
   last_scene: string;
   last_event_type: string;
   last_watch_ms: number;
+  last_position_ms?: number;
+  effective_watch_ms?: number;
   completed: boolean;
   last_watched_at: string;
 }
@@ -392,13 +394,21 @@ export interface UnreadStatResponse {
 
 // ---------- 行为上报 ----------
 
+export type ViewEventType = "exposed" | "play" | "progress" | "complete" | "skip";
+
 export interface CreateViewEventRequest {
   video_id: number;
   scene: string;
   request_id: string;
-  event_type: string;
+  event_type: ViewEventType;
   watch_ms: number;
   completed: boolean;
+  event_id?: string;
+  playback_session_id?: string;
+  sequence?: number;
+  occurred_at?: string;
+  position_ms?: number;
+  duration_ms?: number;
 }
 
 export interface CreateQoSReportRequest {

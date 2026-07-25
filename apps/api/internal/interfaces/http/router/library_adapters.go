@@ -46,7 +46,8 @@ func (a historyIndexAdapter) ListHistoryVideos(ctx context.Context, userID int64
 	for _, item := range items {
 		result = append(result, domainlibrary.HistoryCandidate{
 			VideoID: item.VideoID, UpdatedAt: item.LastWatchedAt, LastScene: item.LastScene,
-			LastEventType: item.LastEventType, LastWatchMs: item.LastWatchMs, Completed: item.Completed,
+			LastEventType: item.LastEventType, LastPositionMs: item.LastPositionMs,
+			LastWatchMs: item.LastWatchMs, Completed: item.Completed,
 		})
 	}
 	return result, nil

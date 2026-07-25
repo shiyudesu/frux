@@ -286,6 +286,10 @@ DELETE /api/videos/{videoId}/like
 
 最新状态投影与原始流水分表保存。例如 `video_view_events` 是不可变观看流水，`video_view_history` 是可删除的用户历史投影；清空投影不得级联删除原始事实。
 
+端侧生命周期事件必须携带稳定 `event_id`，播放会话内使用 `playback_session_id + sequence`，跨请求最新状态使用有界 `occurred_at + event_id` 定序。相同用户重放相同事件不得重复更新投影；同 ID 不同规范化载荷必须返回冲突。历史聚合修复只更新仍存在的投影行，不得从原始事件重新创建用户已删除的历史。
+
+需要可靠投递到 RabbitMQ、但不能让外部队列决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和 publisher confirm 分发，下游继续按业务事件 ID 去重。
+
 账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。
 
 ## 12. 错误处理
@@ -362,10 +366,11 @@ cd apps/api
 go test ./...
 ```
 
-Web 构建命令：
+Web 单元测试和构建命令：
 
 ```bash
 cd apps/web
+pnpm run test
 pnpm run build
 ```
 

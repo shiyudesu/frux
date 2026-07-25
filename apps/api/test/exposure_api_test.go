@@ -20,18 +20,25 @@ import (
 type exposureAPIResponse struct {
 	Event    exposureEventAPIResponse  `json:"event"`
 	Exposure *exposureIndexAPIResponse `json:"exposure"`
+	Replayed bool                      `json:"replayed"`
 }
 
 type exposureEventAPIResponse struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"user_id"`
-	VideoID   int64     `json:"video_id"`
-	Scene     string    `json:"scene"`
-	RequestID string    `json:"request_id"`
-	EventType string    `json:"event_type"`
-	WatchMs   int       `json:"watch_ms"`
-	Completed bool      `json:"completed"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                int64     `json:"id"`
+	UserID            int64     `json:"user_id"`
+	VideoID           int64     `json:"video_id"`
+	Scene             string    `json:"scene"`
+	RequestID         string    `json:"request_id"`
+	EventType         string    `json:"event_type"`
+	EventID           string    `json:"event_id"`
+	PlaybackSessionID string    `json:"playback_session_id"`
+	Sequence          int64     `json:"sequence"`
+	OccurredAt        time.Time `json:"occurred_at"`
+	PositionMs        int       `json:"position_ms"`
+	WatchMs           int       `json:"watch_ms"`
+	DurationMs        *int      `json:"duration_ms"`
+	Completed         bool      `json:"completed"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type exposureIndexAPIResponse struct {
@@ -45,45 +52,109 @@ type exposureIndexAPIResponse struct {
 
 // memoryExposureRepo 是曝光测试用内存仓储，模拟观看流水和曝光聚合索引。
 type memoryExposureRepo struct {
-	mu        sync.Mutex
-	nextID    int64
-	published map[int64]bool
-	events    []*domainexposure.ViewEvent
-	exposures map[string]*domainexposure.Exposure
-}
-
-type memoryViewEventPublisher struct {
-	mu     sync.Mutex
-	events []*applicationexposure.ViewEventRecordedEvent
+	mu             sync.Mutex
+	nextID         int64
+	published      map[int64]bool
+	events         []*domainexposure.ViewEvent
+	eventIDs       map[string]*domainexposure.ViewEvent
+	eventExposures map[string]*domainexposure.Exposure
+	exposures      map[string]*domainexposure.Exposure
+	histories      map[string]*domainexposure.ViewHistory
 }
 
 func newMemoryExposureRepo() *memoryExposureRepo {
 	return &memoryExposureRepo{
-		nextID:    1,
-		published: map[int64]bool{1001: true, 1002: true},
-		events:    []*domainexposure.ViewEvent{},
-		exposures: map[string]*domainexposure.Exposure{},
+		nextID:         1,
+		published:      map[int64]bool{1001: true, 1002: true},
+		events:         []*domainexposure.ViewEvent{},
+		eventIDs:       map[string]*domainexposure.ViewEvent{},
+		eventExposures: map[string]*domainexposure.Exposure{},
+		exposures:      map[string]*domainexposure.Exposure{},
+		histories:      map[string]*domainexposure.ViewHistory{},
 	}
 }
 
+func (r *memoryExposureRepo) FindViewEventByIdentity(_ context.Context, userID int64, eventID string) (*domainexposure.SaveViewEventResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	existing := r.eventIDs[memoryExposureEventKey(userID, eventID)]
+	if existing == nil {
+		return nil, nil
+	}
+	return &domainexposure.SaveViewEventResult{
+		Event: cloneExposureViewEvent(existing), Exposure: cloneExposure(r.eventExposures[memoryExposureEventKey(userID, eventID)]), Replayed: true,
+	}, nil
+}
+
 // SaveViewEvent 模拟写入观看流水，并在 exposed 事件时维护聚合索引。
-func (r *memoryExposureRepo) SaveViewEvent(ctx context.Context, event *domainexposure.ViewEvent) (*domainexposure.ViewEvent, *domainexposure.Exposure, error) {
+func (r *memoryExposureRepo) SaveViewEvent(ctx context.Context, event *domainexposure.ViewEvent) (*domainexposure.SaveViewEventResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if !r.published[event.VideoID] {
-		return nil, nil, domainexposure.ErrVideoNotFound
+		return nil, domainexposure.ErrVideoNotFound
+	}
+	if event.EventID != "" {
+		if existing := r.eventIDs[memoryExposureEventKey(event.UserID, event.EventID)]; existing != nil {
+			if !existing.SameNormalizedPayload(event) {
+				return nil, domainexposure.ErrEventIDConflict
+			}
+			return &domainexposure.SaveViewEventResult{
+				Event: cloneExposureViewEvent(existing), Exposure: cloneExposure(r.eventExposures[memoryExposureEventKey(event.UserID, event.EventID)]), Replayed: true,
+			}, nil
+		}
 	}
 
-	now := time.Now()
+	now := event.OccurredAt.Add(time.Millisecond)
 	saved := cloneExposureViewEvent(event)
 	saved.ID = r.nextID
 	r.nextID++
 	saved.CreatedAt = now
+	if saved.EventID == "" {
+		saved.EventID = fmt.Sprintf("legacy-%d", saved.ID)
+	}
 	r.events = append(r.events, cloneExposureViewEvent(saved))
+	r.eventIDs[memoryExposureEventKey(saved.UserID, saved.EventID)] = cloneExposureViewEvent(saved)
+
+	if saved.CountsAsHistory() {
+		key := memoryExposureKey(saved.UserID, saved.VideoID)
+		history := r.histories[key]
+		if history == nil {
+			history = &domainexposure.ViewHistory{
+				UserID: saved.UserID, VideoID: saved.VideoID, FirstWatchedAt: saved.OccurredAt,
+			}
+			r.histories[key] = history
+		}
+		sameSession := history.LastSessionID != "" && saved.PlaybackSessionID != "" && history.LastSessionID == saved.PlaybackSessionID
+		newer := false
+		if sameSession {
+			newer = !saved.OccurredAt.Before(history.LastOccurredAt) && saved.Sequence > history.LastSequence
+		} else {
+			newer = history.LastOccurredAt.IsZero() || history.LastOccurredAt.Before(saved.OccurredAt) ||
+				(history.LastOccurredAt.Equal(saved.OccurredAt) && history.LastEventID < saved.EventID)
+		}
+		if newer {
+			history.LastScene = saved.Scene
+			history.LastEventType = saved.EventType
+			if saved.OccurredAt.After(history.LastWatchedAt) {
+				history.LastWatchedAt = saved.OccurredAt
+			}
+			history.LastOccurredAt = saved.OccurredAt
+			history.LastEventID = saved.EventID
+			history.LastSessionID = saved.PlaybackSessionID
+			history.LastSequence = saved.Sequence
+		}
+		history.LastPositionMs = maxExposureInt(history.LastPositionMs, saved.PositionMs)
+		history.LastWatchMs = maxExposureInt(history.LastWatchMs, saved.WatchMs)
+		history.Completed = history.Completed || saved.Completed
+		if saved.OccurredAt.Before(history.FirstWatchedAt) {
+			history.FirstWatchedAt = saved.OccurredAt
+		}
+	}
 
 	if !saved.CountsAsExposure() {
-		return cloneExposureViewEvent(saved), nil, nil
+		r.eventExposures[memoryExposureEventKey(saved.UserID, saved.EventID)] = nil
+		return &domainexposure.SaveViewEventResult{Event: cloneExposureViewEvent(saved)}, nil
 	}
 
 	key := memoryExposureKey(saved.UserID, saved.VideoID)
@@ -101,14 +172,16 @@ func (r *memoryExposureRepo) SaveViewEvent(ctx context.Context, event *domainexp
 			UpdatedAt:      saved.CreatedAt,
 		}
 		r.exposures[key] = exposure
-		return cloneExposureViewEvent(saved), cloneExposure(exposure), nil
+		r.eventExposures[memoryExposureEventKey(saved.UserID, saved.EventID)] = cloneExposure(exposure)
+		return &domainexposure.SaveViewEventResult{Event: cloneExposureViewEvent(saved), Exposure: cloneExposure(exposure)}, nil
 	}
 
 	exposure.LastExposedAt = saved.CreatedAt
 	exposure.ExposureCount++
 	exposure.LastScene = saved.Scene
 	exposure.UpdatedAt = saved.CreatedAt
-	return cloneExposureViewEvent(saved), cloneExposure(exposure), nil
+	r.eventExposures[memoryExposureEventKey(saved.UserID, saved.EventID)] = cloneExposure(exposure)
+	return &domainexposure.SaveViewEventResult{Event: cloneExposureViewEvent(saved), Exposure: cloneExposure(exposure)}, nil
 }
 
 func (r *memoryExposureRepo) EventCount() int {
@@ -117,22 +190,15 @@ func (r *memoryExposureRepo) EventCount() int {
 	return len(r.events)
 }
 
-func (p *memoryViewEventPublisher) PublishViewEventRecorded(ctx context.Context, event *applicationexposure.ViewEventRecordedEvent) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.events = append(p.events, event)
-	return nil
-}
-
-func (p *memoryViewEventPublisher) Events() []*applicationexposure.ViewEventRecordedEvent {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	events := make([]*applicationexposure.ViewEventRecordedEvent, 0, len(p.events))
-	for _, event := range p.events {
-		cloned := *event
-		events = append(events, &cloned)
+func (r *memoryExposureRepo) History(userID, videoID int64) *domainexposure.ViewHistory {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	history := r.histories[memoryExposureKey(userID, videoID)]
+	if history == nil {
+		return nil
 	}
-	return events
+	cloned := *history
+	return &cloned
 }
 
 // TestExposureAPIFlow 覆盖首次曝光、重复曝光聚合和普通观看事件。
@@ -195,43 +261,104 @@ func TestExposureAPIFlow(t *testing.T) {
 	}
 }
 
-// TestExposurePublishesViewEvent 覆盖观看行为落库后发布画像更新事件。
-func TestExposurePublishesViewEvent(t *testing.T) {
-	publisher := &memoryViewEventPublisher{}
-	router, jwtManager, _ := newExposureRouterWithPublisher(t, publisher)
+func TestExposureLifecycleReplayConflictAndOrdering(t *testing.T) {
+	current := time.Now().UTC().Truncate(time.Millisecond)
+	router, jwtManager, repo := newExposureRouterWithNow(t, func() time.Time { return current })
 	token := signTestToken(t, jwtManager, 42)
+	base := current
 
+	progressBody := fmt.Sprintf(
+		`{"video_id":1001,"scene":"recommend","request_id":"req-profile","event_type":"progress","event_id":"event-progress-2","playback_session_id":"session-1","sequence":2,"occurred_at":%q,"position_ms":20000,"watch_ms":18000,"duration_ms":60000}`,
+		base.Add(2*time.Second).Format(time.RFC3339Nano),
+	)
 	response := performJSONRequest(
 		router,
 		http.MethodPost,
 		"/api/video-view-events",
-		`{"video_id":1001,"scene":"recommend","request_id":"req-profile","event_type":"complete","watch_ms":15000,"completed":false}`,
+		progressBody,
 		token,
 	)
 	requireStatus(t, response, http.StatusCreated)
 
-	events := publisher.Events()
-	if len(events) != 1 {
-		t.Fatalf("unexpected published event count: %d", len(events))
+	var progress exposureAPIResponse
+	decodeJSON(t, response, &progress)
+	if progress.Event.EventID != "event-progress-2" || progress.Event.PositionMs != 20000 || progress.Event.WatchMs != 18000 {
+		t.Fatalf("unexpected progress response: %+v", progress)
 	}
-	event := events[0]
-	if event.EventID == "" || event.UserID != 42 || event.VideoID != 1001 || event.Scene != "recommend" {
-		t.Fatalf("unexpected published event: %+v", event)
+
+	current = current.Add(48 * time.Hour)
+	replay := performJSONRequest(router, http.MethodPost, "/api/video-view-events", progressBody, token)
+	requireStatus(t, replay, http.StatusOK)
+	var replayed exposureAPIResponse
+	decodeJSON(t, replay, &replayed)
+	if !replayed.Replayed || replayed.Event.ID != progress.Event.ID || repo.EventCount() != 1 {
+		t.Fatalf("retry was not replayed: %+v count=%d", replayed, repo.EventCount())
 	}
-	if event.EventType != domainexposure.EventTypeComplete || !event.Completed || event.WatchMs != 15000 {
-		t.Fatalf("unexpected behavior payload: %+v", event)
+
+	conflictBody := fmt.Sprintf(
+		`{"video_id":1001,"scene":"recommend","event_type":"progress","event_id":"event-progress-2","playback_session_id":"session-1","sequence":2,"occurred_at":%q,"position_ms":21000,"watch_ms":18000,"duration_ms":60000}`,
+		base.Add(2*time.Second).Format(time.RFC3339Nano),
+	)
+	conflict := performJSONRequest(router, http.MethodPost, "/api/video-view-events", conflictBody, token)
+	requireStatus(t, conflict, http.StatusConflict)
+	current = base
+
+	completeBody := fmt.Sprintf(
+		`{"video_id":1001,"scene":"recommend","event_type":"complete","event_id":"event-complete-3","playback_session_id":"session-1","sequence":3,"occurred_at":%q,"position_ms":59000,"watch_ms":55000,"duration_ms":60000}`,
+		base.Add(3*time.Second).Format(time.RFC3339Nano),
+	)
+	requireStatus(t, performJSONRequest(router, http.MethodPost, "/api/video-view-events", completeBody, token), http.StatusCreated)
+
+	delayedBody := fmt.Sprintf(
+		`{"video_id":1001,"scene":"recommend","event_type":"progress","event_id":"event-progress-1","playback_session_id":"session-1","sequence":1,"occurred_at":%q,"position_ms":10000,"watch_ms":9000,"duration_ms":60000}`,
+		base.Add(time.Second).Format(time.RFC3339Nano),
+	)
+	requireStatus(t, performJSONRequest(router, http.MethodPost, "/api/video-view-events", delayedBody, token), http.StatusCreated)
+	history := repo.History(42, 1001)
+	if history == nil || history.LastEventID != "event-complete-3" || history.LastPositionMs != 59000 || !history.Completed {
+		t.Fatalf("delayed event regressed history: %+v", history)
 	}
 
 	missingVideoResponse := performJSONRequest(
 		router,
 		http.MethodPost,
 		"/api/video-view-events",
-		`{"video_id":404,"scene":"recommend","event_type":"exposed"}`,
+		fmt.Sprintf(`{"video_id":404,"scene":"recommend","event_type":"play","event_id":"missing-video","playback_session_id":"session-2","sequence":1,"occurred_at":%q}`, base.Format(time.RFC3339Nano)),
 		token,
 	)
 	requireStatus(t, missingVideoResponse, http.StatusNotFound)
-	if len(publisher.Events()) != 1 {
-		t.Fatalf("published event after failed save")
+}
+
+func TestExposureReplayReturnsOriginalSnapshot(t *testing.T) {
+	current := time.Now().UTC().Truncate(time.Millisecond)
+	router, jwtManager, _ := newExposureRouterWithNow(t, func() time.Time { return current })
+	token := signTestToken(t, jwtManager, 42)
+
+	firstBody := fmt.Sprintf(
+		`{"video_id":1001,"scene":"timeline","event_type":"exposed","event_id":"exposure-first","playback_session_id":"exposure-session-1","sequence":1,"occurred_at":%q}`,
+		current.Format(time.RFC3339Nano),
+	)
+	firstResponse := performJSONRequest(router, http.MethodPost, "/api/video-view-events", firstBody, token)
+	requireStatus(t, firstResponse, http.StatusCreated)
+	var first exposureAPIResponse
+	decodeJSON(t, firstResponse, &first)
+
+	current = current.Add(time.Second)
+	secondBody := fmt.Sprintf(
+		`{"video_id":1001,"scene":"hot","event_type":"exposed","event_id":"exposure-second","playback_session_id":"exposure-session-2","sequence":1,"occurred_at":%q}`,
+		current.Format(time.RFC3339Nano),
+	)
+	requireStatus(t, performJSONRequest(router, http.MethodPost, "/api/video-view-events", secondBody, token), http.StatusCreated)
+
+	replay := performJSONRequest(router, http.MethodPost, "/api/video-view-events", firstBody, token)
+	requireStatus(t, replay, http.StatusOK)
+	var replayed exposureAPIResponse
+	decodeJSON(t, replay, &replayed)
+	if !replayed.Replayed || replayed.Exposure == nil || first.Exposure == nil ||
+		replayed.Exposure.ExposureCount != first.Exposure.ExposureCount ||
+		replayed.Exposure.LastScene != first.Exposure.LastScene ||
+		!replayed.Exposure.LastExposedAt.Equal(first.Exposure.LastExposedAt) {
+		t.Fatalf("replay did not preserve original exposure snapshot: first=%+v replay=%+v", first, replayed)
 	}
 }
 
@@ -276,6 +403,30 @@ func TestExposureAPIValidation(t *testing.T) {
 	)
 	requireStatus(t, negativeWatchResponse, http.StatusBadRequest)
 
+	outOfRangeOccurrence := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/video-view-events",
+		fmt.Sprintf(
+			`{"video_id":1001,"scene":"timeline","event_type":"play","event_id":"old-event","playback_session_id":"session-old","sequence":1,"occurred_at":%q}`,
+			time.Now().UTC().Add(-25*time.Hour).Format(time.RFC3339Nano),
+		),
+		token,
+	)
+	requireStatus(t, outOfRangeOccurrence, http.StatusBadRequest)
+
+	invalidDuration := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/video-view-events",
+		fmt.Sprintf(
+			`{"video_id":1001,"scene":"timeline","event_type":"progress","event_id":"bad-duration","playback_session_id":"session-duration","sequence":2,"occurred_at":%q,"position_ms":2000,"watch_ms":1000,"duration_ms":1000}`,
+			time.Now().UTC().Format(time.RFC3339Nano),
+		),
+		token,
+	)
+	requireStatus(t, invalidDuration, http.StatusBadRequest)
+
 	missingVideoResponse := performJSONRequest(
 		router,
 		http.MethodPost,
@@ -287,10 +438,10 @@ func TestExposureAPIValidation(t *testing.T) {
 }
 
 func newExposureRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager, *memoryExposureRepo) {
-	return newExposureRouterWithPublisher(t, nil)
+	return newExposureRouterWithNow(t, nil)
 }
 
-func newExposureRouterWithPublisher(t *testing.T, publisher applicationexposure.ViewEventPublisher) (*server.Hertz, *infrajwt.Manager, *memoryExposureRepo) {
+func newExposureRouterWithNow(t *testing.T, now func() time.Time) (*server.Hertz, *infrajwt.Manager, *memoryExposureRepo) {
 	t.Helper()
 
 	router := server.New()
@@ -302,8 +453,8 @@ func newExposureRouterWithPublisher(t *testing.T, publisher applicationexposure.
 
 	repo := newMemoryExposureRepo()
 	options := []applicationexposure.Option{}
-	if publisher != nil {
-		options = append(options, applicationexposure.WithViewEventPublisher(publisher))
+	if now != nil {
+		options = append(options, applicationexposure.WithNow(now))
 	}
 	service := applicationexposure.New(repo, options...)
 	handler := interfaceshttpexposure.New(service)
@@ -321,10 +472,24 @@ func cloneExposureViewEvent(event *domainexposure.ViewEvent) *domainexposure.Vie
 }
 
 func cloneExposure(exposure *domainexposure.Exposure) *domainexposure.Exposure {
+	if exposure == nil {
+		return nil
+	}
 	cloned := *exposure
 	return &cloned
 }
 
 func memoryExposureKey(userID int64, videoID int64) string {
 	return fmt.Sprintf("%d:%d", userID, videoID)
+}
+
+func memoryExposureEventKey(userID int64, eventID string) string {
+	return fmt.Sprintf("%d:%s", userID, eventID)
+}
+
+func maxExposureInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }

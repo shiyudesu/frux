@@ -53,11 +53,12 @@ export function fetchPreloadVideos(token: string, currentVideoID: number, limit:
   return apiRequest<PreloadVideosResponse>(`/api/preload-videos?${params.toString()}`, { token });
 }
 
-export function reportVideoViewEvent(token: string, body: CreateViewEventRequest): Promise<unknown> {
+export function reportVideoViewEvent(token: string, body: CreateViewEventRequest, keepalive = false): Promise<unknown> {
   return apiRequest("/api/video-view-events", {
     method: "POST",
     token,
-    body
+    body,
+    keepalive
   });
 }
 

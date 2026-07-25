@@ -40,19 +40,27 @@ GCFeed SHALL expose a public liked-video list only when the target user's profil
 - **THEN** the API returns the configured privacy response without any liked-video items
 
 ### Requirement: Durable Watch History Projection
-GCFeed SHALL maintain one latest watch-history record per user and video from play, complete, and skip events, including the most recent scene, event type, watch duration, completion state, and watch time. Exposure-only events SHALL NOT create watch-history entries.
+GCFeed SHALL maintain one latest watch-history record per user and video from play, progress, complete, and skip events, including the most recent scene, event type, media position, effective watch duration, completion state, and watch time. Exposure-only events SHALL NOT create watch-history entries.
 
 #### Scenario: Play event updates history
 - **WHEN** an authenticated user's play event is stored
 - **THEN** the corresponding user-video history record is created or updated in the same persistence transaction
 
+#### Scenario: Progress event advances history
+- **WHEN** an authenticated user's deterministically newer progress event is stored
+- **THEN** the history record advances its latest media position, effective watch duration, event type, and watch time
+
 #### Scenario: Exposure event does not update history
-- **WHEN** an exposed event is stored without a play, complete, or skip event
+- **WHEN** an exposed event is stored without a play, progress, complete, or skip event
 - **THEN** no watch-history entry is created
 
 #### Scenario: Older watch event commits last
 - **WHEN** concurrent or delayed watch events reach the projection out of order
-- **THEN** the projection keeps the deterministic newest `(created_at, event_id)` state and does not regress
+- **THEN** the projection keeps the deterministic newest `(occurred_at, event_id)` state and does not regress position, completion, or latest watch time
+
+#### Scenario: Completion is followed by an older progress event
+- **WHEN** a completed history record later receives an older progress or skip event
+- **THEN** the completed state and newer position remain unchanged
 
 ### Requirement: Watch History Listing and Deletion
 GCFeed SHALL allow an authenticated user to list watch history by `last_watched_at DESC, video_id DESC`, delete one history item, or clear the history projection without deleting raw view events.

@@ -28,6 +28,7 @@ export interface ApiRequestOptions {
   token?: string;
   headers?: Record<string, string>;
   body?: unknown;
+  keepalive?: boolean;
 }
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
@@ -41,7 +42,8 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   const response = await fetch(path, {
     method: options.method || "GET",
     headers,
-    body: options.body ? JSON.stringify(options.body) : undefined
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    keepalive: options.keepalive
   });
 
   if (!response.ok) {

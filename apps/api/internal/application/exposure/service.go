@@ -4,71 +4,82 @@ import (
 	domainexposure "GCFeed/internal/domain/exposure"
 	"context"
 	"errors"
+	"time"
 )
 
 var ErrSaveExposureFailed = errors.New("failed to save exposure")
 
 type Service struct {
-	repo      domainexposure.Repository
-	publisher ViewEventPublisher
+	repo domainexposure.Repository
+	now  func() time.Time
 }
 
 type RecordViewEventResult struct {
 	Event    *domainexposure.ViewEvent
 	Exposure *domainexposure.Exposure
-}
-
-// ViewEventPublisher 投递观看行为事件，推荐画像 worker 基于该事件更新用户向量。
-type ViewEventPublisher interface {
-	PublishViewEventRecorded(ctx context.Context, event *ViewEventRecordedEvent) error
+	Replayed bool
 }
 
 type Option func(*Service)
 
 func New(repo domainexposure.Repository, options ...Option) *Service {
-	service := &Service{repo: repo}
+	service := &Service{repo: repo, now: func() time.Time { return time.Now().UTC() }}
 	for _, option := range options {
 		option(service)
 	}
 	return service
 }
 
-// WithViewEventPublisher 为曝光服务启用观看行为事件发布。
-func WithViewEventPublisher(publisher ViewEventPublisher) Option {
+func WithNow(now func() time.Time) Option {
 	return func(s *Service) {
-		s.publisher = publisher
+		if now != nil {
+			s.now = now
+		}
 	}
 }
 
 // RecordViewEvent 写入观看行为，并在 exposed 事件时同步维护曝光聚合索引。
-func (s *Service) RecordViewEvent(ctx context.Context, userID int64, videoID int64, scene string, requestID string, eventType string, watchMs int, completed bool) (*RecordViewEventResult, error) {
-	event, err := domainexposure.NewViewEvent(userID, videoID, scene, requestID, eventType, watchMs, completed)
+func (s *Service) RecordViewEvent(ctx context.Context, input domainexposure.NewViewEventInput) (*RecordViewEventResult, error) {
+	event, err := domainexposure.NewViewEvent(input)
 	if err != nil {
 		return nil, err
 	}
+	now := s.now().UTC().Truncate(time.Microsecond)
+	if event.ClientEnvelope {
+		stored, err := s.repo.FindViewEventByIdentity(ctx, event.UserID, event.EventID)
+		if err != nil {
+			return nil, ErrSaveExposureFailed
+		}
+		if stored != nil {
+			if !stored.Event.SameNormalizedPayload(event) {
+				return nil, domainexposure.ErrEventIDConflict
+			}
+			return recordViewEventResult(stored), nil
+		}
+		if event.OccurredAt.Before(now.Add(-domainexposure.MaxPastOccurrenceSkew)) ||
+			event.OccurredAt.After(now.Add(domainexposure.MaxFutureOccurrenceSkew)) {
+			return nil, domainexposure.ErrOccurredAtOutOfRange
+		}
+	} else {
+		event.OccurredAt = now
+		event.PositionMs = event.WatchMs
+	}
 
-	savedEvent, exposure, err := s.repo.SaveViewEvent(ctx, event)
+	saved, err := s.repo.SaveViewEvent(ctx, event)
 	if err != nil {
-		if errors.Is(err, domainexposure.ErrVideoNotFound) {
+		if errors.Is(err, domainexposure.ErrVideoNotFound) || errors.Is(err, domainexposure.ErrEventIDConflict) {
 			return nil, err
 		}
 		return nil, ErrSaveExposureFailed
 	}
-	s.publishViewEventRecorded(ctx, savedEvent, exposure)
 
-	return &RecordViewEventResult{
-		Event:    savedEvent,
-		Exposure: exposure,
-	}, nil
+	return recordViewEventResult(saved), nil
 }
 
-func (s *Service) publishViewEventRecorded(ctx context.Context, event *domainexposure.ViewEvent, exposure *domainexposure.Exposure) {
-	if s.publisher == nil {
-		return
+func recordViewEventResult(saved *domainexposure.SaveViewEventResult) *RecordViewEventResult {
+	return &RecordViewEventResult{
+		Event:    saved.Event,
+		Exposure: saved.Exposure,
+		Replayed: saved.Replayed,
 	}
-	message := NewViewEventRecordedEvent(event, exposure)
-	if message == nil {
-		return
-	}
-	_ = s.publisher.PublishViewEventRecorded(ctx, message)
 }

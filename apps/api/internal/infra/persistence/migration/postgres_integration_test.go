@@ -31,6 +31,7 @@ import (
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	infralibrary "GCFeed/internal/infra/persistence/library"
 	inframessage "GCFeed/internal/infra/persistence/message"
+	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
 	infrarelation "GCFeed/internal/infra/persistence/relation"
 	infravideo "GCFeed/internal/infra/persistence/video"
 
@@ -188,6 +189,9 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"video_view_events",
 		"exposures",
 		"video_view_history",
+		"video_view_history_deletion",
+		"view_event_outbox",
+		"recommendation_behavior_event",
 		"user_watch_later",
 		"interaction_action",
 		"interaction_action_event",
@@ -214,7 +218,10 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infravideo.VideoModel{}, "idx_video_public_timeline"},
 		{&infrafeed.InboxModel{}, "uk_feed_inbox_user_video"},
 		{&infraexposure.ExposureModel{}, "uk_exposures_user_video"},
+		{&infraexposure.ViewEventModel{}, "uk_video_view_events_user_event"},
 		{&infraexposure.ViewHistoryModel{}, "idx_video_view_history_user_last"},
+		{&infraexposure.ViewEventOutboxModel{}, "idx_view_event_outbox_pending"},
+		{&infrarecommendation.BehaviorEventModel{}, "idx_recommendation_behavior_user_occurred"},
 		{&infrainteraction.ActionModel{}, "idx_interaction_action_user_type_status_updated"},
 		{&infralibrary.WatchLaterModel{}, "idx_user_watch_later_user_status_updated"},
 		{&inframessage.MessageModel{}, "uk_user_message_user_event"},
@@ -862,17 +869,17 @@ func TestPostgreSQLProfileBackendTransactions(t *testing.T) {
 	}
 
 	exposureRepo := infraexposure.New(db)
-	if _, _, err := exposureRepo.SaveViewEvent(context.Background(), mustViewEvent(t, 2, first.ID, domainexposure.EventTypeExposed, 0)); err != nil {
+	if _, err := exposureRepo.SaveViewEvent(context.Background(), mustViewEvent(t, 2, first.ID, domainexposure.EventTypeExposed, 0)); err != nil {
 		t.Fatalf("save exposed event: %v", err)
 	}
 	history, err := exposureRepo.ListHistory(context.Background(), 2, nil, 20)
 	if err != nil || len(history) != 0 {
 		t.Fatalf("exposed event entered history: history=%+v err=%v", history, err)
 	}
-	if _, _, err := exposureRepo.SaveViewEvent(context.Background(), mustViewEvent(t, 2, first.ID, domainexposure.EventTypePlay, 900)); err != nil {
+	if _, err := exposureRepo.SaveViewEvent(context.Background(), mustViewEvent(t, 2, first.ID, domainexposure.EventTypePlay, 900)); err != nil {
 		t.Fatalf("save play event: %v", err)
 	}
-	if _, _, err := exposureRepo.SaveViewEvent(context.Background(), mustViewEvent(t, 2, first.ID, domainexposure.EventTypeComplete, 1500)); err != nil {
+	if _, err := exposureRepo.SaveViewEvent(context.Background(), mustViewEvent(t, 2, first.ID, domainexposure.EventTypeComplete, 1500)); err != nil {
 		t.Fatalf("save complete event: %v", err)
 	}
 	history, err = exposureRepo.ListHistory(context.Background(), 2, nil, 20)
@@ -1020,10 +1027,15 @@ func TestPostgreSQLPublicCollectionListUsesBoundedBatchHydration(t *testing.T) {
 
 func mustViewEvent(t *testing.T, userID, videoID int64, eventType string, watchMs int) *domainexposure.ViewEvent {
 	t.Helper()
-	event, err := domainexposure.NewViewEvent(userID, videoID, "timeline", "", eventType, watchMs, false)
+	event, err := domainexposure.NewViewEvent(domainexposure.NewViewEventInput{
+		UserID: userID, VideoID: videoID, Scene: "timeline", EventType: eventType,
+		WatchMs: watchMs,
+	})
 	if err != nil {
 		t.Fatalf("new view event: %v", err)
 	}
+	event.OccurredAt = time.Now().UTC()
+	event.PositionMs = watchMs
 	return event
 }
 
@@ -1119,29 +1131,37 @@ func TestPostgreSQLRepositorySemantics(t *testing.T) {
 	}
 
 	exposureRepo := infraexposure.New(db)
-	firstEvent, err := domainexposure.NewViewEvent(alice.ID, video.ID, "timeline", "Exposure-Key", domainexposure.EventTypeExposed, 0, false)
+	firstEvent, err := domainexposure.NewViewEvent(domainexposure.NewViewEventInput{
+		UserID: alice.ID, VideoID: video.ID, Scene: "timeline", RequestID: "Exposure-Key",
+		EventType: domainexposure.EventTypeExposed,
+	})
 	if err != nil {
 		t.Fatalf("new first exposure: %v", err)
 	}
-	savedEvent, firstExposure, err := exposureRepo.SaveViewEvent(ctx, firstEvent)
+	firstEvent.OccurredAt = time.Now().UTC()
+	firstResult, err := exposureRepo.SaveViewEvent(ctx, firstEvent)
 	if err != nil {
 		t.Fatalf("save first exposure: %v", err)
 	}
-	secondEvent, err := domainexposure.NewViewEvent(alice.ID, video.ID, "hot", "exposure-key", domainexposure.EventTypeExposed, 0, false)
+	secondEvent, err := domainexposure.NewViewEvent(domainexposure.NewViewEventInput{
+		UserID: alice.ID, VideoID: video.ID, Scene: "hot", RequestID: "exposure-key",
+		EventType: domainexposure.EventTypeExposed,
+	})
 	if err != nil {
 		t.Fatalf("new second exposure: %v", err)
 	}
-	savedSecondEvent, aggregated, err := exposureRepo.SaveViewEvent(ctx, secondEvent)
+	secondEvent.OccurredAt = time.Now().UTC()
+	secondResult, err := exposureRepo.SaveViewEvent(ctx, secondEvent)
 	if err != nil {
 		t.Fatalf("save second exposure: %v", err)
 	}
-	if firstExposure.ExposureCount != 1 || aggregated.ExposureCount != 2 || aggregated.LastScene != "hot" {
-		t.Fatalf("unexpected exposure aggregation: first=%+v aggregated=%+v", firstExposure, aggregated)
+	if firstResult.Exposure.ExposureCount != 1 || secondResult.Exposure.ExposureCount != 2 || secondResult.Exposure.LastScene != "hot" {
+		t.Fatalf("unexpected exposure aggregation: first=%+v aggregated=%+v", firstResult.Exposure, secondResult.Exposure)
 	}
-	if savedEvent.ID == 0 || savedSecondEvent.ID == 0 || savedEvent.ID == savedSecondEvent.ID {
-		t.Fatalf("expected distinct exposure event IDs: %d and %d", savedEvent.ID, savedSecondEvent.ID)
+	if firstResult.Event.ID == 0 || secondResult.Event.ID == 0 || firstResult.Event.ID == secondResult.Event.ID {
+		t.Fatalf("expected distinct exposure event IDs: %d and %d", firstResult.Event.ID, secondResult.Event.ID)
 	}
-	if delta := aggregated.LastExposedAt.Sub(savedSecondEvent.CreatedAt); delta < -time.Millisecond || delta > time.Millisecond {
+	if delta := secondResult.Exposure.LastExposedAt.Sub(secondResult.Event.CreatedAt); delta < -time.Millisecond || delta > time.Millisecond {
 		t.Fatalf("last exposure time does not match incoming event: delta=%v", delta)
 	}
 

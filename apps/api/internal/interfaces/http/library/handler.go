@@ -144,7 +144,8 @@ func (h *Handler) writePage(c *app.RequestContext, page *applicationlibrary.Page
 		if item.History != nil {
 			response.History = &historyMetadataResponse{
 				LastScene: item.History.LastScene, LastEventType: item.History.LastEventType,
-				LastWatchMs: item.History.LastWatchMs, Completed: item.History.Completed,
+				LastPositionMs: item.History.LastPositionMs, LastWatchMs: item.History.LastWatchMs,
+				EffectiveWatchMs: item.History.LastWatchMs, Completed: item.History.Completed,
 				LastWatchedAt: item.History.UpdatedAt,
 			}
 		}

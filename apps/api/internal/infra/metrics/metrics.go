@@ -126,6 +126,31 @@ var (
 		},
 		[]string{"job", "result"},
 	)
+
+	ViewEventOutboxPending = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "gcfeed",
+			Name:      "view_event_outbox_pending",
+			Help:      "Pending view-event outbox rows.",
+		},
+	)
+
+	ViewEventOutboxLagSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "gcfeed",
+			Name:      "view_event_outbox_lag_seconds",
+			Help:      "Age in seconds of the oldest pending view-event outbox row.",
+		},
+	)
+
+	ViewEventOutboxDispatchTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gcfeed",
+			Name:      "view_event_outbox_dispatch_total",
+			Help:      "View-event outbox dispatch observations by result.",
+		},
+		[]string{"result"},
+	)
 )
 
 func init() {
@@ -142,6 +167,9 @@ func init() {
 		VideoProcessingDuration,
 		WorkerJobsTotal,
 		WorkerJobDuration,
+		ViewEventOutboxPending,
+		ViewEventOutboxLagSeconds,
+		ViewEventOutboxDispatchTotal,
 	)
 }
 
@@ -237,6 +265,19 @@ func ObserveWorkerJob(job string, duration time.Duration, err error) {
 	result := resultLabel(err)
 	WorkerJobsTotal.WithLabelValues(job, result).Inc()
 	WorkerJobDuration.WithLabelValues(job, result).Observe(duration.Seconds())
+}
+
+func ObserveViewEventOutbox(pending int64, oldest time.Time, now time.Time, err error) {
+	ViewEventOutboxPending.Set(float64(pending))
+	lag := 0.0
+	if pending > 0 && !oldest.IsZero() {
+		lag = now.Sub(oldest).Seconds()
+		if lag < 0 {
+			lag = 0
+		}
+	}
+	ViewEventOutboxLagSeconds.Set(lag)
+	ViewEventOutboxDispatchTotal.WithLabelValues(resultLabel(err)).Inc()
 }
 
 func resultLabel(err error) string {

@@ -1,7 +1,7 @@
 # Feed 模块设计
 
 ## 1. 模块职责
-负责刷视频主链路，输出游标分页结果并记录观看行为。所有 Feed 场景和缓存卡片回源都只允许已发布公开视频；观看历史投影由曝光模块维护。
+负责刷视频主链路，输出游标分页结果并驱动端侧播放生命周期。所有 Feed 场景和缓存卡片回源都只允许已发布公开视频；曝光、播放、进度、完播和跳过事实及观看历史投影由曝光模块维护。
 
 ## 2. 接口设计
 
@@ -84,7 +84,7 @@
 
 ## 3. 数据表设计
 
-Feed 依赖 `video` 和 `video_stat` 读取已发布公开视频与互动计数。曝光上报写入 `video_view_events` 行为流水；`event_type=exposed` 维护 `exposures`，`play/complete/skip` 同事务维护 `video_view_history`。完整投影规则见 [exposure.md](exposure.md)。
+Feed 依赖 `video` 和 `video_stat` 读取已发布公开视频与互动计数。曝光上报写入 `video_view_events` 行为流水；`event_type=exposed` 维护 `exposures`，`play/progress/complete/skip` 同事务维护 `video_view_history`。完整投影规则见 [exposure.md](exposure.md)。
 
 `video_view_events`：
 
@@ -95,8 +95,11 @@ Feed 依赖 `video` 和 `video_stat` 读取已发布公开视频与互动计数�
 | `video_id` | 视频 ID |
 | `scene` | Feed 场景 |
 | `request_id` | 一次 Feed 请求标识 |
-| `event_type` | `exposed`、`play`、`complete`、`skip` |
-| `watch_ms` | 观看时长 |
+| `event_type` | `exposed`、`play`、`progress`、`complete`、`skip` |
+| `watch_ms` | 有效前台播放时长 |
+| `position_ms` | 媒体位置 |
+| `event_id`、`playback_session_id`、`sequence` | 重试安全的播放会话顺序 |
+| `occurred_at` | 有界事件发生时间 |
 | `completed` | 是否完播 |
 | `created_at` | 事件时间 |
 
@@ -110,7 +113,7 @@ Feed 依赖 `video` 和 `video_stat` 读取已发布公开视频与互动计数�
 | `exposure_count` | 重复曝光次数 |
 | `last_scene` | 最近曝光场景 |
 
-`video_view_history` 以 `(user_id, video_id)` 唯一，记录最近场景、事件、观看时长、完播状态和最近观看时间；纯曝光事件不会进入历史。
+`video_view_history` 以 `(user_id, video_id)` 唯一，记录最近场景、事件、媒体位置、有效观看时长、完播状态和最近观看时间；纯曝光事件不会进入历史。Web 每个激活视频建立独立播放会话，暂停、切换、隐藏和退出会刷新状态，React Strict Mode 或请求重试不会制造重复事实。
 
 推荐索引：
 

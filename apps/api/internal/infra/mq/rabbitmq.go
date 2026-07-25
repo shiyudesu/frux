@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -25,17 +26,24 @@ const defaultVideoPublishedRouting = "video.published"
 const defaultExposureExchange = "gcfeed.exposure"
 const defaultViewEventRecordedQueue = "gcfeed.exposure.view_event_recorded"
 const defaultViewEventRecordedRouting = "exposure.view_event_recorded"
+const viewEventConsumerRetryDelay = time.Second
 
 var ErrEmptyRabbitMQURL = errors.New("rabbitmq url is empty")
 var ErrPublisherConfirmUnavailable = errors.New("rabbitmq publisher confirm unavailable")
 var ErrPublishNotAcknowledged = errors.New("rabbitmq publish not acknowledged")
 
 type RabbitMQ struct {
-	conn                 *amqp.Connection
-	publishChannel       *amqp.Channel
-	actionPublishChannel *amqp.Channel
-	consumerChannel      *amqp.Channel
-	config               infraconfig.RabbitMQConfig
+	conn                     *amqp.Connection
+	publishChannel           *amqp.Channel
+	actionPublishChannel     *amqp.Channel
+	viewEventPublishChannel  *amqp.Channel
+	viewEventPublishConn     *amqp.Connection
+	viewEventPublishMu       sync.Mutex
+	consumerChannel          *amqp.Channel
+	viewEventConsumerChannel *amqp.Channel
+	viewEventConsumerConn    *amqp.Connection
+	viewEventConsumerMu      sync.Mutex
+	config                   infraconfig.RabbitMQConfig
 }
 
 func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
@@ -65,8 +73,32 @@ func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	viewEventPublishChannel, err := conn.Channel()
+	if err != nil {
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := viewEventPublishChannel.Confirm(false); err != nil {
+		_ = viewEventPublishChannel.Close()
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
 	consumerChannel, err := conn.Channel()
 	if err != nil {
+		_ = viewEventPublishChannel.Close()
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
+	viewEventConsumerChannel, err := conn.Channel()
+	if err != nil {
+		_ = consumerChannel.Close()
+		_ = viewEventPublishChannel.Close()
 		_ = actionPublishChannel.Close()
 		_ = channel.Close()
 		_ = conn.Close()
@@ -74,11 +106,13 @@ func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
 	}
 
 	client := &RabbitMQ{
-		conn:                 conn,
-		publishChannel:       channel,
-		actionPublishChannel: actionPublishChannel,
-		consumerChannel:      consumerChannel,
-		config:               cfg,
+		conn:                     conn,
+		publishChannel:           channel,
+		actionPublishChannel:     actionPublishChannel,
+		viewEventPublishChannel:  viewEventPublishChannel,
+		consumerChannel:          consumerChannel,
+		viewEventConsumerChannel: viewEventConsumerChannel,
+		config:                   cfg,
 	}
 	if err := client.ensureTopology(); err != nil {
 		_ = client.Close()
@@ -97,9 +131,18 @@ func (r *RabbitMQ) Close() error {
 	if r.actionPublishChannel != nil {
 		_ = r.actionPublishChannel.Close()
 	}
+	if r.viewEventPublishChannel != nil {
+		_ = r.viewEventPublishChannel.Close()
+	}
+	if r.viewEventPublishConn != nil {
+		_ = r.viewEventPublishConn.Close()
+	}
 	if r.consumerChannel != nil {
 		_ = r.consumerChannel.Close()
 	}
+	r.viewEventConsumerMu.Lock()
+	r.resetViewEventConsumerLocked()
+	r.viewEventConsumerMu.Unlock()
 	if r.conn != nil {
 		return r.conn.Close()
 	}
@@ -176,7 +219,12 @@ func (r *RabbitMQ) PublishViewEventRecorded(ctx context.Context, event *applicat
 	if err != nil {
 		return err
 	}
-	return r.publishChannel.PublishWithContext(
+	r.viewEventPublishMu.Lock()
+	defer r.viewEventPublishMu.Unlock()
+	if err := r.ensureViewEventPublisher(); err != nil {
+		return err
+	}
+	confirmation, err := r.viewEventPublishChannel.PublishWithDeferredConfirmWithContext(
 		ctx,
 		r.config.ExposureExchange,
 		r.config.ViewEventRecordedRouting,
@@ -188,8 +236,87 @@ func (r *RabbitMQ) PublishViewEventRecorded(ctx context.Context, event *applicat
 			MessageId:    event.EventID,
 			Timestamp:    time.Now(),
 			Body:         content,
+			Headers: amqp.Table{
+				"x-gcfeed-event-id":      event.EventID,
+				"x-gcfeed-view-event-id": event.ViewEventID,
+				"x-gcfeed-user-id":       event.UserID,
+			},
 		},
 	)
+	if err != nil {
+		r.resetViewEventPublisher()
+		return err
+	}
+	if confirmation == nil {
+		r.resetViewEventPublisher()
+		return ErrPublisherConfirmUnavailable
+	}
+	acknowledged, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		r.resetViewEventPublisher()
+		return err
+	}
+	if !acknowledged {
+		r.resetViewEventPublisher()
+		return ErrPublishNotAcknowledged
+	}
+	return nil
+}
+
+func (r *RabbitMQ) ensureViewEventPublisher() error {
+	if r.viewEventPublishChannel != nil && !r.viewEventPublishChannel.IsClosed() {
+		return nil
+	}
+	var conn *amqp.Connection
+	if r.viewEventPublishConn != nil && !r.viewEventPublishConn.IsClosed() {
+		conn = r.viewEventPublishConn
+	} else if r.conn != nil && !r.conn.IsClosed() {
+		conn = r.conn
+	} else {
+		created, err := amqp.Dial(r.config.URL)
+		if err != nil {
+			return err
+		}
+		r.viewEventPublishConn = created
+		conn = created
+	}
+	channel, err := conn.Channel()
+	if err != nil {
+		if r.viewEventPublishConn != nil {
+			_ = r.viewEventPublishConn.Close()
+			r.viewEventPublishConn = nil
+		}
+		return err
+	}
+	if err := channel.Confirm(false); err != nil {
+		_ = channel.Close()
+		if r.viewEventPublishConn != nil {
+			_ = r.viewEventPublishConn.Close()
+			r.viewEventPublishConn = nil
+		}
+		return err
+	}
+	if err := channel.ExchangeDeclare(r.config.ExposureExchange, "topic", true, false, false, false, nil); err != nil {
+		_ = channel.Close()
+		if r.viewEventPublishConn != nil {
+			_ = r.viewEventPublishConn.Close()
+			r.viewEventPublishConn = nil
+		}
+		return err
+	}
+	r.viewEventPublishChannel = channel
+	return nil
+}
+
+func (r *RabbitMQ) resetViewEventPublisher() {
+	if r.viewEventPublishChannel != nil {
+		_ = r.viewEventPublishChannel.Close()
+		r.viewEventPublishChannel = nil
+	}
+	if r.viewEventPublishConn != nil {
+		_ = r.viewEventPublishConn.Close()
+		r.viewEventPublishConn = nil
+	}
 }
 
 func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(context.Context, *applicationinteraction.ActionChangedEvent) error) error {
@@ -273,7 +400,35 @@ func (r *RabbitMQ) consumeVideoPublishedQueue(ctx context.Context, queue string,
 }
 
 func (r *RabbitMQ) ConsumeViewEventRecorded(ctx context.Context, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) error {
-	deliveries, err := r.consumerChannel.ConsumeWithContext(
+	deliveries, err := r.consumeViewEventDeliveries(ctx)
+	if err != nil {
+		return err
+	}
+
+	go superviseViewEventDeliveries(
+		ctx,
+		deliveries,
+		func(ctx context.Context) (<-chan amqp.Delivery, error) {
+			r.viewEventConsumerMu.Lock()
+			r.resetViewEventConsumerLocked()
+			r.viewEventConsumerMu.Unlock()
+			return r.consumeViewEventDeliveries(ctx)
+		},
+		func(delivery amqp.Delivery) {
+			r.handleViewEventDelivery(ctx, delivery, handler)
+		},
+		viewEventConsumerRetryDelay,
+	)
+	return nil
+}
+
+func (r *RabbitMQ) consumeViewEventDeliveries(ctx context.Context) (<-chan amqp.Delivery, error) {
+	r.viewEventConsumerMu.Lock()
+	defer r.viewEventConsumerMu.Unlock()
+	if err := r.ensureViewEventConsumerLocked(); err != nil {
+		return nil, err
+	}
+	deliveries, err := r.viewEventConsumerChannel.ConsumeWithContext(
 		ctx,
 		r.config.ViewEventRecordedQueue,
 		"",
@@ -284,28 +439,125 @@ func (r *RabbitMQ) ConsumeViewEventRecorded(ctx context.Context, handler func(co
 		nil,
 	)
 	if err != nil {
+		r.resetViewEventConsumerLocked()
+		return nil, err
+	}
+	return deliveries, nil
+}
+
+func (r *RabbitMQ) ensureViewEventConsumerLocked() error {
+	if r.viewEventConsumerChannel != nil && !r.viewEventConsumerChannel.IsClosed() {
+		return nil
+	}
+	var conn *amqp.Connection
+	if r.viewEventConsumerConn != nil && !r.viewEventConsumerConn.IsClosed() {
+		conn = r.viewEventConsumerConn
+	} else if r.conn != nil && !r.conn.IsClosed() {
+		conn = r.conn
+	} else {
+		created, err := amqp.Dial(r.config.URL)
+		if err != nil {
+			return err
+		}
+		r.viewEventConsumerConn = created
+		conn = created
+	}
+	channel, err := conn.Channel()
+	if err != nil {
+		r.resetViewEventConsumerLocked()
 		return err
 	}
-
-	go func() {
-		for delivery := range deliveries {
-			start := time.Now()
-			var event applicationexposure.ViewEventRecordedEvent
-			if err := json.Unmarshal(delivery.Body, &event); err != nil {
-				inframetrics.ObserveWorkerJob("mq_view_event_decode", time.Since(start), err)
-				_ = delivery.Nack(false, false)
-				continue
-			}
-			if err := handler(ctx, &event); err != nil {
-				inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), err)
-				_ = delivery.Nack(false, true)
-				continue
-			}
-			inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), nil)
-			_ = delivery.Ack(false)
-		}
-	}()
+	if err := channel.ExchangeDeclare(r.config.ExposureExchange, "topic", true, false, false, false, nil); err != nil {
+		_ = channel.Close()
+		r.resetViewEventConsumerLocked()
+		return err
+	}
+	if _, err := channel.QueueDeclare(r.config.ViewEventRecordedQueue, true, false, false, false, nil); err != nil {
+		_ = channel.Close()
+		r.resetViewEventConsumerLocked()
+		return err
+	}
+	if err := channel.QueueBind(
+		r.config.ViewEventRecordedQueue,
+		r.config.ViewEventRecordedRouting,
+		r.config.ExposureExchange,
+		false,
+		nil,
+	); err != nil {
+		_ = channel.Close()
+		r.resetViewEventConsumerLocked()
+		return err
+	}
+	r.viewEventConsumerChannel = channel
 	return nil
+}
+
+func (r *RabbitMQ) resetViewEventConsumerLocked() {
+	if r.viewEventConsumerChannel != nil {
+		_ = r.viewEventConsumerChannel.Close()
+		r.viewEventConsumerChannel = nil
+	}
+	if r.viewEventConsumerConn != nil {
+		_ = r.viewEventConsumerConn.Close()
+		r.viewEventConsumerConn = nil
+	}
+}
+
+func (r *RabbitMQ) handleViewEventDelivery(ctx context.Context, delivery amqp.Delivery, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) {
+	start := time.Now()
+	var event applicationexposure.ViewEventRecordedEvent
+	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+		inframetrics.ObserveWorkerJob("mq_view_event_decode", time.Since(start), err)
+		_ = delivery.Nack(false, false)
+		return
+	}
+	if err := handler(ctx, &event); err != nil {
+		inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), err)
+		_ = delivery.Nack(false, true)
+		return
+	}
+	inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), nil)
+	_ = delivery.Ack(false)
+}
+
+func superviseViewEventDeliveries(
+	ctx context.Context,
+	deliveries <-chan amqp.Delivery,
+	reconsume func(context.Context) (<-chan amqp.Delivery, error),
+	handle func(amqp.Delivery),
+	retryDelay time.Duration,
+) {
+	for {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case delivery, ok := <-deliveries:
+				if !ok {
+					goto reconnect
+				}
+				handle(delivery)
+			}
+		}
+
+	reconnect:
+		for {
+			timer := time.NewTimer(retryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			next, err := reconsume(ctx)
+			inframetrics.ObserveWorkerJob("mq_view_event_reconsume", 0, err)
+			if err != nil {
+				continue
+			}
+			deliveries = next
+			break
+		}
+	}
 }
 
 func (r *RabbitMQ) ensureTopology() error {

@@ -414,7 +414,9 @@ export function ProfileVideoGrid({
                   )}
                   {item.history && (
                     <span className="profile-history-progress">
-                      {item.history.completed ? "已看完" : `${Math.max(0, Math.round(item.history.last_watch_ms / 1000))} 秒`}
+                      {item.history.completed
+                        ? "已看完"
+                        : `${Math.max(0, Math.round((item.history.last_position_ms ?? item.history.last_watch_ms) / 1000))} 秒`}
                     </span>
                   )}
                 </span>

@@ -28,8 +28,10 @@
       "updated_at": "2026-07-24T08:00:00Z",
       "history": {
         "last_scene": "recommend",
-        "last_event_type": "play",
+        "last_event_type": "progress",
         "last_watch_ms": 18000,
+        "effective_watch_ms": 18000,
+        "last_position_ms": 22000,
         "completed": false,
         "last_watched_at": "2026-07-24T08:00:00Z"
       }
@@ -62,6 +64,8 @@
 | 身份来源 | 所有 `/users/me/**` 接口只使用 JWT 上下文用户 ID |
 | 行为排序 | 喜欢、收藏、稍后再看按 `updated_at DESC, video_id DESC` |
 | 历史排序 | 观看历史按 `last_watched_at DESC, video_id DESC` |
+| 历史进度 | `last_position_ms` 表示媒体位置，`last_watch_ms` 表示有效前台播放时长；Web 优先展示媒体位置并兼容旧响应 |
+| 历史单调性 | 只有确定性更新的 `(occurred_at, event_id)` 可覆盖最近状态，旧进度或 skip 不能回退已完成记录 |
 | 稳定游标 | URL-safe Base64 游标编码时间和 `video_id`；非法游标返回 400 |
 | 活跃事实 | 喜欢/收藏只读取 `interaction_action.status=1`，稍后再看只读取 `status=1` |
 | 可读过滤 | 列表只补齐 `status=published` 且公开或属于当前用户的私密视频；删除、下架和他人的私密视频不返回 |
@@ -70,7 +74,7 @@
 | 公开喜欢隐私 | `liked_visibility=public` 才可读取；否则返回 403 `liked videos are private` |
 | 收藏范围 | 收藏列表只有本人接口；`favorite_visibility` 当前不产生公开接口 |
 | 稍后再看幂等 | PUT 添加前验证视频当前可读；DELETE 可重复执行，即使视频已不可读也可写 removed 状态 |
-| 历史删除 | 204 且天然幂等，只删除投影；Web 清空前先使所有在途历史分页请求失效，并在清空期间拒绝新分页，旧响应不能恢复已清空项目 |
+| 历史删除 | 204 且天然幂等，只删除投影并写单项/全局删除水位；Web 清空前先使所有在途历史分页请求失效，并在清空期间拒绝新分页。删除水位覆盖允许的未来时钟偏差窗口，旧响应和删除前迟到事件不能恢复项目；窗口后真实新播放可重建历史 |
 
 ## 5. 测试建议
 
@@ -92,6 +96,6 @@
 | --- | --- |
 | 本人个人主页 | 喜欢、收藏、观看历史、稍后再看独立分页状态 |
 | 推荐 Tab | 复用现有推荐 Feed API，不经过 library 后端 |
-| 观看历史 | 显示已看秒数/已看完，支持单项删除和清空 |
+| 观看历史 | 按媒体位置显示已看秒数/已看完，兼容旧 `last_watch_ms`，支持单项删除和清空 |
 | 稍后再看 | 支持乐观移除，失败时恢复 |
 | 公开主页 | 仅在 `liked_videos_public=true` 时显示喜欢 Tab |
