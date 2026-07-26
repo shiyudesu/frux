@@ -155,9 +155,11 @@ func preloadResponseFromResult(result *applicationplayback.PreloadResult) preloa
 	items := make([]preloadVideoResponse, 0, len(result.Items))
 	for _, item := range result.Items {
 		items = append(items, preloadVideoResponse{
-			VideoID:  item.VideoID,
-			MediaURL: item.MediaURL,
-			CoverURL: item.CoverURL,
+			VideoID:         item.VideoID,
+			MediaURL:        item.MediaURL,
+			CoverURL:        item.CoverURL,
+			MediaStatus:     item.MediaStatus,
+			PlaybackSources: item.PlaybackSources,
 		})
 	}
 	return preloadVideosResponse{Items: items}

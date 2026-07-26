@@ -1,6 +1,7 @@
 package infravideo
 
 import (
+	domainmedia "GCFeed/internal/domain/media"
 	domainvideo "GCFeed/internal/domain/video"
 
 	"gorm.io/gorm"
@@ -44,7 +45,9 @@ func ReconcileContentStats(db *gorm.DB) error {
 			SELECT
 				video.author_id AS user_id,
 				COUNT(*) FILTER (
-					WHERE video.status = 2 AND video.visibility = 'public'
+					WHERE video.status = 2
+						AND video.visibility = 'public'
+						AND video.media_status IN ('legacy_ready', 'ready')
 				) AS public_work_count,
 				COUNT(*) FILTER (
 					WHERE video.status <> 4 AND video.visibility = 'private'
@@ -115,8 +118,8 @@ func ReconcileContentStats(db *gorm.DB) error {
 	`).Error
 }
 
-func contentWorkCounts(status int, visibility string) (publicWork, privateWork int) {
-	if status == domainvideo.StatusPublished && visibility == domainvideo.VisibilityPublic {
+func contentWorkCounts(status int, visibility string, mediaStatus string) (publicWork, privateWork int) {
+	if status == domainvideo.StatusPublished && visibility == domainvideo.VisibilityPublic && domainmedia.IsPublicReadyStatus(mediaStatus) {
 		publicWork = 1
 	}
 	if status != domainvideo.StatusDeleted && visibility == domainvideo.VisibilityPrivate {
@@ -125,8 +128,8 @@ func contentWorkCounts(status int, visibility string) (publicWork, privateWork i
 	return publicWork, privateWork
 }
 
-func contentWorkDeltas(oldStatus int, oldVisibility string, newStatus int, newVisibility string) (publicDelta, privateDelta int) {
-	oldPublic, oldPrivate := contentWorkCounts(oldStatus, oldVisibility)
-	newPublic, newPrivate := contentWorkCounts(newStatus, newVisibility)
+func contentWorkDeltas(oldStatus int, oldVisibility, oldMediaStatus string, newStatus int, newVisibility, newMediaStatus string) (publicDelta, privateDelta int) {
+	oldPublic, oldPrivate := contentWorkCounts(oldStatus, oldVisibility, oldMediaStatus)
+	newPublic, newPrivate := contentWorkCounts(newStatus, newVisibility, newMediaStatus)
 	return newPublic - oldPublic, newPrivate - oldPrivate
 }

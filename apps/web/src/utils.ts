@@ -82,7 +82,9 @@ export function mapFeedItem(item: FeedItem, feedScene = "timeline", requestID = 
     avatar_url: item.author_avatar_url || image.creator,
     description: item.description || "",
     feed_scene: feedScene,
-    request_id: requestID
+    request_id: requestID,
+    media_status: item.media_status,
+    playback_sources: item.playback_sources
   };
 }
 

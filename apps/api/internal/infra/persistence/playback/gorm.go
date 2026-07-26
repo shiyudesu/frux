@@ -1,8 +1,10 @@
 package infraplayback
 
 import (
+	domainmedia "GCFeed/internal/domain/media"
 	domainplayback "GCFeed/internal/domain/playback"
 	domainvideo "GCFeed/internal/domain/video"
+	inframediastore "GCFeed/internal/infra/media"
 	infrapersistence "GCFeed/internal/infra/persistence"
 	"context"
 	"errors"
@@ -14,12 +16,25 @@ import (
 )
 
 type Repository struct {
-	db *gorm.DB
+	db           *gorm.DB
+	mediaCatalog *inframediastore.DeliveryCatalog
 }
 
+type Option func(*Repository)
+
 // New 创建播放优化仓储实现。
-func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+func New(db *gorm.DB, options ...Option) *Repository {
+	repository := &Repository{db: db}
+	for _, option := range options {
+		option(repository)
+	}
+	return repository
+}
+
+func WithMediaCatalog(catalog *inframediastore.DeliveryCatalog) Option {
+	return func(repository *Repository) {
+		repository.mediaCatalog = catalog
+	}
 }
 
 // FindConfig 按端和网络类型读取配置。
@@ -42,8 +57,8 @@ func (r *Repository) FindConfig(ctx context.Context, platform string, networkTyp
 func (r *Repository) ListPreloadVideos(ctx context.Context, currentVideoID int64, limit int) ([]*domainplayback.PreloadVideo, error) {
 	query := r.db.WithContext(ctx).
 		Table("video AS v").
-		Select("v.id AS video_id, v.media_url, v.cover_url").
-		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic)
+		Select("v.id AS video_id, v.media_url, v.cover_url, v.media_asset_id, v.cover_asset_id, v.media_status").
+		Where("v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady})
 
 	if currentVideoID > 0 {
 		current, err := r.findCurrentVideo(ctx, currentVideoID)
@@ -70,10 +85,32 @@ func (r *Repository) ListPreloadVideos(ctx context.Context, currentVideoID int64
 	if err != nil {
 		return nil, err
 	}
+	if r.mediaCatalog != nil {
+		refs := make([]inframediastore.DeliveryRef, 0, len(models))
+		for _, model := range models {
+			if model.MediaAssetID > 0 {
+				refs = append(refs, inframediastore.DeliveryRef{VideoID: model.VideoID, MediaAssetID: model.MediaAssetID, CoverAssetID: model.CoverAssetID})
+			}
+		}
+		deliveries, err := r.mediaCatalog.ResolveBatch(ctx, refs)
+		if err != nil {
+			return nil, err
+		}
+		for index := range models {
+			if delivery := deliveries[models[index].VideoID]; delivery != nil {
+				models[index].MediaURL = delivery.MediaURL
+				models[index].CoverURL = delivery.CoverURL
+				models[index].PlaybackSources = delivery.PlaybackSources
+			}
+		}
+	}
 
 	items := make([]*domainplayback.PreloadVideo, 0, len(models))
 	for _, model := range models {
-		items = append(items, domainplayback.RestorePreloadVideo(model.VideoID, model.MediaURL, model.CoverURL))
+		item := domainplayback.RestorePreloadVideo(model.VideoID, model.MediaURL, model.CoverURL)
+		item.MediaStatus = model.MediaStatus
+		item.PlaybackSources = model.PlaybackSources
+		items = append(items, item)
 	}
 	return items, nil
 }
@@ -109,7 +146,7 @@ func (r *Repository) findCurrentVideo(ctx context.Context, videoID int64) (*curr
 	err := r.db.WithContext(ctx).
 		Table("video AS v").
 		Select("v.id AS video_id, v.published_at").
-		Where("v.id = ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("v.id = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Take(&model).
 		Error
 	if err != nil {

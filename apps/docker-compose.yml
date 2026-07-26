@@ -42,6 +42,40 @@ services:
       timeout: 30s
       retries: 20
 
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: gcfeed-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: gcfeed
+      MINIO_ROOT_PASSWORD: gcfeed-secret
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:5173,http://localhost:5173"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    container_name: gcfeed-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mc alias set local http://minio:9000 gcfeed gcfeed-secret &&
+        mc mb --ignore-existing local/gcfeed-media &&
+        mc anonymous set download local/gcfeed-media/media
+
   api:
     build:
       context: ./api
@@ -56,6 +90,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     volumes:
@@ -83,6 +119,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     volumes:
       - ./api/configs/config.docker.yaml:/app/configs/config.yaml:ro
 
@@ -136,5 +174,6 @@ volumes:
   redis_data:
   rabbitmq_data:
   api_uploads:
+  minio_data:
   prometheus_data:
   grafana_data:

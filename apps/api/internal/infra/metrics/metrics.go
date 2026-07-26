@@ -151,6 +151,60 @@ var (
 		},
 		[]string{"result"},
 	)
+
+	MediaObjectOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gcfeed",
+			Name:      "media_object_operations_total",
+			Help:      "Object-storage operations by operation, backend, and result.",
+		},
+		[]string{"operation", "backend", "result"},
+	)
+
+	MediaObjectOperationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "gcfeed",
+			Name:      "media_object_operation_duration_seconds",
+			Help:      "Object-storage operation duration in seconds.",
+			Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+		},
+		[]string{"operation", "backend", "result"},
+	)
+
+	MediaProcessingResultsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gcfeed",
+			Name:      "media_processing_results_total",
+			Help:      "Media processing state transitions.",
+		},
+		[]string{"state", "error_code"},
+	)
+
+	MediaRenditionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gcfeed",
+			Name:      "media_renditions_total",
+			Help:      "Generated media renditions by result.",
+		},
+		[]string{"result"},
+	)
+
+	MediaReconciliationIssuesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "gcfeed",
+			Name:      "media_reconciliation_issues_total",
+			Help:      "Media reconciliation findings by issue type and result.",
+		},
+		[]string{"issue", "result"},
+	)
+
+	MediaCleanupBacklog = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "gcfeed",
+			Name:      "media_cleanup_backlog",
+			Help:      "Observed media cleanup backlog.",
+		},
+	)
 )
 
 func init() {
@@ -170,6 +224,12 @@ func init() {
 		ViewEventOutboxPending,
 		ViewEventOutboxLagSeconds,
 		ViewEventOutboxDispatchTotal,
+		MediaObjectOperationsTotal,
+		MediaObjectOperationDuration,
+		MediaProcessingResultsTotal,
+		MediaRenditionsTotal,
+		MediaReconciliationIssuesTotal,
+		MediaCleanupBacklog,
 	)
 }
 
@@ -278,6 +338,41 @@ func ObserveViewEventOutbox(pending int64, oldest time.Time, now time.Time, err 
 	}
 	ViewEventOutboxLagSeconds.Set(lag)
 	ViewEventOutboxDispatchTotal.WithLabelValues(resultLabel(err)).Inc()
+}
+
+func ObserveMediaObject(operation, backend string, duration time.Duration, err error) {
+	operation = normalizeLabel(operation, "unknown")
+	backend = normalizeLabel(backend, "unknown")
+	result := resultLabel(err)
+	MediaObjectOperationsTotal.WithLabelValues(operation, backend, result).Inc()
+	MediaObjectOperationDuration.WithLabelValues(operation, backend, result).Observe(duration.Seconds())
+}
+
+func ObserveMediaProcessing(state, errorCode string) {
+	state = normalizeLabel(state, "unknown")
+	errorCode = normalizeLabel(errorCode, "none")
+	MediaProcessingResultsTotal.WithLabelValues(state, errorCode).Inc()
+}
+
+func ObserveMediaRenditions(count int, err error) {
+	if count <= 0 {
+		count = 1
+	}
+	MediaRenditionsTotal.WithLabelValues(resultLabel(err)).Add(float64(count))
+}
+
+func ObserveMediaReconciliation(issue string, count int, err error) {
+	if count <= 0 {
+		count = 1
+	}
+	MediaReconciliationIssuesTotal.WithLabelValues(normalizeLabel(issue, "unknown"), resultLabel(err)).Add(float64(count))
+}
+
+func ObserveMediaCleanupBacklog(count int64) {
+	if count < 0 {
+		count = 0
+	}
+	MediaCleanupBacklog.Set(float64(count))
 }
 
 func resultLabel(err error) string {

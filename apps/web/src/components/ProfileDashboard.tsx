@@ -333,6 +333,8 @@ interface ProfileVideoGridProps {
 }
 
 function statusLabel(video: Video): string {
+  if (video.media_status === "failed") return "处理失败";
+  if (video.media_status === "pending" || video.media_status === "processing") return "处理中";
   if (video.visibility === "private") return "私密";
   if (video.status === 0) return "审核中";
   if (video.status === 1) return "草稿";

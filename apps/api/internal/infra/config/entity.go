@@ -8,6 +8,36 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Redis    RedisConfig    `yaml:"redis"`
 	RabbitMQ RabbitMQConfig `yaml:"rabbitmq"`
+	Media    MediaConfig    `yaml:"media"`
+}
+
+type MediaConfig struct {
+	Backend          string                `yaml:"backend"`
+	LocalRoot        string                `yaml:"local_root"`
+	PublicBaseURL    string                `yaml:"public_base_url"`
+	SignedURLTTL     string                `yaml:"signed_url_ttl"`
+	UploadSessionTTL string                `yaml:"upload_session_ttl"`
+	Processing       MediaProcessingConfig `yaml:"processing"`
+	S3               S3Config              `yaml:"s3"`
+}
+
+type S3Config struct {
+	Endpoint         string `yaml:"endpoint"`
+	PresignEndpoint  string `yaml:"presign_endpoint"`
+	Region           string `yaml:"region"`
+	Bucket           string `yaml:"bucket"`
+	AccessKey        string `yaml:"access_key"`
+	SecretKey        string `yaml:"secret_key"`
+	UsePathStyle     bool   `yaml:"use_path_style"`
+	AutoCreateBucket bool   `yaml:"auto_create_bucket"`
+}
+
+type MediaProcessingConfig struct {
+	ProfileVersion    string `yaml:"profile_version"`
+	MaxAttempts       int    `yaml:"max_attempts"`
+	WorkerConcurrency int    `yaml:"worker_concurrency"`
+	LeaseTTL          string `yaml:"lease_ttl"`
+	CleanupDelay      string `yaml:"cleanup_delay"`
 }
 
 // JWTConfig 保存 JWT 签名密钥和访问 token 有效期。
@@ -52,4 +82,7 @@ type RabbitMQConfig struct {
 	ExposureExchange         string `yaml:"exposure_exchange"`
 	ViewEventRecordedQueue   string `yaml:"view_event_recorded_queue"`
 	ViewEventRecordedRouting string `yaml:"view_event_recorded_routing"`
+	MediaExchange            string `yaml:"media_exchange"`
+	MediaProcessingQueue     string `yaml:"media_processing_queue"`
+	MediaProcessingRouting   string `yaml:"media_processing_routing"`
 }

@@ -49,7 +49,9 @@
 | --- | --- |
 | 播放配置按端和网络匹配 | Web 和移动端可使用不同预加载策略 |
 | 预加载围绕当前 Feed 页 | 返回当前视频后续若干条视频资源 |
-| 预加载只读公开内容 | 当前视频定位和后续候选都要求 `status=published AND visibility=public` |
+| 预加载只读公开内容 | 当前视频定位和后续候选要求 `status=published AND visibility=public`，且媒体为 `legacy_ready` 或 `ready` |
+| 播放源保持兼容 | 响应保留 `media_url`、`cover_url`，生产媒体附加有序 `playback_sources` 和 `media_status` |
+| 基线优先 | `media_url` 始终投影浏览器兼容 H.264/AAC faststart MP4；DASH 和其他 MP4 清晰度作为增量来源 |
 | QoS 上报写流水 | 首帧、卡顿、观看时长写入日志 |
 | 指标供监控聚合 | QoS 日志可被监控模块汇总 |
 | 缺省配置可兜底 | 匹配不到配置时返回 Web 默认配置 |
@@ -61,6 +63,8 @@
 | 获取 Web 播放配置 | 返回 preload_count 和 buffer_ms |
 | 获取预加载视频 | 返回后续视频列表 |
 | 当前视频变私密 | 不作为预加载定位点或返回项 |
+| 视频仍在处理 | 不进入预加载列表 |
+| 多变体视频 | 返回稳定排序的 MP4 与 DASH 播放源，同时旧客户端仍可使用 `media_url` |
 | 上报 QoS | 写入 `playback_qos_log` |
 | 配置缺失 | 返回默认配置 |
 

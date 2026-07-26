@@ -1,6 +1,7 @@
 package domainlibrary
 
 import (
+	domainmedia "GCFeed/internal/domain/media"
 	"context"
 	"errors"
 	"strings"
@@ -34,20 +35,22 @@ type Cursor struct {
 }
 
 type VideoCard struct {
-	ID            int64
-	AuthorID      int64
-	Title         string
-	Description   string
-	MediaURL      string
-	CoverURL      string
-	Status        int
-	Visibility    string
-	LikeCount     int
-	CommentCount  int
-	FavoriteCount int
-	PublishedAt   *time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID              int64
+	AuthorID        int64
+	Title           string
+	Description     string
+	MediaURL        string
+	CoverURL        string
+	Status          int
+	Visibility      string
+	LikeCount       int
+	CommentCount    int
+	FavoriteCount   int
+	PublishedAt     *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	MediaStatus     string
+	PlaybackSources []domainmedia.PlaybackSource
 }
 
 type VideoCandidate struct {

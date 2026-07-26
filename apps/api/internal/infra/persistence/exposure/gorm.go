@@ -2,6 +2,7 @@ package infraexposure
 
 import (
 	domainexposure "GCFeed/internal/domain/exposure"
+	domainmedia "GCFeed/internal/domain/media"
 	domainvideo "GCFeed/internal/domain/video"
 	infrapersistence "GCFeed/internal/infra/persistence"
 	infravideo "GCFeed/internal/infra/persistence/video"
@@ -237,7 +238,7 @@ func (r *Repository) resultForStoredEvent(ctx context.Context, existing ViewEven
 func ensureReadableVideo(tx *gorm.DB, userID, videoID int64) error {
 	var video infravideo.VideoModel
 	err := tx.Select("id").
-		Where("id = ? AND status = ? AND (visibility = ? OR author_id = ?)", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, userID).
+		Where("id = ? AND status = ? AND media_status IN ? AND (visibility = ? OR author_id = ?)", videoID, domainvideo.StatusPublished, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}, domainvideo.VisibilityPublic, userID).
 		Take(&video).
 		Error
 	if err != nil {

@@ -1,6 +1,7 @@
 package domainplayback
 
 import (
+	domainmedia "GCFeed/internal/domain/media"
 	"strings"
 	"time"
 )
@@ -32,9 +33,11 @@ type Config struct {
 
 // PreloadVideo 表示客户端可提前加载的视频资源。
 type PreloadVideo struct {
-	VideoID  int64
-	MediaURL string
-	CoverURL string
+	VideoID         int64
+	MediaURL        string
+	CoverURL        string
+	MediaStatus     string
+	PlaybackSources []domainmedia.PlaybackSource
 }
 
 // QoSReport 表示一次播放质量上报。

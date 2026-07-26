@@ -1,8 +1,9 @@
 // 发布视频页：视频 + 封面上传后创建作品。
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createVideo } from "../api/account";
-import { apiErrorMessage, uploadFile } from "../api/client";
+import { apiErrorMessage } from "../api/client";
+import { uploadMediaFile } from "../api/upload";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
 import { Icon } from "../components/Icon";
@@ -24,6 +25,9 @@ export function UploadPage() {
   const [coverPreview, setCoverPreview] = useState("");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
+  const [coverProgress, setCoverProgress] = useState(0);
+  const uploadAttemptRef = useRef("");
 
   useEffect(() => {
     if (!coverFile) {
@@ -39,6 +43,8 @@ export function UploadPage() {
     event.preventDefault();
     setSubmitting(true);
     setStatus("");
+    setVideoProgress(0);
+    setCoverProgress(0);
     try {
       if (!videoFile) {
         throw new Error("请选择视频文件");
@@ -46,17 +52,35 @@ export function UploadPage() {
       if (!coverFile) {
         throw new Error("请选择封面文件");
       }
+      if (!uploadAttemptRef.current) {
+        uploadAttemptRef.current = crypto.randomUUID();
+      }
+      const uploadAttemptID = uploadAttemptRef.current;
+      setStatus("正在计算校验和并上传");
       const [videoUpload, coverUpload] = await Promise.all([
-        uploadFile(videoFile, "video", session.token),
-        uploadFile(coverFile, "cover", session.token)
+        uploadMediaFile(videoFile, "video", session.token, uploadAttemptID, setVideoProgress),
+        uploadMediaFile(coverFile, "cover", session.token, uploadAttemptID, setCoverProgress)
       ]);
-      await createVideo(session.token, {
+      const uploadReferences =
+        videoUpload.mode === "direct" && coverUpload.mode === "direct"
+          ? { media_asset_id: videoUpload.assetID, cover_asset_id: coverUpload.assetID }
+          : videoUpload.mode === "multipart" && coverUpload.mode === "multipart"
+            ? { media_url: videoUpload.url, cover_url: coverUpload.url }
+            : null;
+      if (!uploadReferences) {
+        throw new Error("视频和封面上传模式不一致，请重试");
+      }
+      const videoReference = videoUpload.mode === "direct" ? String(videoUpload.assetID) : videoUpload.url;
+      const coverReference = coverUpload.mode === "direct" ? String(coverUpload.assetID) : coverUpload.url;
+      const creationKey = `web-video-${uploadAttemptID}-${videoReference}-${coverReference}`.slice(0, 128);
+      setStatus("正在创建作品");
+      const video = await createVideo(session.token, {
         title: form.title.trim(),
         description: form.description.trim(),
-        media_url: videoUpload.url,
-        cover_url: coverUpload.url
-      });
-      setStatus("发布成功");
+        ...uploadReferences
+      }, creationKey);
+      setStatus(video.media_status === "processing" ? "上传完成，视频正在处理中" : "发布成功");
+      uploadAttemptRef.current = "";
       navigate("/profile");
     } catch (error) {
       setStatus(apiErrorMessage(error, "发布失败"));
@@ -123,7 +147,10 @@ export function UploadPage() {
                   <strong>{videoFile ? videoFile.name : "选择视频文件"}</strong>
                   <small>本地视频上传</small>
                 </span>
-                <input type="file" accept="video/*" onChange={(event) => setVideoFile(event.target.files?.[0] || null)} />
+                <input type="file" accept="video/*" onChange={(event) => {
+                  uploadAttemptRef.current = "";
+                  setVideoFile(event.target.files?.[0] || null);
+                }} />
               </span>
             </label>
             <label>
@@ -134,9 +161,18 @@ export function UploadPage() {
                   <strong>{coverFile ? coverFile.name : "选择封面文件"}</strong>
                   <small>本地图片上传</small>
                 </span>
-                <input type="file" accept="image/*" onChange={(event) => setCoverFile(event.target.files?.[0] || null)} />
+                <input type="file" accept="image/*" onChange={(event) => {
+                  uploadAttemptRef.current = "";
+                  setCoverFile(event.target.files?.[0] || null);
+                }} />
               </span>
             </label>
+            {submitting && (
+              <div className="upload-progress-list" aria-live="polite">
+                <UploadProgress label="视频" value={videoProgress} />
+                <UploadProgress label="封面" value={coverProgress} />
+              </div>
+            )}
             {status && <p className={`form-message ${status === "发布成功" ? "success" : ""}`}>{status}</p>}
             <button className="primary-button" disabled={submitting}>
               <Icon name="publish" size={18} />
@@ -156,5 +192,16 @@ export function UploadPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function UploadProgress({ label, value }: { label: string; value: number }) {
+  const progress = Math.max(0, Math.min(100, value));
+  return (
+    <div className="upload-progress">
+      <span>{label}</span>
+      <progress max="100" value={progress} />
+      <strong>{progress}%</strong>
+    </div>
   );
 }

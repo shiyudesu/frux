@@ -10,6 +10,7 @@ import (
 	infrafeed "GCFeed/internal/infra/persistence/feed"
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	infralibrary "GCFeed/internal/infra/persistence/library"
+	inframedia "GCFeed/internal/infra/persistence/media"
 	inframessage "GCFeed/internal/infra/persistence/message"
 	infraplayback "GCFeed/internal/infra/persistence/playback"
 	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
@@ -47,6 +48,12 @@ func AutoMigrate(db *gorm.DB) error {
 			&infraaccount.ProfileSettingModel{},
 			&infraembedding.VideoEmbeddingModel{},
 			&infravideo.VideoModel{},
+			&inframedia.AssetModel{},
+			&inframedia.VariantModel{},
+			&inframedia.ProcessingProfileModel{},
+			&inframedia.ProcessingJobModel{},
+			&inframedia.UploadSessionModel{},
+			&inframedia.CleanupTaskModel{},
 			&infravideo.LocalAssetModel{},
 			&infravideo.VideoStatModel{},
 			&infravideo.UserContentStatModel{},
@@ -82,6 +89,9 @@ func AutoMigrate(db *gorm.DB) error {
 		if err := infravideo.BackfillLocalAssets(tx); err != nil {
 			return err
 		}
+		if err := backfillLegacyMediaStatus(tx); err != nil {
+			return err
+		}
 		if err := infraaccount.EnsureProfileSettings(tx); err != nil {
 			return err
 		}
@@ -105,6 +115,13 @@ func AutoMigrate(db *gorm.DB) error {
 		}
 		return infrafeed.EnsureTimelineIndex(tx)
 	})
+}
+
+func backfillLegacyMediaStatus(tx *gorm.DB) error {
+	return tx.Model(&infravideo.VideoModel{}).
+		Where("media_status IS NULL OR media_status = ''").
+		Update("media_status", "legacy_ready").
+		Error
 }
 
 func prepareExposureSchema(tx *gorm.DB) error {

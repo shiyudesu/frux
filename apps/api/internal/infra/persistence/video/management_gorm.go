@@ -1,6 +1,8 @@
 package infravideo
 
 import (
+	applicationvideo "GCFeed/internal/application/video"
+	domainmedia "GCFeed/internal/domain/media"
 	domainvideo "GCFeed/internal/domain/video"
 	infrapersistence "GCFeed/internal/infra/persistence"
 	"context"
@@ -42,7 +44,38 @@ func (r *Repository) QueryCreatorVideos(ctx context.Context, filter domainvideo.
 	for _, model := range models {
 		videos = append(videos, restoreVideo(model))
 	}
+	if err := r.hydrateMediaDelivery(ctx, videos); err != nil {
+		return nil, err
+	}
 	return videos, nil
+}
+
+func (r *Repository) ListMediaAssetRefs(ctx context.Context, videoIDs []int64) ([]applicationvideo.MediaAssetRef, error) {
+	if len(videoIDs) == 0 {
+		return []applicationvideo.MediaAssetRef{}, nil
+	}
+	var models []struct {
+		VideoID      int64
+		MediaAssetID *int64
+		CoverAssetID *int64
+	}
+	if err := r.db.WithContext(ctx).Model(&VideoModel{}).
+		Select("id AS video_id, media_asset_id, cover_asset_id").
+		Where("id IN ?", videoIDs).Scan(&models).Error; err != nil {
+		return nil, err
+	}
+	result := make([]applicationvideo.MediaAssetRef, 0, len(models))
+	for _, model := range models {
+		ref := applicationvideo.MediaAssetRef{VideoID: model.VideoID}
+		if model.MediaAssetID != nil {
+			ref.MediaAssetID = *model.MediaAssetID
+		}
+		if model.CoverAssetID != nil {
+			ref.CoverAssetID = *model.CoverAssetID
+		}
+		result = append(result, ref)
+	}
+	return result, nil
 }
 
 func (r *Repository) ApplyBatch(ctx context.Context, userID int64, action string, videoIDs []int64, idempotencyKey, fingerprint string) (*domainvideo.BatchOperation, bool, error) {
@@ -108,7 +141,7 @@ func (r *Repository) ApplyBatch(ctx context.Context, userID int64, action string
 				return domainvideo.ErrInvalidBatchAction
 			}
 			if len(updates) > 0 {
-				publicDelta, privateDelta := contentWorkDeltas(video.Status, video.Visibility, newStatus, newVisibility)
+				publicDelta, privateDelta := contentWorkDeltas(video.Status, video.Visibility, video.MediaStatus, newStatus, newVisibility, video.MediaStatus)
 				if err := tx.Model(&VideoModel{}).Where("id = ?", video.ID).Updates(updates).Error; err != nil {
 					return err
 				}
@@ -367,9 +400,10 @@ func (r *Repository) listCollectionItemsBatch(ctx context.Context, collectionIDs
 		Where("i.collection_id IN ?", collectionIDs)
 	if publicOnly {
 		membershipQuery = membershipQuery.Where(
-			"member_video.status = ? AND member_video.visibility = ?",
+			"member_video.status = ? AND member_video.visibility = ? AND member_video.media_status IN ?",
 			domainvideo.StatusPublished,
 			domainvideo.VisibilityPublic,
+			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
 		)
 	} else {
 		membershipQuery = membershipQuery.Where("member_video.status <> ?", domainvideo.StatusDeleted)
@@ -403,7 +437,7 @@ func (r *Repository) listCollectionItemsBatch(ctx context.Context, collectionIDs
 	query := r.db.WithContext(ctx).Table("video AS v").Select(videoWithStatSelect()).
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").Where("v.id IN ?", videoIDs)
 	if publicOnly {
-		query = query.Where("v.status = ? AND v.visibility = ?", domainvideo.StatusPublished, domainvideo.VisibilityPublic)
+		query = query.Where("v.status = ? AND v.visibility = ? AND v.media_status IN ?", domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady})
 	} else {
 		query = query.Where("v.status <> ?", domainvideo.StatusDeleted)
 	}
@@ -413,9 +447,14 @@ func (r *Repository) listCollectionItemsBatch(ctx context.Context, collectionIDs
 		}
 	}
 	videos := make(map[int64]*domainvideo.Video, len(models))
+	videoList := make([]*domainvideo.Video, 0, len(models))
 	for _, model := range models {
 		video := restoreVideo(model)
 		videos[video.ID] = video
+		videoList = append(videoList, video)
+	}
+	if err := r.hydrateMediaDelivery(ctx, videoList); err != nil {
+		return nil, nil, err
 	}
 	for _, membership := range memberships {
 		video := videos[membership.VideoID]
@@ -441,7 +480,7 @@ func (r *Repository) BatchGetReadable(ctx context.Context, viewerID int64, video
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
 		Where("v.id IN ? AND v.status = ?", videoIDs, domainvideo.StatusPublished)
 	if publicOnly {
-		query = query.Where("v.visibility = ?", domainvideo.VisibilityPublic)
+		query = query.Where("v.visibility = ? AND v.media_status IN ?", domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady})
 	} else {
 		query = query.Where("v.visibility = ? OR v.author_id = ?", domainvideo.VisibilityPublic, viewerID)
 	}
@@ -451,6 +490,13 @@ func (r *Repository) BatchGetReadable(ctx context.Context, viewerID int64, video
 	for _, model := range models {
 		video := restoreVideo(model)
 		result[video.ID] = video
+	}
+	videoList := make([]*domainvideo.Video, 0, len(result))
+	for _, video := range result {
+		videoList = append(videoList, video)
+	}
+	if err := r.hydrateMediaDelivery(ctx, videoList); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

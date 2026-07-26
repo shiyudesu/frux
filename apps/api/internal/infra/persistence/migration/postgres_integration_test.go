@@ -21,6 +21,7 @@ import (
 	domainfeed "GCFeed/internal/domain/feed"
 	domaininteraction "GCFeed/internal/domain/interaction"
 	domainlibrary "GCFeed/internal/domain/library"
+	domainmedia "GCFeed/internal/domain/media"
 	domainmessage "GCFeed/internal/domain/message"
 	domainrelation "GCFeed/internal/domain/relation"
 	domainvideo "GCFeed/internal/domain/video"
@@ -30,6 +31,7 @@ import (
 	infrafeed "GCFeed/internal/infra/persistence/feed"
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	infralibrary "GCFeed/internal/infra/persistence/library"
+	inframedia "GCFeed/internal/infra/persistence/media"
 	inframessage "GCFeed/internal/infra/persistence/message"
 	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
 	infrarelation "GCFeed/internal/infra/persistence/relation"
@@ -179,6 +181,12 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"account_profile_setting",
 		"video_embedding",
 		"video",
+		"media_asset",
+		"media_variant",
+		"media_processing_profile",
+		"media_processing_job",
+		"media_upload_session",
+		"media_cleanup_task",
 		"local_upload_asset",
 		"video_stat",
 		"user_content_stat",
@@ -216,6 +224,10 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infraaccount.UserModel{}, "uk_account_account"},
 		{&infravideo.VideoModel{}, "idx_video_timeline"},
 		{&infravideo.VideoModel{}, "idx_video_public_timeline"},
+		{&inframedia.AssetModel{}, "uk_media_asset_backend_key"},
+		{&inframedia.VariantModel{}, "idx_media_variant_video_order"},
+		{&inframedia.ProcessingJobModel{}, "uk_media_processing_job_asset_profile"},
+		{&inframedia.UploadSessionModel{}, "idx_media_upload_session_expiry"},
 		{&infrafeed.InboxModel{}, "uk_feed_inbox_user_video"},
 		{&infraexposure.ExposureModel{}, "uk_exposures_user_video"},
 		{&infraexposure.ViewEventModel{}, "uk_video_view_events_user_event"},
@@ -292,6 +304,13 @@ func TestPostgreSQLMigration(t *testing.T) {
 			t.Fatalf("unexpected backfilled owner: %+v", asset)
 		}
 	}
+	var migratedVideo infravideo.VideoModel
+	if err := db.Where("id = ?", video.ID).Take(&migratedVideo).Error; err != nil {
+		t.Fatalf("reload legacy-ready video: %v", err)
+	}
+	if migratedVideo.MediaStatus != domainmedia.MediaStatusLegacyReady {
+		t.Fatalf("expected legacy media status, got %q", migratedVideo.MediaStatus)
+	}
 
 	if err := db.Model(&infravideo.VideoStatModel{}).Where("video_id = ?", video.ID).Update("like_count", 5).Error; err != nil {
 		t.Fatalf("seed video likes: %v", err)
@@ -347,6 +366,44 @@ func TestPostgreSQLMigration(t *testing.T) {
 	}
 	if missingStats != 0 {
 		t.Fatalf("expected complete video_stat rows, found %d missing", missingStats)
+	}
+}
+
+func TestPostgreSQLMediaVariantOrdering(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("migrate media schema: %v", err)
+	}
+
+	asset := &domainmedia.MediaAsset{
+		OwnerID: 1, Kind: domainmedia.AssetKindVideo, StorageBackend: domainmedia.StorageBackendS3,
+		ObjectKey: "assets/1/source.mp4", ContentType: "video/mp4", SizeBytes: 100,
+		ChecksumSHA256: strings.Repeat("a", 64), State: domainmedia.AssetStateReady,
+	}
+	repo := inframedia.New(db)
+	if err := repo.CreateAsset(context.Background(), asset); err != nil {
+		t.Fatalf("create media asset: %v", err)
+	}
+	videoID := int64(91)
+	variants := []*domainmedia.MediaVariant{
+		{AssetID: asset.ID, VideoID: videoID, ProfileVersion: "v1", SourceType: domainmedia.SourceTypeMP4, Format: "mp4", ObjectKey: "assets/1/720.mp4", Role: domainmedia.VariantRoleRendition, SortOrder: 20, State: domainmedia.VariantStateReady, ChecksumSHA256: strings.Repeat("b", 64), SizeBytes: 70, Bitrate: 2_000_000, Public: true},
+		{AssetID: asset.ID, VideoID: videoID, ProfileVersion: "v1", SourceType: domainmedia.SourceTypeDASH, Format: "mpd", ObjectKey: "assets/1/manifest.mpd", Role: domainmedia.VariantRoleManifest, SortOrder: 30, State: domainmedia.VariantStateReady, ChecksumSHA256: strings.Repeat("c", 64), SizeBytes: 10, Public: true},
+		{AssetID: asset.ID, VideoID: videoID, ProfileVersion: "v1", SourceType: domainmedia.SourceTypeMP4, Format: "mp4", ObjectKey: "assets/1/baseline.mp4", Role: domainmedia.VariantRoleBaseline, SortOrder: 10, State: domainmedia.VariantStateReady, ChecksumSHA256: strings.Repeat("d", 64), SizeBytes: 80, Bitrate: 1_000_000, Public: true},
+	}
+	if err := repo.UpsertVariants(context.Background(), variants); err != nil {
+		t.Fatalf("upsert media variants: %v", err)
+	}
+	byVideo, err := repo.ListReadyVariantsByVideoIDs(context.Background(), []int64{videoID})
+	if err != nil {
+		t.Fatalf("list media variants: %v", err)
+	}
+	got := byVideo[videoID]
+	if len(got) != 3 {
+		t.Fatalf("expected three variants, got %+v", got)
+	}
+	if got[0].Role != domainmedia.VariantRoleBaseline || got[1].Role != domainmedia.VariantRoleRendition || got[2].Role != domainmedia.VariantRoleManifest {
+		t.Fatalf("unexpected deterministic order: %+v", got)
 	}
 }
 

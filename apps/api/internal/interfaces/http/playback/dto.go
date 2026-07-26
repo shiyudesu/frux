@@ -1,6 +1,9 @@
 package interfaceshttpplayback
 
-import "time"
+import (
+	domainmedia "GCFeed/internal/domain/media"
+	"time"
+)
 
 type playbackConfigResponse struct {
 	ID           int64     `json:"id"`
@@ -12,9 +15,11 @@ type playbackConfigResponse struct {
 }
 
 type preloadVideoResponse struct {
-	VideoID  int64  `json:"video_id"`
-	MediaURL string `json:"media_url"`
-	CoverURL string `json:"cover_url"`
+	VideoID         int64                        `json:"video_id"`
+	MediaURL        string                       `json:"media_url"`
+	CoverURL        string                       `json:"cover_url"`
+	MediaStatus     string                       `json:"media_status"`
+	PlaybackSources []domainmedia.PlaybackSource `json:"playback_sources,omitempty"`
 }
 
 type preloadVideosResponse struct {

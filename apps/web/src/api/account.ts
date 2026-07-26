@@ -9,6 +9,7 @@ import type {
   UpdateProfileRequest,
   UpdateProfileSettingsRequest,
   UserProfile,
+  Video,
   VideoListResponse
 } from "../types";
 import { apiRequest } from "./client";
@@ -73,12 +74,12 @@ export function fetchUserVideos(userID: number, limit = 24): Promise<VideoListRe
   return apiRequest<VideoListResponse>(`/api/users/${userID}/videos?limit=${limit}`);
 }
 
-export function createVideo(token: string, body: CreateVideoRequest): Promise<unknown> {
-  return apiRequest("/api/videos", {
+export function createVideo(token: string, body: CreateVideoRequest, idempotencyKey: string): Promise<Video> {
+  return apiRequest<Video>("/api/videos", {
     method: "POST",
     token,
     headers: {
-      "Idempotency-Key": `web-upload-${Date.now()}`
+      "Idempotency-Key": idempotencyKey
     },
     body
   });

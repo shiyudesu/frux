@@ -3,6 +3,7 @@ package infrainteraction
 import (
 	domainaccount "GCFeed/internal/domain/account"
 	domaininteraction "GCFeed/internal/domain/interaction"
+	domainmedia "GCFeed/internal/domain/media"
 	domainvideo "GCFeed/internal/domain/video"
 	infrapersistence "GCFeed/internal/infra/persistence"
 	infravideo "GCFeed/internal/infra/persistence/video"
@@ -49,7 +50,7 @@ func (r *Repository) GetVideoStat(ctx context.Context, videoID int64) (*domainin
 		Table("video_stat AS vs").
 		Select("vs.video_id, vs.like_count, vs.comment_count, vs.favorite_count, vs.created_at, vs.updated_at").
 		Joins("JOIN video AS v ON v.id = vs.video_id").
-		Where("vs.video_id = ? AND v.status = ? AND v.visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("vs.video_id = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Take(&stat).
 		Error
 	if err != nil {
@@ -98,7 +99,7 @@ func (r *Repository) GetActionState(ctx context.Context, userID int64, videoID i
 func (r *Repository) GetVideoAuthorID(ctx context.Context, videoID int64) (int64, error) {
 	var video infravideo.VideoModel
 	err := r.db.WithContext(ctx).
-		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("id = ? AND status = ? AND visibility = ? AND media_status IN ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Take(&video).
 		Error
 	if err != nil {
@@ -446,11 +447,12 @@ func (r *Repository) ListComments(ctx context.Context, videoID int64, cursor *do
 		Joins("LEFT JOIN account AS a ON a.id = c.user_id").
 		Joins("JOIN video AS v ON v.id = c.video_id").
 		Where(
-			"c.video_id = ? AND c.status = ? AND v.status = ? AND v.visibility = ?",
+			"c.video_id = ? AND c.status = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?",
 			videoID,
 			domaininteraction.CommentStatusNormal,
 			domainvideo.StatusPublished,
 			domainvideo.VisibilityPublic,
+			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
 		)
 
 	if cursor != nil {
@@ -478,7 +480,7 @@ func (r *Repository) requirePublicPublishedVideo(ctx context.Context, videoID in
 	var video infravideo.VideoModel
 	err := r.db.WithContext(ctx).
 		Select("id").
-		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("id = ? AND status = ? AND visibility = ? AND media_status IN ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Take(&video).
 		Error
 	return mapVideoError(err)
@@ -566,7 +568,7 @@ func (r *Repository) commentCount(ctx context.Context, videoID int64) (int, erro
 func lockPublishedVideo(tx *gorm.DB, videoID int64) (*infravideo.VideoModel, error) {
 	var video infravideo.VideoModel
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("id = ? AND status = ? AND visibility = ? AND media_status IN ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Take(&video).
 		Error
 	if err != nil {

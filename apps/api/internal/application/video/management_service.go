@@ -20,6 +20,10 @@ const defaultManagementLimit = 20
 type ManagementService struct {
 	repo             domainvideo.ManagementRepository
 	cacheInvalidator VideoCacheInvalidator
+	mediaCleanup     MediaCleanupScheduler
+	mediaPublisher   interface {
+		MediaReady(ctx context.Context, assetID int64) error
+	}
 }
 
 type CreatorQueryRequest struct {
@@ -43,14 +47,44 @@ type BatchResult struct {
 	Replayed bool    `json:"replayed"`
 }
 
+type MediaAssetRef struct {
+	VideoID      int64
+	MediaAssetID int64
+	CoverAssetID int64
+}
+
+type MediaAssetRefReader interface {
+	ListMediaAssetRefs(ctx context.Context, videoIDs []int64) ([]MediaAssetRef, error)
+}
+
+type ManagementOption func(*ManagementService)
+
+func WithManagementMediaCleanup(scheduler MediaCleanupScheduler) ManagementOption {
+	return func(service *ManagementService) {
+		service.mediaCleanup = scheduler
+	}
+}
+
+func WithManagementMediaPublisher(publisher interface {
+	MediaReady(ctx context.Context, assetID int64) error
+}) ManagementOption {
+	return func(service *ManagementService) {
+		service.mediaPublisher = publisher
+	}
+}
+
 type CollectionListResult struct {
 	Items      []*domainvideo.Collection
 	NextCursor string
 	HasMore    bool
 }
 
-func NewManagement(repo domainvideo.ManagementRepository, invalidator VideoCacheInvalidator) *ManagementService {
-	return &ManagementService{repo: repo, cacheInvalidator: invalidator}
+func NewManagement(repo domainvideo.ManagementRepository, invalidator VideoCacheInvalidator, options ...ManagementOption) *ManagementService {
+	service := &ManagementService{repo: repo, cacheInvalidator: invalidator}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *ManagementService) QueryCreatorVideos(ctx context.Context, userID int64, request CreatorQueryRequest) (*CreatorQueryResult, error) {
@@ -111,6 +145,16 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 	if err != nil {
 		return nil, err
 	}
+	var mediaRefs []MediaAssetRef
+	if (action == domainvideo.BatchActionDelete && s.mediaCleanup != nil) ||
+		(action == domainvideo.BatchActionMakePublic && s.mediaPublisher != nil) {
+		if reader, ok := s.repo.(MediaAssetRefReader); ok {
+			mediaRefs, err = reader.ListMediaAssetRefs(ctx, ids)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	fingerprint := batchFingerprint(action, ids)
 	operation, replayed, err := s.repo.ApplyBatch(ctx, userID, action, ids, idempotencyKey, fingerprint)
 	if err != nil {
@@ -119,6 +163,22 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 	if s.cacheInvalidator != nil && !replayed {
 		for _, videoID := range operation.VideoIDs {
 			_ = s.cacheInvalidator.InvalidateVideo(ctx, videoID)
+		}
+		if action == domainvideo.BatchActionDelete && s.mediaCleanup != nil {
+			for _, ref := range mediaRefs {
+				if err := s.mediaCleanup.ScheduleMediaCleanup(ctx, ref.MediaAssetID, ref.CoverAssetID); err != nil {
+					return nil, err
+				}
+				if action == domainvideo.BatchActionMakePublic && s.mediaPublisher != nil {
+					for _, ref := range mediaRefs {
+						if ref.MediaAssetID > 0 {
+							if err := s.mediaPublisher.MediaReady(ctx, ref.MediaAssetID); err != nil {
+								return nil, err
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	return &BatchResult{Action: operation.Action, VideoIDs: operation.VideoIDs, Replayed: replayed}, nil

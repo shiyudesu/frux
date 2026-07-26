@@ -681,6 +681,30 @@
   gap: 15px;
 }
 
+.upload-progress-list {
+  display: grid;
+  gap: 8px;
+}
+
+.upload-progress {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  color: var(--gc-text-muted);
+  font-size: 12px;
+}
+
+.upload-progress progress {
+  width: 100%;
+  accent-color: var(--gc-cyan);
+}
+
+.upload-progress strong {
+  color: var(--gc-text);
+  text-align: right;
+}
+
 .file-picker {
   position: relative;
   display: flex;

@@ -1,6 +1,9 @@
 package infraplayback
 
-import "time"
+import (
+	domainmedia "GCFeed/internal/domain/media"
+	"time"
+)
 
 // ConfigModel 映射 playback_config 表，保存端侧播放策略。
 type ConfigModel struct {
@@ -35,7 +38,11 @@ func (QoSLogModel) TableName() string {
 }
 
 type PreloadVideoModel struct {
-	VideoID  int64  `gorm:"column:video_id"`
-	MediaURL string `gorm:"column:media_url"`
-	CoverURL string `gorm:"column:cover_url"`
+	VideoID         int64                        `gorm:"column:video_id"`
+	MediaURL        string                       `gorm:"column:media_url"`
+	CoverURL        string                       `gorm:"column:cover_url"`
+	MediaAssetID    int64                        `gorm:"column:media_asset_id"`
+	CoverAssetID    int64                        `gorm:"column:cover_asset_id"`
+	MediaStatus     string                       `gorm:"column:media_status"`
+	PlaybackSources []domainmedia.PlaybackSource `gorm:"-"`
 }

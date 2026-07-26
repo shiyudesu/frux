@@ -82,7 +82,7 @@ func (r *Repository) FindByAccount(ctx context.Context, account string) (*domain
 		Joins("LEFT JOIN user_content_stat AS cs ON cs.user_id = a.id").
 		Joins("LEFT JOIN (SELECT user_id, COUNT(*) AS following_count FROM user_follow WHERE status = 1 GROUP BY user_id) AS active_following ON active_following.user_id = a.id").
 		Joins("LEFT JOIN (SELECT target_user_id, COUNT(*) AS follower_count FROM user_follow WHERE status = 1 GROUP BY target_user_id) AS active_followers ON active_followers.target_user_id = a.id").
-		Joins("LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM video WHERE status = 2 AND visibility = 'public' GROUP BY author_id) AS published_works ON published_works.author_id = a.id").
+		Joins("LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM video WHERE status = 2 AND visibility = 'public' AND media_status IN ('legacy_ready', 'ready') GROUP BY author_id) AS published_works ON published_works.author_id = a.id").
 		Where("a.account = ?", account).
 		Take(&user).
 		Error
@@ -106,7 +106,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainaccount.Use
 		Joins("LEFT JOIN user_content_stat AS cs ON cs.user_id = a.id").
 		Joins("LEFT JOIN (SELECT user_id, COUNT(*) AS following_count FROM user_follow WHERE status = 1 GROUP BY user_id) AS active_following ON active_following.user_id = a.id").
 		Joins("LEFT JOIN (SELECT target_user_id, COUNT(*) AS follower_count FROM user_follow WHERE status = 1 GROUP BY target_user_id) AS active_followers ON active_followers.target_user_id = a.id").
-		Joins("LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM video WHERE status = 2 AND visibility = 'public' GROUP BY author_id) AS published_works ON published_works.author_id = a.id").
+		Joins("LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM video WHERE status = 2 AND visibility = 'public' AND media_status IN ('legacy_ready', 'ready') GROUP BY author_id) AS published_works ON published_works.author_id = a.id").
 		Where("a.id = ?", id).
 		Take(&user).
 		Error

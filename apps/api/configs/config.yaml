@@ -32,3 +32,28 @@ rabbitmq:
   exposure_exchange: "gcfeed.exposure"
   view_event_recorded_queue: "gcfeed.exposure.view_event_recorded"
   view_event_recorded_routing: "exposure.view_event_recorded"
+  media_exchange: "gcfeed.media"
+  media_processing_queue: "gcfeed.media.processing"
+  media_processing_routing: "media.processing.requested"
+
+media:
+  backend: "local"
+  local_root: "./uploads"
+  public_base_url: "/media"
+  signed_url_ttl: "15m"
+  upload_session_ttl: "15m"
+  processing:
+    profile_version: "v1"
+    max_attempts: 5
+    worker_concurrency: 1
+    lease_ttl: "10m"
+    cleanup_delay: "24h"
+  s3:
+    endpoint: ""
+    presign_endpoint: ""
+    region: "us-east-1"
+    bucket: ""
+    access_key: ""
+    secret_key: ""
+    use_path_style: true
+    auto_create_bucket: false

@@ -686,6 +686,8 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 			stat.FavoriteCount,
 			publishedAt,
 		)
+		item.MediaStatus = card.MediaStatus
+		item.PlaybackSources = card.PlaybackSources
 		if action := viewerActions[item.VideoID]; action != nil {
 			item.Liked = action.Liked
 			item.Favorited = action.Favorited

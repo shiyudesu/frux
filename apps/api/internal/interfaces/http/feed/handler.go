@@ -138,6 +138,8 @@ func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsRe
 			Liked:           item.Liked,
 			Favorited:       item.Favorited,
 			PublishedAt:     item.PublishedAt,
+			MediaStatus:     item.MediaStatus,
+			PlaybackSources: item.PlaybackSources,
 		})
 	}
 	return feedItemsResponse{

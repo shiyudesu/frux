@@ -16,6 +16,7 @@ GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API �
 - 消息中心和播放优化接入。
 - API 流程测试和 Web 生产构建。
 - Prometheus 指标和 Grafana 监控面板。
+- S3 兼容对象存储、预签名直传、异步多码率 MP4/DASH 处理和不可变媒体交付。
 
 重点待补能力：
 
@@ -84,6 +85,8 @@ docker compose down -v
 | PostgreSQL | `127.0.0.1:5432` |
 | Redis | `127.0.0.1:6379` |
 | RabbitMQ 管理台 | `http://127.0.0.1:15672` |
+| MinIO S3 API | `http://127.0.0.1:9000` |
+| MinIO Console | `http://127.0.0.1:9001` |
 | Prometheus | `http://127.0.0.1:9090` |
 | Grafana 面板 | `http://127.0.0.1:3000/d/gcfeed-overview/gcfeed-overview` |
 
@@ -184,6 +187,8 @@ Prometheus 抓取目标：
 | [docs/engineering.md](docs/engineering.md) | 工程规范、目录规则、API 风格、测试约定 |
 | [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
+| [docs/security.md](docs/security.md) | 媒体所有权、签名访问和缓存安全 |
+| [docs/deployment.md](docs/deployment.md) | MinIO/S3 配置、灰度和回滚 |
 | [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
 | [docs/modules/](docs/modules/README.md) | 各业务模块设计 |
 | [openspec/](openspec/) | OpenSpec 项目基线和变更规格 |

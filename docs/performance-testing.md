@@ -306,3 +306,13 @@ sum(rate(gcfeed_feed_cache_requests_total{result="hit"}[5m])) by (area)
 - 10 秒进度间隔下的写 QPS、PostgreSQL P95、Outbox 延迟和 Worker 成功率保持在目标范围。
 
 浏览器检查必须使用 Windows 真 Chrome，覆盖自动播放、手动暂停、seek、滚轮/拖拽切换、页面隐藏、`pagehide/pageshow` 和 React Strict Mode 开发环境。网络面板中同一播放会话不应出现重复 `exposed`/`complete`，退出请求应使用 keepalive。
+
+## 生产媒体链路验证
+
+1. 使用上传页提交代表性 360p、720p、1080p 视频，确认浏览器 PUT 直接发往 MinIO/S3，API 不承载文件正文。
+2. 观察 `media_processing_job` 从 pending/processing 到 completed，输出不得上采样；同一处理事件重放不产生重复最终对象。
+3. 对基线 MP4 发起 HEAD、Range 和 `If-None-Match`，确认 200/206/304、ETag 和 immutable Cache-Control；manifest 使用短缓存。
+4. 处理期间公共 Feed、详情、推荐和预加载不得出现视频；基线完成后兼容 `media_url` 和有序 `playback_sources` 同时可用。
+5. 删除视频后立即确认 API 不再发现播放源；缩短测试清理延迟后确认原始对象、封面、MP4、manifest 和 segment 被幂等删除。
+
+压测时同时观察 `gcfeed_media_object_operation_duration_seconds`、`gcfeed_media_processing_results_total`、`gcfeed_media_renditions_total`、`gcfeed_media_reconciliation_issues_total` 和 `gcfeed_media_cleanup_backlog`。

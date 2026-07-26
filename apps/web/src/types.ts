@@ -135,6 +135,25 @@ export interface Video {
   published_at?: string;
   created_at: string;
   updated_at: string;
+  media_asset_id?: number;
+  cover_asset_id?: number;
+  media_status?: MediaStatus;
+  media_error_code?: string;
+  playback_sources?: PlaybackSource[];
+}
+
+export type MediaStatus = "legacy_ready" | "pending" | "processing" | "ready" | "failed";
+
+export interface PlaybackSource {
+  type: "mp4" | "dash" | "image";
+  url: string;
+  codec?: string;
+  audio_codec?: string;
+  width?: number;
+  height?: number;
+  bitrate?: number;
+  quality?: string;
+  role?: string;
 }
 
 export type VideoVisibility = "public" | "private";
@@ -235,8 +254,10 @@ export interface VideoListResponse {
 export interface CreateVideoRequest {
   title: string;
   description: string;
-  media_url: string;
-  cover_url: string;
+  media_url?: string;
+  cover_url?: string;
+  media_asset_id?: number;
+  cover_asset_id?: number;
 }
 
 export interface UploadResponse {
@@ -244,6 +265,50 @@ export interface UploadResponse {
   kind: string;
   filename: string;
   size: number;
+}
+
+export interface UploadSessionRequest {
+  kind: "video" | "cover";
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  checksum_sha256: string;
+}
+
+export interface PresignedUploadRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  expires_at: string;
+}
+
+export interface UploadSessionResponse {
+  mode: "direct" | "multipart";
+  id?: string;
+  kind?: string;
+  state?: string;
+  object_key?: string;
+  expires_at?: string;
+  upload?: PresignedUploadRequest;
+  completed_asset_id?: number;
+  replayed?: boolean;
+}
+
+export interface CompletedUploadAsset {
+  id: number;
+  kind: string;
+  state: string;
+  storage_backend: string;
+  content_type: string;
+  size_bytes: number;
+  checksum_sha256: string;
+}
+
+export interface CompleteUploadSessionResponse {
+  session_id: string;
+  state: string;
+  asset: CompletedUploadAsset;
+  replayed?: boolean;
 }
 
 // ---------- Feed ----------
@@ -264,6 +329,8 @@ export interface FeedItem {
   liked: boolean;
   favorited: boolean;
   published_at: string;
+  media_status?: MediaStatus;
+  playback_sources?: PlaybackSource[];
 }
 
 export interface FeedItemsResponse extends CursorPage<FeedItem> {
@@ -294,12 +361,16 @@ export interface FeedVideo {
   description: string;
   feed_scene: string;
   request_id: string;
+  media_status?: MediaStatus;
+  playback_sources?: PlaybackSource[];
 }
 
 export interface PreloadVideo {
   video_id: number;
   media_url: string;
   cover_url: string;
+  media_status?: MediaStatus;
+  playback_sources?: PlaybackSource[];
 }
 
 export interface PreloadVideosResponse {

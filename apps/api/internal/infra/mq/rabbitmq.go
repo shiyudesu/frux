@@ -3,6 +3,7 @@ package inframq
 import (
 	applicationexposure "GCFeed/internal/application/exposure"
 	applicationinteraction "GCFeed/internal/application/interaction"
+	applicationmedia "GCFeed/internal/application/media"
 	applicationvideo "GCFeed/internal/application/video"
 	infraconfig "GCFeed/internal/infra/config"
 	inframetrics "GCFeed/internal/infra/metrics"
@@ -26,6 +27,9 @@ const defaultVideoPublishedRouting = "video.published"
 const defaultExposureExchange = "gcfeed.exposure"
 const defaultViewEventRecordedQueue = "gcfeed.exposure.view_event_recorded"
 const defaultViewEventRecordedRouting = "exposure.view_event_recorded"
+const defaultMediaExchange = "gcfeed.media"
+const defaultMediaProcessingQueue = "gcfeed.media.processing"
+const defaultMediaProcessingRouting = "media.processing.requested"
 const viewEventConsumerRetryDelay = time.Second
 
 var ErrEmptyRabbitMQURL = errors.New("rabbitmq url is empty")
@@ -43,6 +47,10 @@ type RabbitMQ struct {
 	viewEventConsumerChannel *amqp.Channel
 	viewEventConsumerConn    *amqp.Connection
 	viewEventConsumerMu      sync.Mutex
+	mediaPublishChannel      *amqp.Channel
+	mediaPublishMu           sync.Mutex
+	mediaConsumerChannel     *amqp.Channel
+	videoPublishMu           sync.Mutex
 	config                   infraconfig.RabbitMQConfig
 }
 
@@ -58,6 +66,11 @@ func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
 	}
 	channel, err := conn.Channel()
 	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := channel.Confirm(false); err != nil {
+		_ = channel.Close()
 		_ = conn.Close()
 		return nil, err
 	}
@@ -104,6 +117,48 @@ func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	mediaPublishChannel, err := conn.Channel()
+	if err != nil {
+		_ = viewEventConsumerChannel.Close()
+		_ = consumerChannel.Close()
+		_ = viewEventPublishChannel.Close()
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := mediaPublishChannel.Confirm(false); err != nil {
+		_ = mediaPublishChannel.Close()
+		_ = viewEventConsumerChannel.Close()
+		_ = consumerChannel.Close()
+		_ = viewEventPublishChannel.Close()
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
+	mediaConsumerChannel, err := conn.Channel()
+	if err != nil {
+		_ = mediaPublishChannel.Close()
+		_ = viewEventConsumerChannel.Close()
+		_ = consumerChannel.Close()
+		_ = viewEventPublishChannel.Close()
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := mediaConsumerChannel.Qos(1, 0, false); err != nil {
+		_ = mediaConsumerChannel.Close()
+		_ = mediaPublishChannel.Close()
+		_ = viewEventConsumerChannel.Close()
+		_ = consumerChannel.Close()
+		_ = viewEventPublishChannel.Close()
+		_ = actionPublishChannel.Close()
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
 
 	client := &RabbitMQ{
 		conn:                     conn,
@@ -112,6 +167,8 @@ func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
 		viewEventPublishChannel:  viewEventPublishChannel,
 		consumerChannel:          consumerChannel,
 		viewEventConsumerChannel: viewEventConsumerChannel,
+		mediaPublishChannel:      mediaPublishChannel,
+		mediaConsumerChannel:     mediaConsumerChannel,
 		config:                   cfg,
 	}
 	if err := client.ensureTopology(); err != nil {
@@ -140,11 +197,54 @@ func (r *RabbitMQ) Close() error {
 	if r.consumerChannel != nil {
 		_ = r.consumerChannel.Close()
 	}
+	if r.mediaPublishChannel != nil {
+		_ = r.mediaPublishChannel.Close()
+	}
+	if r.mediaConsumerChannel != nil {
+		_ = r.mediaConsumerChannel.Close()
+	}
 	r.viewEventConsumerMu.Lock()
 	r.resetViewEventConsumerLocked()
 	r.viewEventConsumerMu.Unlock()
 	if r.conn != nil {
 		return r.conn.Close()
+	}
+	return nil
+}
+
+func (r *RabbitMQ) PublishMediaProcessingRequested(ctx context.Context, event *applicationmedia.ProcessingRequestedEvent) error {
+	if event == nil {
+		return nil
+	}
+	content, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	r.mediaPublishMu.Lock()
+	defer r.mediaPublishMu.Unlock()
+	confirmation, err := r.mediaPublishChannel.PublishWithDeferredConfirmWithContext(
+		ctx,
+		r.config.MediaExchange,
+		r.config.MediaProcessingRouting,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json", DeliveryMode: amqp.Persistent,
+			MessageId: event.EventID, Timestamp: time.Now().UTC(), Body: content,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if confirmation == nil {
+		return ErrPublisherConfirmUnavailable
+	}
+	acknowledged, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		return err
+	}
+	if !acknowledged {
+		return ErrPublishNotAcknowledged
 	}
 	return nil
 }
@@ -195,7 +295,9 @@ func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *application
 	if err != nil {
 		return err
 	}
-	return r.publishChannel.PublishWithContext(
+	r.videoPublishMu.Lock()
+	defer r.videoPublishMu.Unlock()
+	confirmation, err := r.publishChannel.PublishWithDeferredConfirmWithContext(
 		ctx,
 		r.config.VideoExchange,
 		r.config.VideoPublishedRouting,
@@ -209,6 +311,20 @@ func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *application
 			Body:         content,
 		},
 	)
+	if err != nil {
+		return err
+	}
+	if confirmation == nil {
+		return ErrPublisherConfirmUnavailable
+	}
+	acknowledged, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		return err
+	}
+	if !acknowledged {
+		return ErrPublishNotAcknowledged
+	}
+	return nil
 }
 
 func (r *RabbitMQ) PublishViewEventRecorded(ctx context.Context, event *applicationexposure.ViewEventRecordedEvent) error {
@@ -419,6 +535,34 @@ func (r *RabbitMQ) ConsumeViewEventRecorded(ctx context.Context, handler func(co
 		},
 		viewEventConsumerRetryDelay,
 	)
+	return nil
+}
+
+func (r *RabbitMQ) ConsumeMediaProcessingRequested(ctx context.Context, handler func(context.Context, *applicationmedia.ProcessingRequestedEvent) error) error {
+	deliveries, err := r.mediaConsumerChannel.ConsumeWithContext(
+		ctx, r.config.MediaProcessingQueue, "", false, false, false, false, nil,
+	)
+	if err != nil {
+		return err
+	}
+	go func() {
+		for delivery := range deliveries {
+			start := time.Now()
+			var event applicationmedia.ProcessingRequestedEvent
+			if err := json.Unmarshal(delivery.Body, &event); err != nil {
+				inframetrics.ObserveWorkerJob("mq_media_processing_decode", time.Since(start), err)
+				_ = delivery.Nack(false, false)
+				continue
+			}
+			if err := handler(ctx, &event); err != nil {
+				inframetrics.ObserveWorkerJob("mq_media_processing_consume", time.Since(start), err)
+				_ = delivery.Nack(false, true)
+				continue
+			}
+			inframetrics.ObserveWorkerJob("mq_media_processing_consume", time.Since(start), nil)
+			_ = delivery.Ack(false)
+		}
+	}()
 	return nil
 }
 
@@ -661,12 +805,28 @@ func (r *RabbitMQ) ensureTopology() error {
 	); err != nil {
 		return err
 	}
-	return r.publishChannel.QueueBind(
+	if err := r.publishChannel.QueueBind(
 		r.config.ViewEventRecordedQueue,
 		r.config.ViewEventRecordedRouting,
 		r.config.ExposureExchange,
 		false,
 		nil,
+	); err != nil {
+		return err
+	}
+	if err := r.publishChannel.ExchangeDeclare(
+		r.config.MediaExchange, "topic", true, false, false, false, nil,
+	); err != nil {
+		return err
+	}
+	if _, err := r.publishChannel.QueueDeclare(
+		r.config.MediaProcessingQueue, true, false, false, false, nil,
+	); err != nil {
+		return err
+	}
+	return r.publishChannel.QueueBind(
+		r.config.MediaProcessingQueue, r.config.MediaProcessingRouting,
+		r.config.MediaExchange, false, nil,
 	)
 }
 
@@ -708,6 +868,18 @@ func normalizeRabbitMQConfig(cfg infraconfig.RabbitMQConfig) infraconfig.RabbitM
 	}
 	if cfg.ViewEventRecordedRouting == "" {
 		cfg.ViewEventRecordedRouting = defaultViewEventRecordedRouting
+	}
+	cfg.MediaExchange = strings.TrimSpace(cfg.MediaExchange)
+	cfg.MediaProcessingQueue = strings.TrimSpace(cfg.MediaProcessingQueue)
+	cfg.MediaProcessingRouting = strings.TrimSpace(cfg.MediaProcessingRouting)
+	if cfg.MediaExchange == "" {
+		cfg.MediaExchange = defaultMediaExchange
+	}
+	if cfg.MediaProcessingQueue == "" {
+		cfg.MediaProcessingQueue = defaultMediaProcessingQueue
+	}
+	if cfg.MediaProcessingRouting == "" {
+		cfg.MediaProcessingRouting = defaultMediaProcessingRouting
 	}
 	return cfg
 }

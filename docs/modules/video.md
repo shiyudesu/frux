@@ -23,6 +23,9 @@
 | DELETE | `/api/users/me/video-collections/{collectionId}/videos/{videoId}` | 从合集移除作品 | 登录 | 自然幂等 |
 | GET | `/api/users/{userId}/video-collections` | 游标分页查询公开合集 | 可匿名 | 无 |
 | POST | `/api/uploads` | 上传媒体文件 | 登录 | 支持 |
+| POST | `/api/upload-sessions` | 创建对象存储直传会话；本地模式返回 multipart 回退 | 登录 | 支持 |
+| POST | `/api/upload-sessions/{sessionId}/complete` | 校验对象并完成上传会话 | 登录 | 自然幂等 |
+| GET | `/api/media-assets/{assetId}/access` | 获取本人原始/保护资产短期签名 URL | 登录 | 无 |
 
 复杂作品查询请求使用 `visibility`、`query`、`created_from`、`created_to`、`cursor`、`limit`，响应为 `items`、`next_cursor`、`has_more`。日期接受 RFC 3339 或 `YYYY-MM-DD`；仅日期形式的结束日期包含当天末尾。默认 `limit=20`，范围 1–100，排序为 `created_at DESC, id DESC`。
 
@@ -50,6 +53,10 @@
 | `description` | VARCHAR(512) | NULLABLE | 视频简介 |
 | `media_url` | VARCHAR(512) | NOT NULL | 视频地址 |
 | `cover_url` | VARCHAR(512) | NOT NULL | 封面地址 |
+| `media_asset_id` | BIGINT | NULLABLE | 生产视频源资产 |
+| `cover_asset_id` | BIGINT | NULLABLE | 生产封面资产 |
+| `media_status` | VARCHAR(24) | NOT NULL | `legacy_ready` / `processing` / `ready` / `failed` |
+| `media_error_code` | VARCHAR(64) | NOT NULL | 处理失败代码 |
 | `status` | SMALLINT | NOT NULL, DEFAULT 2 | 1 草稿 / 2 已发布 / 3 下架 / 4 删除 |
 | `visibility` | VARCHAR(16) | NOT NULL, DEFAULT `public` | `public` / `private`，独立于生命周期 |
 | `published_at` | TIMESTAMPTZ | NULLABLE | 发布时间 |
@@ -80,6 +87,8 @@
 迁移从现有受保护本地 URL 引用回填唯一作者资产；同一 URL 若被多个作者引用则不猜测所有者并保持不可读。重复迁移使用 `ON CONFLICT DO NOTHING`，不会覆盖已有不可变所有权。
 
 ### 3.4 `user_content_stat`
+
+生产媒体链路另外使用 `media_asset`、`media_variant`、`media_processing_profile`、`media_processing_job`、`media_upload_session` 和 `media_cleanup_task`。资产保存不可变 owner、对象键、大小、SHA-256 和探测元数据；变体按 `sort_order` 稳定返回；处理任务按 `(asset_id, profile_version)` 幂等并带租约、尝试次数和失败状态。
 
 | 字段 | 说明 |
 | --- | --- |
@@ -113,7 +122,11 @@
 | 创建统计行 | 发布视频时同步创建 `video_stat` 并增加公开作品计数 |
 | 本地上传所有权 | 认证上传视频/封面后持久化不可变 owner；记录失败会删除已写入文件 |
 | 发布 URL 规则 | `http/https` 远程 URL 可用；本地媒体只接受属于作者的 `/uploads/video/*`，本地封面只接受属于作者的 `/uploads/cover/*`；`file`、`avatar`、类型互换和无所有权路径均拒绝 |
-| 公开视频可读 | 视频详情、公开作者作品、Feed、推荐、预加载和公开合集只返回 `status=2 AND visibility=public` |
+| 公开视频可读 | 视频详情、公开作者作品、Feed、推荐、预加载和公开合集只返回 `status=2 AND visibility=public AND media_status IN (legacy_ready, ready)` |
+| 生产上传 | Web 创建上传会话后直传 S3 兼容存储，完成接口严格校验 owner、对象键、大小、类型、SHA-256 和过期时间；本地模式继续使用 `/api/uploads` |
+| 基线就绪门禁 | 新生产视频在 H.264/AAC faststart 基线完成前只对作者显示“处理中”，不进入公开读模型或公开作品计数 |
+| 兼容与增量响应 | `media_url`、`cover_url` 继续投影可播放基线和封面；新客户端可读取有序 `playback_sources` |
+| 延迟清理 | 删除视频立即移除公开发现，并为原始对象、封面和所有变体创建延迟清理任务 |
 | 旧列表兼容 | `/users/me/videos` 与 `/users/{userId}/videos` 保留 offset 响应 |
 | 创作者查询语义 | `/video-queries` 查询作者自己的所有非删除作品；公开/私密过滤按 `visibility`，不额外限制为已发布状态 |
 | 关键词安全 | 标题和描述使用参数化 `ILIKE`，并转义 `\`、`%`、`_` |
@@ -144,13 +157,17 @@
 | 他人重引用保护 URL | 发布返回 403，且伪造的公开引用不能让资产对匿名用户可读 |
 | 历史资产回填 | 唯一作者引用的保护 URL 获得该作者所有权并继续按公开视频/本人规则读取 |
 | 上传非法媒体 | 返回 400 并清理失败文件 |
+| 直传对象不匹配 | owner、对象键、大小、类型或校验和不匹配时返回冲突且不创建资产 |
+| 视频仍在处理 | 作者列表返回 `media_status=processing`，公共详情、Feed、推荐和预加载均不返回 |
+| 基线完成 | `media_url` 投影到基线，`playback_sources` 按基线、MP4 清晰度、DASH manifest 稳定排序 |
+| 删除生产视频 | 公开发现立即消失，物理对象在安全延迟后由 Worker 清理 |
 
 ## 6. 前端接入点
 
 | 页面 | 接入能力 |
 | --- | --- |
-| 发布页 | 上传文件、填写标题和简介、发布公开视频 |
+| 发布页 | 生产模式使用预签名直传和独立视频/封面进度，本地模式保留 multipart 回退 |
 | Feed/详情 | 展示已发布公开视频 |
-| 个人主页作品 Tab | “已发布”当前对应公开可见性，“私密作品”对应私密可见性；支持关键词、日期、游标加载和批量操作 |
+| 个人主页作品 Tab | 展示处理中/处理失败状态；“已发布”当前对应公开可见性，“私密作品”对应私密可见性 |
 | 个人主页合集 Tab | 创建、编辑、删除合集并管理成员；编辑器独立搜索和游标加载全部公开/私密候选作品 |
 | 公开主页 | 展示已发布公开作品和公开合集 |

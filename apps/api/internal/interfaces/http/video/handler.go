@@ -2,6 +2,7 @@ package interfaceshttpvideo
 
 import (
 	applicationvideo "GCFeed/internal/application/video"
+	domainmedia "GCFeed/internal/domain/media"
 	domainvideo "GCFeed/internal/domain/video"
 	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
@@ -238,15 +239,19 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	}
 
 	// Idempotency-Key 来自请求头，用于客户端重试时获得同一个视频结果。
-	result, err := h.service.CreatePublished(
-		ctx,
-		userID,
-		req.Title,
-		req.Description,
-		req.MediaURL,
-		req.CoverURL,
-		string(c.GetHeader("Idempotency-Key")),
-	)
+	var result *applicationvideo.CreateResult
+	var err error
+	if req.MediaAssetID > 0 || req.CoverAssetID > 0 {
+		result, err = h.service.CreateWithAssets(
+			ctx, userID, req.Title, req.Description, req.MediaAssetID, req.CoverAssetID,
+			string(c.GetHeader("Idempotency-Key")),
+		)
+	} else {
+		result, err = h.service.CreatePublished(
+			ctx, userID, req.Title, req.Description, req.MediaURL, req.CoverURL,
+			string(c.GetHeader("Idempotency-Key")),
+		)
+	}
 	if err != nil {
 		writeVideoError(c, err)
 		return
@@ -395,20 +400,25 @@ func parsePagination(c *app.RequestContext) (int, int, error) {
 // videoResponseFromDomain 把领域视频转换成 HTTP JSON 响应。
 func videoResponseFromDomain(video *domainvideo.Video) videoResponse {
 	return videoResponse{
-		ID:            video.ID,
-		AuthorID:      video.AuthorID,
-		Title:         video.Title,
-		Description:   video.Description,
-		MediaURL:      video.MediaURL,
-		CoverURL:      video.CoverURL,
-		Status:        video.Status,
-		Visibility:    video.Visibility,
-		LikeCount:     video.LikeCount,
-		CommentCount:  video.CommentCount,
-		FavoriteCount: video.FavoriteCount,
-		PublishedAt:   video.PublishedAt,
-		CreatedAt:     video.CreatedAt,
-		UpdatedAt:     video.UpdatedAt,
+		ID:              video.ID,
+		AuthorID:        video.AuthorID,
+		Title:           video.Title,
+		Description:     video.Description,
+		MediaURL:        video.MediaURL,
+		CoverURL:        video.CoverURL,
+		Status:          video.Status,
+		Visibility:      video.Visibility,
+		LikeCount:       video.LikeCount,
+		CommentCount:    video.CommentCount,
+		FavoriteCount:   video.FavoriteCount,
+		PublishedAt:     video.PublishedAt,
+		CreatedAt:       video.CreatedAt,
+		UpdatedAt:       video.UpdatedAt,
+		MediaAssetID:    video.MediaAssetID,
+		CoverAssetID:    video.CoverAssetID,
+		MediaStatus:     video.MediaStatus,
+		MediaErrorCode:  video.MediaErrorCode,
+		PlaybackSources: video.PlaybackSources,
 	}
 }
 
@@ -468,6 +478,10 @@ func writeVideoError(c *app.RequestContext, err error) {
 		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
 		return
 	}
+	if errors.Is(err, domainmedia.ErrMediaAssetNotFound) {
+		c.JSON(http.StatusNotFound, utils.H{"error": "media asset not found"})
+		return
+	}
 	if errors.Is(err, domainvideo.ErrVideoPermissionDenied) {
 		c.JSON(http.StatusForbidden, utils.H{"error": "video permission denied"})
 		return
@@ -514,5 +528,6 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainvideo.ErrCollectionTitleTooLong) ||
 		errors.Is(err, domainvideo.ErrCollectionDescriptionTooLong) ||
 		errors.Is(err, domainvideo.ErrIdempotencyKeyRequired) ||
-		errors.Is(err, domainvideo.ErrInvalidLocalAsset)
+		errors.Is(err, domainvideo.ErrInvalidLocalAsset) ||
+		errors.Is(err, domainmedia.ErrInvalidAssetID)
 }

@@ -1,6 +1,7 @@
 package domainfeed
 
 import (
+	domainmedia "GCFeed/internal/domain/media"
 	"strings"
 	"time"
 )
@@ -39,6 +40,8 @@ type FeedItem struct {
 	Favorited       bool
 	HotScore        int
 	PublishedAt     time.Time
+	MediaStatus     string
+	PlaybackSources []domainmedia.PlaybackSource `gorm:"-"`
 }
 
 // FeedPageItem 是 Feed 页缓存中的轻量条目，只保存排序和组装所需字段。
@@ -60,6 +63,10 @@ type FeedCard struct {
 	MediaURL        string
 	CoverURL        string
 	PublishedAt     time.Time
+	MediaAssetID    int64
+	CoverAssetID    int64
+	MediaStatus     string
+	PlaybackSources []domainmedia.PlaybackSource `gorm:"-"`
 }
 
 // FeedStat 保存视频卡片中的高频计数字段。

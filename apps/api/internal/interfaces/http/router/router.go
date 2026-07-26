@@ -6,6 +6,7 @@ import (
 	applicationfeed "GCFeed/internal/application/feed"
 	applicationinteraction "GCFeed/internal/application/interaction"
 	applicationlibrary "GCFeed/internal/application/library"
+	applicationmedia "GCFeed/internal/application/media"
 	applicationmessage "GCFeed/internal/application/message"
 	applicationplayback "GCFeed/internal/application/playback"
 	applicationrecommendation "GCFeed/internal/application/recommendation"
@@ -16,12 +17,14 @@ import (
 	infraconfig "GCFeed/internal/infra/config"
 	infrahttphertz "GCFeed/internal/infra/httphertz"
 	infrajwt "GCFeed/internal/infra/jwt"
+	inframediastore "GCFeed/internal/infra/media"
 	inframq "GCFeed/internal/infra/mq"
 	infraaccount "GCFeed/internal/infra/persistence/account"
 	infraexposure "GCFeed/internal/infra/persistence/exposure"
 	infrafeed "GCFeed/internal/infra/persistence/feed"
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	infralibrary "GCFeed/internal/infra/persistence/library"
+	infrapersistencemedia "GCFeed/internal/infra/persistence/media"
 	inframessage "GCFeed/internal/infra/persistence/message"
 	migration "GCFeed/internal/infra/persistence/migration"
 	infraplayback "GCFeed/internal/infra/persistence/playback"
@@ -44,6 +47,7 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -79,8 +83,18 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	accountRepo := infraaccount.New(gormDB)
 	accountService := applicationaccount.New(accountRepo, jwtManager, applicationaccount.WithProfileSettingRepository(accountRepo))
 	accountHandler := interfaceshttpaccount.New(accountService)
-	videoRepo := infravideo.New(gormDB)
-	feedRepo := infrafeed.New(gormDB)
+	mediaRepo := infrapersistencemedia.New(gormDB)
+	mediaStore, err := inframediastore.NewObjectStore(context.Background(), cfg.Media)
+	if err != nil {
+		return err
+	}
+	mediaURLResolver, err := inframediastore.NewURLResolver(cfg.Media.PublicBaseURL, mediaStore)
+	if err != nil {
+		return err
+	}
+	mediaCatalog := inframediastore.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
+	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
+	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))
 	recommendationRepo := infrarecommendation.New(gormDB)
 	recommendationService := applicationrecommendation.New(recommendationRepo)
 	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
@@ -103,9 +117,24 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	messageRepo := inframessage.New(gormDB)
 	messageService := applicationmessage.New(messageRepo)
 	messageHandler := interfaceshttpmessage.New(messageService)
-	playbackRepo := infraplayback.New(gormDB)
+	playbackRepo := infraplayback.New(gormDB, infraplayback.WithMediaCatalog(mediaCatalog))
 	playbackService := applicationplayback.New(playbackRepo)
 	playbackHandler := interfaceshttpplayback.New(playbackService)
+	uploadSessionTTL, err := time.ParseDuration(cfg.Media.UploadSessionTTL)
+	if err != nil {
+		return err
+	}
+	signedURLTTL, err := time.ParseDuration(cfg.Media.SignedURLTTL)
+	if err != nil {
+		return err
+	}
+	cleanupDelay, err := time.ParseDuration(cfg.Media.Processing.CleanupDelay)
+	if err != nil {
+		return err
+	}
+	mediaCleanupService := applicationmedia.NewCleanupService(
+		mediaRepo, mediaStore, cfg.Media.Backend, cleanupDelay, cfg.Media.Processing.MaxAttempts,
+	)
 	if cfg.RabbitMQ.URL != "" {
 		rabbitMQ, err = inframq.NewRabbitMQ(cfg.RabbitMQ)
 		if err != nil {
@@ -117,11 +146,30 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			}
 		}
 	}
+	mediaOptions := []applicationmedia.Option{}
+	mediaOptions = append(mediaOptions, applicationmedia.WithURLResolver(mediaURLResolver, signedURLTTL))
+	mediaOptions = append(mediaOptions, applicationmedia.WithMediaAssetAuthorizer(videoRepo))
+	if rabbitMQ != nil {
+		mediaOptions = append(mediaOptions, applicationmedia.WithProcessingPublisher(rabbitMQ))
+	}
+	mediaService := applicationmedia.New(
+		mediaRepo, mediaStore, cfg.Media.Backend, uploadSessionTTL,
+		cfg.Media.Processing.ProfileVersion, cfg.Media.Processing.MaxAttempts, mediaOptions...,
+	)
+	uploadSessionHandler := interfaceshttpupload.NewSessionHandler(mediaService)
 	messageWriter := NewMessageWriter(messageService)
 	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
 	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
-	videoManagementService := applicationvideo.NewManagement(videoRepo, feedCache)
+	mediaPublicationService := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
+	videoManagementService := applicationvideo.NewManagement(
+		videoRepo, feedCache,
+		applicationvideo.WithManagementMediaCleanup(mediaCleanupService),
+		applicationvideo.WithManagementMediaPublisher(mediaPublicationService),
+	)
 	videoOptions = append(videoOptions, applicationvideo.WithLocalAssetOwnership(videoManagementService))
+	videoOptions = append(videoOptions, applicationvideo.WithMediaAssets(mediaRepo))
+	videoOptions = append(videoOptions, applicationvideo.WithMediaDelivery(mediaCatalog))
+	videoOptions = append(videoOptions, applicationvideo.WithMediaCleanup(mediaCleanupService))
 	videoService := applicationvideo.New(videoRepo, videoOptions...)
 	videoHandler := interfaceshttpvideo.New(videoService, videoManagementService)
 	interactionService := applicationinteraction.New(interactionRepo, interactionOptions...)
@@ -144,10 +192,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 	relationService := applicationrelation.New(relationRepo, relationOptions...)
 	relationHandler := interfaceshttprelation.New(relationService)
-	uploadHandler := interfaceshttpupload.New("./uploads", interfaceshttpupload.WithOwnershipRecorder(videoManagementService))
+	uploadHandler := interfaceshttpupload.New(cfg.Media.LocalRoot, interfaceshttpupload.WithOwnershipRecorder(videoManagementService))
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
-	assetHandler, err := interfaceshttpupload.NewAssetHandler("./uploads", "/uploads", videoManagementService)
+	assetHandler, err := interfaceshttpupload.NewAssetHandler(cfg.Media.LocalRoot, "/uploads", videoManagementService)
 	if err != nil {
 		return err
 	}
@@ -156,6 +204,14 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	h.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
 	h.GET("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Get)
 	h.HEAD("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Head)
+	if localMediaStore, ok := mediaStore.(*inframediastore.LocalStore); ok {
+		publicMediaHandler, err := interfaceshttpupload.NewPublicMediaHandler(localMediaStore, cfg.Media.LocalRoot, "/media")
+		if err != nil {
+			return err
+		}
+		h.GET("/media/*filepath", publicMediaHandler.Get)
+		h.HEAD("/media/*filepath", publicMediaHandler.Head)
+	}
 	api := h.Group("/api")
 
 	// RESTful 路由约定：路径表达资源，HTTP 方法表达动作。
@@ -212,6 +268,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 
 	uploads := api.Group("/uploads", authMiddleware)
 	uploads.POST("", uploadHandler.Create)
+	uploadSessions := api.Group("/upload-sessions", authMiddleware)
+	uploadSessions.POST("", uploadSessionHandler.Create)
+	uploadSessions.POST("/:sessionId/complete", uploadSessionHandler.Complete)
+	api.GET("/media-assets/:assetId/access", authMiddleware, uploadSessionHandler.Access)
 
 	// Feed 暴露为条目集合，客户端通过游标和 limit 控制分页。
 	api.GET("/feed-items", optionalAuthMiddleware, feedHandler.ListFeedItems)

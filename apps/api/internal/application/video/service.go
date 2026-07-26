@@ -1,6 +1,7 @@
 package applicationvideo
 
 import (
+	domainmedia "GCFeed/internal/domain/media"
 	domainvideo "GCFeed/internal/domain/video"
 	"context"
 	"errors"
@@ -16,6 +17,9 @@ type Service struct {
 	publisher        PublishedEventPublisher
 	cacheInvalidator VideoCacheInvalidator
 	localAssets      LocalAssetOwnership
+	mediaAssets      MediaAssetReader
+	mediaDelivery    MediaDeliveryResolver
+	mediaCleanup     MediaCleanupScheduler
 }
 
 type PublishedEventPublisher interface {
@@ -28,6 +32,18 @@ type VideoCacheInvalidator interface {
 
 type LocalAssetOwnership interface {
 	ValidateLocalAssetOwner(ctx context.Context, ownerID int64, assetURL, kind string) error
+}
+
+type MediaAssetReader interface {
+	FindAssetByID(ctx context.Context, assetID int64) (*domainmedia.MediaAsset, error)
+}
+
+type MediaDeliveryResolver interface {
+	ResolveVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) (*domainmedia.ResolvedDelivery, error)
+}
+
+type MediaCleanupScheduler interface {
+	ScheduleMediaCleanup(ctx context.Context, mediaAssetID, coverAssetID int64) error
 }
 
 type Option func(*Service)
@@ -62,6 +78,101 @@ func WithLocalAssetOwnership(ownership LocalAssetOwnership) Option {
 	return func(s *Service) {
 		s.localAssets = ownership
 	}
+}
+
+func WithMediaAssets(assets MediaAssetReader) Option {
+	return func(s *Service) {
+		s.mediaAssets = assets
+	}
+}
+
+func WithMediaDelivery(resolver MediaDeliveryResolver) Option {
+	return func(s *Service) {
+		s.mediaDelivery = resolver
+	}
+}
+
+func WithMediaCleanup(scheduler MediaCleanupScheduler) Option {
+	return func(s *Service) {
+		s.mediaCleanup = scheduler
+	}
+}
+
+func (s *Service) CreateWithAssets(ctx context.Context, authorID int64, title, description string, mediaAssetID, coverAssetID int64, idempotencyKey string) (*CreateResult, error) {
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey != "" {
+		existing, err := s.repo.FindByAuthorAndIdempotencyKey(ctx, authorID, idempotencyKey)
+		if err == nil {
+			return s.ensureReadyAssetPublication(ctx, existing, false)
+		}
+		if !errors.Is(err, domainvideo.ErrVideoNotFound) {
+			return nil, ErrLoadVideoFailed
+		}
+	}
+	if s.mediaAssets == nil {
+		return nil, domainmedia.ErrMediaAssetNotFound
+	}
+	videoAsset, err := s.mediaAssets.FindAssetByID(ctx, mediaAssetID)
+	if err != nil {
+		return nil, err
+	}
+	coverAsset, err := s.mediaAssets.FindAssetByID(ctx, coverAssetID)
+	if err != nil {
+		return nil, err
+	}
+	if videoAsset.OwnerID != authorID || coverAsset.OwnerID != authorID {
+		return nil, domainvideo.ErrVideoPermissionDenied
+	}
+	if videoAsset.Kind != domainmedia.AssetKindVideo || coverAsset.Kind != domainmedia.AssetKindCover ||
+		coverAsset.State != domainmedia.AssetStateReady || videoAsset.State == domainmedia.AssetStateDeleted {
+		return nil, domainvideo.ErrVideoStateNotAllowed
+	}
+	video, err := domainvideo.NewProcessing(authorID, title, description, mediaAssetID, coverAssetID, idempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.Save(ctx, video); err != nil {
+		if idempotencyKey != "" && errors.Is(err, domainvideo.ErrDuplicateIdempotencyKey) {
+			existing, loadErr := s.repo.FindByAuthorAndIdempotencyKey(ctx, authorID, idempotencyKey)
+			if loadErr == nil {
+				return s.ensureReadyAssetPublication(ctx, existing, false)
+			}
+		}
+		return nil, ErrSaveVideoFailed
+	}
+	if videoAsset.State == domainmedia.AssetStateReady {
+		return s.ensureReadyAssetPublication(ctx, video, true)
+	}
+	return &CreateResult{Video: video, Created: true}, nil
+}
+
+func (s *Service) ensureReadyAssetPublication(ctx context.Context, video *domainvideo.Video, created bool) (*CreateResult, error) {
+	if video == nil || video.MediaAssetID <= 0 || s.mediaDelivery == nil {
+		return &CreateResult{Video: video, Created: created}, nil
+	}
+	if s.mediaAssets == nil {
+		return nil, domainmedia.ErrMediaAssetNotFound
+	}
+	asset, err := s.mediaAssets.FindAssetByID(ctx, video.MediaAssetID)
+	if err != nil {
+		return nil, err
+	}
+	if asset.State != domainmedia.AssetStateReady {
+		return &CreateResult{Video: video, Created: created}, nil
+	}
+	projectionRepo, ok := s.repo.(MediaProjectionRepository)
+	if !ok {
+		return nil, ErrUpdateVideoFailed
+	}
+	publication := NewMediaPublicationService(projectionRepo, s.mediaDelivery, s.publisher, s.cacheInvalidator)
+	if err := publication.MediaReady(ctx, video.MediaAssetID); err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.FindByIDAnyStatus(ctx, video.ID)
+	if err != nil {
+		return nil, ErrLoadVideoFailed
+	}
+	return &CreateResult{Video: updated, Created: created}, nil
 }
 
 // CreatePublished 创建已发布视频；Idempotency-Key 命中时返回已有视频。
@@ -181,6 +292,9 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 		return err
 	}
 	if alreadyDeleted {
+		if s.mediaCleanup != nil {
+			return s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID)
+		}
 		return nil
 	}
 	if err := s.repo.UpdateStatus(ctx, video); err != nil {
@@ -191,6 +305,11 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 	}
 	if s.cacheInvalidator != nil {
 		_ = s.cacheInvalidator.InvalidateVideo(ctx, video.ID)
+	}
+	if s.mediaCleanup != nil {
+		if err := s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

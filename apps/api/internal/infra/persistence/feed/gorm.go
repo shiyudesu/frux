@@ -3,8 +3,10 @@ package infrafeed
 import (
 	domainfeed "GCFeed/internal/domain/feed"
 	domaininteraction "GCFeed/internal/domain/interaction"
+	domainmedia "GCFeed/internal/domain/media"
 	domainrelation "GCFeed/internal/domain/relation"
 	domainvideo "GCFeed/internal/domain/video"
+	inframediastore "GCFeed/internal/infra/media"
 	infravideo "GCFeed/internal/infra/persistence/video"
 	"context"
 	"fmt"
@@ -15,8 +17,11 @@ import (
 const hotScoreExpression = "COALESCE(vs.like_count, 0) * 3 + COALESCE(vs.comment_count, 0) * 5 + COALESCE(vs.favorite_count, 0) * 4"
 
 type Repository struct {
-	db *gorm.DB
+	db           *gorm.DB
+	mediaCatalog *inframediastore.DeliveryCatalog
 }
+
+type Option func(*Repository)
 
 type viewerActionStateModel struct {
 	VideoID    int64
@@ -24,8 +29,18 @@ type viewerActionStateModel struct {
 }
 
 // New 创建 Feed 仓储实现。
-func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+func New(db *gorm.DB, options ...Option) *Repository {
+	repository := &Repository{db: db}
+	for _, option := range options {
+		option(repository)
+	}
+	return repository
+}
+
+func WithMediaCatalog(catalog *inframediastore.DeliveryCatalog) Option {
+	return func(repository *Repository) {
+		repository.mediaCatalog = catalog
+	}
 }
 
 // EnsureTimelineIndex 创建 timeline 回源查询所需索引。
@@ -101,7 +116,7 @@ func (r *Repository) ListFollowingPage(ctx context.Context, viewerID int64, curs
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, v.published_at").
 		Joins("JOIN user_follow AS f ON f.target_user_id = v.author_id").
-		Where("f.user_id = ? AND f.status = ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", viewerID, domainrelation.FollowStatusActive, domainvideo.StatusPublished, domainvideo.VisibilityPublic)
+		Where("f.user_id = ? AND f.status = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL", viewerID, domainrelation.FollowStatusActive, domainvideo.StatusPublished, domainvideo.VisibilityPublic, publicMediaStatuses())
 
 	if cursor != nil {
 		query = query.Where(
@@ -178,7 +193,7 @@ func (r *Repository) ListAuthorRecentVideos(ctx context.Context, authorID int64,
 	err := r.db.WithContext(ctx).
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, v.published_at").
-		Where("v.author_id = ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", authorID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("v.author_id = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL", authorID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, publicMediaStatuses()).
 		Order("v.published_at DESC").
 		Order("v.id DESC").
 		Limit(limit).
@@ -200,13 +215,34 @@ func (r *Repository) BatchGetFeedCards(ctx context.Context, videoIDs []int64) (m
 	var models []domainfeed.FeedCard
 	err := r.db.WithContext(ctx).
 		Table("video AS v").
-		Select("v.id AS video_id, v.author_id, a.nickname AS author_nickname, a.avatar_url AS author_avatar_url, v.title, v.description, v.media_url, v.cover_url, v.published_at").
+		Select("v.id AS video_id, v.author_id, a.nickname AS author_nickname, a.avatar_url AS author_avatar_url, v.title, v.description, v.media_url, v.cover_url, v.media_asset_id, v.cover_asset_id, v.media_status, v.published_at").
 		Joins("LEFT JOIN account AS a ON a.id = v.author_id").
-		Where("v.id IN ? AND v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", videoIDs, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("v.id IN ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL", videoIDs, domainvideo.StatusPublished, domainvideo.VisibilityPublic, publicMediaStatuses()).
 		Scan(&models).
 		Error
 	if err != nil {
 		return nil, err
+	}
+	if r.mediaCatalog != nil {
+		refs := make([]inframediastore.DeliveryRef, 0, len(models))
+		for _, model := range models {
+			if model.MediaAssetID > 0 && domainmedia.IsPublicReadyStatus(model.MediaStatus) {
+				refs = append(refs, inframediastore.DeliveryRef{
+					VideoID: model.VideoID, MediaAssetID: model.MediaAssetID, CoverAssetID: model.CoverAssetID,
+				})
+			}
+		}
+		deliveries, err := r.mediaCatalog.ResolveBatch(ctx, refs)
+		if err != nil {
+			return nil, err
+		}
+		for index := range models {
+			if delivery := deliveries[models[index].VideoID]; delivery != nil {
+				models[index].MediaURL = delivery.MediaURL
+				models[index].CoverURL = delivery.CoverURL
+				models[index].PlaybackSources = delivery.PlaybackSources
+			}
+		}
 	}
 	for index := range models {
 		cards[models[index].VideoID] = &models[index]
@@ -221,7 +257,7 @@ func (r *Repository) BatchPublicVideoIDs(ctx context.Context, videoIDs []int64) 
 	}
 	var ids []int64
 	if err := r.db.WithContext(ctx).Table("video").
-		Where("id IN ? AND status = ? AND visibility = ?", videoIDs, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("id IN ? AND status = ? AND visibility = ? AND media_status IN ?", videoIDs, domainvideo.StatusPublished, domainvideo.VisibilityPublic, publicMediaStatuses()).
 		Pluck("id", &ids).Error; err != nil {
 		return nil, err
 	}
@@ -298,7 +334,7 @@ func (r *Repository) basePageQuery(ctx context.Context) *gorm.DB {
 	return r.db.WithContext(ctx).
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, v.published_at").
-		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic)
+		Where("v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic, publicMediaStatuses())
 }
 
 func (r *Repository) baseHotPageQuery(ctx context.Context) *gorm.DB {
@@ -306,7 +342,11 @@ func (r *Repository) baseHotPageQuery(ctx context.Context) *gorm.DB {
 		Table("video AS v").
 		Select("v.id AS video_id, v.author_id, ("+hotScoreExpression+") AS hot_score, v.published_at").
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
-		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic)
+		Where("v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic, publicMediaStatuses())
+}
+
+func publicMediaStatuses() []string {
+	return []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}
 }
 
 func feedPageItemsFromModels(models []domainfeed.FeedPageItem) []*domainfeed.FeedPageItem {

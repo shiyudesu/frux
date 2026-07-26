@@ -4,15 +4,19 @@ import "time"
 
 // VideoModel 映射 video 表，保存视频主体信息和发布状态。
 type VideoModel struct {
-	ID          int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_video_timeline,priority:3;index:idx_video_public_timeline,priority:4;index:idx_video_author_visibility_created,priority:4"`
-	AuthorID    int64      `gorm:"column:author_id;not null;index:idx_video_author_status,priority:1;uniqueIndex:uk_video_author_idempotency,priority:1"`
-	Title       string     `gorm:"column:title;size:128;not null"`
-	Description string     `gorm:"column:description;size:512"`
-	MediaURL    string     `gorm:"column:media_url;size:512;not null"`
-	CoverURL    string     `gorm:"column:cover_url;size:512;not null"`
-	Status      int        `gorm:"column:status;type:smallint;not null;default:2;index:idx_video_author_status,priority:2;index:idx_video_status_published,priority:1;index:idx_video_timeline,priority:1;index:idx_video_public_timeline,priority:1"`
-	Visibility  string     `gorm:"column:visibility;size:16;not null;default:public;index:idx_video_public_timeline,priority:2;index:idx_video_author_visibility_created,priority:2"`
-	PublishedAt *time.Time `gorm:"column:published_at;index:idx_video_status_published,priority:2;index:idx_video_timeline,priority:2;index:idx_video_public_timeline,priority:3"`
+	ID             int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_video_timeline,priority:3;index:idx_video_public_timeline,priority:5;index:idx_video_author_visibility_created,priority:4"`
+	AuthorID       int64      `gorm:"column:author_id;not null;index:idx_video_author_status,priority:1;uniqueIndex:uk_video_author_idempotency,priority:1"`
+	Title          string     `gorm:"column:title;size:128;not null"`
+	Description    string     `gorm:"column:description;size:512"`
+	MediaURL       string     `gorm:"column:media_url;size:512;not null"`
+	CoverURL       string     `gorm:"column:cover_url;size:512;not null"`
+	MediaAssetID   *int64     `gorm:"column:media_asset_id;index:idx_video_media_asset;uniqueIndex:uk_video_media_asset"`
+	CoverAssetID   *int64     `gorm:"column:cover_asset_id;index:idx_video_cover_asset;uniqueIndex:uk_video_cover_asset"`
+	MediaStatus    string     `gorm:"column:media_status;size:24;not null;default:legacy_ready;index:idx_video_public_timeline,priority:3"`
+	MediaErrorCode string     `gorm:"column:media_error_code;size:64;not null;default:''"`
+	Status         int        `gorm:"column:status;type:smallint;not null;default:2;index:idx_video_author_status,priority:2;index:idx_video_status_published,priority:1;index:idx_video_timeline,priority:1;index:idx_video_public_timeline,priority:1"`
+	Visibility     string     `gorm:"column:visibility;size:16;not null;default:public;index:idx_video_public_timeline,priority:2;index:idx_video_author_visibility_created,priority:2"`
+	PublishedAt    *time.Time `gorm:"column:published_at;index:idx_video_status_published,priority:2;index:idx_video_timeline,priority:2;index:idx_video_public_timeline,priority:4"`
 	// IdempotencyKey 与 AuthorID 组成唯一索引，用于发布接口的安全重试。
 	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128;uniqueIndex:uk_video_author_idempotency,priority:2"`
 	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime;index:idx_video_author_status,priority:3;index:idx_video_author_visibility_created,priority:3"`

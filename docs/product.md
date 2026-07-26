@@ -36,7 +36,7 @@ GCFeed 是一个短视频 Feed 系统，目标是用最小可行架构承载完�
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
 | 账户 | 已实现 | 注册、登录、登出、聚合资料、性别、资料更新、隐私设置 |
-| 视频 | 已实现 | 发布、详情、公开/私密可见性、创作者查询、原子批量操作、合集、软删除、上传 |
+| 视频 | 已实现 | 发布、详情、公开/私密可见性、创作者查询、原子批量操作、合集、软删除、对象存储直传与异步媒体处理 |
 | 个人内容库 | 已实现 | 本人喜欢/收藏、公开喜欢、观看历史、稍后再看 |
 | Feed | 已实现 | Timeline、Hot、复杂 Feed 查询、公开可见性校验、观看上报 |
 | 曝光 | 已实现 | 原始观看事件、曝光聚合、最新观看历史投影 |
@@ -100,6 +100,8 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 已实现 | 视频 | PUT/DELETE | `/api/users/me/video-collections/{collectionId}/videos/{videoId}` | 增删合集成员 |
 | 已实现 | 视频 | GET | `/api/users/{userId}/video-collections` | 查询公开合集及公开可读成员 |
 | 已实现 | 上传 | POST | `/api/uploads` | 上传媒体文件 |
+| 已实现 | 上传 | POST | `/api/upload-sessions` | 创建 S3 兼容直传会话；本地模式回退 multipart |
+| 已实现 | 上传 | POST | `/api/upload-sessions/{sessionId}/complete` | 校验直传对象并创建不可变媒体资产 |
 | 已实现 | 媒体 | GET/HEAD | `/uploads/*` | 公开视频/封面匿名读取；作者通过受限资产 Cookie 与 Web 活跃标记读取自己的非删除私密/下架媒体 |
 | 已实现 | Feed | POST | `/api/feed-queries` | 通过请求体查询复杂 Feed 场景 |
 | 已实现 | 推荐 | POST | `/internal/exposure-decisions` | 曝光去重校验 |

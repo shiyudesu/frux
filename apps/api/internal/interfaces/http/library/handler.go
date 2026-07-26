@@ -160,6 +160,7 @@ func videoResponseFromDomain(video *domainlibrary.VideoCard) videoResponse {
 		MediaURL: video.MediaURL, CoverURL: video.CoverURL, Status: video.Status, Visibility: video.Visibility,
 		LikeCount: video.LikeCount, CommentCount: video.CommentCount, FavoriteCount: video.FavoriteCount,
 		PublishedAt: video.PublishedAt, CreatedAt: video.CreatedAt, UpdatedAt: video.UpdatedAt,
+		MediaStatus: video.MediaStatus, PlaybackSources: video.PlaybackSources,
 	}
 }
 

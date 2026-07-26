@@ -841,7 +841,7 @@ func cacheKeys(videoIDs []int64, build func(int64) string) []string {
 }
 
 func feedCardKey(videoID int64) string {
-	return fmt.Sprintf("video:card:v1:%d", videoID)
+	return fmt.Sprintf("video:card:v2:%d", videoID)
 }
 
 func feedStatKey(videoID int64) string {

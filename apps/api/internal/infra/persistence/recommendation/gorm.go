@@ -4,6 +4,7 @@ import (
 	applicationexposure "GCFeed/internal/application/exposure"
 	domainembedding "GCFeed/internal/domain/embedding"
 	domainexposure "GCFeed/internal/domain/exposure"
+	domainmedia "GCFeed/internal/domain/media"
 	domainrecommendation "GCFeed/internal/domain/recommendation"
 	domainvideo "GCFeed/internal/domain/video"
 	infraexposure "GCFeed/internal/infra/persistence/exposure"
@@ -54,7 +55,7 @@ func (r *Repository) ListCandidatePool(ctx context.Context, userID int64, limit 
 			userID,
 			time.Now().Add(-domainrecommendation.RecentExposureWindow),
 		).
-		Where("v.status = ? AND v.visibility = ? AND v.published_at IS NOT NULL AND e.video_id IS NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("v.status = ? AND v.visibility = ? AND v.media_status IN ? AND v.published_at IS NOT NULL AND e.video_id IS NULL", domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Order("hot_score DESC").
 		Order("v.published_at DESC").
 		Order("v.id DESC").
@@ -318,7 +319,7 @@ func ensurePublishedVideo(tx *gorm.DB, videoID int64) error {
 	}
 	err := tx.Table("video").
 		Select("id").
-		Where("id = ? AND status = ? AND visibility = ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic).
+		Where("id = ? AND status = ? AND visibility = ? AND media_status IN ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Take(&item).
 		Error
 	if err != nil {
