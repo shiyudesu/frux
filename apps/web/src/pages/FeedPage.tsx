@@ -19,6 +19,7 @@ import { useFeed } from "../hooks/useFeed";
 import { getFeedTrackStyle, useSwipe } from "../hooks/useSwipe";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
+import { usePlayerPreferences } from "../hooks/usePlayerPreferences";
 import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch } from "../types";
 import type { PlaybackQoSMetrics } from "../utils";
 import { buildPlaybackQoSPayload, createPlaybackQoSKey, openPublicProfile } from "../utils";
@@ -61,6 +62,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     updateCurrentItem,
     preloadController,
     preloadCandidateByVideoID,
+    playerResourceByVideoID,
     preloadPolicy,
     preloadDebug
   } = useFeed(feedScene, feedCallbacks);
@@ -93,6 +95,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const [followBusyID, setFollowBusyID] = useState(0);
   const [followError, setFollowError] = useState("");
   const currentFeedScene = getFeedSceneMeta(feedScene);
+  const { preferences: playerPreferences, updatePreferences: updatePlayerPreferences } = usePlayerPreferences();
 
   useEffect(() => {
     if (!session.token) {
@@ -206,6 +209,12 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     navigate("/auth");
     return false;
   }, [navigate, session.token]);
+
+  const handleContinuousAdvance = useCallback(() => {
+    if (!swipe && index < items.length - 1) {
+      moveTo(index + 1);
+    }
+  }, [index, items.length, moveTo, swipe]);
 
   const setLike = useCallback(async () => {
     if (!current || swipe || !requireLogin()) return;
@@ -373,6 +382,10 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     preloadCandidate={preloadCandidateByVideoID.get(visibleNext.video_id)}
                     preloadController={preloadController}
                     preloadPolicy={preloadPolicy}
+                    playerResource={playerResourceByVideoID.get(visibleNext.video_id)}
+                    playerPreferences={playerPreferences}
+                    onUpdatePlayerPreferences={updatePlayerPreferences}
+                    onContinuousAdvance={handleContinuousAdvance}
                   />
                 </div>
               )}
@@ -380,7 +393,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                 <VideoStage
                   ref={activeStageRef}
                   item={visibleCurrent}
-                  active={!swipe}
+                  active
                   liked={Boolean(liked[visibleCurrent.video_id])}
                   favorited={Boolean(favorited[visibleCurrent.video_id])}
                   following={Boolean(following[visibleCurrent.author_id])}
@@ -400,6 +413,10 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   preloadCandidate={preloadCandidateByVideoID.get(visibleCurrent.video_id)}
                   preloadController={preloadController}
                   preloadPolicy={preloadPolicy}
+                  playerResource={playerResourceByVideoID.get(visibleCurrent.video_id)}
+                  playerPreferences={playerPreferences}
+                  onUpdatePlayerPreferences={updatePlayerPreferences}
+                  onContinuousAdvance={handleContinuousAdvance}
                 />
               </div>
               {swipe?.direction === "next" && visibleNext && (
@@ -425,6 +442,10 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     preloadCandidate={preloadCandidateByVideoID.get(visibleNext.video_id)}
                     preloadController={preloadController}
                     preloadPolicy={preloadPolicy}
+                    playerResource={playerResourceByVideoID.get(visibleNext.video_id)}
+                    playerPreferences={playerPreferences}
+                    onUpdatePlayerPreferences={updatePlayerPreferences}
+                    onContinuousAdvance={handleContinuousAdvance}
                   />
                 </div>
               )}

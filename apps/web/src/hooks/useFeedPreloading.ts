@@ -11,6 +11,10 @@ import {
   FeedPreloadController,
   type FeedPreloadDebugState
 } from "../feedPreloadController";
+import {
+  FeedPlayerPool,
+  type FeedPlayerPoolResource
+} from "../player";
 import type { FeedVideo, PlaybackConfig } from "../types";
 
 interface UseFeedPreloadingInput {
@@ -31,20 +35,29 @@ export interface FeedPreloadingState {
   controller: FeedPreloadController;
   candidates: FeedPreloadCandidate[];
   candidateByVideoID: ReadonlyMap<number, FeedPreloadCandidate>;
+  playerResourceByVideoID: ReadonlyMap<number, FeedPlayerPoolResource>;
   policy: ReturnType<typeof deriveEffectiveFeedPreloadPolicy>;
   debug: FeedPreloadDebugState;
 }
 
 export function useFeedPreloading(input: UseFeedPreloadingInput): FeedPreloadingState {
   const controllerRef = useRef<FeedPreloadController | null>(null);
+  const poolRef = useRef<FeedPlayerPool | null>(null);
   const destroyTimerRef = useRef<number | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = new FeedPreloadController();
   }
   const controller = controllerRef.current;
+  if (!poolRef.current) {
+    poolRef.current = new FeedPlayerPool(controller);
+  }
+  const pool = poolRef.current;
   const [environment, setEnvironment] = useState<FeedPreloadEnvironment>(() => currentEnvironment());
   const [authGeneration, setAuthGeneration] = useState(0);
   const [debug, setDebug] = useState<FeedPreloadDebugState>(() => controller.getDebugState());
+  const [playerResourceByVideoID, setPlayerResourceByVideoID] = useState<ReadonlyMap<number, FeedPlayerPoolResource>>(
+    () => new Map()
+  );
 
   useEffect(() => {
     setAuthGeneration((generation) => generation + 1);
@@ -99,8 +112,9 @@ export function useFeedPreloading(input: UseFeedPreloadingInput): FeedPreloading
   );
 
   useEffect(() => {
-    controller.sync(candidates, policy);
-  }, [candidates, controller, policy]);
+    const resources = pool.synchronize(candidates, policy);
+    setPlayerResourceByVideoID(new Map(resources.map((resource) => [resource.videoID, resource])));
+  }, [candidates, policy, pool]);
 
   useEffect(() => controller.subscribeDebug(setDebug), [controller]);
 
@@ -134,16 +148,17 @@ export function useFeedPreloading(input: UseFeedPreloadingInput): FeedPreloading
     }
     return () => {
       destroyTimerRef.current = window.setTimeout(() => {
-        controller.destroy();
+        pool.destroy();
         destroyTimerRef.current = null;
       }, 0);
     };
-  }, [controller]);
+  }, [pool]);
 
   return {
     controller,
     candidates,
     candidateByVideoID,
+    playerResourceByVideoID,
     policy,
     debug
   };

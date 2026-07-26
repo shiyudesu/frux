@@ -100,6 +100,27 @@ describe("deriveFeedPreloadCandidates", () => {
 
     expect(first[0].key.sourceRevision).not.toBe(second[0].key.sourceRevision);
   });
+
+  it("invalidates pooled resources when adaptive source metadata changes", () => {
+    const policy = deriveEffectiveFeedPreloadPolicy(config, environment({ effectiveType: "4g" }));
+    const firstItem = {
+      ...feedVideo(11, "timeline"),
+      playback_sources: [
+        { type: "dash" as const, url: "https://media.example/11.mpd?v=1", quality: "auto" }
+      ]
+    };
+    const secondItem = {
+      ...firstItem,
+      playback_sources: [
+        { type: "dash" as const, url: "https://media.example/11.mpd?v=2", quality: "auto" }
+      ]
+    };
+
+    const first = deriveFeedPreloadCandidates([firstItem], 0, generation, policy);
+    const second = deriveFeedPreloadCandidates([secondItem], 0, generation, policy);
+
+    expect(first[0].key.sourceRevision).not.toBe(second[0].key.sourceRevision);
+  });
 });
 
 describe("shouldLoadMoreForPreload", () => {

@@ -5,10 +5,10 @@ import {
   type FeedPreloadCandidate,
   type FeedPreloadMediaEvent,
   type FeedPreloadMediaResource,
-  type FeedPreloadMode,
   type FeedPreloadReadiness,
   type FeedPreloadResourceKey
 } from "./feedPreload";
+import { AdaptiveFeedMediaResource } from "./adaptiveFeedMedia";
 
 export interface FeedPreloadDebugState {
   attempts: number;
@@ -57,7 +57,7 @@ export class FeedPreloadController {
   private destroyed = false;
 
   constructor(options: FeedPreloadControllerOptions = {}) {
-    this.createMedia = options.createMedia || (() => new NativeFeedPreloadMedia());
+    this.createMedia = options.createMedia || (() => new AdaptiveFeedMediaResource());
     this.prepareCover = options.prepareCover || prepareNativeCover;
     this.now = options.now || (() => Date.now());
     this.setTimer = options.setTimer || ((callback, delayMs) => window.setTimeout(callback, delayMs));
@@ -227,7 +227,7 @@ export class FeedPreloadController {
       unsubscribe: () => {}
     };
     entry.unsubscribe = media.subscribe((event) => this.handleMediaEvent(entry, event));
-    media.configure(candidate.source.url, candidate.item.cover_url, candidate.mode);
+    media.configure(candidate.source.url, candidate.item.cover_url, candidate.mode, candidate.item);
     this.entries.set(registryKey, entry);
     this.debug.attempts += 1;
     this.scheduleEntryTimeout(entry, policy.timeoutMs);
@@ -360,164 +360,6 @@ export class FeedPreloadController {
   }
 }
 
-class NativeFeedPreloadMedia implements FeedPreloadMediaResource {
-  private static readonly eventTypes: FeedPreloadMediaEvent[] = [
-    "loadedmetadata",
-    "loadeddata",
-    "durationchange",
-    "canplay",
-    "progress",
-    "playing",
-    "pause",
-    "waiting",
-    "stalled",
-    "timeupdate",
-    "seeking",
-    "seeked",
-    "ended",
-    "volumechange",
-    "error"
-  ];
-
-  private readonly element = document.createElement("video");
-  private readonly subscribers = new Set<(event: FeedPreloadMediaEvent) => void>();
-  private readonly eventHandlers = new Map<FeedPreloadMediaEvent, EventListener>();
-
-  constructor() {
-    this.element.muted = true;
-    this.element.loop = true;
-    this.element.playsInline = true;
-    for (const eventType of NativeFeedPreloadMedia.eventTypes) {
-      const handler = () => {
-        for (const subscriber of this.subscribers) {
-          subscriber(eventType);
-        }
-      };
-      this.eventHandlers.set(eventType, handler);
-      this.element.addEventListener(eventType, handler);
-    }
-  }
-
-  get currentTime(): number {
-    return this.element.currentTime;
-  }
-
-  set currentTime(value: number) {
-    this.element.currentTime = value;
-  }
-
-  get duration(): number {
-    return this.element.duration;
-  }
-
-  get paused(): boolean {
-    return this.element.paused;
-  }
-
-  get ended(): boolean {
-    return this.element.ended;
-  }
-
-  get muted(): boolean {
-    return this.element.muted;
-  }
-
-  set muted(value: boolean) {
-    this.element.muted = value;
-  }
-
-  get readyState(): number {
-    return this.element.readyState;
-  }
-
-  requestVideoFrame(callback: () => void): number | undefined {
-    if (typeof this.element.requestVideoFrameCallback !== "function") return undefined;
-    return this.element.requestVideoFrameCallback(() => callback());
-  }
-
-  cancelVideoFrameRequest(callbackID: number): void {
-    this.element.cancelVideoFrameCallback?.(callbackID);
-  }
-
-  readPlaybackQuality(): { droppedFrames: number; totalFrames: number } | undefined {
-    if (typeof this.element.getVideoPlaybackQuality !== "function") return undefined;
-    const quality = this.element.getVideoPlaybackQuality();
-    return {
-      droppedFrames: quality.droppedVideoFrames,
-      totalFrames: quality.totalVideoFrames
-    };
-  }
-
-  mediaErrorCode(): number {
-    return this.element.error?.code || 0;
-  }
-
-  currentSource(): string {
-    return this.element.currentSrc;
-  }
-
-  configure(url: string, poster: string, mode: FeedPreloadMode): void {
-    this.element.src = url;
-    this.element.poster = poster;
-    this.setPreloadMode(mode);
-  }
-
-  setPreloadMode(mode: FeedPreloadMode): void {
-    this.element.preload = mode === "buffer" ? "auto" : "metadata";
-  }
-
-  load(): void {
-    this.element.load();
-  }
-
-  play(): Promise<void> {
-    return this.element.play();
-  }
-
-  pause(): void {
-    this.element.pause();
-  }
-
-  bufferedAheadMs(): number | undefined {
-    const currentTime = Math.max(0, this.element.currentTime || 0);
-    for (let index = 0; index < this.element.buffered.length; index += 1) {
-      const start = this.element.buffered.start(index);
-      const end = this.element.buffered.end(index);
-      if (start <= currentTime + 0.05 && end >= currentTime) {
-        return Math.max(0, Math.round((end - currentTime) * 1000));
-      }
-    }
-    return undefined;
-  }
-
-  mount(host: HTMLElement, className: string): void {
-    this.element.className = className;
-    if (this.element.parentElement !== host) {
-      host.replaceChildren(this.element);
-    }
-  }
-
-  unmount(): void {
-    this.element.remove();
-  }
-
-  subscribe(listener: (event: FeedPreloadMediaEvent) => void): () => void {
-    this.subscribers.add(listener);
-    return () => this.subscribers.delete(listener);
-  }
-
-  destroy(): void {
-    this.unmount();
-    this.subscribers.clear();
-    for (const [eventType, handler] of this.eventHandlers) {
-      this.element.removeEventListener(eventType, handler);
-    }
-    this.eventHandlers.clear();
-    this.element.removeAttribute("src");
-    this.element.load();
-  }
-}
-
 function prepareNativeCover(url: string): () => void {
   const cover = new Image();
   cover.src = url;
@@ -553,5 +395,5 @@ function emptyDebugState(): FeedPreloadDebugState {
 }
 
 export function createNativeFeedPreloadMediaResource(): FeedPreloadMediaResource {
-  return new NativeFeedPreloadMedia();
+  return new AdaptiveFeedMediaResource();
 }

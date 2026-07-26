@@ -11,6 +11,13 @@ import {
   createNativeFeedPreloadMediaResource,
   type FeedPreloadController
 } from "../feedPreloadController";
+import {
+  createInitialPlayerState,
+  type NormalizedPlayerState,
+  type FeedPlayerPoolResource,
+  type PlayerPreferences,
+  type QualitySelection
+} from "../player";
 import { PlaybackLifecycle } from "../playbackLifecycle";
 import {
   buildPlaybackTelemetryContext,
@@ -18,7 +25,12 @@ import {
   playbackTelemetrySource,
   PlaybackTelemetrySession
 } from "../playbackTelemetry";
-import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch } from "../types";
+import type {
+  CreateViewEventRequest,
+  FeedVideo,
+  PlaybackTelemetryBatch,
+  PlaybackTelemetryErrorCategory
+} from "../types";
 import type { PlaybackQoSMetrics, PublicProfileInput, VideoQoSState } from "../utils";
 import { createVideoQoSState, isVideoSource } from "../utils";
 import { FeedActionRail } from "./FeedActionRail";
@@ -51,6 +63,10 @@ export interface VideoStageProps {
   preloadCandidate?: FeedPreloadCandidate;
   preloadController?: FeedPreloadController;
   preloadPolicy?: EffectiveFeedPreloadPolicy;
+  playerResource?: FeedPlayerPoolResource;
+  playerPreferences: PlayerPreferences;
+  onUpdatePlayerPreferences: (patch: Partial<PlayerPreferences>) => void;
+  onContinuousAdvance: () => void;
 }
 
 export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function VideoStage(
@@ -75,7 +91,11 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     onOpenAuthor,
     preloadCandidate,
     preloadController,
-    preloadPolicy
+    preloadPolicy,
+    playerResource,
+    playerPreferences,
+    onUpdatePlayerPreferences,
+    onContinuousAdvance
   },
   ref
 ) {
@@ -87,29 +107,75 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   const mediaRef = useRef<FeedPreloadMediaResource | null>(null);
   const itemRef = useRef(item);
   const activeRef = useRef(active);
+  const playerPreferencesRef = useRef(playerPreferences);
+  const onContinuousAdvanceRef = useRef(onContinuousAdvance);
   const qosRef = useRef<VideoQoSState>(createVideoQoSState(item.video_id));
   const lifecycleRef = useRef<PlaybackLifecycle | null>(null);
   const telemetryRef = useRef<PlaybackTelemetrySession | null>(null);
+  const telemetrySourceKeyRef = useRef("");
+  const telemetryErrorKeyRef = useRef("");
   const onViewEventRef = useRef(onViewEvent);
   const completionPollRef = useRef<number | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(true);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [playerState, setPlayerState] = useState<Readonly<NormalizedPlayerState>>(() => createInitialPlayerState());
+  const playerStateRef = useRef<Readonly<NormalizedPlayerState>>(playerState);
   const [fullscreen, setFullscreen] = useState(false);
   const [playbackError, setPlaybackError] = useState("");
   activeRef.current = active;
+  playerPreferencesRef.current = playerPreferences;
+  onContinuousAdvanceRef.current = onContinuousAdvance;
+  playerStateRef.current = playerState;
+  itemRef.current = item;
 
   useEffect(() => {
-    itemRef.current = item;
-    setCurrentTime(0);
-    setDuration(0);
+    telemetrySourceKeyRef.current = "";
+    telemetryErrorKeyRef.current = "";
+    setPlayerState(createInitialPlayerState());
     setPlaybackError("");
-  }, [item]);
+  }, [item.media_status, item.playback_sources, item.video_id, media]);
 
   useEffect(() => {
     onViewEventRef.current = onViewEvent;
   }, [onViewEvent]);
+
+  useEffect(() => {
+    const telemetry = telemetryRef.current;
+    if (!active || !playerState.source || !telemetry) return;
+    const activeQuality = playerState.qualities.find((quality) => quality.active);
+    const sourceKey = `${playerState.source.id}:${playerState.effectiveQualityId || ""}`;
+    if (telemetrySourceKeyRef.current === sourceKey) return;
+    const previousSourceKey = telemetrySourceKeyRef.current;
+    telemetrySourceKeyRef.current = sourceKey;
+    const source = playbackTelemetrySource(itemRef.current, playerState.source.url);
+    safelyRecordTelemetry(telemetry, (session) => {
+      const renditionLabel = activeQuality?.label || playerState.source?.qualityLabel || source.renditionLabel;
+      if (previousSourceKey.startsWith(`${playerState.source?.id}:`)) {
+        session.qualityChanged(renditionLabel);
+        return;
+      }
+      session.sourceChanged({
+        ...source,
+        renditionLabel,
+        playerAdapter: playerState.source?.type === "dash" ? "dash" : "native_mp4"
+      });
+    });
+  }, [
+    active,
+    playerState.effectiveQualityId,
+    playerState.qualities,
+    playerState.source
+  ]);
+
+  useEffect(() => {
+    const telemetry = telemetryRef.current;
+    const error = playerState.error;
+    if (!active || playerState.status !== "error" || !error || !telemetry) return;
+    const errorKey = `${error.category}:${error.code}:${playerState.source?.id || ""}`;
+    if (telemetryErrorKeyRef.current === errorKey) return;
+    telemetryErrorKeyRef.current = errorKey;
+    safelyRecordTelemetry(telemetry, (session) => {
+      session.playFailed(telemetryErrorCategory(error.category));
+    });
+  }, [active, playerState.error, playerState.source?.id, playerState.status]);
 
   useEffect(() => {
     if (!active || !showVideo || !telemetryEnabled || !onPlaybackTelemetryBatch) return undefined;
@@ -122,6 +188,16 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       const sourceURL = resource.currentSource?.() || media;
       telemetry.sourceLoadStarted(resource, playbackTelemetrySource(item, sourceURL));
       if (resource.readyState >= 1) telemetry.metadataReady();
+    }
+    if (playerState.source) {
+      const activeQuality = playerState.qualities.find((quality) => quality.active);
+      telemetrySourceKeyRef.current = `${playerState.source.id}:${playerState.effectiveQualityId || ""}`;
+      const source = playbackTelemetrySource(item, playerState.source.url);
+      telemetry.sourceChanged({
+        ...source,
+        renditionLabel: activeQuality?.label || playerState.source.qualityLabel || source.renditionLabel,
+        playerAdapter: playerState.source.type === "dash" ? "dash" : "native_mp4"
+      });
     }
     return () => {
       void telemetry.finish(true);
@@ -170,17 +246,8 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     safelyRecordTelemetry(telemetry, (session) => session.playAttempted());
     video
       .play()
-      .then(() => {
-        if (telemetryRef.current === telemetry) {
-          safelyRecordTelemetry(telemetry, (session) => session.playSucceededEvent());
-        }
-      })
       .catch(() => {
-        if (telemetryRef.current === telemetry) {
-          safelyRecordTelemetry(telemetry, (session) => session.playFailed("autoplay"));
-        }
         setPlaybackError("浏览器暂时无法播放该视频");
-        setPlaying(false);
       });
   }, [showVideo]);
 
@@ -246,23 +313,36 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     if (!host || !showVideo) return undefined;
 
     const acquired =
-      preloadCandidate && preloadController && preloadPolicy
+      !playerResource && preloadCandidate && preloadController && preloadPolicy
         ? preloadController.acquireCandidate(preloadCandidate, preloadPolicy)
         : undefined;
-    const resource = acquired?.media || createNativeFeedPreloadMediaResource();
+    const resource = playerResource?.media || acquired?.media || createNativeFeedPreloadMediaResource();
     if (activeRef.current) {
       safelyRecordTelemetry(telemetryRef.current, (telemetry) => {
         telemetry.sourceLoadStarted(resource, playbackTelemetrySource(itemRef.current, media));
       });
     }
-    if (!acquired) {
-      resource.configure(media, cover, "buffer");
+    if (!playerResource && !acquired) {
+      resource.configure(media, cover, "buffer", itemRef.current);
       resource.load();
     }
-    resource.muted = muted;
+    const effectivePreferences = resource.getPlayerPreferences?.() || playerPreferences;
+    if (
+      effectivePreferences.quality !== playerPreferences.quality ||
+      effectivePreferences.playbackRate !== playerPreferences.playbackRate ||
+      effectivePreferences.continuousPlay !== playerPreferences.continuousPlay
+    ) {
+      onUpdatePlayerPreferences(effectivePreferences);
+    }
+    resource.muted = playerState.muted;
+    resource.setPlaybackRate?.(effectivePreferences.playbackRate);
+    resource.setQuality?.(effectivePreferences.quality);
+    resource.setContinuousPlay?.(effectivePreferences.continuousPlay);
     resource.mount(host, "stage-media");
     mediaRef.current = resource;
     const unsubscribe = resource.subscribe(handleMediaEvent);
+    const unsubscribePlayer = resource.subscribePlayerState?.(setPlayerState);
+    if (resource.getPlayerState) setPlayerState(resource.getPlayerState());
     if (resource.readyState >= 1) {
       handleLoadedMetadata();
     }
@@ -272,17 +352,29 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
 
     return () => {
       unsubscribe();
+      unsubscribePlayer?.();
       resource.pause();
       if (mediaRef.current === resource) {
         mediaRef.current = null;
       }
       if (acquired) {
         acquired.release();
-      } else {
+      } else if (!playerResource) {
         resource.destroy();
       }
     };
-  }, [cover, item.video_id, media, preloadController, preloadKey, preloadPolicy, showVideo]);
+  }, [
+    cover,
+    item.media_status,
+    item.playback_sources,
+    item.video_id,
+    media,
+    playerResource?.media,
+    preloadController,
+    preloadKey,
+    preloadPolicy,
+    showVideo
+  ]);
 
   useEffect(() => {
     const video = mediaRef.current;
@@ -292,7 +384,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       return;
     }
     video.pause();
-  }, [active, media, playVideo, showVideo]);
+  }, [active, item.video_id, media, playVideo, playerResource?.media, showVideo]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -366,20 +458,14 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   function handleLoadedMetadata() {
     const video = mediaRef.current;
     if (!video) return;
-    setDuration(Number.isFinite(video.duration) ? video.duration : 0);
-    setCurrentTime(video.currentTime || 0);
     safelyRecordTelemetry(telemetryRef.current, (telemetry) => {
       telemetry.metadataReady();
-      const source = playbackTelemetrySource(itemRef.current, video.currentSource?.() || media);
-      telemetry.sourceChanged(source);
-      telemetry.qualityChanged(source.renditionLabel);
     });
   }
 
   function handlePlaying() {
     const state = qosRef.current;
     const video = mediaRef.current;
-    setPlaying(true);
     setPlaybackError("");
     startCompletionPoll();
     if (video) {
@@ -400,7 +486,6 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
 
   function handlePause() {
     const video = mediaRef.current;
-    setPlaying(false);
     stopCompletionPoll();
     if (video) {
       emitViewEvents(lifecycleRef.current?.pause(performance.now(), video.currentTime, video.duration) || []);
@@ -424,7 +509,6 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   function handleTimeUpdate() {
     const video = mediaRef.current;
     if (!video) return;
-    setCurrentTime(video.currentTime || 0);
     emitViewEvents(lifecycleRef.current?.timeUpdate(performance.now(), video.currentTime, video.duration) || []);
     safelyRecordTelemetry(telemetryRef.current, (telemetry) => telemetry.timeUpdated());
   }
@@ -433,7 +517,6 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     const video = mediaRef.current;
     if (!video || !Number.isFinite(value)) return;
     video.currentTime = Math.max(0, Math.min(value, video.duration || value));
-    setCurrentTime(video.currentTime);
   }
 
   function handleSeeking() {
@@ -465,6 +548,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     }
     safelyRecordTelemetry(telemetryRef.current, (telemetry) => telemetry.ended());
     flushQoS();
+    if (playerPreferencesRef.current.continuousPlay) onContinuousAdvanceRef.current();
   }
 
   function startCompletionPoll() {
@@ -487,7 +571,6 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     const video = mediaRef.current;
     if (!video) return;
     video.muted = !video.muted;
-    setMuted(video.muted);
   }
 
   function handleMediaEvent(event: FeedPreloadMediaEvent) {
@@ -522,14 +605,14 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
         handleEnded();
         break;
       case "volumechange":
-        setMuted(mediaRef.current?.muted ?? true);
         break;
       case "error":
-        safelyRecordTelemetry(telemetryRef.current, (telemetry) => {
-          telemetry.terminalError(playbackErrorCategory(mediaRef.current?.mediaErrorCode?.()));
-        });
+        if (!(mediaRef.current?.getPlayerState?.().error || playerStateRef.current.error)?.recoverable) {
+          safelyRecordTelemetry(telemetryRef.current, (telemetry) => {
+            telemetry.terminalError(playbackErrorCategory(mediaRef.current?.mediaErrorCode?.()));
+          });
+        }
         setPlaybackError("视频加载失败，请稍后重试");
-        setPlaying(false);
         break;
       case "canplay":
       case "progress":
@@ -546,6 +629,29 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       return;
     }
     stage.requestFullscreen().catch(() => setPlaybackError("当前浏览器无法进入全屏"));
+  }
+
+  function handleSelectQuality(selection: QualitySelection) {
+    onUpdatePlayerPreferences({ quality: selection });
+    mediaRef.current?.setQuality?.(selection);
+  }
+
+  function handleSelectRate(rate: number) {
+    onUpdatePlayerPreferences({ playbackRate: rate });
+    mediaRef.current?.setPlaybackRate?.(rate);
+  }
+
+  function handleToggleContinuousPlay() {
+    const enabled = !playerPreferences.continuousPlay;
+    onUpdatePlayerPreferences({ continuousPlay: enabled });
+    mediaRef.current?.setContinuousPlay?.(enabled);
+  }
+
+  function handleRetry() {
+    setPlaybackError("");
+    void mediaRef.current?.retry?.().catch(() => {
+      setPlaybackError("重试失败，请稍后再试");
+    });
   }
 
   return (
@@ -574,14 +680,16 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       />
       {showVideo && (
         <FeedPlayerControls
-          playing={playing}
-          muted={muted}
-          currentTime={currentTime}
-          duration={duration}
+          state={playerState}
           fullscreen={fullscreen}
+          continuousPlay={playerPreferences.continuousPlay}
           onTogglePlayback={togglePlayback}
           onToggleMute={handleToggleMute}
           onSeek={handleSeek}
+          onSelectQuality={handleSelectQuality}
+          onSelectRate={handleSelectRate}
+          onToggleContinuousPlay={handleToggleContinuousPlay}
+          onRetry={handleRetry}
           onToggleFullscreen={handleToggleFullscreen}
         />
       )}
@@ -599,4 +707,14 @@ function safelyRecordTelemetry(
   } catch {
     // Playback telemetry is best-effort and must never affect media controls.
   }
+}
+
+function telemetryErrorCategory(category: string): PlaybackTelemetryErrorCategory {
+  if (category === "network") return "network";
+  if (category === "decode") return "decode";
+  if (category === "unsupported_codec" || category === "source_unavailable" || category === "manifest") {
+    return "unsupported";
+  }
+  if (category === "autoplay") return "autoplay";
+  return "unknown";
 }

@@ -327,6 +327,7 @@ HTTP 层使用 `errors.Is` 映射状态码。响应保持简洁：
 apps/web/src/types.ts        # 领域/API 类型 + localStorage type guard
 apps/web/src/feedPreload.ts  # Feed 预加载契约、网络策略、候选顺序与分页边界
 apps/web/src/feedPreloadController.ts # 有界原生媒体资源、代际取消、复用与调试状态
+apps/web/src/player/          # 播放状态机、能力选源、MP4/DASH adapters、fallback 与三槽池
 apps/web/src/api/            # apiRequest<T> 客户端与按域 fetch（feed/messages/social/account/creator/library）
 apps/web/src/session.tsx     # SessionContext + useSession/useUnreadCount
 apps/web/src/router.tsx      # Route union + normalizeRoute + useRoute/useNavigate
@@ -357,6 +358,8 @@ apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 - Feed 预加载候选必须来自活动场景已返回的有序 items；兼容 `/api/preload-videos` 不得作为 Web 场景排序来源。
 - 保留媒体资源必须有严格数量上限，并在 scene、请求代际、登录态或源版本变化时清理监听器、定时器、src 和缓冲状态。
 - 播放遥测必须是内存有界、失败隔离的附属能力；稳定 ID、单调 offset、首帧 fallback 和页面退出 flush 不得改变用户可见播放结果。
+- DASH 依赖必须固定版本并通过动态 import 隔离；本地控制 UI 只消费 `NormalizedPlayerState`，不得直接依赖 dash.js 类型或事件。
+- Feed 播放资源由三槽 pool 持有，Stage 只能挂载外部资源，不能重新 configure、load 或 destroy pool 句柄。
 
 ## 14. 测试规范
 

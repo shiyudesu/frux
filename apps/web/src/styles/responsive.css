@@ -438,6 +438,23 @@
     font-size: 11px;
   }
 
+  .player-select select {
+    min-width: 58px;
+    max-width: 74px;
+    padding-right: 18px;
+    font-size: 11px;
+  }
+
+  .player-controls-row {
+    gap: 3px;
+  }
+
+  .player-controls-row button[aria-pressed] {
+    width: auto;
+    padding: 0 7px;
+    font-size: 11px;
+  }
+
   .player-controls-row {
     padding-right: 6px;
     padding-left: 6px;

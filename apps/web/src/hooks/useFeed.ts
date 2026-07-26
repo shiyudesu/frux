@@ -220,6 +220,7 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     updateCurrentItem,
     preloadController: preloading.controller,
     preloadCandidateByVideoID: preloading.candidateByVideoID,
+    playerResourceByVideoID: preloading.playerResourceByVideoID,
     preloadPolicy: preloading.policy,
     preloadDebug: preloading.debug
   };

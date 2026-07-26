@@ -360,9 +360,72 @@ video.stage-media {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.player-controls-row button.active {
+  color: #fff;
+  background: rgba(37, 244, 238, 0.18);
+}
+
 .player-time {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.player-select select {
+  min-width: 72px;
+  height: 30px;
+  padding: 0 24px 0 8px;
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(0, 0, 0, 0.34);
+  font: inherit;
+}
+
+.player-select select:focus-visible,
+.player-controls-row button:focus-visible {
+  box-shadow: 0 0 0 2px var(--gc-cyan);
+}
+
+.player-select option {
+  color: #fff;
+  background: var(--gc-bg);
+}
+
+.player-status {
+  position: absolute;
+  right: 14px;
+  bottom: 52px;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(22, 24, 35, 0.82);
+  backdrop-filter: blur(10px);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.player-status.buffering,
+.player-status.loading {
+  color: #fff4c7;
+}
+
+.player-status.error {
+  color: #ffd1d1;
+  border-color: rgba(255, 107, 107, 0.38);
+}
+
+.player-retry {
+  min-height: 24px;
+  padding: 2px 8px;
+  color: #fff;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .player-controls-spacer {

@@ -164,3 +164,10 @@ Web 以当前场景已经返回的 `items` 数组作为唯一预加载顺序来�
 - 控制器最多保留上一条、当前条和网络策略允许的后续条目；窗口外资源清除监听器、定时器、媒体源和缓冲状态。
 - 当活动索引加预加载窗口触及当前页末尾时，复用 Feed 原有分页路径提前加载下一页，追加项随后进入同一有序窗口。
 - 预加载失败只影响对应候选，选择该视频时仍由可见播放器独立重试，不改变 Feed 的 loading/error 状态。
+
+播放器层在该候选窗口上再收敛为 previous/current/next 三槽池：
+
+- 槽 key 使用完整 generation、video ID 和 source revision；同 generation 相邻前进/后退只轮换角色，不重建媒体元素。
+- pool 优先 current，其次 next、previous，绝对上限为 3；scene、请求代次、登录态或源 revision 变化会释放旧 adapter、监听器和媒体源。
+- next slot 使用 `buffer_ms` 判断 ready；提交切换时即使未 ready 也不回退导航，而由新 current 显示 loading/buffering。
+- 视频舞台直接挂载 pool 已 acquire 的预加载句柄；无句柄时使用同一 adaptive media resource 内部准备兼容 MP4。

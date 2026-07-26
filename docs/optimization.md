@@ -233,3 +233,10 @@ feed:hot:window:v1:{windowEndUnix}
 - API 认证用户默认每分钟最多提交 60 个批次，仓储入口再次限制事件数，单事务批量写入并按事件 ID 去重。
 - 原始事件默认保留 168 小时，清理每小时最多删除 1000 条事件和无事件批次，配置上限为 10000。
 - Prometheus 只聚合 scene/network/player/method/error/outcome/quality/source 等固定维度，禁止用户、视频、请求、会话和 URL 标签。
+
+## 16. 自适应播放器成本控制
+
+- 主 MP4 路径只加载约 330 KiB 的主 JS（gzip 约 100 KiB）；dash.js 保持约 854 KiB 的独立懒加载 chunk，不进入基线启动路径。
+- Feed 只保留 previous/current/next 三个 player slot；高频时间和缓冲变化局限在 adapter 订阅，不重建整页。
+- constrained network/save-data 优先低码率或兼容 MP4，MediaCapabilities 不可用时回退到 `canPlayType`。
+- `buffer_ms` 同时作为 next-slot ready 门槛和切入后 buffering 依据，避免“已预加载”但实际不可播的虚假状态。

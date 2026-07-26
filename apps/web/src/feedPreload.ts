@@ -1,3 +1,8 @@
+import type {
+  NormalizedPlayerState,
+  PlayerPreferences,
+  QualitySelection
+} from "./player";
 import type { FeedVideo, PlaybackConfig } from "./types";
 
 export const MAX_FORWARD_PRELOAD_COUNT = 4;
@@ -92,7 +97,7 @@ export interface FeedPreloadMediaResource {
   readPlaybackQuality?: () => { droppedFrames: number; totalFrames: number } | undefined;
   mediaErrorCode?: () => number;
   currentSource?: () => string;
-  configure: (url: string, poster: string, mode: FeedPreloadMode) => void;
+  configure: (url: string, poster: string, mode: FeedPreloadMode, item?: FeedVideo) => void;
   setPreloadMode: (mode: FeedPreloadMode) => void;
   load: () => void;
   play: () => Promise<void>;
@@ -101,6 +106,13 @@ export interface FeedPreloadMediaResource {
   mount: (host: HTMLElement, className: string) => void;
   unmount: () => void;
   subscribe: (listener: (event: FeedPreloadMediaEvent) => void) => () => void;
+  getPlayerState?: () => Readonly<NormalizedPlayerState>;
+  subscribePlayerState?: (listener: (state: Readonly<NormalizedPlayerState>) => void) => () => void;
+  getPlayerPreferences?: () => PlayerPreferences;
+  setQuality?: (selection: QualitySelection) => void;
+  setPlaybackRate?: (rate: number) => void;
+  setContinuousPlay?: (enabled: boolean) => void;
+  retry?: () => Promise<void>;
   destroy: () => void;
 }
 
@@ -188,9 +200,22 @@ export function feedPreloadResourceKey(key: FeedPreloadResourceKey): string {
 export function selectFeedPreloadSource(item: FeedVideo): FeedPreloadSource | undefined {
   const mediaURL = item.media_url.trim();
   if (!isVideoURL(mediaURL)) return undefined;
+  const sourceRevision = (item.playback_sources || [])
+    .map((source) => [
+      source.type,
+      source.url,
+      source.codec || "",
+      source.audio_codec || "",
+      source.width || 0,
+      source.height || 0,
+      source.bitrate || 0,
+      source.quality || "",
+      source.role || ""
+    ].join("|"))
+    .join(";");
   return {
     url: mediaURL,
-    revision: `${item.media_status || "legacy"}:${mediaURL}`
+    revision: `${item.media_status || "legacy"}:${mediaURL}:${sourceRevision}`
   };
 }
 

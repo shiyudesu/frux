@@ -345,3 +345,15 @@ gcfeed_playback_telemetry_events_total
 gcfeed_playback_telemetry_delivery_delay_seconds
 gcfeed_playback_telemetry_cleanup_runs_total
 ```
+
+## 自适应播放器浏览器验证
+
+Windows Chrome 桌面与移动视口至少覆盖：
+
+1. 只有 legacy `media_url` 时不请求 DASH chunk，MP4 播放、seek、静音、全屏和快捷键保持兼容。
+2. 有可用 manifest 时才加载 `dash.all.min` 独立 chunk；自动画质、手动画质和 0.5x-2x 速度反映有效状态。
+3. manifest 失败或 DASH 网络错误时切换 MP4，位置、静音、速度和 intended-play 保持，UI 显示 fallback 而非正常播放假象。
+4. previous/current/next 前后轮换时媒体元素复用，`data-preload-resources` 与 pool 均不超过 3；切换 scene、身份、代次或源 revision 后旧资源归零。
+5. next slot 未达到 `buffer_ms` 时提交切换仍成功，新舞台显示 buffering；达到目标后不出现上一条媒体。
+6. 连播默认关闭并保持 loop；开启后 ended 推进下一项，末项安全停留。
+7. 图片项继续显示封面且没有进度、画质、速度或全屏视频控件。

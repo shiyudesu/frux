@@ -213,7 +213,8 @@
 - 背景层使用当前视频封面，`scale(1.08)`、`blur(30px)`、透明度约 52%。
 - 舞台左右使用暗色渐变承接背景，保证文字与按钮可读。
 - 右侧互动栏贴近视频右缘；评论打开后在宽屏使用 346px 推挤式面板。
-- 底部控制栏显示真实播放/暂停、时间、进度、静音和全屏状态，不显示静态伪进度。
+- 底部控制栏显示真实播放/暂停、时间、进度、自动/手动画质、0.5x-2x 速度、连续播放、静音和全屏状态，不显示静态伪进度。
+- loading、buffering、DASH fallback、可恢复重试和终止错误使用 `role=status` 文案，不只依赖动画或颜色。
 - 桌面滚轮一次切一条视频，动画时长 360ms。
 - 901-1279px 使用 72px 图标导航和覆盖式详情抽屉；900px 以下切换为底部导航、9:16 舞台和评论底部面板。
 
@@ -234,7 +235,7 @@
 | VideoBackdrop | blur / gradient | 16:9 舞台背景 |
 | VideoPlayer | contain / preview | 播放器 |
 | FeedActionRail | vertical | 点赞、评论、收藏、分享 |
-| FeedPlayerControls | desktop / mobile | 播放、时间、进度、静音、全屏 |
+| FeedPlayerControls | desktop / mobile | 播放、时间、进度、画质、速度、连播、重试、静音、全屏 |
 | FeedDetailsPanel | side / drawer / sheet | 宽屏右侧、紧凑抽屉、移动底部评论 |
 | UploadDropzone | video / cover | 发布上传 |
 | WorkCard | published / reviewing / offline | 我的作品 |
@@ -346,6 +347,7 @@ h-11 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-white
 - 紧凑桌面布局：72px 图标栏 + 舞台 + 按需覆盖式详情抽屉。
 - 移动布局：单列 9:16、底部导航、评论底部面板。
 - 状态：首屏骨架、视频加载、准备就绪、预加载失败后可见播放器重试、播放错误、Feed 空状态、接口错误、操作成功、操作回滚。
+- 播放控件：质量与速度使用原生可聚焦 select；连播按钮公开 pressed 状态；buffering/error 状态不抢焦点。
 
 ### 6.3 视频详情
 
