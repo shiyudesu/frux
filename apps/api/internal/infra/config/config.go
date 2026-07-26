@@ -14,6 +14,7 @@ var ErrEmptyConfigPath = errors.New("config file path is empty")
 var ErrReadConfigFailed = errors.New("read config file failed")
 var ErrUnmarshalConfigFailed = errors.New("unmarshal config failed")
 var ErrInvalidMediaConfig = errors.New("invalid media config")
+var ErrInvalidPlaybackConfig = errors.New("invalid playback config")
 
 // LoadConfig 读取 YAML 配置文件，并反序列化为应用启动配置。
 func LoadConfig(path string) (*Config, error) {
@@ -33,8 +34,34 @@ func LoadConfig(path string) (*Config, error) {
 	if err := normalizeAndValidateMediaConfig(&cfg.Media); err != nil {
 		return nil, err
 	}
+	if err := normalizeAndValidatePlaybackConfig(&cfg.Playback); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
+}
+
+func normalizeAndValidatePlaybackConfig(cfg *PlaybackConfig) error {
+	cfg.Telemetry.Retention = defaultDuration(cfg.Telemetry.Retention, "168h")
+	cfg.Telemetry.CleanupInterval = defaultDuration(cfg.Telemetry.CleanupInterval, "1h")
+	if cfg.Telemetry.CleanupBatchSize <= 0 {
+		cfg.Telemetry.CleanupBatchSize = 1000
+	}
+	if cfg.Telemetry.MaxBatchesPerMinute <= 0 {
+		cfg.Telemetry.MaxBatchesPerMinute = 60
+	}
+	retention, err := time.ParseDuration(cfg.Telemetry.Retention)
+	if err != nil || retention <= 0 {
+		return ErrInvalidPlaybackConfig
+	}
+	cleanupInterval, err := time.ParseDuration(cfg.Telemetry.CleanupInterval)
+	if err != nil || cleanupInterval <= 0 || cleanupInterval > retention {
+		return ErrInvalidPlaybackConfig
+	}
+	if cfg.Telemetry.CleanupBatchSize > 10_000 || cfg.Telemetry.MaxBatchesPerMinute > 10_000 {
+		return ErrInvalidPlaybackConfig
+	}
+	return nil
 }
 
 func normalizeAndValidateMediaConfig(cfg *MediaConfig) error {

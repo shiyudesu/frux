@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiErrorMessage, isUnauthorized } from "../api/client";
 import {
+  reportPlaybackTelemetryBatch as reportPlaybackTelemetryBatchRequest,
   reportPlaybackQoS as reportPlaybackQoSRequest,
   reportVideoViewEvent as reportVideoViewEventRequest
 } from "../api/feed";
@@ -18,7 +19,7 @@ import { useFeed } from "../hooks/useFeed";
 import { getFeedTrackStyle, useSwipe } from "../hooks/useSwipe";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
-import type { CreateViewEventRequest, FeedVideo } from "../types";
+import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch } from "../types";
 import type { PlaybackQoSMetrics } from "../utils";
 import { buildPlaybackQoSPayload, createPlaybackQoSKey, openPublicProfile } from "../utils";
 import { enqueuePendingViewEvent, listPendingViewEvents, removePendingViewEvent } from "../viewEventDelivery";
@@ -139,6 +140,14 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
       );
     },
     [navigate, session.clearAuth, session.token]
+  );
+
+  const reportPlaybackTelemetryBatch = useCallback(
+    (batch: PlaybackTelemetryBatch, keepalive: boolean): Promise<void> => {
+      if (!session.token) return Promise.resolve();
+      return reportPlaybackTelemetryBatchRequest(session.token, batch, keepalive).then(() => undefined);
+    },
+    [session.token]
   );
 
   const reportVideoViewEvent = useCallback(
@@ -356,6 +365,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onFavorite={setFavorite}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
+                    telemetryEnabled={Boolean(session.token)}
+                    onPlaybackTelemetryBatch={reportPlaybackTelemetryBatch}
                     onViewEvent={reportVideoViewEvent}
                     onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                     followError={followError}
@@ -381,6 +392,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   onFavorite={setFavorite}
                   onFollow={setFollow}
                   onPlaybackQoS={reportPlaybackQoS}
+                  telemetryEnabled={Boolean(session.token)}
+                  onPlaybackTelemetryBatch={reportPlaybackTelemetryBatch}
                   onViewEvent={reportVideoViewEvent}
                   onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                   followError={followError}
@@ -404,6 +417,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onFavorite={setFavorite}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
+                    telemetryEnabled={Boolean(session.token)}
+                    onPlaybackTelemetryBatch={reportPlaybackTelemetryBatch}
                     onViewEvent={reportVideoViewEvent}
                     onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                     followError={followError}

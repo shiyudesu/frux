@@ -9,6 +9,7 @@ type Config struct {
 	Redis    RedisConfig    `yaml:"redis"`
 	RabbitMQ RabbitMQConfig `yaml:"rabbitmq"`
 	Media    MediaConfig    `yaml:"media"`
+	Playback PlaybackConfig `yaml:"playback"`
 }
 
 type MediaConfig struct {
@@ -38,6 +39,17 @@ type MediaProcessingConfig struct {
 	WorkerConcurrency int    `yaml:"worker_concurrency"`
 	LeaseTTL          string `yaml:"lease_ttl"`
 	CleanupDelay      string `yaml:"cleanup_delay"`
+}
+
+type PlaybackConfig struct {
+	Telemetry PlaybackTelemetryConfig `yaml:"telemetry"`
+}
+
+type PlaybackTelemetryConfig struct {
+	Retention           string `yaml:"retention"`
+	CleanupInterval     string `yaml:"cleanup_interval"`
+	CleanupBatchSize    int    `yaml:"cleanup_batch_size"`
+	MaxBatchesPerMinute int    `yaml:"max_batches_per_minute"`
 }
 
 // JWTConfig 保存 JWT 签名密钥和访问 token 有效期。

@@ -370,6 +370,7 @@ class NativeFeedPreloadMedia implements FeedPreloadMediaResource {
     "playing",
     "pause",
     "waiting",
+    "stalled",
     "timeupdate",
     "seeking",
     "seeked",
@@ -427,6 +428,32 @@ class NativeFeedPreloadMedia implements FeedPreloadMediaResource {
 
   get readyState(): number {
     return this.element.readyState;
+  }
+
+  requestVideoFrame(callback: () => void): number | undefined {
+    if (typeof this.element.requestVideoFrameCallback !== "function") return undefined;
+    return this.element.requestVideoFrameCallback(() => callback());
+  }
+
+  cancelVideoFrameRequest(callbackID: number): void {
+    this.element.cancelVideoFrameCallback?.(callbackID);
+  }
+
+  readPlaybackQuality(): { droppedFrames: number; totalFrames: number } | undefined {
+    if (typeof this.element.getVideoPlaybackQuality !== "function") return undefined;
+    const quality = this.element.getVideoPlaybackQuality();
+    return {
+      droppedFrames: quality.droppedVideoFrames,
+      totalFrames: quality.totalVideoFrames
+    };
+  }
+
+  mediaErrorCode(): number {
+    return this.element.error?.code || 0;
+  }
+
+  currentSource(): string {
+    return this.element.currentSrc;
   }
 
   configure(url: string, poster: string, mode: FeedPreloadMode): void {

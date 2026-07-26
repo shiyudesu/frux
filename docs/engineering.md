@@ -191,7 +191,7 @@ Handler 职责：
 - 将结果转换为响应 DTO。
 - 将业务错误映射成 HTTP 状态码。
 
-Hertz Handler 使用 `func(context.Context, *app.RequestContext)` 签名。标准 `context.Context` 传入 Application Service，并启用客户端断开取消；鉴权身份等同步请求数据保存在 `RequestContext.Keys`，不得让池化的 `RequestContext` 逃逸请求生命周期。JSON 请求统一使用 HTTP binding 包的有界解码器，避免流式请求体被无限读入内存。
+Hertz Handler 使用 `func(context.Context, *app.RequestContext)` 签名。标准 `context.Context` 传入 Application Service，并启用客户端断开取消；鉴权身份等同步请求数据保存在 `RequestContext.Keys`，不得让池化的 `RequestContext` 逃逸请求生命周期。JSON 请求统一使用 HTTP binding 包的有界解码器，避免流式请求体被无限读入内存；隐私或协议敏感接口使用 `BindStrictJSON` 拒绝未知字段和尾随 JSON。
 
 Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
 
@@ -293,6 +293,8 @@ DELETE /api/videos/{videoId}/like
 
 端侧生命周期事件必须携带稳定 `event_id`，播放会话内使用 `playback_session_id + sequence`，跨请求最新状态使用有界 `occurred_at + event_id` 定序。相同用户重放相同事件不得重复更新投影；同 ID 不同规范化载荷必须返回冲突。历史聚合修复只更新仍存在的投影行，不得从原始事件重新创建用户已删除的历史。
 
+播放技术遥测使用独立版本化批次，不进入观看历史或推荐行为投影。批次和事件载荷先规范化再计算哈希；同一 reporter 的写入用事务 advisory lock 串行，安全重放只计 duplicate，同 ID 异载荷回滚整批。原始遥测按 `created_at` 有界清理。
+
 需要可靠投递到 RabbitMQ、但不能让外部队列决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和 publisher confirm 分发，下游继续按业务事件 ID 去重。
 
 账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。
@@ -354,6 +356,7 @@ apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 - 用户端 Shell 通过稳定 `data-ui` 标记支持浏览器几何和响应式验证。
 - Feed 预加载候选必须来自活动场景已返回的有序 items；兼容 `/api/preload-videos` 不得作为 Web 场景排序来源。
 - 保留媒体资源必须有严格数量上限，并在 scene、请求代际、登录态或源版本变化时清理监听器、定时器、src 和缓冲状态。
+- 播放遥测必须是内存有界、失败隔离的附属能力；稳定 ID、单调 offset、首帧 fallback 和页面退出 flush 不得改变用户可见播放结果。
 
 ## 14. 测试规范
 

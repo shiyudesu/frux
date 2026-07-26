@@ -480,6 +480,7 @@ flowchart TB
 - Web 为每次激活视频建立播放会话，按 10 秒边界和暂停、seek、切换、隐藏、退出上报曝光、播放、进度、完播和跳过。观看事实按 `(user_id, event_id)` 幂等，历史投影按有界 `(occurred_at, event_id)` 单调更新；事实、历史/曝光投影和 `view_event_outbox` 同事务提交，Worker 通过租约、重试与 publisher confirm 将反馈可靠送入推荐链路。
 - 新互动请求只接受当前已发布公开视频；Redis 在状态/计数事务内为每个行为事实分配单调版本。RabbitMQ 使用 publisher confirm；失败或确认不确定时同步落库，双失败时只条件回滚仍由该版本拥有的 Redis 状态，相同幂等重试会重发原事件。Redis 提交后若计数读取失败，应用使用脱离请求取消且有超时的上下文条件回滚；回滚报错时重新确认投递原事件并以同步回执持久化兜底，并发更高版本不会被旧请求覆盖。事件回执按 `event_id` 去重，行为行优先按 `version` 拒绝延迟旧事件，同版本才用 `(occurred_at, event_id)` 兼容定序；重复和旧事件成功确认且不改变统计。缺失/删除视频和无效载荷终止消费而不无限重入队，所有内容读取仍按当前可见性过滤。
 - 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品、公开合集和隐私允许的喜欢。“短剧”和“我的预约”没有领域模型或接口，明确不在架构范围内。
+- 播放技术遥测与观看行为事实分流：Web 将渲染首帧、播放结果、rebuffer/seek、选源、帧质量和终止错误组成有界版本化批次；API 严格校验并原子写入 `playback_telemetry_batch/event`，立即聚合低基数 Prometheus 指标。批次失败不影响播放，旧 QoS 端点在迁移窗口内继续兼容。
 
 ## 7. 生产媒体交付
 
@@ -502,3 +503,17 @@ flowchart LR
 - Worker 只在临时对象通过大小与 SHA-256 校验后发布受保护的内容寻址输出；已挂载且公开的视频再提升到 `media/` 公共前缀。基线就绪后才更新视频 `media_status=ready`、兼容 `media_url`/`cover_url` 并发送原有发布事件。
 - 公共变体使用长缓存、ETag、Range/HEAD；原始对象和未完成资产只能由不可变 owner 获取短期签名 URL。
 - 删除视频立即停止 API 发现，并通过 `media_cleanup_task` 延迟删除对象；Reconciler 修复过期租约、缺失对象、不完整变体和孤儿对象。
+
+## 8. 播放观测链路
+
+```mermaid
+flowchart LR
+  Player["Web Native Player"] -->|"稳定事件 ID + 有界 batch"| API["POST /api/playback-telemetry-batches"]
+  API -->|"严格校验 / 归一化"| Store[("PostgreSQL telemetry events")]
+  API -->|"即时低基数聚合"| Prometheus["Prometheus"]
+  Prometheus --> Grafana["Grafana Playback Dashboard"]
+  Prometheus --> Alerts["Sustained Alert Rules"]
+  Cleaner["Retention Cleaner"] -->|"按 created_at 有界删除"| Store
+```
+
+首帧优先使用渲染回调，卡顿排除暂停和 seek。数据库保留诊断标识，指标标签只允许固定技术维度；看板和告警无法按用户、视频、请求或播放会话展开。

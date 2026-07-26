@@ -1,6 +1,7 @@
 package interfaceshttpbinding
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,25 +17,55 @@ var ErrJSONBodyTooLarge = errors.New("json request body is too large")
 
 // BindJSON decodes one bounded JSON request body without materializing an unbounded stream.
 func BindJSON(c *app.RequestContext, target any) error {
-	if !c.Request.IsBodyStream() {
-		body := c.Request.BodyBytes()
-		if len(body) > MaxJSONBodyBytes {
-			return ErrJSONBodyTooLarge
-		}
-		return json.Unmarshal(body, target)
-	}
-
-	limited := &io.LimitedReader{
-		R: c.Request.BodyStream(),
-		N: MaxJSONBodyBytes + 1,
-	}
-	body, err := io.ReadAll(limited)
+	body, err := readJSONBody(c, MaxJSONBodyBytes)
 	if err != nil {
 		return err
 	}
-	if len(body) > MaxJSONBodyBytes {
-		return ErrJSONBodyTooLarge
+	return json.Unmarshal(body, target)
+}
+
+// BindStrictJSON rejects unknown fields and trailing JSON using a caller-specific size limit.
+func BindStrictJSON(c *app.RequestContext, target any, maxBytes int) error {
+	body, err := readJSONBody(c, maxBytes)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("json request body contains multiple values")
+		}
+		return err
+	}
+	return nil
+}
+
+func readJSONBody(c *app.RequestContext, maxBytes int) ([]byte, error) {
+	if maxBytes <= 0 || maxBytes > MaxJSONBodyBytes {
+		maxBytes = MaxJSONBodyBytes
+	}
+	if !c.Request.IsBodyStream() {
+		body := c.Request.BodyBytes()
+		if len(body) > maxBytes {
+			return nil, ErrJSONBodyTooLarge
+		}
+		return body, nil
+	}
+	limited := &io.LimitedReader{
+		R: c.Request.BodyStream(),
+		N: int64(maxBytes + 1),
+	}
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxBytes {
+		return nil, ErrJSONBodyTooLarge
 	}
 	infrahttphertz.MarkRequestBodyConsumed(c)
-	return json.Unmarshal(body, target)
+	return body, nil
 }

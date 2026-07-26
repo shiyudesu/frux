@@ -61,6 +61,7 @@ func TestBindJSONMarksConsumedStreamForKeepAlive(t *testing.T) {
 			c.Status(http.StatusBadRequest)
 			return
 		}
+
 		c.Status(http.StatusNoContent)
 	})
 
@@ -77,5 +78,45 @@ func TestBindJSONMarksConsumedStreamForKeepAlive(t *testing.T) {
 	}
 	if got := resp.Header().Get("Connection"); got == "close" {
 		t.Fatalf("fully consumed JSON stream should keep the connection reusable")
+	}
+}
+
+func TestBindStrictJSONRejectsUnknownFieldsAndCustomLimit(t *testing.T) {
+	h := server.New(server.WithDisablePrintRoute(true))
+	var bindErr error
+	h.POST("/json", func(_ context.Context, c *app.RequestContext) {
+		var payload struct {
+			Value string `json:"value"`
+		}
+		bindErr = BindStrictJSON(c, &payload, 32)
+		if bindErr != nil {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	unknown := []byte(`{"value":"ok","token":"prohibited"}`)
+	resp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/json",
+		&ut.Body{Body: bytes.NewReader(unknown), Len: len(unknown)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	if resp.Code != http.StatusBadRequest || bindErr == nil {
+		t.Fatalf("expected strict unknown-field rejection, status=%d err=%v", resp.Code, bindErr)
+	}
+
+	oversized := []byte(`{"value":"abcdefghijklmnopqrstuvwxyz"}`)
+	resp = ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/json",
+		&ut.Body{Body: bytes.NewReader(oversized), Len: len(oversized)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	if resp.Code != http.StatusBadRequest || !errors.Is(bindErr, ErrJSONBodyTooLarge) {
+		t.Fatalf("expected custom size rejection, status=%d err=%v", resp.Code, bindErr)
 	}
 }

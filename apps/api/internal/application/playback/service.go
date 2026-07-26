@@ -5,13 +5,18 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 var ErrLoadPlaybackFailed = errors.New("failed to load playback data")
 var ErrSaveQoSReportFailed = errors.New("failed to save playback qos report")
+var ErrSaveTelemetryBatchFailed = errors.New("failed to save playback telemetry batch")
 
 type Service struct {
-	repo domainplayback.Repository
+	repo              domainplayback.Repository
+	telemetryRepo     domainplayback.TelemetryRepository
+	telemetryObserver TelemetryObserver
+	now               func() time.Time
 }
 
 type ConfigResult struct {
@@ -27,8 +32,46 @@ type QoSReportResult struct {
 	Created bool
 }
 
-func New(repo domainplayback.Repository) *Service {
-	return &Service{repo: repo}
+type TelemetryBatchResult struct {
+	Summary *domainplayback.TelemetryBatchWriteResult
+}
+
+type Option func(*Service)
+
+type TelemetryObserver interface {
+	RecordTelemetryBatch(batch *domainplayback.TelemetryBatch, summary *domainplayback.TelemetryBatchWriteResult, receivedAt time.Time)
+	RecordTelemetryRejection(eventCount int)
+}
+
+func New(repo domainplayback.Repository, options ...Option) *Service {
+	service := &Service{
+		repo: repo,
+		now:  func() time.Time { return time.Now().UTC() },
+	}
+	for _, option := range options {
+		option(service)
+	}
+	return service
+}
+
+func WithTelemetryRepository(repo domainplayback.TelemetryRepository) Option {
+	return func(service *Service) {
+		service.telemetryRepo = repo
+	}
+}
+
+func WithTelemetryObserver(observer TelemetryObserver) Option {
+	return func(service *Service) {
+		service.telemetryObserver = observer
+	}
+}
+
+func WithNow(now func() time.Time) Option {
+	return func(service *Service) {
+		if now != nil {
+			service.now = now
+		}
+	}
 }
 
 // GetConfig 查询端侧播放配置，配置缺失时返回领域默认值。
@@ -85,6 +128,43 @@ func (s *Service) CreateQoSReport(ctx context.Context, userID int64, videoID int
 		return nil, ErrSaveQoSReportFailed
 	}
 	return &QoSReportResult{Report: created, Created: inserted}, nil
+}
+
+func (s *Service) CreateTelemetryBatch(ctx context.Context, input domainplayback.NewTelemetryBatchInput) (*TelemetryBatchResult, error) {
+	batch, err := domainplayback.NewTelemetryBatch(input)
+	if err != nil {
+		s.recordTelemetryRejection(len(input.Events))
+		return nil, err
+	}
+	now := s.now().UTC().Truncate(time.Microsecond)
+	if batch.ClientSentAt.Before(now.Add(-domainplayback.MaxTelemetryPastSentAtSkew)) ||
+		batch.ClientSentAt.After(now.Add(domainplayback.MaxTelemetryFutureSentAtSkew)) {
+		s.recordTelemetryRejection(len(batch.Events))
+		return nil, domainplayback.ErrTelemetrySentAtOutOfRange
+	}
+	if s.telemetryRepo == nil {
+		s.recordTelemetryRejection(len(batch.Events))
+		return nil, ErrSaveTelemetryBatchFailed
+	}
+	summary, err := s.telemetryRepo.CreateTelemetryBatch(ctx, batch)
+	if err != nil {
+		s.recordTelemetryRejection(len(batch.Events))
+		if errors.Is(err, domainplayback.ErrTelemetryBatchConflict) ||
+			errors.Is(err, domainplayback.ErrTelemetryEventConflict) {
+			return nil, err
+		}
+		return nil, ErrSaveTelemetryBatchFailed
+	}
+	if s.telemetryObserver != nil {
+		s.telemetryObserver.RecordTelemetryBatch(batch, summary, now)
+	}
+	return &TelemetryBatchResult{Summary: summary}, nil
+}
+
+func (s *Service) recordTelemetryRejection(eventCount int) {
+	if s.telemetryObserver != nil {
+		s.telemetryObserver.RecordTelemetryRejection(eventCount)
+	}
 }
 
 func normalizeConfig(config *domainplayback.Config, platform string, networkType string) *domainplayback.Config {

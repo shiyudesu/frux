@@ -1,0 +1,94 @@
+groups:
+  - name: gcfeed-playback
+    interval: 30s
+    rules:
+      - alert: GCFeedPlaybackStartupRegression
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, scene, network, player) (
+              rate(gcfeed_playback_first_frame_duration_seconds_bucket[10m])
+            )
+          ) > 3
+          and on (scene, network, player)
+          sum by (scene, network, player) (
+            increase(gcfeed_playback_first_frame_duration_seconds_count[10m])
+          ) >= 100
+        for: 10m
+        labels:
+          severity: warning
+          service: gcfeed-playback
+        annotations:
+          summary: Playback first-frame p95 is above 3 seconds
+          description: "First-frame p95 is {{ $value | humanizeDuration }} for scene={{ $labels.scene }}, network={{ $labels.network }}, player={{ $labels.player }} with at least 100 samples per 10 minutes."
+          runbook: docs/modules/monitoring.md#playback-alert-investigation
+
+      - alert: GCFeedPlaybackRebufferingHigh
+        expr: |
+          (
+            sum by (scene, network, player) (
+              increase(gcfeed_playback_rebuffer_duration_seconds_total[10m])
+            )
+            /
+            clamp_min(
+              sum by (scene, network, player) (
+                increase(gcfeed_playback_observed_duration_seconds_total[10m])
+              ),
+              1
+            )
+          ) > 0.05
+          and on (scene, network, player)
+          sum by (scene, network, player) (
+            increase(gcfeed_playback_rebuffer_ratio_count[10m])
+          ) >= 100
+        for: 10m
+        labels:
+          severity: warning
+          service: gcfeed-playback
+        annotations:
+          summary: Playback rebuffer ratio is above 5%
+          description: "Aggregate rebuffer ratio is {{ $value | humanizePercentage }} for scene={{ $labels.scene }}, network={{ $labels.network }}, player={{ $labels.player }} with at least 100 samples per 10 minutes."
+          runbook: docs/modules/monitoring.md#playback-alert-investigation
+
+      - alert: GCFeedPlaybackFailureRateHigh
+        expr: |
+          (
+            sum by (scene, network, player) (
+              increase(gcfeed_playback_attempts_total{result="failure"}[10m])
+            )
+            /
+            clamp_min(
+              sum by (scene, network, player) (
+                increase(gcfeed_playback_attempts_total[10m])
+              ),
+              1
+            )
+          ) > 0.05
+          and on (scene, network, player)
+          sum by (scene, network, player) (
+            increase(gcfeed_playback_attempts_total[10m])
+          ) >= 100
+        for: 10m
+        labels:
+          severity: critical
+          service: gcfeed-playback
+        annotations:
+          summary: Playback failure rate is above 5%
+          description: "Playback failure rate is {{ $value | humanizePercentage }} for scene={{ $labels.scene }}, network={{ $labels.network }}, player={{ $labels.player }} with at least 100 attempts per 10 minutes."
+          runbook: docs/modules/monitoring.md#playback-alert-investigation
+
+      - alert: GCFeedPlaybackTelemetryOutage
+        expr: |
+          sum(increase(gcfeed_http_requests_total[15m])) >= 100
+          and on ()
+          (
+            (sum(increase(gcfeed_playback_telemetry_batches_total[15m])) or vector(0)) == 0
+          )
+        for: 15m
+        labels:
+          severity: warning
+          service: gcfeed-playback
+        annotations:
+          summary: Playback telemetry ingestion has stopped
+          description: No playback telemetry batch reached the API for 15 minutes while the API handled at least 100 requests.
+          runbook: docs/modules/monitoring.md#playback-alert-investigation

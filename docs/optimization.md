@@ -225,3 +225,11 @@ feed:hot:window:v1:{windowEndUnix}
 - 控制器保留上一条、当前条和前向窗口，使用 `buffer_ms`、buffered range 与 `canplay` 判定就绪，并通过源版本、重试冷却和 LRU 控制失效与内存。
 - Feed 接近页尾时提前走原分页，不调用兼容 `/api/preload-videos` 创建第二排序模型。
 - 页面提供无用户、视频或请求标签的 attempts、ready、reuse、cancellation、failure 和活动资源调试状态。
+
+## 15. 播放遥测成本控制
+
+- Web 只保留当前页面会话的内存队列，每批最多 50 个事件和 64 KiB，最多排队 4 个批次。
+- flush 发生在大小阈值、10 秒间隔、终止状态、页面隐藏和退出；失败仅做有界重试并复用原 batch/event ID。
+- API 认证用户默认每分钟最多提交 60 个批次，仓储入口再次限制事件数，单事务批量写入并按事件 ID 去重。
+- 原始事件默认保留 168 小时，清理每小时最多删除 1000 条事件和无事件批次，配置上限为 10000。
+- Prometheus 只聚合 scene/network/player/method/error/outcome/quality/source 等固定维度，禁止用户、视频、请求、会话和 URL 标签。

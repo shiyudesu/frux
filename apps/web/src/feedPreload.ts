@@ -16,6 +16,7 @@ export type FeedPreloadMediaEvent =
   | "playing"
   | "pause"
   | "waiting"
+  | "stalled"
   | "timeupdate"
   | "seeking"
   | "seeked"
@@ -86,6 +87,11 @@ export interface FeedPreloadMediaResource {
   readonly ended: boolean;
   muted: boolean;
   readonly readyState: number;
+  requestVideoFrame?: (callback: () => void) => number | undefined;
+  cancelVideoFrameRequest?: (callbackID: number) => void;
+  readPlaybackQuality?: () => { droppedFrames: number; totalFrames: number } | undefined;
+  mediaErrorCode?: () => number;
+  currentSource?: () => string;
   configure: (url: string, poster: string, mode: FeedPreloadMode) => void;
   setPreloadMode: (mode: FeedPreloadMode) => void;
   load: () => void;

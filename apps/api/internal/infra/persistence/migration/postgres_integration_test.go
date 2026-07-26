@@ -23,6 +23,7 @@ import (
 	domainlibrary "GCFeed/internal/domain/library"
 	domainmedia "GCFeed/internal/domain/media"
 	domainmessage "GCFeed/internal/domain/message"
+	domainplayback "GCFeed/internal/domain/playback"
 	domainrelation "GCFeed/internal/domain/relation"
 	domainvideo "GCFeed/internal/domain/video"
 	infraaccount "GCFeed/internal/infra/persistence/account"
@@ -33,6 +34,7 @@ import (
 	infralibrary "GCFeed/internal/infra/persistence/library"
 	inframedia "GCFeed/internal/infra/persistence/media"
 	inframessage "GCFeed/internal/infra/persistence/message"
+	infraplayback "GCFeed/internal/infra/persistence/playback"
 	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
 	infrarelation "GCFeed/internal/infra/persistence/relation"
 	infravideo "GCFeed/internal/infra/persistence/video"
@@ -207,6 +209,8 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"user_message",
 		"playback_config",
 		"playback_qos_log",
+		"playback_telemetry_batch",
+		"playback_telemetry_event",
 		"user_follow",
 		"user_relation_stat",
 		"app_migration",
@@ -237,6 +241,11 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infrainteraction.ActionModel{}, "idx_interaction_action_user_type_status_updated"},
 		{&infralibrary.WatchLaterModel{}, "idx_user_watch_later_user_status_updated"},
 		{&inframessage.MessageModel{}, "uk_user_message_user_event"},
+		{&infraplayback.TelemetryBatchModel{}, "uk_playback_telemetry_batch_user_batch"},
+		{&infraplayback.TelemetryBatchModel{}, "uk_playback_telemetry_batch_anon_batch"},
+		{&infraplayback.TelemetryEventModel{}, "uk_playback_telemetry_event_user_event"},
+		{&infraplayback.TelemetryEventModel{}, "uk_playback_telemetry_event_anon_event"},
+		{&infraplayback.TelemetryEventModel{}, "idx_playback_telemetry_event_created"},
 	}
 	for _, index := range requiredIndexes {
 		if !db.Migrator().HasIndex(index.model, index.name) {
@@ -367,6 +376,101 @@ func TestPostgreSQLMigration(t *testing.T) {
 	if missingStats != 0 {
 		t.Fatalf("expected complete video_stat rows, found %d missing", missingStats)
 	}
+}
+
+func TestPostgreSQLPlaybackTelemetryBatchWrite(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("migrate telemetry schema: %v", err)
+	}
+
+	repository := infraplayback.New(db)
+	sentAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	first := newTelemetryPersistenceBatch(t, "batch-1", sentAt, []domainplayback.NewTelemetryEventInput{{
+		EventID: "event-1", EventType: domainplayback.TelemetryEventLoadStart,
+	}})
+	result, err := repository.CreateTelemetryBatch(context.Background(), first)
+	if err != nil {
+		t.Fatalf("create telemetry batch: %v", err)
+	}
+	if !result.Created || result.AcceptedCount != 1 || result.DuplicateCount != 0 {
+		t.Fatalf("unexpected first telemetry result: %+v", result)
+	}
+
+	replay, err := repository.CreateTelemetryBatch(context.Background(), first)
+	if err != nil {
+		t.Fatalf("replay telemetry batch: %v", err)
+	}
+	if replay.Created || replay.AcceptedCount != 1 || replay.DuplicateCount != 0 {
+		t.Fatalf("unexpected replay result: %+v", replay)
+	}
+
+	second := newTelemetryPersistenceBatch(t, "batch-2", sentAt.Add(time.Second), []domainplayback.NewTelemetryEventInput{
+		{EventID: "event-1", EventType: domainplayback.TelemetryEventLoadStart},
+		{EventID: "event-2", EventType: domainplayback.TelemetryEventMetadataReady, OffsetMs: 25},
+	})
+	result, err = repository.CreateTelemetryBatch(context.Background(), second)
+	if err != nil {
+		t.Fatalf("create partially duplicate telemetry batch: %v", err)
+	}
+	if result.AcceptedCount != 1 || result.DuplicateCount != 1 {
+		t.Fatalf("unexpected duplicate accounting: %+v", result)
+	}
+
+	batchConflict := newTelemetryPersistenceBatch(t, "batch-1", sentAt, []domainplayback.NewTelemetryEventInput{{
+		EventID: "event-1", EventType: domainplayback.TelemetryEventMetadataReady,
+	}})
+	if _, err := repository.CreateTelemetryBatch(context.Background(), batchConflict); !errors.Is(err, domainplayback.ErrTelemetryBatchConflict) {
+		t.Fatalf("expected batch conflict, got %v", err)
+	}
+
+	eventConflict := newTelemetryPersistenceBatch(t, "batch-3", sentAt.Add(2*time.Second), []domainplayback.NewTelemetryEventInput{{
+		EventID: "event-1", EventType: domainplayback.TelemetryEventMetadataReady,
+	}})
+	if _, err := repository.CreateTelemetryBatch(context.Background(), eventConflict); !errors.Is(err, domainplayback.ErrTelemetryEventConflict) {
+		t.Fatalf("expected event conflict, got %v", err)
+	}
+	var rolledBackBatches int64
+	if err := db.Model(&infraplayback.TelemetryBatchModel{}).Where("batch_id = ?", "batch-3").Count(&rolledBackBatches).Error; err != nil {
+		t.Fatalf("count rolled back telemetry batch: %v", err)
+	}
+	if rolledBackBatches != 0 {
+		t.Fatalf("event conflict left a partial batch row: %d", rolledBackBatches)
+	}
+
+	oldCreatedAt := sentAt.Add(-8 * 24 * time.Hour)
+	if err := db.Model(&infraplayback.TelemetryEventModel{}).Where("1 = 1").Update("created_at", oldCreatedAt).Error; err != nil {
+		t.Fatalf("age telemetry events: %v", err)
+	}
+	if err := db.Model(&infraplayback.TelemetryBatchModel{}).Where("1 = 1").Update("created_at", oldCreatedAt).Error; err != nil {
+		t.Fatalf("age telemetry batches: %v", err)
+	}
+	cleanup, err := repository.DeleteTelemetryBefore(context.Background(), sentAt.Add(-7*24*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("cleanup telemetry: %v", err)
+	}
+	if cleanup.DeletedEvents != 2 || cleanup.DeletedBatches != 2 {
+		t.Fatalf("unexpected telemetry cleanup result: %+v", cleanup)
+	}
+}
+
+func newTelemetryPersistenceBatch(t *testing.T, batchID string, sentAt time.Time, events []domainplayback.NewTelemetryEventInput) *domainplayback.TelemetryBatch {
+	t.Helper()
+	batch, err := domainplayback.NewTelemetryBatch(domainplayback.NewTelemetryBatchInput{
+		UserID: 42, SchemaVersion: domainplayback.TelemetrySchemaVersionV1,
+		BatchID: batchID, PlaybackSessionID: "playback-1", ClientSentAt: sentAt,
+		Context: domainplayback.TelemetryContext{
+			VideoID: 7, Scene: "recommend",
+			PlayerAdapter: domainplayback.TelemetryPlayerAdapterNativeMP4,
+			SourceType:    domainplayback.TelemetrySourceMP4,
+		},
+		Events: events,
+	})
+	if err != nil {
+		t.Fatalf("new telemetry persistence batch: %v", err)
+	}
+	return batch
 }
 
 func TestPostgreSQLMediaVariantOrdering(t *testing.T) {

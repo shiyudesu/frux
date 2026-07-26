@@ -489,6 +489,114 @@ export interface CreateQoSReportRequest {
   watch_ms: number;
 }
 
+// ---------- 播放遥测 ----------
+
+export type PlaybackTelemetryEventType =
+  | "load_start"
+  | "metadata_ready"
+  | "first_rendered_frame"
+  | "play_success"
+  | "play_failure"
+  | "rebuffer_start"
+  | "rebuffer_end"
+  | "seek_start"
+  | "seek_end"
+  | "source_change"
+  | "quality_change"
+  | "pause"
+  | "end"
+  | "terminal_error";
+
+export type PlaybackTelemetryPlayerAdapter = "native_mp4" | "dash" | "unknown";
+export type PlaybackTelemetrySourceType = "mp4" | "dash" | "unknown";
+export type PlaybackTelemetryCodecFamily = "h264" | "h265" | "vp8" | "vp9" | "av1" | "other" | "unknown";
+export type PlaybackTelemetryNetworkClass =
+  | "offline"
+  | "slow_2g"
+  | "2g"
+  | "3g"
+  | "4g"
+  | "5g"
+  | "wifi"
+  | "ethernet"
+  | "unknown";
+export type PlaybackTelemetryBrowserFamily = "chrome" | "edge" | "firefox" | "safari" | "other" | "unknown";
+export type PlaybackTelemetryOSFamily =
+  | "windows"
+  | "macos"
+  | "ios"
+  | "android"
+  | "linux"
+  | "chromeos"
+  | "other"
+  | "unknown";
+export type PlaybackTelemetryViewportClass = "small" | "medium" | "large" | "unknown";
+export type PlaybackTelemetryMeasurementMethod = "video_frame_callback" | "advancing_time" | "playing";
+export type PlaybackTelemetryRecoveryOutcome =
+  | "resumed"
+  | "paused"
+  | "seeked"
+  | "source_changed"
+  | "ended"
+  | "failed";
+export type PlaybackTelemetryErrorCategory =
+  | "aborted"
+  | "network"
+  | "decode"
+  | "unsupported"
+  | "autoplay"
+  | "timeout"
+  | "unknown";
+
+export interface PlaybackTelemetryContext {
+  video_id: number;
+  scene: string;
+  request_id: string;
+  player_adapter: PlaybackTelemetryPlayerAdapter;
+  source_type: PlaybackTelemetrySourceType;
+  rendition_label: string;
+  codec_family: PlaybackTelemetryCodecFamily;
+  network_class: PlaybackTelemetryNetworkClass;
+  save_data: boolean;
+  browser_family: PlaybackTelemetryBrowserFamily;
+  browser_major: number;
+  os_family: PlaybackTelemetryOSFamily;
+  viewport_class: PlaybackTelemetryViewportClass;
+  cdn_host: string;
+}
+
+export interface PlaybackTelemetryEvent {
+  event_id: string;
+  event_type: PlaybackTelemetryEventType;
+  offset_ms: number;
+  media_position_ms: number;
+  media_duration_ms?: number;
+  first_frame_ms?: number;
+  interval_duration_ms?: number;
+  dropped_frames?: number;
+  total_frames?: number;
+  rebuffer_count?: number;
+  rebuffer_duration_ms?: number;
+  max_rebuffer_duration_ms?: number;
+  startup_retry_count?: number;
+  measurement_method?: PlaybackTelemetryMeasurementMethod;
+  recovery_outcome?: PlaybackTelemetryRecoveryOutcome;
+  error_category?: PlaybackTelemetryErrorCategory;
+  source_type?: PlaybackTelemetrySourceType;
+  rendition_label?: string;
+  codec_family?: PlaybackTelemetryCodecFamily;
+  cdn_host?: string;
+}
+
+export interface PlaybackTelemetryBatch {
+  schema_version: 1;
+  batch_id: string;
+  playback_session_id: string;
+  client_sent_at: string;
+  context: PlaybackTelemetryContext;
+  events: PlaybackTelemetryEvent[];
+}
+
 // ---------- localStorage 窄化（不可信 JSON，读取处必须过 guard） ----------
 
 function isRecord(value: unknown): value is Record<string, unknown> {

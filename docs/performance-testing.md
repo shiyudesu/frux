@@ -324,3 +324,24 @@ Feed 预加载检查同时覆盖：
 5. 删除视频后立即确认 API 不再发现播放源；缩短测试清理延迟后确认原始对象、封面、MP4、manifest 和 segment 被幂等删除。
 
 压测时同时观察 `gcfeed_media_object_operation_duration_seconds`、`gcfeed_media_processing_results_total`、`gcfeed_media_renditions_total`、`gcfeed_media_reconciliation_issues_total` 和 `gcfeed_media_cleanup_backlog`。
+
+## 播放遥测验证
+
+1. 使用认证 Web 会话播放视频，确认 `/api/playback-telemetry-batches` 单批不超过 50 个事件和 64 KiB，退出请求带 keepalive。
+2. 在 Windows Chrome DevTools 依次验证正常、Fast 3G、Offline、seek、暂停、后台切换和页面退出；seek 期间不得产生普通 rebuffer。
+3. 支持 `requestVideoFrameCallback` 时首帧事件标记 `video_frame_callback`；禁用/模拟缺失 API 后依次验证 `advancing_time` 和 `playing` fallback。
+4. 重放完全相同的 batch 返回原汇总且不重复增加质量指标；相同 batch/event ID 修改载荷返回 409。
+5. 请求加入 `token`、`cookie`、完整签名 URL 或自由 metadata 时必须返回 400；Prometheus 标签不得出现用户、视频、请求或播放会话 ID。
+6. 同时观察新遥测和旧 QoS 至少两个 Web 发布版本。比较首帧 p50/p95、卡顿次数/时长和上报覆盖率；趋势连续两周一致后才停止 Web 旧 QoS 主动上报。
+
+重点指标：
+
+```text
+gcfeed_playback_first_frame_duration_seconds
+gcfeed_playback_rebuffer_duration_seconds_total
+gcfeed_playback_attempts_total
+gcfeed_playback_telemetry_batches_total
+gcfeed_playback_telemetry_events_total
+gcfeed_playback_telemetry_delivery_delay_seconds
+gcfeed_playback_telemetry_cleanup_runs_total
+```

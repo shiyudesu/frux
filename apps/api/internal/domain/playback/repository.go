@@ -1,6 +1,7 @@
 package domainplayback
 
 import "context"
+import "time"
 
 // Repository 定义播放优化需要的持久化能力。
 type Repository interface {
@@ -10,4 +11,13 @@ type Repository interface {
 	ListPreloadVideos(ctx context.Context, currentVideoID int64, limit int) ([]*PreloadVideo, error)
 	// CreateQoSReport 保存播放质量上报；幂等键命中时返回既有记录。
 	CreateQoSReport(ctx context.Context, report *QoSReport) (*QoSReport, bool, error)
+}
+
+// TelemetryRepository persists bounded telemetry batches independently from legacy QoS reports.
+type TelemetryRepository interface {
+	CreateTelemetryBatch(ctx context.Context, batch *TelemetryBatch) (*TelemetryBatchWriteResult, error)
+}
+
+type TelemetryRetentionRepository interface {
+	DeleteTelemetryBefore(ctx context.Context, cutoff time.Time, limit int) (*TelemetryCleanupResult, error)
 }

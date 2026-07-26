@@ -118,8 +118,30 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	messageService := applicationmessage.New(messageRepo)
 	messageHandler := interfaceshttpmessage.New(messageService)
 	playbackRepo := infraplayback.New(gormDB, infraplayback.WithMediaCatalog(mediaCatalog))
-	playbackService := applicationplayback.New(playbackRepo)
-	playbackHandler := interfaceshttpplayback.New(playbackService)
+	playbackService := applicationplayback.New(
+		playbackRepo,
+		applicationplayback.WithTelemetryRepository(playbackRepo),
+		applicationplayback.WithTelemetryObserver(playbackMetricsAdapter{}),
+	)
+	playbackHandler := interfaceshttpplayback.New(
+		playbackService,
+		interfaceshttpplayback.WithTelemetryRateLimit(cfg.Playback.Telemetry.MaxBatchesPerMinute),
+		interfaceshttpplayback.WithTelemetryRejectionRecorder(playbackMetricsAdapter{}.RecordTelemetryRejection),
+	)
+	telemetryRetention, err := time.ParseDuration(cfg.Playback.Telemetry.Retention)
+	if err != nil {
+		return err
+	}
+	telemetryCleanupInterval, err := time.ParseDuration(cfg.Playback.Telemetry.CleanupInterval)
+	if err != nil {
+		return err
+	}
+	telemetryCleaner := applicationplayback.NewTelemetryCleaner(
+		playbackRepo,
+		telemetryRetention,
+		telemetryCleanupInterval,
+		cfg.Playback.Telemetry.CleanupBatchSize,
+	)
 	uploadSessionTTL, err := time.ParseDuration(cfg.Media.UploadSessionTTL)
 	if err != nil {
 		return err
@@ -285,6 +307,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	api.GET("/playback-config", authMiddleware, playbackHandler.GetConfig)
 	api.GET("/preload-videos", authMiddleware, playbackHandler.ListPreloadVideos)
 	api.POST("/playback-qos-reports", authMiddleware, playbackHandler.CreateQoSReport)
+	api.POST("/playback-telemetry-batches", authMiddleware, playbackHandler.CreateTelemetryBatch)
 
 	internal := h.Group("/internal")
 	internal.POST("/recommendation-candidates", recommendationHandler.ListCandidates)
@@ -296,6 +319,19 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	infrahttphertz.RegisterTrailingSlashRedirects(h)
 	h.GET("/uploads", infrahttphertz.RedirectTo("/uploads/"))
 	h.HEAD("/uploads", infrahttphertz.RedirectTo("/uploads/"))
+
+	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
+	go telemetryCleaner.Run(
+		telemetryCleanerContext,
+		playbackMetricsAdapter{}.RecordTelemetryCleanup,
+		func(err error) {
+			playbackMetricsAdapter{}.RecordTelemetryCleanupFailure()
+			log.Printf("playback telemetry cleanup failed: %v", err)
+		},
+	)
+	h.Engine.OnShutdown = append(h.Engine.OnShutdown, func(context.Context) {
+		stopTelemetryCleaner()
+	})
 
 	return nil
 }

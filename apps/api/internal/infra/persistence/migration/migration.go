@@ -73,6 +73,8 @@ func AutoMigrate(db *gorm.DB) error {
 			&inframessage.MessageModel{},
 			&infraplayback.ConfigModel{},
 			&infraplayback.QoSLogModel{},
+			&infraplayback.TelemetryBatchModel{},
+			&infraplayback.TelemetryEventModel{},
 			&infrarelation.FollowModel{},
 			&infrarelation.RelationStatModel{},
 			&infralibrary.WatchLaterModel{},

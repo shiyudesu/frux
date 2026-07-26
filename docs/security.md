@@ -25,3 +25,11 @@
 - 处理任务按资产和 profile 版本幂等，租约过期后可重试。
 - 删除请求只写清理任务，不同步批量删除对象。
 - Reconciler 检查缺失源、缺失变体、过期租约和孤儿对象。
+
+## 播放遥测隐私
+
+- 遥测请求使用严格 JSON schema，只允许版本、稳定事件 ID、技术事件和低基数环境维度。
+- 不接受完整媒体 URL、签名参数、JWT、Cookie、标题、描述或任意 metadata map；CDN 只保存校验后的 hostname。
+- PostgreSQL 可以保存认证用户 ID、视频 ID、request ID 和播放会话用于受控诊断，但 Prometheus/Grafana 标签禁止包含这些标识符。
+- browser、OS、network、viewport、codec、quality、source 和 scene 都折叠到固定枚举；未知值归入 `unknown`/`other`。
+- 原始遥测默认保留 168 小时并由有界清理任务删除；行为历史和推荐事实使用独立保留策略。

@@ -4,6 +4,7 @@ import type {
   CreateViewEventRequest,
   FeedItemsResponse,
   FeedQueryRequest,
+  PlaybackTelemetryBatch,
   PlaybackConfig,
   PreloadVideosResponse
 } from "../types";
@@ -78,5 +79,18 @@ export function reportPlaybackQoS(
       video_id: videoID,
       ...payload
     }
+  });
+}
+
+export function reportPlaybackTelemetryBatch(
+  token: string,
+  body: PlaybackTelemetryBatch,
+  keepalive = false
+): Promise<unknown> {
+  return apiRequest("/api/playback-telemetry-batches", {
+    method: "POST",
+    token,
+    body,
+    keepalive
   });
 }

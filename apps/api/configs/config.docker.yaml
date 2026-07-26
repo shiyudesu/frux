@@ -57,3 +57,10 @@ media:
     secret_key: "gcfeed-secret"
     use_path_style: true
     auto_create_bucket: true
+
+playback:
+  telemetry:
+    retention: "168h"
+    cleanup_interval: "1h"
+    cleanup_batch_size: 1000
+    max_batches_per_minute: 60

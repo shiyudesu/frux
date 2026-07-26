@@ -80,3 +80,55 @@
 | 监控看板 | Feed、互动、播放、队列和数据库指标 |
 | 告警规则页 | 创建和启停规则 |
 | 告警事件页 | 查看触发和恢复记录 |
+
+## 7. 播放观测
+
+Grafana 的 `GCFeed Playback Observability` 看板提供：
+
+- 启动耗时 p50/p95/p99，以及首帧耗时按 scene、network、player 的 p95 拆分。
+- 聚合卡顿时长占比、播放失败率、清晰度和媒体源分布。
+- 遥测 batch/event 吞吐、拒绝率、重复率和客户端投递延迟。
+
+首帧和卡顿优先按 network、player 判断是否为特定网络或播放器回归，再按 scene
+判断是否局限于某一入口。清晰度或 source 分布突变通常表示选源、转码或降级策略变化。
+拒绝率上升表示客户端契约或服务端校验不一致；重复率上升通常表示 keepalive/retry 增多；
+投递延迟上升表示客户端积压、弱网或入口处理变慢。
+
+Prometheus 标签仅允许固定低基数集合。播放指标不包含 `user_id`、`video_id`、
+`request_id`、`session_id` 或 `playback_session_id`；未知 scene、network、player、
+quality、source、错误和恢复结果会折叠到 `unknown` 或 `other`。
+
+后端 ingestion 可使用 `internal/infra/metrics.PlaybackMetrics`：
+
+```go
+inframetrics.PlaybackMetrics.ObserveFirstFrame(inframetrics.PlaybackTimingObservation{...})
+inframetrics.PlaybackMetrics.ObserveStartup(inframetrics.PlaybackTimingObservation{...})
+inframetrics.PlaybackMetrics.ObserveRebuffer(inframetrics.PlaybackRebufferObservation{...})
+inframetrics.PlaybackMetrics.ObserveRebufferSummary(inframetrics.PlaybackRebufferSummaryObservation{...})
+inframetrics.PlaybackMetrics.ObserveAttempt(inframetrics.PlaybackAttemptObservation{...})
+inframetrics.PlaybackMetrics.ObserveRecovery(inframetrics.PlaybackRecoveryObservation{...})
+inframetrics.PlaybackMetrics.ObserveSelection(inframetrics.PlaybackSelectionObservation{...})
+inframetrics.PlaybackMetrics.ObserveTelemetryIngestion(inframetrics.TelemetryIngestionObservation{...})
+inframetrics.PlaybackMetrics.ObserveTelemetryCleanup(inframetrics.TelemetryCleanupObservation{...})
+```
+
+调用方只传归一化技术维度和聚合值，不传任何用户、视频、请求或播放会话标识。
+清理失败或删除量长期为零时，检查 retention 配置、数据库权限和 `created_at` 索引。
+
+## 8. Playback alert investigation
+
+告警规则位于 `apps/monitoring/alerts/playback.yml`，均要求持续窗口；质量告警还要求每
+10 分钟至少 100 个样本，避免稀疏流量误报。
+
+1. **Startup regression**：在看板按 scene/network/player 定位；检查 CDN/源站可用性、
+   最近播放器或选源发布，并比较 measurement method，确认是否只是 fallback 比例变化。
+2. **Rebuffering high**：确认卡顿时长和样本量同步上升；检查特定网络、source 和 quality，
+   再检查媒体分片、带宽和转码产物。
+3. **Playback failure high**：查看失败率和 error category；区分 network、decode、
+   unsupported、autoplay、timeout，并检查对应 source 的近期变化。
+4. **Telemetry outage**：先确认 API `/metrics` 可抓取和整体 HTTP 流量存在，再检查
+   `/api/playback-telemetry-batches` 路由、客户端发布开关、拒绝计数和服务日志。该规则应在
+   遥测客户端开始稳定上报后启用。
+
+处置后保持观察至少一个完整告警窗口。若只有遥测指标异常而实际播放成功率正常，优先回滚
+遥测客户端或 ingestion 变更；遥测失败不得影响播放。

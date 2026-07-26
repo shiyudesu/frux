@@ -10,18 +10,42 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
-	service *applicationplayback.Service
+	service                  *applicationplayback.Service
+	telemetryLimiter         *telemetryRateLimiter
+	recordTelemetryRejection func(int)
 }
 
+type Option func(*Handler)
+
 // New 注入播放优化应用服务。
-func New(service *applicationplayback.Service) *Handler {
-	return &Handler{service: service}
+func New(service *applicationplayback.Service, options ...Option) *Handler {
+	handler := &Handler{
+		service:          service,
+		telemetryLimiter: newTelemetryRateLimiter(defaultTelemetryBatchesPerMinute, time.Minute, defaultTelemetryRateLimitEntries),
+	}
+	for _, option := range options {
+		option(handler)
+	}
+	return handler
+}
+
+func WithTelemetryRateLimit(batchesPerMinute int) Option {
+	return func(handler *Handler) {
+		handler.telemetryLimiter = newTelemetryRateLimiter(batchesPerMinute, time.Minute, defaultTelemetryRateLimitEntries)
+	}
+}
+
+func WithTelemetryRejectionRecorder(record func(int)) Option {
+	return func(handler *Handler) {
+		handler.recordTelemetryRejection = record
+	}
 }
 
 // GetConfig 查询当前客户端播放配置。
@@ -73,6 +97,43 @@ func (h *Handler) CreateInternalQoSReport(ctx context.Context, c *app.RequestCon
 		return
 	}
 	h.createQoSReportWithRequest(ctx, c, req.UserID, req)
+}
+
+func (h *Handler) CreateTelemetryBatch(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	if h.telemetryLimiter != nil && !h.telemetryLimiter.Allow(userID) {
+		h.recordRejectedTelemetry(0)
+		c.JSON(http.StatusTooManyRequests, utils.H{"error": "telemetry rate limit exceeded"})
+		return
+	}
+
+	var req createTelemetryBatchRequest
+	if err := interfaceshttpbinding.BindStrictJSON(c, &req, domainplayback.MaxTelemetryPayloadBytes); err != nil {
+		h.recordRejectedTelemetry(0)
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	result, err := h.service.CreateTelemetryBatch(ctx, telemetryBatchInputFromRequest(userID, req))
+	if err != nil {
+		writePlaybackError(c, err)
+		return
+	}
+
+	status := http.StatusCreated
+	if !result.Summary.Created {
+		status = http.StatusOK
+	}
+	c.JSON(status, telemetryBatchResponseFromResult(result))
+}
+
+func (h *Handler) recordRejectedTelemetry(eventCount int) {
+	if h.recordTelemetryRejection != nil {
+		h.recordTelemetryRejection(eventCount)
+	}
 }
 
 func (h *Handler) createQoSReport(ctx context.Context, c *app.RequestContext, userID int64) {
@@ -178,9 +239,77 @@ func qosResponseFromResult(result *applicationplayback.QoSReportResult) qosRepor
 	}
 }
 
+func telemetryBatchInputFromRequest(userID int64, req createTelemetryBatchRequest) domainplayback.NewTelemetryBatchInput {
+	events := make([]domainplayback.NewTelemetryEventInput, 0, len(req.Events))
+	for _, event := range req.Events {
+		events = append(events, domainplayback.NewTelemetryEventInput{
+			EventID:               event.EventID,
+			EventType:             domainplayback.TelemetryEventType(event.EventType),
+			OffsetMs:              event.OffsetMs,
+			MediaPositionMs:       event.MediaPositionMs,
+			MediaDurationMs:       event.MediaDurationMs,
+			FirstFrameMs:          event.FirstFrameMs,
+			IntervalDurationMs:    event.IntervalDurationMs,
+			DroppedFrames:         event.DroppedFrames,
+			TotalFrames:           event.TotalFrames,
+			RebufferCount:         event.RebufferCount,
+			RebufferDurationMs:    event.RebufferDurationMs,
+			MaxRebufferDurationMs: event.MaxRebufferDurationMs,
+			StartupRetryCount:     event.StartupRetryCount,
+			MeasurementMethod:     domainplayback.TelemetryMeasurementMethod(event.MeasurementMethod),
+			RecoveryOutcome:       domainplayback.TelemetryRecoveryOutcome(event.RecoveryOutcome),
+			ErrorCategory:         domainplayback.TelemetryErrorCategory(event.ErrorCategory),
+			SourceType:            domainplayback.TelemetrySourceType(event.SourceType),
+			RenditionLabel:        event.RenditionLabel,
+			CodecFamily:           domainplayback.TelemetryCodecFamily(event.CodecFamily),
+			CDNHost:               event.CDNHost,
+		})
+	}
+	return domainplayback.NewTelemetryBatchInput{
+		UserID:            userID,
+		SchemaVersion:     req.SchemaVersion,
+		BatchID:           req.BatchID,
+		PlaybackSessionID: req.PlaybackSessionID,
+		ClientSentAt:      req.ClientSentAt,
+		Context: domainplayback.TelemetryContext{
+			VideoID:        req.Context.VideoID,
+			Scene:          req.Context.Scene,
+			RequestID:      req.Context.RequestID,
+			PlayerAdapter:  domainplayback.TelemetryPlayerAdapter(req.Context.PlayerAdapter),
+			SourceType:     domainplayback.TelemetrySourceType(req.Context.SourceType),
+			RenditionLabel: req.Context.RenditionLabel,
+			CodecFamily:    domainplayback.TelemetryCodecFamily(req.Context.CodecFamily),
+			NetworkClass:   domainplayback.TelemetryNetworkClass(req.Context.NetworkClass),
+			SaveData:       req.Context.SaveData,
+			BrowserFamily:  domainplayback.TelemetryBrowserFamily(req.Context.BrowserFamily),
+			BrowserMajor:   req.Context.BrowserMajor,
+			OSFamily:       domainplayback.TelemetryOSFamily(req.Context.OSFamily),
+			ViewportClass:  domainplayback.TelemetryViewportClass(req.Context.ViewportClass),
+			CDNHost:        req.Context.CDNHost,
+		},
+		Events: events,
+	}
+}
+
+func telemetryBatchResponseFromResult(result *applicationplayback.TelemetryBatchResult) telemetryBatchResponse {
+	summary := result.Summary
+	return telemetryBatchResponse{
+		BatchID:        summary.BatchID,
+		EventCount:     summary.EventCount,
+		AcceptedCount:  summary.AcceptedCount,
+		DuplicateCount: summary.DuplicateCount,
+		CreatedAt:      summary.CreatedAt,
+	}
+}
+
 func writePlaybackError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
 		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, domainplayback.ErrTelemetryBatchConflict) ||
+		errors.Is(err, domainplayback.ErrTelemetryEventConflict) {
+		c.JSON(http.StatusConflict, utils.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
@@ -195,5 +324,29 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainplayback.ErrInvalidFirstFrameMs) ||
 		errors.Is(err, domainplayback.ErrInvalidStutterCount) ||
 		errors.Is(err, domainplayback.ErrInvalidWatchMs) ||
-		errors.Is(err, domainplayback.ErrIdempotencyKeyTooLong)
+		errors.Is(err, domainplayback.ErrIdempotencyKeyTooLong) ||
+		errors.Is(err, domainplayback.ErrUnsupportedTelemetryVersion) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryReporter) ||
+		errors.Is(err, domainplayback.ErrEmptyTelemetryBatchID) ||
+		errors.Is(err, domainplayback.ErrTelemetryBatchIDTooLong) ||
+		errors.Is(err, domainplayback.ErrEmptyTelemetrySessionID) ||
+		errors.Is(err, domainplayback.ErrTelemetrySessionIDTooLong) ||
+		errors.Is(err, domainplayback.ErrTelemetryAnonymousSessionIDTooLong) ||
+		errors.Is(err, domainplayback.ErrEmptyTelemetrySentAt) ||
+		errors.Is(err, domainplayback.ErrTelemetrySentAtOutOfRange) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryContext) ||
+		errors.Is(err, domainplayback.ErrTelemetryStringTooLong) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryEventCount) ||
+		errors.Is(err, domainplayback.ErrEmptyTelemetryEventID) ||
+		errors.Is(err, domainplayback.ErrTelemetryEventIDTooLong) ||
+		errors.Is(err, domainplayback.ErrDuplicateTelemetryEventID) ||
+		errors.Is(err, domainplayback.ErrUnsupportedTelemetryEventType) ||
+		errors.Is(err, domainplayback.ErrTelemetryEventsOutOfOrder) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryOffset) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryPosition) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryDuration) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryMetric) ||
+		errors.Is(err, domainplayback.ErrInvalidTelemetryDimension) ||
+		errors.Is(err, domainplayback.ErrMissingTelemetryField) ||
+		errors.Is(err, domainplayback.ErrUnexpectedTelemetryField)
 }

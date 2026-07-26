@@ -32,10 +32,29 @@ func TestNormalizeAndValidateMediaConfigAcceptsS3CompatibleEndpoint(t *testing.T
 			Region: "us-east-1", Bucket: "gcfeed-media", AccessKey: "minio", SecretKey: "secret", UsePathStyle: true,
 		},
 	}
+
 	if err := normalizeAndValidateMediaConfig(&cfg); err != nil {
 		t.Fatalf("normalize S3 media config: %v", err)
 	}
 	if cfg.S3.Endpoint != "http://minio:9000" || cfg.S3.PresignEndpoint != "http://127.0.0.1:9000" {
 		t.Fatalf("unexpected endpoints: %+v", cfg.S3)
+	}
+}
+
+func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
+	var cfg PlaybackConfig
+	if err := normalizeAndValidatePlaybackConfig(&cfg); err != nil {
+		t.Fatalf("normalize playback config: %v", err)
+	}
+	if cfg.Telemetry.Retention != "168h" ||
+		cfg.Telemetry.CleanupInterval != "1h" ||
+		cfg.Telemetry.CleanupBatchSize != 1000 ||
+		cfg.Telemetry.MaxBatchesPerMinute != 60 {
+		t.Fatalf("unexpected playback defaults: %+v", cfg.Telemetry)
+	}
+
+	cfg.Telemetry.CleanupInterval = "200h"
+	if err := normalizeAndValidatePlaybackConfig(&cfg); !errors.Is(err, ErrInvalidPlaybackConfig) {
+		t.Fatalf("expected invalid cleanup interval, got %v", err)
 	}
 }
