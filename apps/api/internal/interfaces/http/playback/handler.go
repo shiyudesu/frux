@@ -34,7 +34,7 @@ func (h *Handler) GetConfig(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, configResponseFromResult(result))
 }
 
-// ListPreloadVideos 查询 Feed 当前视频之后的预加载资源。
+// ListPreloadVideos 保留兼容客户端使用的发布时间顺序补充接口。
 func (h *Handler) ListPreloadVideos(ctx context.Context, c *app.RequestContext) {
 	currentVideoID, err := parseOptionalInt64(c.Query("current_video_id"))
 	if err != nil {

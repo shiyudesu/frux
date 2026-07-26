@@ -58,7 +58,7 @@ func (s *Service) GetConfig(ctx context.Context, platform string, networkType st
 	return &ConfigResult{Config: normalizeConfig(config, platform, networkType)}, nil
 }
 
-// ListPreloadVideos 查询当前视频后续资源，供端侧预加载。
+// ListPreloadVideos 为兼容客户端查询按发布时间排列的补充资源。
 func (s *Service) ListPreloadVideos(ctx context.Context, currentVideoID int64, limit int) (*PreloadResult, error) {
 	if currentVideoID < 0 {
 		return nil, domainplayback.ErrInvalidVideoID

@@ -57,7 +57,11 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     loadingMore,
     current,
     loadFeed,
-    updateCurrentItem
+    updateCurrentItem,
+    preloadController,
+    preloadCandidateByVideoID,
+    preloadPolicy,
+    preloadDebug
   } = useFeed(feedScene, feedCallbacks);
 
   const { swipe, setSwipe, moveTo, handlePointerDown, handlePointerMove, handlePointerEnd, handleWheel } = useSwipe({
@@ -304,7 +308,16 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const trackStyle = getFeedTrackStyle(swipe);
 
   return (
-    <main className={`feed-layout ${commentsOpen ? "details-open" : ""}`} data-ui="feed-layout">
+    <main
+      className={`feed-layout ${commentsOpen ? "details-open" : ""}`}
+      data-ui="feed-layout"
+      data-preload-network={preloadPolicy.networkClass}
+      data-preload-resources={preloadDebug.activeResources}
+      data-preload-ready={preloadDebug.ready}
+      data-preload-reused={preloadDebug.reused}
+      data-preload-cancellations={preloadDebug.cancellations}
+      data-preload-failures={preloadDebug.failures}
+    >
       <section
         className="feed-main"
         data-ui="feed-main"
@@ -346,6 +359,9 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onViewEvent={reportVideoViewEvent}
                     onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                     followError={followError}
+                    preloadCandidate={preloadCandidateByVideoID.get(visibleNext.video_id)}
+                    preloadController={preloadController}
+                    preloadPolicy={preloadPolicy}
                   />
                 </div>
               )}
@@ -368,6 +384,9 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   onViewEvent={reportVideoViewEvent}
                   onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                   followError={followError}
+                  preloadCandidate={preloadCandidateByVideoID.get(visibleCurrent.video_id)}
+                  preloadController={preloadController}
+                  preloadPolicy={preloadPolicy}
                 />
               </div>
               {swipe?.direction === "next" && visibleNext && (
@@ -388,6 +407,9 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onViewEvent={reportVideoViewEvent}
                     onOpenAuthor={(author) => openPublicProfile(author, navigate)}
                     followError={followError}
+                    preloadCandidate={preloadCandidateByVideoID.get(visibleNext.video_id)}
+                    preloadController={preloadController}
+                    preloadPolicy={preloadPolicy}
                   />
                 </div>
               )}

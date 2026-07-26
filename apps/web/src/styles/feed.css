@@ -109,6 +109,10 @@
   background: transparent;
 }
 
+.stage-media-host {
+  display: contents;
+}
+
 video.stage-media {
   cursor: pointer;
 }

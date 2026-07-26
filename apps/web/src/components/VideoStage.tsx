@@ -1,5 +1,16 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { image } from "../constants";
+import {
+  feedPreloadResourceKey,
+  type EffectiveFeedPreloadPolicy,
+  type FeedPreloadCandidate,
+  type FeedPreloadMediaEvent,
+  type FeedPreloadMediaResource
+} from "../feedPreload";
+import {
+  createNativeFeedPreloadMediaResource,
+  type FeedPreloadController
+} from "../feedPreloadController";
 import { PlaybackLifecycle } from "../playbackLifecycle";
 import type { CreateViewEventRequest, FeedVideo } from "../types";
 import type { PlaybackQoSMetrics, PublicProfileInput, VideoQoSState } from "../utils";
@@ -29,6 +40,9 @@ export interface VideoStageProps {
   onPlaybackQoS?: (item: FeedVideo, metrics: PlaybackQoSMetrics) => void;
   onViewEvent?: (event: CreateViewEventRequest, keepalive?: boolean) => void;
   onOpenAuthor: (profile: PublicProfileInput) => void;
+  preloadCandidate?: FeedPreloadCandidate;
+  preloadController?: FeedPreloadController;
+  preloadPolicy?: EffectiveFeedPreloadPolicy;
 }
 
 export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function VideoStage(
@@ -48,7 +62,10 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     onFollow,
     onPlaybackQoS,
     onViewEvent,
-    onOpenAuthor
+    onOpenAuthor,
+    preloadCandidate,
+    preloadController,
+    preloadPolicy
   },
   ref
 ) {
@@ -56,8 +73,10 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   const media = item.media_url || cover;
   const showVideo = isVideoSource(media);
   const stageRef = useRef<HTMLElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const mediaHostRef = useRef<HTMLDivElement | null>(null);
+  const mediaRef = useRef<FeedPreloadMediaResource | null>(null);
   const itemRef = useRef(item);
+  const activeRef = useRef(active);
   const qosRef = useRef<VideoQoSState>(createVideoQoSState(item.video_id));
   const lifecycleRef = useRef<PlaybackLifecycle | null>(null);
   const onViewEventRef = useRef(onViewEvent);
@@ -68,6 +87,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   const [duration, setDuration] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [playbackError, setPlaybackError] = useState("");
+  activeRef.current = active;
 
   useEffect(() => {
     itemRef.current = item;
@@ -104,7 +124,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   }, [onPlaybackQoS]);
 
   const playVideo = useCallback(() => {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video || !showVideo) return;
     video.play().catch(() => {
       setPlaybackError("浏览器暂时无法播放该视频");
@@ -113,7 +133,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   }, [showVideo]);
 
   const togglePlayback = useCallback(() => {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video || !showVideo) return;
     setPlaybackError("");
     if (video.paused) {
@@ -145,7 +165,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     const lifecycle = lifecycleRef.current;
     const timer = window.setTimeout(() => {
       if (lifecycleRef.current === lifecycle && lifecycle) {
-        const video = videoRef.current;
+        const video = mediaRef.current;
         const now = performance.now();
         const events = lifecycle.activate(now);
         if (video && !video.paused && !video.ended) {
@@ -167,8 +187,52 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     };
   }, [active, flushQoS, item.video_id, showVideo]);
 
+  const preloadKey = preloadCandidate ? feedPreloadResourceKey(preloadCandidate.key) : "";
+
   useEffect(() => {
-    const video = videoRef.current;
+    const host = mediaHostRef.current;
+    if (!host || !showVideo) return undefined;
+
+    const acquired =
+      preloadCandidate && preloadController && preloadPolicy
+        ? preloadController.acquireCandidate(preloadCandidate, preloadPolicy)
+        : undefined;
+    const resource = acquired?.media || createNativeFeedPreloadMediaResource();
+    if (!acquired) {
+      resource.configure(media, cover, "buffer");
+      resource.load();
+    }
+    resource.muted = muted;
+    resource.mount(host, "stage-media");
+    mediaRef.current = resource;
+    const unsubscribe = resource.subscribe(handleMediaEvent);
+    handleLoadedMetadata();
+    if (resource.readyState >= 2) {
+      handleLoadedData();
+    }
+    if (activeRef.current) {
+      resource.play().catch(() => {
+        setPlaybackError("浏览器暂时无法播放该视频");
+        setPlaying(false);
+      });
+    }
+
+    return () => {
+      unsubscribe();
+      resource.pause();
+      if (mediaRef.current === resource) {
+        mediaRef.current = null;
+      }
+      if (acquired) {
+        acquired.release();
+      } else {
+        resource.destroy();
+      }
+    };
+  }, [cover, item.video_id, media, preloadController, preloadKey, preloadPolicy, showVideo]);
+
+  useEffect(() => {
+    const video = mediaRef.current;
     if (!video || !showVideo) return;
     if (active) {
       playVideo();
@@ -188,7 +252,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   useEffect(() => {
     if (!showVideo) return undefined;
     const handleVisibilityChange = () => {
-      const video = videoRef.current;
+      const video = mediaRef.current;
       const lifecycle = lifecycleRef.current;
       if (!lifecycle) return;
       emitViewEvents(
@@ -202,7 +266,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       );
     };
     const handlePageHide = (event: PageTransitionEvent) => {
-      const video = videoRef.current;
+      const video = mediaRef.current;
       const lifecycle = lifecycleRef.current;
       if (!lifecycle) return;
       const events = event.persisted
@@ -212,7 +276,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     };
     const handlePageShow = (event: PageTransitionEvent) => {
       if (!event.persisted) return;
-      const video = videoRef.current;
+      const video = mediaRef.current;
       const lifecycle = lifecycleRef.current;
       if (!lifecycle) return;
       const now = performance.now();
@@ -233,13 +297,13 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
 
   function handleLoadedData() {
     const state = qosRef.current;
-    if (!active || !state || state.firstFrameMs !== undefined) return;
+    if (!activeRef.current || !state || state.firstFrameMs !== undefined) return;
     const startedAt = state.loadStartedAt || performance.now();
     state.firstFrameMs = Math.max(0, Math.round(performance.now() - startedAt));
   }
 
   function handleLoadedMetadata() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     setDuration(Number.isFinite(video.duration) ? video.duration : 0);
     setCurrentTime(video.currentTime || 0);
@@ -247,16 +311,19 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
 
   function handlePlaying() {
     const state = qosRef.current;
-    const video = videoRef.current;
+    const video = mediaRef.current;
     setPlaying(true);
     setPlaybackError("");
     startCompletionPoll();
     if (video) {
       emitViewEvents(lifecycleRef.current?.playing(performance.now(), video.currentTime, video.duration) || []);
     }
-    if (!active || !state) return;
+    if (!activeRef.current || !state) return;
     if (!state.loadStartedAt) {
       state.loadStartedAt = performance.now();
+    }
+    if (state.firstFrameMs === undefined) {
+      state.firstFrameMs = Math.max(0, Math.round(performance.now() - state.loadStartedAt));
     }
     if (!state.playingStartedAt) {
       state.playingStartedAt = performance.now();
@@ -264,7 +331,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   }
 
   function handlePause() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     setPlaying(false);
     stopCompletionPoll();
     if (video) {
@@ -275,37 +342,37 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
 
   function handleWaiting() {
     const state = qosRef.current;
-    const video = videoRef.current;
+    const video = mediaRef.current;
     stopCompletionPoll();
     if (video) {
       lifecycleRef.current?.waiting(performance.now(), video.currentTime, video.duration);
     }
-    if (!active || !state) return;
+    if (!activeRef.current || !state) return;
     state.stutterCount += 1;
   }
 
   function handleTimeUpdate() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     setCurrentTime(video.currentTime || 0);
     emitViewEvents(lifecycleRef.current?.timeUpdate(performance.now(), video.currentTime, video.duration) || []);
   }
 
   function handleSeek(value: number) {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video || !Number.isFinite(value)) return;
     video.currentTime = Math.max(0, Math.min(value, video.duration || value));
     setCurrentTime(video.currentTime);
   }
 
   function handleSeeking() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     lifecycleRef.current?.seeking(performance.now(), video.currentTime, video.duration);
   }
 
   function handleSeeked() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     emitViewEvents(
       lifecycleRef.current?.seeked(
@@ -318,7 +385,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   }
 
   function handleEnded() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     stopCompletionPoll();
     if (video) {
       emitViewEvents(lifecycleRef.current?.timeUpdate(performance.now(), video.duration, video.duration) || []);
@@ -328,9 +395,9 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
 
   function startCompletionPoll() {
     stopCompletionPoll();
-    if (!active) return;
+    if (!activeRef.current) return;
     completionPollRef.current = window.setInterval(() => {
-      const video = videoRef.current;
+      const video = mediaRef.current;
       if (!video || video.paused || video.ended) return;
       emitViewEvents(lifecycleRef.current?.timeUpdate(performance.now(), video.currentTime, video.duration) || []);
     }, 250);
@@ -343,10 +410,53 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   }
 
   function handleToggleMute() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     video.muted = !video.muted;
     setMuted(video.muted);
+  }
+
+  function handleMediaEvent(event: FeedPreloadMediaEvent) {
+    switch (event) {
+      case "durationchange":
+      case "loadedmetadata":
+        handleLoadedMetadata();
+        break;
+      case "loadeddata":
+        handleLoadedData();
+        break;
+      case "playing":
+        handlePlaying();
+        break;
+      case "pause":
+        handlePause();
+        break;
+      case "waiting":
+        handleWaiting();
+        break;
+      case "timeupdate":
+        handleTimeUpdate();
+        break;
+      case "seeking":
+        handleSeeking();
+        break;
+      case "seeked":
+        handleSeeked();
+        break;
+      case "ended":
+        handleEnded();
+        break;
+      case "volumechange":
+        setMuted(mediaRef.current?.muted ?? true);
+        break;
+      case "error":
+        setPlaybackError("视频加载失败，请稍后重试");
+        setPlaying(false);
+        break;
+      case "canplay":
+      case "progress":
+        break;
+    }
   }
 
   function handleToggleFullscreen() {
@@ -365,29 +475,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       <img className="stage-backdrop" src={cover} alt="" />
       <div className="stage-vignette" />
       {showVideo ? (
-        <video
-          ref={videoRef}
-          className="stage-media"
-          src={media}
-          poster={cover}
-          autoPlay={active}
-          muted={muted}
-          loop
-          playsInline
-          preload={active ? "metadata" : "none"}
-          onClick={togglePlayback}
-          onDurationChange={handleLoadedMetadata}
-          onLoadedData={handleLoadedData}
-          onLoadedMetadata={handleLoadedMetadata}
-          onPause={handlePause}
-          onPlaying={handlePlaying}
-          onSeeked={handleSeeked}
-          onSeeking={handleSeeking}
-          onTimeUpdate={handleTimeUpdate}
-          onVolumeChange={(event) => setMuted(event.currentTarget.muted)}
-          onWaiting={handleWaiting}
-          onEnded={handleEnded}
-        />
+        <div ref={mediaHostRef} className="stage-media-host" onClick={togglePlayback} />
       ) : (
         <img className="stage-media portrait-media" src={media} alt="" />
       )}

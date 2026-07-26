@@ -323,12 +323,14 @@ HTTP 层使用 `errors.Is` 映射状态码。响应保持简洁：
 
 ```text
 apps/web/src/types.ts        # 领域/API 类型 + localStorage type guard
+apps/web/src/feedPreload.ts  # Feed 预加载契约、网络策略、候选顺序与分页边界
+apps/web/src/feedPreloadController.ts # 有界原生媒体资源、代际取消、复用与调试状态
 apps/web/src/api/            # apiRequest<T> 客户端与按域 fetch（feed/messages/social/account/creator/library）
 apps/web/src/session.tsx     # SessionContext + useSession/useUnreadCount
 apps/web/src/router.tsx      # Route union + normalizeRoute + useRoute/useNavigate
 apps/web/src/pages/          # Login/Feed/Messages/Profile/PublicProfile/Upload
 apps/web/src/components/     # AppShell/导航/Icon/VideoStage/FeedDetailsPanel 等共享组件
-apps/web/src/hooks/          # useFeed/useComments/useSwipe/useCreatorContent/useProfileLibrary
+apps/web/src/hooks/          # useFeed/useFeedPreloading/useComments/useSwipe/useCreatorContent/useProfileLibrary
 apps/web/src/styles/         # tokens/base/shell/feed/pages/responsive 模块化样式
 apps/web/src/App.tsx         # Provider 组装 + 路由分发
 apps/web/src/main.tsx
@@ -350,6 +352,8 @@ apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 - CSS class 使用语义命名。
 - 图标使用 `components/Icon.tsx` 的本地 SVG 注册表与 `IconName` 联合类型，不引入图标字体或复制第三方品牌资产。
 - 用户端 Shell 通过稳定 `data-ui` 标记支持浏览器几何和响应式验证。
+- Feed 预加载候选必须来自活动场景已返回的有序 items；兼容 `/api/preload-videos` 不得作为 Web 场景排序来源。
+- 保留媒体资源必须有严格数量上限，并在 scene、请求代际、登录态或源版本变化时清理监听器、定时器、src 和缓冲状态。
 
 ## 14. 测试规范
 

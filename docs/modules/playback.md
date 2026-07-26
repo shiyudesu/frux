@@ -9,7 +9,7 @@
 | 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
 | --- | --- | --- | --- | --- |
 | GET | `/api/playback-config` | 获取端侧播放参数 | Bearer JWT | 无 |
-| GET | `/api/preload-videos` | 获取预加载视频列表 | Bearer JWT | 无 |
+| GET | `/api/preload-videos` | 兼容客户端按发布时间获取补充资源 | Bearer JWT | 无 |
 | POST | `/api/playback-qos-reports` | Web 客户端上报首帧和卡顿质量数据 | Bearer JWT | 支持 |
 | POST | `/internal/playback-qos-reports` | 上报首帧和卡顿质量数据 | 服务鉴权 | 支持 |
 
@@ -48,7 +48,11 @@
 | 规则 | 说明 |
 | --- | --- |
 | 播放配置按端和网络匹配 | Web 和移动端可使用不同预加载策略 |
-| 预加载围绕当前 Feed 页 | 返回当前视频后续若干条视频资源 |
+| Web 预加载服从活动 Feed 顺序 | 当前 Web 从活动场景已经返回的有序 items 派生上一条、当前条和后续窗口 |
+| 兼容补充接口不代表 Feed 顺序 | `/api/preload-videos` 仅按发布时间为旧客户端提供 current-video/refill 资源 |
+| 端侧策略有界 | `preload_count` 绝对上限为 4；低内存、慢网、省流和离线状态会进一步收缩或只加载封面/元数据 |
+| 缓冲阈值真实生效 | 立即下一条达到有效 `buffer_ms` 时标记可切换；无可靠 buffered range 时使用 `canplay` 兜底 |
+| 预加载代际隔离 | scene、请求代际、登录态、video ID 或源版本变化会取消旧任务并释放资源 |
 | 预加载只读公开内容 | 当前视频定位和后续候选要求 `status=published AND visibility=public`，且媒体为 `legacy_ready` 或 `ready` |
 | 播放源保持兼容 | 响应保留 `media_url`、`cover_url`，生产媒体附加有序 `playback_sources` 和 `media_status` |
 | 基线优先 | `media_url` 始终投影浏览器兼容 H.264/AAC faststart MP4；DASH 和其他 MP4 清晰度作为增量来源 |
@@ -61,7 +65,9 @@
 | 场景 | 期望 |
 | --- | --- |
 | 获取 Web 播放配置 | 返回 preload_count 和 buffer_ms |
-| 获取预加载视频 | 返回后续视频列表 |
+| 获取兼容补充视频 | 按发布时间返回 current-video 之后的资源；无锚点时从最新资源 refill |
+| Feed 场景预加载 | 推荐、热门、关注、时间线均严格保持各自响应顺序 |
+| 网络策略 | WiFi/5G、4G/default、慢网、离线和 save-data 使用有界差异化策略 |
 | 当前视频变私密 | 不作为预加载定位点或返回项 |
 | 视频仍在处理 | 不进入预加载列表 |
 | 多变体视频 | 返回稳定排序的 MP4 与 DASH 播放源，同时旧客户端仍可使用 `media_url` |
@@ -72,6 +78,7 @@
 
 | 页面 | 接入能力 |
 | --- | --- |
-| Feed 页 | 获取播放配置和预加载视频 |
+| Feed 页 | 获取播放配置；从当前 Feed items 派生有序候选并提前触发原分页 |
+| Feed 预加载控制器 | 保留有界原生视频资源、复用已准备媒体、记录 attempt/ready/reuse/cancel/failure 调试计数 |
 | 视频播放器 | 上报首帧耗时、卡顿次数和观看时长 |
 | 监控看板 | 展示播放质量指标 |

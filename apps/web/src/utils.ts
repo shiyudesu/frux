@@ -3,6 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { DEFAULT_PLAYBACK_CONFIG, PUBLIC_PROFILE_KEY, image } from "./constants";
 import type { IconName } from "./components/Icon";
+import { playbackNetworkType, readFeedPreloadEnvironment } from "./feedPreload";
 import type { Route } from "./router";
 import {
   parseStoredPublicProfiles,
@@ -12,7 +13,6 @@ import {
   type FeedVideo,
   type Message,
   type PlaybackConfig,
-  type PreloadVideo,
   type StoredPublicProfile
 } from "./types";
 
@@ -101,76 +101,8 @@ export function normalizePlaybackConfig(config: Partial<PlaybackConfig> | null |
   };
 }
 
-/** navigator.connection 是非标准 API，用最小接口声明而非 any */
-interface NetworkInformation {
-  effectiveType?: string;
-  type?: string;
-}
-
 export function detectNetworkType(): string {
-  const nav = navigator as Navigator & {
-    connection?: NetworkInformation;
-    mozConnection?: NetworkInformation;
-    webkitConnection?: NetworkInformation;
-  };
-  const connection = nav.connection || nav.mozConnection || nav.webkitConnection;
-  const raw = String(connection?.effectiveType || connection?.type || "").toLowerCase();
-  if (raw.includes("wifi")) return "WiFi";
-  if (raw.includes("5g")) return "5G";
-  if (raw.includes("4g")) return "4G";
-  if (raw.includes("3g")) return "3G";
-  return DEFAULT_PLAYBACK_CONFIG.network_type;
-}
-
-// ---------- 资源预热 ----------
-
-export function prewarmVideoAssets(items: PreloadVideo[], loadedSet: Set<string>): void {
-  for (const item of items) {
-    const coverKey = `cover:${item.cover_url || ""}`;
-    if (item.cover_url && !loadedSet.has(coverKey)) {
-      const imagePreload = new Image();
-      imagePreload.src = item.cover_url;
-      loadedSet.add(coverKey);
-    }
-    prewarmVideoMetadata(item.media_url, loadedSet);
-  }
-}
-
-function prewarmVideoMetadata(url: string, loadedSet: Set<string>): void {
-  const mediaURL = String(url || "").trim();
-  const mediaKey = `metadata:${mediaURL}`;
-  if (!mediaURL || loadedSet.has(mediaKey) || typeof document === "undefined") return;
-  loadedSet.add(mediaKey);
-
-  const probe = document.createElement("video");
-  probe.preload = "metadata";
-  probe.src = mediaURL;
-  probe.muted = true;
-  probe.playsInline = true;
-  probe.setAttribute("aria-hidden", "true");
-  probe.style.position = "absolute";
-  probe.style.width = "1px";
-  probe.style.height = "1px";
-  probe.style.opacity = "0";
-  probe.style.pointerEvents = "none";
-
-  let timer = 0;
-  const cleanup = () => {
-    window.clearTimeout(timer);
-    probe.removeEventListener("loadedmetadata", cleanup);
-    probe.removeEventListener("canplay", cleanup);
-    probe.removeEventListener("error", cleanup);
-    probe.removeAttribute("src");
-    probe.load();
-    probe.remove();
-  };
-
-  probe.addEventListener("loadedmetadata", cleanup);
-  probe.addEventListener("canplay", cleanup);
-  probe.addEventListener("error", cleanup);
-  timer = window.setTimeout(cleanup, 4000);
-  document.body.appendChild(probe);
-  probe.load();
+  return playbackNetworkType(readFeedPreloadEnvironment(typeof navigator === "undefined" ? undefined : navigator));
 }
 
 // ---------- 播放 QoS ----------

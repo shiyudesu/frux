@@ -5,7 +5,7 @@
 // 这两个 setter 现在属于 useSwipe/useComments，因此由容器组件通过 callbacks 注入。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiErrorMessage, isUnauthorized } from "../api/client";
-import { fetchFeedPage, fetchPlaybackConfig, fetchPreloadVideos } from "../api/feed";
+import { fetchFeedPage, fetchPlaybackConfig } from "../api/feed";
 import { DEFAULT_PLAYBACK_CONFIG, getFeedSceneMeta } from "../constants";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
@@ -16,10 +16,10 @@ import {
   mapFeedItem,
   mergeViewerActions,
   normalizePlaybackConfig,
-  prewarmVideoAssets,
   requiresAuthFeed,
   viewerActionMap
 } from "../utils";
+import { useFeedPreloading } from "./useFeedPreloading";
 
 export type FeedState = "loading" | "auth" | "error" | "ready";
 
@@ -44,17 +44,18 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [playbackConfig, setPlaybackConfig] = useState<PlaybackConfig>(DEFAULT_PLAYBACK_CONFIG);
   const [feedRequestID, setFeedRequestID] = useState("");
+  const [feedGeneration, setFeedGeneration] = useState(0);
   const loadingMoreRef = useRef(false);
   const feedRequestIDRef = useRef("");
   const feedGenerationRef = useRef(0);
   const sessionTokenRef = useRef(session.token);
-  const preloadedVideoRef = useRef(new Set<string>());
   const currentFeedScene = getFeedSceneMeta(feedScene);
   sessionTokenRef.current = session.token;
 
   const loadFeed = useCallback(() => {
     let live = true;
     const generation = ++feedGenerationRef.current;
+    setFeedGeneration(generation);
     const requestToken = session.token;
     if (requiresAuthFeed(feedScene) && !session.token) {
       callbacks.resetSwipe();
@@ -155,7 +156,6 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
   useEffect(() => {
     if (!session.token) {
       setPlaybackConfig(DEFAULT_PLAYBACK_CONFIG);
-      preloadedVideoRef.current = new Set<string>();
       return undefined;
     }
 
@@ -183,40 +183,25 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     };
   }, [navigate, session.clearAuth, session.token]);
 
-  useEffect(() => {
-    if (feedState === "ready" && items.length > 0 && index >= items.length - 3) {
-      loadMoreFeed();
-    }
-  }, [feedState, index, items.length, loadMoreFeed]);
-
   const current = items[index];
 
   const updateCurrentItem = useCallback((videoID: number, patch: Partial<FeedVideo>) => {
     setItems((state) => state.map((item) => (item.video_id === videoID ? { ...item, ...patch } : item)));
   }, []);
 
-  // 预加载：拉取接下来要播的视频并预热封面/元数据
-  useEffect(() => {
-    if (!current || feedState !== "ready" || !session.token) return undefined;
-    let live = true;
-    const requestToken = session.token;
-    const generation = feedGenerationRef.current;
-    fetchPreloadVideos(requestToken, current.video_id, playbackConfig.preload_count)
-      .then((data) => {
-        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
-        prewarmVideoAssets(data.items || [], preloadedVideoRef.current);
-      })
-      .catch((error: unknown) => {
-        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
-        if (isUnauthorized(error) && requiresAuthFeed(feedScene)) {
-          session.clearAuth();
-          navigate("/auth");
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [current?.video_id, feedScene, feedState, navigate, playbackConfig.preload_count, session.clearAuth, session.token]);
+  const preloading = useFeedPreloading({
+    scene: feedScene,
+    requestID: feedRequestID,
+    requestGeneration: feedGeneration,
+    authKey: session.token,
+    items,
+    activeIndex: index,
+    playbackConfig,
+    ready: feedState === "ready",
+    hasMore,
+    loadingMore,
+    loadMore: loadMoreFeed
+  });
 
   return {
     items,
@@ -232,6 +217,10 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     loadingMore,
     current,
     loadFeed,
-    updateCurrentItem
+    updateCurrentItem,
+    preloadController: preloading.controller,
+    preloadCandidateByVideoID: preloading.candidateByVideoID,
+    preloadPolicy: preloading.policy,
+    preloadDebug: preloading.debug
   };
 }

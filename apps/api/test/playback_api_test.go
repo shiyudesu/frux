@@ -209,6 +209,14 @@ func TestPlaybackAPIFlow(t *testing.T) {
 		t.Fatalf("unexpected preload items: %+v", preload.Items)
 	}
 
+	refillResponse := performJSONRequest(router, http.MethodGet, "/api/preload-videos?limit=2", "", token)
+	requireStatus(t, refillResponse, http.StatusOK)
+
+	decodeJSON(t, refillResponse, &preload)
+	if len(preload.Items) != 2 || preload.Items[0].VideoID != 103 || preload.Items[1].VideoID != 102 {
+		t.Fatalf("unexpected compatibility refill items: %+v", preload.Items)
+	}
+
 	firstFrameMs := 186
 	qosResponse := performPlaybackJSONRequest(
 		router,

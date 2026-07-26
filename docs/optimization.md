@@ -217,3 +217,11 @@ feed:hot:window:v1:{windowEndUnix}
 - 处理输出先保留在受保护前缀，公开发布时提升为按资产、处理版本和校验和组成的不可变键。MP4/segment 使用一年 immutable 缓存，manifest 使用短缓存。
 - `media_url` 保留基线兼容，`playback_sources` 增量返回多源，避免旧客户端同步升级。
 - 重点指标为对象操作耗时、处理成功/失败、输出数量、过期租约、孤儿对象和清理积压；标签不得包含用户、视频、资产或对象键。
+
+## 14. Feed 顺序预加载
+
+- 候选直接来自活动 Feed 的有序 items，避免推荐、热门和关注场景被全局发布时间顺序污染。
+- 默认网络最多准备立即后续 2 条，WiFi/5G 最多 4 条，慢网只准备下一条元数据，离线或 save-data 不主动加载视频字节。
+- 控制器保留上一条、当前条和前向窗口，使用 `buffer_ms`、buffered range 与 `canplay` 判定就绪，并通过源版本、重试冷却和 LRU 控制失效与内存。
+- Feed 接近页尾时提前走原分页，不调用兼容 `/api/preload-videos` 创建第二排序模型。
+- 页面提供无用户、视频或请求标签的 attempts、ready、reuse、cancellation、failure 和活动资源调试状态。

@@ -124,7 +124,7 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 规划中 | 后台运营 | PUT | `/api/admin/review/tasks/{taskId}/assignee` | 分配审核员 |
 | 规划中 | 后台运营 | PATCH | `/api/admin/configs/{configKey}` | 更新运营配置 |
 | 已实现 | 播放优化 | GET | `/api/playback-config` | 播放参数下发 |
-| 已实现 | 播放优化 | GET | `/api/preload-videos` | 预加载建议 |
+| 已实现 | 播放优化 | GET | `/api/preload-videos` | 兼容客户端的发布时间顺序补充资源 |
 | 已实现 | 播放优化 | POST | `/api/playback-qos-reports` | Web 播放质量上报 |
 | 已实现 | 播放优化 | POST | `/internal/playback-qos-reports` | 服务端播放质量上报 |
 | 规划中 | 系统治理 | GET | `/internal/governance/degrade-switches` | 查询降级开关 |

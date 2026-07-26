@@ -307,6 +307,14 @@ sum(rate(gcfeed_feed_cache_requests_total{result="hit"}[5m])) by (area)
 
 浏览器检查必须使用 Windows 真 Chrome，覆盖自动播放、手动暂停、seek、滚轮/拖拽切换、页面隐藏、`pagehide/pageshow` 和 React Strict Mode 开发环境。网络面板中同一播放会话不应出现重复 `exposed`/`complete`，退出请求应使用 keepalive。
 
+Feed 预加载检查同时覆盖：
+
+- `timeline`、`hot`、`following`、`recommend` 的请求顺序与实际后续媒体请求顺序一致，Web 不再调用 `/api/preload-videos`。
+- 前进后退切换会复用准备资源，活动窗口外的视频元素、监听器和请求被释放。
+- DevTools 模拟 3G 时只准备下一条元数据；offline 或 save-data 时不主动请求后续视频字节；恢复网络后策略重新计算。
+- 接近当前页末尾时只触发原 Feed 分页一次，追加项进入同一预加载窗口。
+- 宽屏和移动视口切换后 `data-preload-resources` 不超过有效策略上限，失败只增加低基数调试计数且不让 Feed 进入错误状态。
+
 ## 生产媒体链路验证
 
 1. 使用上传页提交代表性 360p、720p、1080p 视频，确认浏览器 PUT 直接发往 MinIO/S3，API 不承载文件正文。

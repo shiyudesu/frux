@@ -53,7 +53,7 @@ func (r *Repository) FindConfig(ctx context.Context, platform string, networkTyp
 	return restoreConfig(model), nil
 }
 
-// ListPreloadVideos 读取当前视频之后的公开资源；currentVideoID 为空时返回最新资源。
+// ListPreloadVideos 按发布时间读取兼容补充资源；currentVideoID 为空时从最新资源开始。
 func (r *Repository) ListPreloadVideos(ctx context.Context, currentVideoID int64, limit int) ([]*domainplayback.PreloadVideo, error) {
 	query := r.db.WithContext(ctx).
 		Table("video AS v").
