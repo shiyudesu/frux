@@ -715,3 +715,23 @@ video.stage-media {
 .comment-form input:disabled {
   opacity: 0.5;
 }
+
+.rail-more { position: relative; }
+.recommendation-feedback-menu {
+  position: absolute;
+  right: 48px;
+  bottom: 0;
+  display: grid;
+  width: 176px;
+  gap: 4px;
+  padding: 8px;
+  color: var(--gc-text);
+  border: 1px solid var(--gc-line);
+  border-radius: 10px;
+  background: var(--gc-surface);
+  box-shadow: var(--gc-shadow-stage);
+}
+.recommendation-feedback-menu p { min-height: 16px; margin: 0 4px 4px; color: var(--gc-muted); font-size: 11px; }
+.recommendation-feedback-menu button { padding: 8px; color: var(--gc-text); border-radius: 7px; background: transparent; text-align: left; }
+.recommendation-feedback-menu button:hover:not(:disabled) { background: var(--gc-surface-raised); }
+.recommendation-feedback-menu button:disabled { opacity: .55; }

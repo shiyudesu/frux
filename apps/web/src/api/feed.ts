@@ -6,22 +6,40 @@ import type {
   FeedQueryRequest,
   PlaybackTelemetryBatch,
   PlaybackConfig,
-  PreloadVideosResponse
+  PreloadVideosResponse,
+  RecommendationContext,
+  CreateRecommendationFeedbackRequest,
+  RecommendationFeedbackResponse,
+  RecommendationPlaybackCapability,
+  PlaybackTelemetryNetworkClass,
+  PlaybackTelemetryViewportClass
 } from "../types";
 import type { PlaybackQoSPayload } from "../utils";
+import { readFeedPreloadEnvironment } from "../feedPreload";
 import { detectNetworkType } from "../utils";
 import { apiRequest } from "./client";
 
-export function fetchFeedPage(scene: string, token: string, cursor = "", requestID = ""): Promise<FeedItemsResponse> {
+export interface RecommendationContextInput {
+  requestID: string;
+  sessionID: string;
+  refreshIndex: number;
+  recentVideoIDs: number[];
+  currentVideoID: number;
+}
+
+export function fetchFeedPage(
+  scene: string,
+  token: string,
+  cursor = "",
+  context?: RecommendationContext
+): Promise<FeedItemsResponse> {
   const limit = 10;
   if (scene === "recommend") {
     const body: FeedQueryRequest = {
       scene,
       cursor,
       limit,
-      context: {
-        request_id: requestID
-      }
+      context
     };
     return apiRequest<FeedItemsResponse>("/api/feed-queries", {
       method: "POST",
@@ -35,6 +53,26 @@ export function fetchFeedPage(scene: string, token: string, cursor = "", request
     params.set("cursor", cursor);
   }
   return apiRequest<FeedItemsResponse>(`/api/feed-items?${params.toString()}`, { token });
+}
+
+export function buildRecommendationContext(
+  input: RecommendationContextInput,
+  nav: Navigator | undefined = typeof navigator === "undefined" ? undefined : navigator,
+  viewportWidth: number | undefined = typeof window === "undefined" ? undefined : window.innerWidth,
+  documentValue: Document | undefined = typeof document === "undefined" ? undefined : document
+): RecommendationContext {
+  const environment = readFeedPreloadEnvironment(nav);
+  return {
+    request_id: input.requestID.trim().slice(0, 64),
+    session_id: input.sessionID.trim().slice(0, 64),
+    refresh_index: clampInteger(input.refreshIndex, 0, 1_000_000),
+    recent_video_ids: normalizeVideoIDs(input.recentVideoIDs, 20),
+    current_video_id: normalizeVideoID(input.currentVideoID),
+    network_class: recommendationNetworkClass(environment),
+    save_data: environment.saveData,
+    viewport_class: recommendationViewportClass(viewportWidth),
+    playback_capabilities: recommendationPlaybackCapabilities(nav, documentValue)
+  };
 }
 
 /** 后端播放配置可能缺字段，调用方用 normalizePlaybackConfig 归一化 */
@@ -60,6 +98,19 @@ export function reportVideoViewEvent(token: string, body: CreateViewEventRequest
     token,
     body,
     keepalive
+  });
+}
+
+export function createRecommendationFeedback(
+  token: string,
+  body: CreateRecommendationFeedbackRequest,
+  idempotencyKey: string
+): Promise<RecommendationFeedbackResponse> {
+  return apiRequest<RecommendationFeedbackResponse>("/api/recommendation-feedback", {
+    method: "POST",
+    token,
+    headers: { "Idempotency-Key": idempotencyKey },
+    body
   });
 }
 
@@ -93,4 +144,65 @@ export function reportPlaybackTelemetryBatch(
     body,
     keepalive
   });
+}
+
+function recommendationNetworkClass(environment: ReturnType<typeof readFeedPreloadEnvironment>): PlaybackTelemetryNetworkClass {
+  if (!environment.online) return "offline";
+  const signal = `${environment.connectionType} ${environment.effectiveType}`.toLowerCase();
+  if (signal.includes("wifi")) return "wifi";
+  if (signal.includes("ethernet")) return "ethernet";
+  if (signal.includes("slow-2g")) return "slow_2g";
+  if (/(^|\s)2g(\s|$)/.test(signal)) return "2g";
+  if (/(^|\s)3g(\s|$)/.test(signal)) return "3g";
+  if (/(^|\s)4g(\s|$)/.test(signal)) return "4g";
+  if (/(^|\s)5g(\s|$)/.test(signal)) return "5g";
+  return "unknown";
+}
+
+function recommendationViewportClass(width: number | undefined): PlaybackTelemetryViewportClass {
+  if (!Number.isFinite(width) || Number(width) <= 0) return "unknown";
+  if (Number(width) < 640) return "small";
+  if (Number(width) < 1024) return "medium";
+  return "large";
+}
+
+function recommendationPlaybackCapabilities(
+  nav: Navigator | undefined,
+  documentValue: Document | undefined
+): RecommendationPlaybackCapability[] {
+  const capabilities: RecommendationPlaybackCapability[] = [];
+  const video = documentValue?.createElement("video");
+  if (video?.canPlayType("video/mp4")) {
+    capabilities.push("mp4");
+  }
+  if (typeof MediaSource !== "undefined") {
+    capabilities.push("media_source", "dash");
+  }
+  if (nav && "mediaCapabilities" in nav) {
+    capabilities.push("media_capabilities");
+  }
+  return capabilities;
+}
+
+function normalizeVideoIDs(values: number[], limit: number): number[] {
+  const normalized: number[] = [];
+  const seen = new Set<number>();
+  for (const value of values) {
+    const videoID = normalizeVideoID(value);
+    if (!videoID || seen.has(videoID)) continue;
+    seen.add(videoID);
+    normalized.push(videoID);
+    if (normalized.length >= limit) break;
+  }
+  return normalized;
+}
+
+function normalizeVideoID(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value);
+}
+
+function clampInteger(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.min(maximum, Math.max(minimum, Math.round(value)));
 }

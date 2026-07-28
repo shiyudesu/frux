@@ -3,6 +3,7 @@ package interfaceshttpfeed
 import (
 	applicationfeed "GCFeed/internal/application/feed"
 	domainfeed "GCFeed/internal/domain/feed"
+	domainrecommendation "GCFeed/internal/domain/recommendation"
 	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	"context"
@@ -14,6 +15,8 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 )
+
+const maxFeedQueryBodyBytes = 16 * 1024
 
 type Handler struct {
 	service *applicationfeed.Service
@@ -50,7 +53,7 @@ func (h *Handler) ListFeedItems(ctx context.Context, c *app.RequestContext) {
 // Query 通过请求体接收复杂 Feed 查询参数，适合推荐上下文逐步扩展。
 func (h *Handler) Query(ctx context.Context, c *app.RequestContext) {
 	var req feedQueryRequest
-	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+	if err := interfaceshttpbinding.BindStrictJSON(c, &req, maxFeedQueryBodyBytes); err != nil {
 		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
@@ -61,13 +64,19 @@ func (h *Handler) Query(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	recommendationContext, err := recommendationContextFromRequest(req.Context)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		return
+	}
+
 	viewerID, _ := viewerIDFromContext(c)
 	result, err := h.service.GetFeed(ctx, applicationfeed.FeedRequest{
-		Scene:         domainfeed.Scene(req.Scene),
-		Cursor:        req.Cursor,
-		Limit:         limit,
-		ViewerID:      viewerID,
-		ClientContext: req.ClientContext,
+		Scene:                 domainfeed.Scene(req.Scene),
+		Cursor:                req.Cursor,
+		Limit:                 limit,
+		ViewerID:              viewerID,
+		RecommendationContext: recommendationContext,
 	})
 	if err != nil {
 		writeFeedError(c, err)
@@ -75,6 +84,23 @@ func (h *Handler) Query(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(http.StatusOK, feedItemsResponseFromResult(result))
+}
+
+func recommendationContextFromRequest(req *recommendationContextRequest) (*domainrecommendation.RecommendationContext, error) {
+	if req == nil {
+		return nil, nil
+	}
+	return domainrecommendation.NewRecommendationContext(domainrecommendation.RecommendationContextInput{
+		RequestID:            req.RequestID,
+		SessionID:            req.SessionID,
+		RefreshIndex:         req.RefreshIndex,
+		RecentVideoIDs:       req.RecentVideoIDs,
+		CurrentVideoID:       req.CurrentVideoID,
+		NetworkClass:         req.NetworkClass,
+		SaveData:             req.SaveData,
+		ViewportClass:        req.ViewportClass,
+		PlaybackCapabilities: req.PlaybackCapabilities,
+	})
 }
 
 // Refresh 从第一页重新读取 Feed，适合下拉刷新语义。
@@ -144,6 +170,7 @@ func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsRe
 	}
 	return feedItemsResponse{
 		Scene:      string(result.Scene),
+		RequestID:  result.RequestID,
 		Items:      items,
 		NextCursor: result.NextCursor,
 		HasMore:    result.HasMore,
@@ -154,6 +181,10 @@ func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsRe
 func writeFeedError(c *app.RequestContext, err error) {
 	if errors.Is(err, domainfeed.ErrViewerRequired) {
 		c.JSON(http.StatusUnauthorized, utils.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, domainrecommendation.ErrInvalidCursor) {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
 		return
 	}
 	if isBadRequestError(err) {

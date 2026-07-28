@@ -29,7 +29,7 @@
 
 ### 3.1 `video_view_events`
 
-保存 `user_id`、`video_id`、`scene`、可选 `request_id`、`event_type`、`watch_ms`、`completed`、事件/播放会话标识、序号、发生时间、媒体位置、总时长和 `created_at` 原始流水。新事件按 `(user_id, event_id)` 唯一；历史行回填确定性的 `legacy-{id}` 事件 ID。
+保存 `user_id`、`video_id`、`scene`、可选 `request_id`、`event_type`、`watch_ms`、`completed`、事件/播放会话标识、序号、发生时间、媒体位置、总时长和 `created_at` 原始流水。新事件按 `(user_id, event_id)` 唯一；历史行回填确定性的 `legacy-{id}` 事件 ID。带 recommendation request ID 的曝光、播放、进度、完播和跳过在行为 Worker 中幂等写入 `recommendation_outcome`，以 `view:{event_id}` 去重，供离线评估关联采样请求日志；该关联不改变曝光或历史写入的成功语义。
 
 ### 3.2 `exposures`
 

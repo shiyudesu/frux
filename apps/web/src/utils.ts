@@ -27,6 +27,11 @@ export function createFeedRequestID(scene: string): string {
   return `web-${scene}-${Date.now()}-${random}`;
 }
 
+export function createFeedSessionID(scene: string): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `web-session-${scene}-${Date.now()}-${random}`;
+}
+
 export function appendFeedItems(currentItems: FeedVideo[], nextItems: FeedVideo[]): FeedVideo[] {
   if (!nextItems.length) return currentItems;
   const seen = new Set(currentItems.map((item) => item.video_id));

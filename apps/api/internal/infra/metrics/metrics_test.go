@@ -2,8 +2,10 @@ package inframetrics
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -32,5 +34,48 @@ func TestHTTPMiddlewareUsesNormalizedRoute(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(raw) - rawBefore; got != 0 {
 		t.Fatalf("expected raw route counter delta 0, got %v", got)
+	}
+}
+
+func TestObserveProfileWorkerTracksOutcomes(t *testing.T) {
+	updated := ProfileWorkerEventsTotal.WithLabelValues("updated")
+	duplicate := ProfileWorkerEventsTotal.WithLabelValues("duplicate")
+	failure := ProfileWorkerEventsTotal.WithLabelValues("failure")
+	updatedBefore, duplicateBefore, failureBefore := testutil.ToFloat64(updated), testutil.ToFloat64(duplicate), testutil.ToFloat64(failure)
+	ObserveProfileWorker(time.Now().Add(-time.Second), false, nil)
+	ObserveProfileWorker(time.Now(), true, nil)
+	ObserveProfileWorker(time.Now(), false, errors.New("failure"))
+	if testutil.ToFloat64(updated)-updatedBefore != 1 || testutil.ToFloat64(duplicate)-duplicateBefore != 1 || testutil.ToFloat64(failure)-failureBefore != 1 {
+		t.Fatal("profile worker outcomes were not recorded")
+	}
+}
+
+func TestRecommendationMetricsUseBoundedLabels(t *testing.T) {
+	recall := RecommendationRecallCandidatesTotal.WithLabelValues("fresh")
+	degraded := RecommendationDegradedRequestsTotal.WithLabelValues("unknown", "unknown")
+	snapshot := RecommendationSnapshotOperationsTotal.WithLabelValues("write_failure")
+	maintenance := RecommendationSnapshotOperationsTotal.WithLabelValues("maintenance_failure")
+	outcome := RecommendationOutcomesTotal.WithLabelValues("complete")
+	invalidAttribution := RecommendationInvalidAttributionsTotal.WithLabelValues("follow")
+	logFailure := RecommendationRequestLogFailuresTotal.WithLabelValues("storage")
+	deliveryFailure := RecommendationDeliveryFailuresTotal
+	before := []float64{testutil.ToFloat64(recall), testutil.ToFloat64(degraded), testutil.ToFloat64(snapshot), testutil.ToFloat64(maintenance), testutil.ToFloat64(outcome), testutil.ToFloat64(invalidAttribution), testutil.ToFloat64(logFailure), testutil.ToFloat64(deliveryFailure)}
+	ObserveRecommendationRecall("fresh", 2)
+	ObserveRecommendationDegraded("unbounded-provider", "unbounded-reason")
+	ObserveRecommendationSnapshot("write_failure")
+	ObserveRecommendationSnapshot("maintenance_failure")
+	ObserveRecommendationOutcome("complete")
+	ObserveRecommendationInvalidAttribution("follow")
+	ObserveRecommendationRequestLogFailure("storage")
+	ObserveRecommendationDeliveryFailure()
+	ObserveRecommendationPolicy("recommend", 7)
+	if testutil.ToFloat64(recall)-before[0] != 2 || testutil.ToFloat64(degraded)-before[1] != 1 ||
+		testutil.ToFloat64(snapshot)-before[2] != 1 || testutil.ToFloat64(maintenance)-before[3] != 1 ||
+		testutil.ToFloat64(outcome)-before[4] != 1 || testutil.ToFloat64(invalidAttribution)-before[5] != 1 ||
+		testutil.ToFloat64(logFailure)-before[6] != 1 || testutil.ToFloat64(deliveryFailure)-before[7] != 1 {
+		t.Fatal("recommendation metric observations were not recorded")
+	}
+	if version := testutil.ToFloat64(RecommendationActivePolicyVersion.WithLabelValues("recommend")); version != 7 {
+		t.Fatalf("expected policy version 7, got %v", version)
 	}
 }

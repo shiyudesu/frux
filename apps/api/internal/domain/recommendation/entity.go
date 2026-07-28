@@ -20,6 +20,7 @@ type CandidateRequest struct {
 	RequestID string
 	Cursor    *Cursor
 	Limit     int
+	Context   *RecommendationContext
 }
 
 type Cursor struct {
@@ -37,6 +38,29 @@ type Candidate struct {
 	FreshnessScore float64
 	Reason         string
 	PublishedAt    time.Time
+	PolicyVersion  int
+	// RecallReasons and SourceScores are internal recall metadata. They are
+	// intentionally not part of the public Feed response contract.
+	RecallReasons   []RecallReason
+	SourceScores    map[string]float64
+	ScoreComponents map[string]float64
+}
+
+type RecallReason struct {
+	Provider string
+	Score    float64
+}
+
+// RankingFeatures is bounded request-time ranking state. It remains internal
+// and is deliberately absent from Feed response DTOs.
+type RankingFeatures struct {
+	Profile           *UserInterestProfile
+	FollowedAuthors   map[int64]bool
+	RecentExposures   map[int64]*Exposure
+	NegativeVideos    map[int64]bool
+	NegativeAuthors   map[int64]bool
+	SuppressedVideos  map[int64]bool
+	SuppressedAuthors map[int64]bool
 }
 
 type ExposureWrite struct {
@@ -70,12 +94,18 @@ type ExposureDecision struct {
 	LastExposedAt *time.Time
 }
 
-func NewCandidateRequest(userID int64, scene string, requestID string, cursor *Cursor, limit int) (*CandidateRequest, error) {
+func NewCandidateRequest(userID int64, scene string, requestID string, cursor *Cursor, limit int, recommendationContext *RecommendationContext) (*CandidateRequest, error) {
 	if userID <= 0 {
 		return nil, ErrInvalidUserID
 	}
 	scene = strings.TrimSpace(strings.ToLower(scene))
 	requestID = strings.TrimSpace(requestID)
+	if recommendationContext != nil {
+		recommendationContext = recommendationContext.Clone()
+		if requestID == "" {
+			requestID = recommendationContext.RequestID
+		}
+	}
 	if scene == "" {
 		return nil, ErrEmptyScene
 	}
@@ -97,6 +127,7 @@ func NewCandidateRequest(userID int64, scene string, requestID string, cursor *C
 		RequestID: requestID,
 		Cursor:    cursor,
 		Limit:     limit,
+		Context:   recommendationContext,
 	}, nil
 }
 
@@ -163,15 +194,35 @@ func NewExposureWrite(userID int64, videoID int64, scene string, requestID strin
 
 func RestoreCandidate(videoID int64, authorID int64, rankScore float64, similarity float64, hotScore int, freshnessScore float64, reason string, publishedAt time.Time) *Candidate {
 	return &Candidate{
-		VideoID:        videoID,
-		AuthorID:       authorID,
-		RankScore:      rankScore,
-		Similarity:     similarity,
-		HotScore:       hotScore,
-		FreshnessScore: freshnessScore,
-		Reason:         strings.TrimSpace(reason),
-		PublishedAt:    publishedAt,
+		VideoID:         videoID,
+		AuthorID:        authorID,
+		RankScore:       rankScore,
+		Similarity:      similarity,
+		HotScore:        hotScore,
+		FreshnessScore:  freshnessScore,
+		Reason:          strings.TrimSpace(reason),
+		PublishedAt:     publishedAt,
+		RecallReasons:   []RecallReason{},
+		SourceScores:    map[string]float64{},
+		ScoreComponents: map[string]float64{},
 	}
+}
+
+func (c *Candidate) Clone() *Candidate {
+	if c == nil {
+		return nil
+	}
+	cloned := *c
+	cloned.RecallReasons = append([]RecallReason(nil), c.RecallReasons...)
+	cloned.SourceScores = make(map[string]float64, len(c.SourceScores))
+	for provider, score := range c.SourceScores {
+		cloned.SourceScores[provider] = score
+	}
+	cloned.ScoreComponents = make(map[string]float64, len(c.ScoreComponents))
+	for name, score := range c.ScoreComponents {
+		cloned.ScoreComponents[name] = score
+	}
+	return &cloned
 }
 
 func RestoreExposure(id int64, userID int64, videoID int64, firstExposedAt time.Time, lastExposedAt time.Time, exposureCount int, lastScene string) *Exposure {

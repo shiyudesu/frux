@@ -115,10 +115,16 @@ func (h *Handler) setFollow(ctx context.Context, c *app.RequestContext, active b
 	}
 
 	var result *applicationrelation.FollowResult
+	recommendationRequestID := string(c.GetHeader("X-Recommendation-Request-ID"))
+	recommendationVideoID, err := parseOptionalRecommendationVideoID(string(c.GetHeader("X-Recommendation-Video-ID")))
+	if err != nil {
+		writeRelationError(c, err)
+		return
+	}
 	if active {
-		result, err = h.service.Follow(ctx, userID, targetUserID, string(c.GetHeader("Idempotency-Key")))
+		result, err = h.service.FollowWithRecommendation(ctx, userID, targetUserID, string(c.GetHeader("Idempotency-Key")), recommendationRequestID, recommendationVideoID)
 	} else {
-		result, err = h.service.Unfollow(ctx, userID, targetUserID, string(c.GetHeader("Idempotency-Key")))
+		result, err = h.service.UnfollowWithRecommendation(ctx, userID, targetUserID, string(c.GetHeader("Idempotency-Key")), recommendationRequestID, recommendationVideoID)
 	}
 	if err != nil {
 		writeRelationError(c, err)
@@ -154,6 +160,18 @@ func parseLimit(raw string) (int, error) {
 		return 0, domainrelation.ErrInvalidLimit
 	}
 	return limit, nil
+}
+
+func parseOptionalRecommendationVideoID(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	videoID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || videoID <= 0 {
+		return 0, domainrelation.ErrInvalidRecommendationVideoID
+	}
+	return videoID, nil
 }
 
 func followResponseFromResult(result *applicationrelation.FollowResult) followResponse {
@@ -194,6 +212,10 @@ func writeRelationError(c *app.RequestContext, err error) {
 		c.JSON(http.StatusNotFound, utils.H{"error": "target user not found"})
 		return
 	}
+	if errors.Is(err, domainrelation.ErrFollowIdempotencyConflict) {
+		c.JSON(http.StatusConflict, utils.H{"error": "idempotency key conflict"})
+		return
+	}
 	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
@@ -203,5 +225,7 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainrelation.ErrFollowSelfForbidden) ||
 		errors.Is(err, domainrelation.ErrInvalidLimit) ||
 		errors.Is(err, domainrelation.ErrInvalidCursor) ||
-		errors.Is(err, domainrelation.ErrIdempotencyKeyTooLong)
+		errors.Is(err, domainrelation.ErrIdempotencyKeyTooLong) ||
+		errors.Is(err, domainrelation.ErrRecommendationRequestIDTooLong) ||
+		errors.Is(err, domainrelation.ErrInvalidRecommendationVideoID)
 }

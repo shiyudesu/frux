@@ -1,6 +1,7 @@
 package infrainteraction
 
 import (
+	applicationinteraction "GCFeed/internal/application/interaction"
 	domainaccount "GCFeed/internal/domain/account"
 	domaininteraction "GCFeed/internal/domain/interaction"
 	domainmedia "GCFeed/internal/domain/media"
@@ -82,12 +83,13 @@ func (r *Repository) GetActionState(ctx context.Context, userID int64, videoID i
 		return nil, err
 	}
 	snapshot := &domaininteraction.ActionStateSnapshot{
-		Exists:         true,
-		Active:         action.Status == domaininteraction.ActionStatusActive,
-		IdempotencyKey: idempotencyKeyValue(action.IdempotencyKey),
-		Version:        action.LatestEventVersion,
-		EventID:        idempotencyKeyValue(action.LatestEventID),
-		UpdatedAt:      action.UpdatedAt,
+		Exists:                  true,
+		Active:                  action.Status == domaininteraction.ActionStatusActive,
+		IdempotencyKey:          idempotencyKeyValue(action.IdempotencyKey),
+		RecommendationRequestID: strings.TrimSpace(action.RecommendationRequestID),
+		Version:                 action.LatestEventVersion,
+		EventID:                 idempotencyKeyValue(action.LatestEventID),
+		UpdatedAt:               action.UpdatedAt,
 	}
 	if action.LatestEventOccurredAt != nil {
 		snapshot.OccurredAt = *action.LatestEventOccurredAt
@@ -153,18 +155,254 @@ func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64,
 	return restoreAction(action), count, statDelta, nil
 }
 
-// PersistAcceptedActionEvent persists an interaction already accepted while the video was publicly readable.
-func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *domaininteraction.AcceptedActionEvent) error {
+// SetActionWithAcceptedEvent is the synchronous counterpart to the Redis/MQ
+// pipeline. It validates public readability and commits the action state,
+// receipt, and durable projection/outcome handoffs together.
+func (r *Repository) SetActionWithAcceptedEvent(ctx context.Context, event *domaininteraction.AcceptedActionEvent) (*domaininteraction.Action, int, int, error) {
 	if event == nil {
-		return domaininteraction.ErrInvalidActionEvent
+		return nil, 0, 0, domaininteraction.ErrInvalidActionEvent
 	}
-	normalized, err := domaininteraction.NewAcceptedActionEvent(
+	normalized, err := domaininteraction.NewAcceptedActionEventWithRecommendation(
 		event.EventID,
 		event.UserID,
 		event.VideoID,
 		event.ActionType,
 		event.Active,
 		event.IdempotencyKey,
+		event.RecommendationRequestID,
+		event.Version,
+		event.OccurredAt,
+	)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	var action ActionModel
+	var count, statDelta int
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		video, err := lockPublishedVideo(tx, normalized.VideoID)
+		if err != nil {
+			return err
+		}
+
+		if normalized.IdempotencyKey != "" {
+			var existingReceipt ActionIdempotencyReceiptModel
+			receiptErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where(
+					"user_id = ? AND video_id = ? AND action_type = ? AND idempotency_key = ?",
+					normalized.UserID, normalized.VideoID, normalized.ActionType, normalized.IdempotencyKey,
+				).
+				Take(&existingReceipt).
+				Error
+			if receiptErr == nil {
+				if existingReceipt.Active != normalized.Active {
+					return domaininteraction.ErrActionIdempotencyConflict
+				}
+				action = actionFromIdempotencyReceipt(existingReceipt)
+				count = existingReceipt.ActionCount
+				return nil
+			}
+			if !errors.Is(receiptErr, gorm.ErrRecordNotFound) {
+				return receiptErr
+			}
+		}
+
+		var current ActionModel
+		currentErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND video_id = ? AND action_type = ?", normalized.UserID, normalized.VideoID, normalized.ActionType).
+			Take(&current).
+			Error
+		if currentErr != nil && !errors.Is(currentErr, gorm.ErrRecordNotFound) {
+			return currentErr
+		}
+
+		stateChanged := currentErr != nil && normalized.Active
+		if currentErr == nil && (current.Status == domaininteraction.ActionStatusActive) != normalized.Active {
+			stateChanged = true
+		}
+		if !stateChanged {
+			if currentErr == nil {
+				action = current
+			} else {
+				action = ActionModel{
+					UserID: normalized.UserID, VideoID: normalized.VideoID, ActionType: normalized.ActionType,
+					Status: actionStatusFromActive(normalized.Active),
+				}
+			}
+			count, err = currentActionCount(tx, normalized.VideoID, normalized.ActionType)
+			if err != nil {
+				return err
+			}
+		} else {
+			if normalized.Version == 0 {
+				normalized.Version = 1
+				if currentErr == nil && current.LatestEventVersion >= normalized.Version {
+					normalized.Version = current.LatestEventVersion + 1
+				}
+			}
+			action, count, statDelta, err = persistActionState(
+				tx,
+				video.AuthorID,
+				normalized.UserID,
+				normalized.VideoID,
+				normalized.ActionType,
+				normalized.Active,
+				normalized.IdempotencyKey,
+				normalized,
+			)
+			if err != nil {
+				return err
+			}
+			handoff := actionEventModelFromDomain(normalized)
+			handoff.ProfileProjectionAvailableAt = normalized.OccurredAt
+			handoff.RecommendationOutcomeAvailableAt = normalized.OccurredAt
+			if err := tx.Create(&handoff).Error; err != nil {
+				if infrapersistence.IsDuplicatedKeyError(err) {
+					return domaininteraction.ErrActionEventConflict
+				}
+				return err
+			}
+		}
+
+		if normalized.IdempotencyKey == "" {
+			return nil
+		}
+		return tx.Create(&ActionIdempotencyReceiptModel{
+			UserID: normalized.UserID, VideoID: normalized.VideoID, ActionType: normalized.ActionType,
+			IdempotencyKey: normalized.IdempotencyKey, Active: normalized.Active,
+			ActionID: action.ID, ActionCount: count,
+		}).Error
+	})
+	if err != nil {
+		return nil, 0, 0, mapVideoError(err)
+	}
+	return restoreAction(action), count, statDelta, nil
+}
+
+func actionFromIdempotencyReceipt(receipt ActionIdempotencyReceiptModel) ActionModel {
+	key := receipt.IdempotencyKey
+	return ActionModel{
+		ID:             receipt.ActionID,
+		UserID:         receipt.UserID,
+		VideoID:        receipt.VideoID,
+		ActionType:     receipt.ActionType,
+		Status:         actionStatusFromActive(receipt.Active),
+		IdempotencyKey: &key,
+		CreatedAt:      receipt.CreatedAt,
+		UpdatedAt:      receipt.CreatedAt,
+	}
+}
+
+func (r *Repository) ClaimRecommendationActionOutcomes(ctx context.Context, limit int, now, leasedUntil time.Time) ([]applicationinteraction.RecommendationActionOutcomeItem, error) {
+	if limit <= 0 {
+		return []applicationinteraction.RecommendationActionOutcomeItem{}, nil
+	}
+
+	items := make([]applicationinteraction.RecommendationActionOutcomeItem, 0, limit)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var events []ActionEventModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("active = ? AND recommendation_request_id <> '' AND recommendation_outcome_dispatched_at IS NULL AND recommendation_outcome_available_at <= ? AND (recommendation_outcome_leased_until IS NULL OR recommendation_outcome_leased_until <= ?)", true, now, now).
+			Order("recommendation_outcome_available_at ASC, processed_at ASC, event_id ASC").Limit(limit).Find(&events).Error; err != nil {
+			return err
+		}
+		for _, event := range events {
+			if err := tx.Model(&ActionEventModel{}).Where("event_id = ?", event.EventID).Updates(map[string]any{
+				"recommendation_outcome_leased_until": leasedUntil,
+				"recommendation_outcome_attempts":     gorm.Expr("recommendation_outcome_attempts + 1"),
+			}).Error; err != nil {
+				return err
+			}
+			items = append(items, applicationinteraction.RecommendationActionOutcomeItem{
+				EventID: event.EventID, UserID: event.UserID, VideoID: event.VideoID, ActionType: event.ActionType,
+				Active: event.Active, RecommendationRequestID: event.RecommendationRequestID, OccurredAt: event.OccurredAt,
+				Attempts: event.RecommendationOutcomeAttempts + 1,
+			})
+		}
+		return nil
+	})
+	return items, err
+}
+
+// ClaimActionProfileProjections leases durable action facts for recommendation
+// profile projection. The receipt and projection fields are created in the same
+// transaction as the accepted action, so RabbitMQ is only a wake-up path.
+func (r *Repository) ClaimActionProfileProjections(ctx context.Context, limit int, now, leasedUntil time.Time) ([]applicationinteraction.ActionProfileProjectionItem, error) {
+	if limit <= 0 {
+		return []applicationinteraction.ActionProfileProjectionItem{}, nil
+	}
+	items := make([]applicationinteraction.ActionProfileProjectionItem, 0, limit)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var events []ActionEventModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("profile_projection_dispatched_at IS NULL AND profile_projection_available_at <= ? AND (profile_projection_leased_until IS NULL OR profile_projection_leased_until <= ?)", now, now).
+			Order("profile_projection_available_at ASC, processed_at ASC, event_id ASC").Limit(limit).Find(&events).Error; err != nil {
+			return err
+		}
+		for _, event := range events {
+			if err := tx.Model(&ActionEventModel{}).Where("event_id = ?", event.EventID).Updates(map[string]any{
+				"profile_projection_leased_until": leasedUntil,
+				"profile_projection_attempts":     gorm.Expr("profile_projection_attempts + 1"),
+			}).Error; err != nil {
+				return err
+			}
+			items = append(items, applicationinteraction.ActionProfileProjectionItem{
+				EventID: event.EventID, UserID: event.UserID, VideoID: event.VideoID, ActionType: event.ActionType,
+				Active: event.Active, IdempotencyKey: idempotencyKeyValue(event.IdempotencyKey), Version: event.Version,
+				OccurredAt: event.OccurredAt, Attempts: event.ProfileProjectionAttempts + 1,
+			})
+		}
+		return nil
+	})
+	return items, err
+}
+
+func (r *Repository) MarkActionProfileProjectionDispatched(ctx context.Context, eventID string, dispatchedAt time.Time) error {
+	return r.db.WithContext(ctx).Model(&ActionEventModel{}).Where("event_id = ?", eventID).Updates(map[string]any{
+		"profile_projection_dispatched_at": dispatchedAt.UTC(),
+		"profile_projection_leased_until":  nil,
+		"profile_projection_last_error":    "",
+	}).Error
+}
+
+func (r *Repository) MarkActionProfileProjectionFailed(ctx context.Context, eventID string, availableAt time.Time, reason string) error {
+	return r.db.WithContext(ctx).Model(&ActionEventModel{}).Where("event_id = ?", eventID).Updates(map[string]any{
+		"profile_projection_available_at": availableAt.UTC(),
+		"profile_projection_leased_until": nil,
+		"profile_projection_last_error":   truncateProfileProjectionError(reason),
+	}).Error
+}
+
+func (r *Repository) MarkRecommendationActionOutcomeDispatched(ctx context.Context, eventID string, dispatchedAt time.Time) error {
+	return r.db.WithContext(ctx).Model(&ActionEventModel{}).Where("event_id = ?", eventID).Updates(map[string]any{
+		"recommendation_outcome_dispatched_at": dispatchedAt,
+		"recommendation_outcome_leased_until":  nil,
+		"recommendation_outcome_last_error":    "",
+	}).Error
+}
+
+func (r *Repository) MarkRecommendationActionOutcomeFailed(ctx context.Context, eventID string, availableAt time.Time, reason string) error {
+	return r.db.WithContext(ctx).Model(&ActionEventModel{}).Where("event_id = ?", eventID).Updates(map[string]any{
+		"recommendation_outcome_available_at": availableAt.UTC(),
+		"recommendation_outcome_leased_until": nil,
+		"recommendation_outcome_last_error":   truncateProfileProjectionError(reason),
+	}).Error
+}
+
+// PersistAcceptedActionEvent persists an interaction already accepted while the video was publicly readable.
+func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *domaininteraction.AcceptedActionEvent) error {
+	if event == nil {
+		return domaininteraction.ErrInvalidActionEvent
+	}
+
+	normalized, err := domaininteraction.NewAcceptedActionEventWithRecommendation(
+		event.EventID,
+		event.UserID,
+		event.VideoID,
+		event.ActionType,
+		event.Active,
+		event.IdempotencyKey,
+		event.RecommendationRequestID,
 		event.Version,
 		event.OccurredAt,
 	)
@@ -173,13 +411,33 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 	}
 
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing ActionEventModel
+		existingErr := tx.Where("event_id = ?", normalized.EventID).Take(&existing).Error
+		if existingErr == nil {
+			if !sameAcceptedActionEvent(existing, actionEventModelFromDomain(normalized)) {
+				return domaininteraction.ErrActionEventConflict
+			}
+			return nil
+		}
+		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return existingErr
+		}
+		// The API normally validates readability before publishing, but worker
+		// retries must retain the same missing-video terminal behavior.
+		video, err := lockAcceptedActionVideo(tx, normalized.VideoID)
+		if err != nil {
+			return err
+		}
+
+		// Stale events remain immutable inputs for profile and outcome workers.
 		receipt := actionEventModelFromDomain(normalized)
+		receipt.ProfileProjectionAvailableAt = normalized.OccurredAt
+		receipt.RecommendationOutcomeAvailableAt = normalized.OccurredAt
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&receipt)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			var existing ActionEventModel
 			if err := tx.Where("event_id = ?", normalized.EventID).Take(&existing).Error; err != nil {
 				return err
 			}
@@ -189,12 +447,20 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 			return nil
 		}
 
+		var current ActionModel
+		currentErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND video_id = ? AND action_type = ?", normalized.UserID, normalized.VideoID, normalized.ActionType).
+			Take(&current).
+			Error
+		if currentErr != nil && !errors.Is(currentErr, gorm.ErrRecordNotFound) {
+			return currentErr
+		}
+		if !acceptedActionEventTransitionsState(current, currentErr == nil, normalized) {
+			return nil
+		}
+
 		// The API already validated public readability before publishing. Visibility or non-deleted
 		// lifecycle changes after acceptance must not erase the durable interaction fact.
-		video, err := lockAcceptedActionVideo(tx, normalized.VideoID)
-		if err != nil {
-			return err
-		}
 		_, _, _, err = persistActionState(
 			tx,
 			video.AuthorID,
@@ -208,6 +474,24 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 		return err
 	})
 	return mapVideoError(err)
+}
+
+func acceptedActionEventTransitionsState(current ActionModel, found bool, event *domaininteraction.AcceptedActionEvent) bool {
+	if event == nil {
+		return false
+	}
+	if !found {
+		return true
+	}
+	return actionEventComesAfter(current, event)
+}
+
+func truncateProfileProjectionError(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > 1024 {
+		return reason[:1024]
+	}
+	return reason
 }
 
 func persistActionState(tx *gorm.DB, authorID int64, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, event *domaininteraction.AcceptedActionEvent) (ActionModel, int, int, error) {
@@ -224,11 +508,12 @@ func persistActionState(tx *gorm.DB, authorID int64, userID int64, videoID int64
 	nextStatus := actionStatusFromActive(active)
 	if errors.Is(findErr, gorm.ErrRecordNotFound) {
 		action = ActionModel{
-			UserID:         userID,
-			VideoID:        videoID,
-			ActionType:     actionType,
-			Status:         nextStatus,
-			IdempotencyKey: idempotencyKeyPtr(idempotencyKey),
+			UserID:                  userID,
+			VideoID:                 videoID,
+			ActionType:              actionType,
+			Status:                  nextStatus,
+			IdempotencyKey:          idempotencyKeyPtr(idempotencyKey),
+			RecommendationRequestID: recommendationRequestIDFromEvent(event),
 		}
 		setLatestActionOrder(&action, event)
 		if err := tx.Create(&action).Error; err != nil {
@@ -249,6 +534,7 @@ func persistActionState(tx *gorm.DB, authorID int64, userID int64, videoID int64
 
 		previousStatus := action.Status
 		previousIdempotencyKey := idempotencyKeyValue(action.IdempotencyKey)
+		previousRecommendationRequestID := strings.TrimSpace(action.RecommendationRequestID)
 		if action.Status != nextStatus {
 			if active {
 				delta = 1
@@ -258,8 +544,10 @@ func persistActionState(tx *gorm.DB, authorID int64, userID int64, videoID int64
 		}
 		action.Status = nextStatus
 		action.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
+		action.RecommendationRequestID = recommendationRequestIDFromEvent(event)
 		setLatestActionOrder(&action, event)
-		if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey || event != nil {
+		if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey ||
+			previousRecommendationRequestID != action.RecommendationRequestID || event != nil {
 			if err := tx.Save(&action).Error; err != nil {
 				return ActionModel{}, 0, 0, err
 			}
@@ -316,6 +604,13 @@ func setLatestActionOrder(action *ActionModel, event *domaininteraction.Accepted
 	action.LatestEventVersion++
 	action.LatestEventOccurredAt = &occurredAt
 	action.LatestEventID = &eventID
+}
+
+func recommendationRequestIDFromEvent(event *domaininteraction.AcceptedActionEvent) string {
+	if event == nil {
+		return ""
+	}
+	return strings.TrimSpace(event.RecommendationRequestID)
 }
 
 // BackfillActionEventOrder preserves existing action state as newer than delayed pre-migration events.
@@ -725,19 +1020,20 @@ func idempotencyKeyValue(value *string) string {
 	if value == nil {
 		return ""
 	}
-	return *value
+	return strings.TrimSpace(*value)
 }
 
 func actionEventModelFromDomain(event *domaininteraction.AcceptedActionEvent) ActionEventModel {
 	return ActionEventModel{
-		EventID:        event.EventID,
-		UserID:         event.UserID,
-		VideoID:        event.VideoID,
-		ActionType:     event.ActionType,
-		Active:         event.Active,
-		IdempotencyKey: idempotencyKeyPtr(event.IdempotencyKey),
-		Version:        event.Version,
-		OccurredAt:     event.OccurredAt,
+		EventID:                 event.EventID,
+		UserID:                  event.UserID,
+		VideoID:                 event.VideoID,
+		ActionType:              event.ActionType,
+		Active:                  event.Active,
+		IdempotencyKey:          idempotencyKeyPtr(event.IdempotencyKey),
+		RecommendationRequestID: event.RecommendationRequestID,
+		Version:                 event.Version,
+		OccurredAt:              event.OccurredAt,
 	}
 }
 
@@ -748,6 +1044,7 @@ func sameAcceptedActionEvent(left ActionEventModel, right ActionEventModel) bool
 		left.ActionType == right.ActionType &&
 		left.Active == right.Active &&
 		idempotencyKeyValue(left.IdempotencyKey) == idempotencyKeyValue(right.IdempotencyKey) &&
+		strings.TrimSpace(left.RecommendationRequestID) == strings.TrimSpace(right.RecommendationRequestID) &&
 		left.Version == right.Version &&
 		left.OccurredAt.Equal(right.OccurredAt)
 }

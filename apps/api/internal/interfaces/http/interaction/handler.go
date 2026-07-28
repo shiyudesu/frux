@@ -143,10 +143,11 @@ func (h *Handler) setLike(ctx context.Context, c *app.RequestContext, active boo
 	}
 
 	var result *applicationinteraction.ActionResult
+	recommendationRequestID := string(c.GetHeader("X-Recommendation-Request-ID"))
 	if active {
-		result, err = h.service.Like(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
+		result, err = h.service.LikeWithRecommendation(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")), recommendationRequestID)
 	} else {
-		result, err = h.service.Unlike(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
+		result, err = h.service.UnlikeWithRecommendation(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")), recommendationRequestID)
 	}
 	if err != nil {
 		writeInteractionError(c, err)
@@ -170,10 +171,11 @@ func (h *Handler) setFavorite(ctx context.Context, c *app.RequestContext, active
 	}
 
 	var result *applicationinteraction.ActionResult
+	recommendationRequestID := string(c.GetHeader("X-Recommendation-Request-ID"))
 	if active {
-		result, err = h.service.Favorite(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
+		result, err = h.service.FavoriteWithRecommendation(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")), recommendationRequestID)
 	} else {
-		result, err = h.service.Unfavorite(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")))
+		result, err = h.service.UnfavoriteWithRecommendation(ctx, userID, videoID, string(c.GetHeader("Idempotency-Key")), recommendationRequestID)
 	}
 	if err != nil {
 		writeInteractionError(c, err)
@@ -280,6 +282,10 @@ func writeInteractionError(c *app.RequestContext, err error) {
 		c.JSON(http.StatusForbidden, utils.H{"error": "comment permission denied"})
 		return
 	}
+	if errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) {
+		c.JSON(http.StatusConflict, utils.H{"error": "idempotency key conflicts with another payload"})
+		return
+	}
 	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
 }
 
@@ -292,5 +298,6 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domaininteraction.ErrInvalidCursor) ||
 		errors.Is(err, domaininteraction.ErrEmptyCommentContent) ||
 		errors.Is(err, domaininteraction.ErrCommentContentTooLong) ||
-		errors.Is(err, domaininteraction.ErrIdempotencyKeyTooLong)
+		errors.Is(err, domaininteraction.ErrIdempotencyKeyTooLong) ||
+		errors.Is(err, domaininteraction.ErrRecommendationRequestIDTooLong)
 }

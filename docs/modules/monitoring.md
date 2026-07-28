@@ -132,3 +132,21 @@ inframetrics.PlaybackMetrics.ObserveTelemetryCleanup(inframetrics.TelemetryClean
 
 处置后保持观察至少一个完整告警窗口。若只有遥测指标异常而实际播放成功率正常，优先回滚
 遥测客户端或 ingestion 变更；遥测失败不得影响播放。
+
+## 9. Recommendation observability and rollout gates
+
+推荐指标为 `gcfeed_recommendation_recall_candidates_total{provider}`、
+`gcfeed_recommendation_degraded_requests_total{provider,reason}`、
+`gcfeed_recommendation_snapshot_operations_total{result}`、
+`gcfeed_recommendation_request_log_failures_total{stage}`、
+`gcfeed_recommendation_active_policy_version{scene}`、
+`gcfeed_recommendation_outcomes_total{outcome}`，以及 profile Worker lag/events。标签只允许
+固定 provider、reason、scene、result 和 outcome；不得使用 user、video、request、session 或
+policy cohort 标识。snapshot `result=maintenance_failure` 表示 Lua 已提交权威 snapshot 后的
+请求索引 TTL 或用户索引维护失败；该错误不应把本次 Feed 响应降级为本地重排。
+
+v2 扩量前比较同一 24h 窗口的 API error、degraded/timeout、snapshot hit、profile lag、曝光到
+play/complete 和反馈率；任何错误或降级恶化、snapshot hit 明显下降、lag 持续积压或负反馈
+恶化时停止扩量并回滚到 v1。请求日志保存用于离线归因，不作为 Prometheus 标签；日志落库失败
+应记录有界 failure metric 但不能影响 Feed 响应。snapshot 的 `hit/miss` 只表示读取结果；
+`write_success/write_failure` 单独表示写入，避免以写入量污染命中率。

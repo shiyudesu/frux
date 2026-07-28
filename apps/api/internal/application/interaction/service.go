@@ -46,31 +46,41 @@ type StatCache interface {
 type Option func(*Service)
 
 type ActionStateResult struct {
-	UserID         int64
-	VideoID        int64
-	ActionType     string
-	Active         bool
-	LikeCount      int
-	FavoriteCount  int
-	Delta          int
-	IdempotencyKey string
-	Version        int64
-	EventID        string
-	OccurredAt     time.Time
-	ShouldPublish  bool
-	CanRollback    bool
-	Previous       domaininteraction.ActionStateSnapshot
+	UserID                   int64
+	VideoID                  int64
+	ActionType               string
+	Active                   bool
+	LikeCount                int
+	FavoriteCount            int
+	Delta                    int
+	IdempotencyKey           string
+	RecommendationRequestID  string
+	Version                  int64
+	EventID                  string
+	OccurredAt               time.Time
+	ShouldPublish            bool
+	CanRollback              bool
+	Previous                 domaininteraction.ActionStateSnapshot
+	PreviousHandoffConfirmed bool
+	PreviousHasDependency    bool
 }
 
 type ActionMutation struct {
-	EventID    string
-	OccurredAt time.Time
+	EventID                 string
+	RecommendationRequestID string
+	OccurredAt              time.Time
 }
 
 // ActionStateStore 保存点赞收藏的快速状态和计数。
 type ActionStateStore interface {
 	SetActionState(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, initialStat *domaininteraction.VideoStat, initialState *domaininteraction.ActionStateSnapshot, mutation ActionMutation) (*ActionStateResult, error)
 	RollbackActionState(ctx context.Context, state *ActionStateResult) (bool, error)
+}
+
+// ActionStateHandoffConfirmer records that an asynchronous action event has
+// reached a durable handoff. Older ActionStateStore implementations may omit it.
+type ActionStateHandoffConfirmer interface {
+	ConfirmActionStateHandoff(ctx context.Context, state *ActionStateResult) error
 }
 
 // ActionEventPublisher 投递点赞收藏变更事件。
@@ -89,14 +99,15 @@ type ActorMessageWriter interface {
 }
 
 type ActionChangedEvent struct {
-	EventID        string    `json:"event_id"`
-	UserID         int64     `json:"user_id"`
-	VideoID        int64     `json:"video_id"`
-	ActionType     string    `json:"action_type"`
-	Active         bool      `json:"active"`
-	IdempotencyKey string    `json:"idempotency_key"`
-	Version        int64     `json:"version"`
-	OccurredAt     time.Time `json:"occurred_at"`
+	EventID                 string    `json:"event_id"`
+	UserID                  int64     `json:"user_id"`
+	VideoID                 int64     `json:"video_id"`
+	ActionType              string    `json:"action_type"`
+	Active                  bool      `json:"active"`
+	IdempotencyKey          string    `json:"idempotency_key"`
+	RecommendationRequestID string    `json:"recommendation_request_id,omitempty"`
+	Version                 int64     `json:"version"`
+	OccurredAt              time.Time `json:"occurred_at"`
 }
 
 type ActionResult struct {
@@ -168,22 +179,38 @@ func WithMessageWriter(writer MessageWriter) Option {
 
 // Like 设置用户对视频的点赞状态为有效。
 func (s *Service) Like(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
-	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeLike, true, idempotencyKey)
+	return s.LikeWithRecommendation(ctx, userID, videoID, idempotencyKey, "")
+}
+
+func (s *Service) LikeWithRecommendation(ctx context.Context, userID int64, videoID int64, idempotencyKey string, recommendationRequestID string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeLike, true, idempotencyKey, recommendationRequestID)
 }
 
 // Unlike 设置用户对视频的点赞状态为取消。
 func (s *Service) Unlike(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
-	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeLike, false, idempotencyKey)
+	return s.UnlikeWithRecommendation(ctx, userID, videoID, idempotencyKey, "")
+}
+
+func (s *Service) UnlikeWithRecommendation(ctx context.Context, userID int64, videoID int64, idempotencyKey string, recommendationRequestID string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeLike, false, idempotencyKey, recommendationRequestID)
 }
 
 // Favorite 设置用户对视频的收藏状态为有效。
 func (s *Service) Favorite(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
-	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, true, idempotencyKey)
+	return s.FavoriteWithRecommendation(ctx, userID, videoID, idempotencyKey, "")
+}
+
+func (s *Service) FavoriteWithRecommendation(ctx context.Context, userID int64, videoID int64, idempotencyKey string, recommendationRequestID string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, true, idempotencyKey, recommendationRequestID)
 }
 
 // Unfavorite 设置用户对视频的收藏状态为取消。
 func (s *Service) Unfavorite(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
-	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, false, idempotencyKey)
+	return s.UnfavoriteWithRecommendation(ctx, userID, videoID, idempotencyKey, "")
+}
+
+func (s *Service) UnfavoriteWithRecommendation(ctx context.Context, userID int64, videoID int64, idempotencyKey string, recommendationRequestID string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, false, idempotencyKey, recommendationRequestID)
 }
 
 // CreateComment 创建评论，并通过幂等键防止客户端重试生成重复评论。
@@ -294,7 +321,7 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 }
 
 // setAction 统一处理点赞和收藏状态变更，actionType 区分点赞或收藏，active 表示目标状态。
-func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*ActionResult, error) {
+func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, recommendationRequestID string) (*ActionResult, error) {
 	if userID <= 0 {
 		return nil, domaininteraction.ErrInvalidUserID
 	}
@@ -304,19 +331,22 @@ func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, ac
 	if len(strings.TrimSpace(idempotencyKey)) > domaininteraction.MaxIdempotencyKeyLength {
 		return nil, domaininteraction.ErrIdempotencyKeyTooLong
 	}
+	if len(strings.TrimSpace(recommendationRequestID)) > domaininteraction.MaxRecommendationRequestIDLength {
+		return nil, domaininteraction.ErrRecommendationRequestIDTooLong
+	}
 
 	actionType, err := domaininteraction.NormalizeActionType(actionType)
 	if err != nil {
 		return nil, err
 	}
 	if s.actionStateStore != nil && s.actionPublisher != nil {
-		return s.setActionAsync(ctx, userID, videoID, actionType, active, idempotencyKey)
+		return s.setActionAsync(ctx, userID, videoID, actionType, active, idempotencyKey, recommendationRequestID)
 	}
 
-	return s.setActionSync(ctx, userID, videoID, actionType, active, idempotencyKey)
+	return s.setActionSync(ctx, userID, videoID, actionType, active, idempotencyKey, recommendationRequestID)
 }
 
-func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*ActionResult, error) {
+func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, recommendationRequestID string) (*ActionResult, error) {
 	initialStat, err := s.repo.GetVideoStat(ctx, videoID)
 	if err != nil {
 		if errors.Is(err, domaininteraction.ErrVideoNotFound) {
@@ -329,9 +359,12 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		return nil, ErrUpdateInteractionFailed
 	}
 
-	mutation := newActionMutation()
+	mutation := newActionMutation(recommendationRequestID)
 	state, err := s.actionStateStore.SetActionState(ctx, userID, videoID, actionType, active, idempotencyKey, initialStat, initialState, mutation)
 	if err != nil {
+		if errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) {
+			return nil, err
+		}
 		return nil, s.handleActionStateStoreFailure(ctx, state, err)
 	}
 
@@ -366,6 +399,9 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 				return nil, actionUpdateError(publishErr, persistErr)
 			}
 			cancelRecovery()
+		}
+		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {
+			return nil, actionUpdateError(confirmErr)
 		}
 	}
 	if state.Delta != 0 {
@@ -454,11 +490,37 @@ func (s *Service) rollbackActionState(ctx context.Context, state *ActionStateRes
 	return s.actionStateStore.RollbackActionState(ctx, state)
 }
 
-func (s *Service) setActionSync(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*ActionResult, error) {
-	action, count, delta, err := s.repo.SetAction(ctx, userID, videoID, actionType, active, idempotencyKey)
+func (s *Service) confirmActionStateHandoff(ctx context.Context, state *ActionStateResult) error {
+	confirmer, ok := s.actionStateStore.(ActionStateHandoffConfirmer)
+	if !ok || state == nil {
+		return nil
+	}
+	return confirmer.ConfirmActionStateHandoff(ctx, state)
+}
+
+func (s *Service) setActionSync(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, recommendationRequestID string) (*ActionResult, error) {
+	mutation := newActionMutation(recommendationRequestID)
+	accepted, err := domaininteraction.NewAcceptedActionEventWithRecommendation(
+		mutation.EventID,
+		userID,
+		videoID,
+		actionType,
+		active,
+		idempotencyKey,
+		mutation.RecommendationRequestID,
+		0,
+		mutation.OccurredAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	action, count, delta, err := s.repo.SetActionWithAcceptedEvent(ctx, accepted)
 	if err != nil {
 		if errors.Is(err, domaininteraction.ErrVideoNotFound) {
 			return nil, domaininteraction.ErrVideoNotFound
+		}
+		if errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) {
+			return nil, err
 		}
 		return nil, ErrUpdateInteractionFailed
 	}
@@ -515,24 +577,26 @@ func recordHotScore(ctx context.Context, recorder HotScoreRecorder, videoID int6
 	_ = recorder.AddHotScore(ctx, videoID, scoreDelta, time.Now())
 }
 
-func newActionMutation() ActionMutation {
-	occurredAt := time.Now().UTC()
+func newActionMutation(recommendationRequestID string) ActionMutation {
+	occurredAt := time.Now().UTC().Truncate(time.Microsecond)
 	return ActionMutation{
-		EventID:    newEventID(occurredAt),
-		OccurredAt: occurredAt,
+		EventID:                 newEventID(occurredAt),
+		RecommendationRequestID: strings.TrimSpace(recommendationRequestID),
+		OccurredAt:              occurredAt,
 	}
 }
 
 func actionChangedEventFromState(userID int64, state *ActionStateResult) *ActionChangedEvent {
 	return &ActionChangedEvent{
-		EventID:        state.EventID,
-		UserID:         userID,
-		VideoID:        state.VideoID,
-		ActionType:     state.ActionType,
-		Active:         state.Active,
-		IdempotencyKey: state.IdempotencyKey,
-		Version:        state.Version,
-		OccurredAt:     state.OccurredAt,
+		EventID:                 state.EventID,
+		UserID:                  userID,
+		VideoID:                 state.VideoID,
+		ActionType:              state.ActionType,
+		Active:                  state.Active,
+		IdempotencyKey:          state.IdempotencyKey,
+		RecommendationRequestID: state.RecommendationRequestID,
+		Version:                 state.Version,
+		OccurredAt:              state.OccurredAt,
 	}
 }
 

@@ -12,6 +12,11 @@
 
 `minio-init` 创建 bucket、设置浏览器直传 CORS，并只允许匿名下载 `media/` 公共输出前缀。
 
+Compose 不包含可用的内部 API token。启动 API/Worker 前必须通过环境变量或部署平台
+Secret 注入 `GCFEED_INTERNAL_TOKEN`；配置中的 `internal.enabled=true` 会拒绝空值、
+`replace-with-internal-token` 占位值，以及少于 32 字符或字符类别不足的弱值。可用
+`openssl rand -base64 48` 生成值，并在执行 `docker compose config` 时一并导出。
+
 ## 生产配置
 
 设置 `media.backend=s3`，并配置：
@@ -32,4 +37,3 @@ API 凭据需要 Put/Head/Get，Worker 另需 List/Delete；浏览器只获得�
 4. 验证基线 MP4、DASH、Range、ETag、CDN 缓存和删除清理后，再全量开启。
 5. 回滚时把 `media.backend` 切回 `local` 并让 Web 根据 `mode=multipart` 自动回退。已生成的 `ready` 记录、`media_url` 和 `cover_url` 继续可读，不删除新增表或对象。
 6. 若 Worker 异常，停止新直传并保留任务表；修复后由数据库 pending/retryable 任务和 Reconciler 恢复，不需要重放用户请求。
-

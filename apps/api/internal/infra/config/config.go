@@ -15,6 +15,9 @@ var ErrReadConfigFailed = errors.New("read config file failed")
 var ErrUnmarshalConfigFailed = errors.New("unmarshal config failed")
 var ErrInvalidMediaConfig = errors.New("invalid media config")
 var ErrInvalidPlaybackConfig = errors.New("invalid playback config")
+var ErrInvalidInternalToken = errors.New("invalid internal token")
+
+const minInternalTokenLength = 32
 
 // LoadConfig 读取 YAML 配置文件，并反序列化为应用启动配置。
 func LoadConfig(path string) (*Config, error) {
@@ -28,8 +31,11 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, ErrReadConfigFailed
 	}
 	cfg := &Config{}
-	if err := yaml.Unmarshal(content, cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(content))), cfg); err != nil {
 		return nil, ErrUnmarshalConfigFailed
+	}
+	if err := ValidateAPIConfig(cfg); err != nil {
+		return nil, err
 	}
 	if err := normalizeAndValidateMediaConfig(&cfg.Media); err != nil {
 		return nil, err
@@ -39,6 +45,55 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ValidateAPIConfig validates settings that protect API routes. Internal
+// endpoints are opt-in so a worker-only deployment can leave their token unset.
+func ValidateAPIConfig(cfg *Config) error {
+	if cfg == nil {
+		return ErrInvalidInternalToken
+	}
+	return normalizeAndValidateInternalConfig(&cfg.Internal)
+}
+
+func normalizeAndValidateInternalConfig(cfg *InternalConfig) error {
+	if cfg == nil {
+		return ErrInvalidInternalToken
+	}
+	cfg.Token = strings.TrimSpace(cfg.Token)
+	if !cfg.Enabled {
+		return nil
+	}
+	if strings.EqualFold(cfg.Token, "replace-with-internal-token") || !strongInternalToken(cfg.Token) {
+		return ErrInvalidInternalToken
+	}
+	return nil
+}
+
+func strongInternalToken(token string) bool {
+	if len(token) < minInternalTokenLength {
+		return false
+	}
+	classes := 0
+	var lower, upper, digit, other bool
+	for _, character := range token {
+		switch {
+		case character >= 'a' && character <= 'z':
+			lower = true
+		case character >= 'A' && character <= 'Z':
+			upper = true
+		case character >= '0' && character <= '9':
+			digit = true
+		default:
+			other = true
+		}
+	}
+	for _, present := range []bool{lower, upper, digit, other} {
+		if present {
+			classes++
+		}
+	}
+	return classes >= 3
 }
 
 func normalizeAndValidatePlaybackConfig(cfg *PlaybackConfig) error {

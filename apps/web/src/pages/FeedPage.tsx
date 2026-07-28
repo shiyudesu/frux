@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiErrorMessage, isUnauthorized } from "../api/client";
 import {
+  createRecommendationFeedback,
   reportPlaybackTelemetryBatch as reportPlaybackTelemetryBatchRequest,
   reportPlaybackQoS as reportPlaybackQoSRequest,
   reportVideoViewEvent as reportVideoViewEventRequest
@@ -15,12 +16,13 @@ import { VideoStage } from "../components/VideoStage";
 import type { VideoStageHandle } from "../components/VideoStage";
 import { emptyProfile, getFeedSceneMeta } from "../constants";
 import { useComments } from "../hooks/useComments";
-import { useFeed } from "../hooks/useFeed";
+import { shouldApplyAcceptedRecommendationFeedback, useFeed } from "../hooks/useFeed";
+import type { FeedSwipeTransition } from "../hooks/useFeed";
 import { getFeedTrackStyle, useSwipe } from "../hooks/useSwipe";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
 import { usePlayerPreferences } from "../hooks/usePlayerPreferences";
-import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch } from "../types";
+import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch, RecommendationFeedbackType } from "../types";
 import type { PlaybackQoSMetrics } from "../utils";
 import { buildPlaybackQoSPayload, createPlaybackQoSKey, openPublicProfile } from "../utils";
 import { enqueuePendingViewEvent, listPendingViewEvents, removePendingViewEvent } from "../viewEventDelivery";
@@ -32,8 +34,10 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const activeStageRef = useRef<VideoStageHandle | null>(null);
   const commentButtonRef = useRef<HTMLButtonElement | null>(null);
   const sessionTokenRef = useRef(session.token);
+  const sessionUserIDRef = useRef(session.user?.id || 0);
   const inflightViewEventIDsRef = useRef(new Set<string>());
   sessionTokenRef.current = session.token;
+  sessionUserIDRef.current = session.user?.id || 0;
 
   // useFeed 的 loadFeed 需要重置 swipe/评论面板，而这两个 state 由下方
   // useSwipe/useComments 持有（调用顺序在后），故通过 ref 转发稳定回调。
@@ -60,6 +64,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     current,
     loadFeed,
     updateCurrentItem,
+    removeAcceptedFeedback,
+    isRecommendationSceneActive,
     preloadController,
     preloadCandidateByVideoID,
     playerResourceByVideoID,
@@ -67,12 +73,19 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     preloadDebug
   } = useFeed(feedScene, feedCallbacks);
 
-  const { swipe, setSwipe, moveTo, handlePointerDown, handlePointerMove, handlePointerEnd, handleWheel } = useSwipe({
+  const { swipe, cancelSwipe, moveTo, handlePointerDown, handlePointerMove, handlePointerEnd, handleWheel } = useSwipe({
     index,
     itemsCount: items.length,
     onIndexChange: setIndex,
     stageRef: feedMainRef
   });
+  const feedbackSwipeTransitionRef = useRef<FeedSwipeTransition>();
+  feedbackSwipeTransitionRef.current = swipe
+    ? {
+        from: feedSwipeTransitionTarget(items[swipe.fromIndex]),
+        to: feedSwipeTransitionTarget(items[swipe.toIndex])
+      }
+    : undefined;
 
   const {
     commentsOpen,
@@ -87,7 +100,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   } = useComments({ current, updateCurrentItem });
 
   feedUICallbacksRef.current = {
-    resetSwipe: () => setSwipe(null),
+    resetSwipe: cancelSwipe,
     closeComments: () => setCommentsOpen(false)
   };
 
@@ -210,6 +223,33 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     return false;
   }, [navigate, session.token]);
 
+  const submitRecommendationFeedback = useCallback(async (item: FeedVideo, feedbackType: RecommendationFeedbackType) => {
+    const originUserID = session.user?.id || 0;
+    const originToken = session.token;
+    if (!originToken || originUserID <= 0) {
+      navigate("/auth");
+      throw new Error("请先登录后再提交反馈");
+    }
+    if (item.feed_scene !== "recommend" || !item.request_id) {
+      throw new Error("当前视频不支持推荐反馈");
+    }
+    const idempotencyKey = `web-reco-feedback:${item.request_id}:${item.video_id}:${feedbackType}`.slice(0, 128);
+    await createRecommendationFeedback(originToken, {
+      video_id: item.video_id, request_id: item.request_id, feedback_type: feedbackType
+    }, idempotencyKey);
+    if (!shouldApplyAcceptedRecommendationFeedback(
+      { scene: item.feed_scene, token: originToken, userID: originUserID },
+      {
+        scene: isRecommendationSceneActive() ? "recommend" : "",
+        token: sessionTokenRef.current,
+        userID: sessionUserIDRef.current
+      }
+    )) {
+      return;
+    }
+    removeAcceptedFeedback(item, feedbackType, feedbackSwipeTransitionRef.current);
+  }, [isRecommendationSceneActive, navigate, removeAcceptedFeedback, session.token, session.user?.id]);
+
   const handleContinuousAdvance = useCallback(() => {
     if (!swipe && index < items.length - 1) {
       moveTo(index + 1);
@@ -220,7 +260,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     if (!current || swipe || !requireLogin()) return;
     try {
       const nextLiked = !Boolean(liked[current.video_id]);
-      const data = await likeVideo(session.token, current.video_id, nextLiked);
+      const data = await likeVideo(session.token, current.video_id, nextLiked, recommendationOutcomeContext(current));
       setLiked((state) => ({ ...state, [current.video_id]: Boolean(data.active) }));
       updateCurrentItem(current.video_id, { like_count: data.like_count ?? current.like_count });
     } catch (error) {
@@ -235,7 +275,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     if (!current || swipe || !requireLogin()) return;
     try {
       const nextFavorited = !Boolean(favorited[current.video_id]);
-      const data = await favoriteVideo(session.token, current.video_id, nextFavorited);
+      const data = await favoriteVideo(session.token, current.video_id, nextFavorited, recommendationOutcomeContext(current));
       setFavorited((state) => ({ ...state, [current.video_id]: Boolean(data.active) }));
       updateCurrentItem(current.video_id, { favorite_count: data.favorite_count ?? current.favorite_count });
     } catch (error) {
@@ -255,7 +295,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     setFollowBusyID(authorID);
     setFollowError("");
     try {
-      const data = await followUser(session.token, authorID, nextFollowing, "web-follow");
+      const data = await followUser(session.token, authorID, nextFollowing, "web-follow", recommendationOutcomeContext(current));
       setFollowing((state) => ({ ...state, [authorID]: Boolean(data.following) }));
       updateSessionRelationCount(session, data.following_count);
     } catch (error) {
@@ -386,6 +426,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     playerPreferences={playerPreferences}
                     onUpdatePlayerPreferences={updatePlayerPreferences}
                     onContinuousAdvance={handleContinuousAdvance}
+                    onRecommendationFeedback={submitRecommendationFeedback}
                   />
                 </div>
               )}
@@ -417,6 +458,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   playerPreferences={playerPreferences}
                   onUpdatePlayerPreferences={updatePlayerPreferences}
                   onContinuousAdvance={handleContinuousAdvance}
+                  onRecommendationFeedback={submitRecommendationFeedback}
                 />
               </div>
               {swipe?.direction === "next" && visibleNext && (
@@ -446,6 +488,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     playerPreferences={playerPreferences}
                     onUpdatePlayerPreferences={updatePlayerPreferences}
                     onContinuousAdvance={handleContinuousAdvance}
+                    onRecommendationFeedback={submitRecommendationFeedback}
                   />
                 </div>
               )}
@@ -475,6 +518,16 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
       />
     </main>
   );
+}
+
+function recommendationOutcomeContext(item: FeedVideo) {
+  if (item.feed_scene !== "recommend" || !item.request_id) return undefined;
+  return { requestID: item.request_id, videoID: item.video_id };
+}
+
+function feedSwipeTransitionTarget(item: FeedVideo | undefined) {
+  if (!item) return undefined;
+  return { videoID: item.video_id, authorID: item.author_id };
 }
 
 function isPermanentViewEventError(status: number): boolean {

@@ -33,6 +33,13 @@ GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API �
 - Docker
 - Docker Compose
 
+内部服务接口需要一个至少 32 字符、包含至少三类字符的随机 token。它不会作为
+可用默认值提交到仓库；启动或校验 Compose 前生成并导出它：
+
+```bash
+export GCFEED_INTERNAL_TOKEN="$(openssl rand -base64 48 | tr -d '\n')"
+```
+
 启动：
 
 ```bash

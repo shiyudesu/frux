@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { FeedVideo } from "../types";
+import { feedbackStateKey } from "./FeedActionRail";
 import { VideoStage } from "./VideoStage";
 
 const baseItem: FeedVideo = {
@@ -32,6 +33,10 @@ const callbacks = {
 };
 
 describe("VideoStage", () => {
+  it("remounts recommendation feedback state for each video", () => {
+    expect(feedbackStateKey({ video_id: 1 })).not.toBe(feedbackStateKey({ video_id: 2 }));
+  });
+
   it("keeps image fallback visible without video-only controls", () => {
     const html = renderToStaticMarkup(
       <VideoStage

@@ -15,10 +15,11 @@ const (
 	CommentStatusNormal  = 1
 	CommentStatusDeleted = 2
 
-	MaxCommentContentLength = 1000
-	MaxIdempotencyKeyLength = 128
-	MaxActionEventIDLength  = 128
-	MaxLimit                = 100
+	MaxCommentContentLength          = 1000
+	MaxIdempotencyKeyLength          = 128
+	MaxActionEventIDLength           = 128
+	MaxRecommendationRequestIDLength = 64
+	MaxLimit                         = 100
 )
 
 // Action 表示用户对视频的一类互动状态，例如点赞或收藏。
@@ -45,25 +46,27 @@ type ActionVideo struct {
 
 // ActionStateSnapshot is the durable baseline used when Redis has no action state.
 type ActionStateSnapshot struct {
-	Exists         bool
-	Active         bool
-	IdempotencyKey string
-	Version        int64
-	EventID        string
-	OccurredAt     time.Time
-	UpdatedAt      time.Time
+	Exists                  bool
+	Active                  bool
+	IdempotencyKey          string
+	RecommendationRequestID string
+	Version                 int64
+	EventID                 string
+	OccurredAt              time.Time
+	UpdatedAt               time.Time
 }
 
 // AcceptedActionEvent represents an interaction that passed public request validation before enqueueing.
 type AcceptedActionEvent struct {
-	EventID        string
-	UserID         int64
-	VideoID        int64
-	ActionType     string
-	Active         bool
-	IdempotencyKey string
-	Version        int64
-	OccurredAt     time.Time
+	EventID                 string
+	UserID                  int64
+	VideoID                 int64
+	ActionType              string
+	Active                  bool
+	IdempotencyKey          string
+	RecommendationRequestID string
+	Version                 int64
+	OccurredAt              time.Time
 }
 
 // ActionEventComesAfter compares the durable order tuple used for one action fact.
@@ -127,8 +130,13 @@ func NormalizeActionType(value string) (string, error) {
 }
 
 func NewAcceptedActionEvent(eventID string, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, version int64, occurredAt time.Time) (*AcceptedActionEvent, error) {
+	return NewAcceptedActionEventWithRecommendation(eventID, userID, videoID, actionType, active, idempotencyKey, "", version, occurredAt)
+}
+
+func NewAcceptedActionEventWithRecommendation(eventID string, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, recommendationRequestID string, version int64, occurredAt time.Time) (*AcceptedActionEvent, error) {
 	eventID = strings.TrimSpace(eventID)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	recommendationRequestID = strings.TrimSpace(recommendationRequestID)
 	if eventID == "" || len(eventID) > MaxActionEventIDLength {
 		return nil, ErrInvalidActionEventID
 	}
@@ -145,6 +153,9 @@ func NewAcceptedActionEvent(eventID string, userID int64, videoID int64, actionT
 	if len(idempotencyKey) > MaxIdempotencyKeyLength {
 		return nil, ErrIdempotencyKeyTooLong
 	}
+	if len(recommendationRequestID) > MaxRecommendationRequestIDLength {
+		return nil, ErrRecommendationRequestIDTooLong
+	}
 	if version < 0 {
 		return nil, ErrInvalidActionEvent
 	}
@@ -152,14 +163,15 @@ func NewAcceptedActionEvent(eventID string, userID int64, videoID int64, actionT
 		return nil, ErrInvalidActionEventTime
 	}
 	return &AcceptedActionEvent{
-		EventID:        eventID,
-		UserID:         userID,
-		VideoID:        videoID,
-		ActionType:     normalizedActionType,
-		Active:         active,
-		IdempotencyKey: idempotencyKey,
-		Version:        version,
-		OccurredAt:     occurredAt.UTC().Truncate(time.Microsecond),
+		EventID:                 eventID,
+		UserID:                  userID,
+		VideoID:                 videoID,
+		ActionType:              normalizedActionType,
+		Active:                  active,
+		IdempotencyKey:          idempotencyKey,
+		RecommendationRequestID: recommendationRequestID,
+		Version:                 version,
+		OccurredAt:              occurredAt.UTC().Truncate(time.Microsecond),
 	}, nil
 }
 

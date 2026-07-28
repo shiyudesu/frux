@@ -6,6 +6,7 @@ import (
 	infraaccount "GCFeed/internal/infra/persistence/account"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -44,6 +45,17 @@ func New(db *gorm.DB) *Repository {
 
 // SetFollow 设置关注或取关状态，并在同一事务中维护双方计数。
 func (r *Repository) SetFollow(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string) (*domainrelation.Follow, *domainrelation.RelationStat, *domainrelation.RelationStat, error) {
+	return r.setFollow(ctx, userID, targetUserID, active, idempotencyKey, nil)
+}
+
+func (r *Repository) SetFollowWithRecommendation(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string, outcome *domainrelation.RecommendationOutcomeContext) (*domainrelation.Follow, *domainrelation.RelationStat, *domainrelation.RelationStat, error) {
+	if _, err := domainrelation.NewRecommendationOutcomeContext(outcomeRequestID(outcome), outcomeVideoID(outcome)); err != nil {
+		return nil, nil, nil, err
+	}
+	return r.setFollow(ctx, userID, targetUserID, active, idempotencyKey, outcome)
+}
+
+func (r *Repository) setFollow(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string, outcome *domainrelation.RecommendationOutcomeContext) (*domainrelation.Follow, *domainrelation.RelationStat, *domainrelation.RelationStat, error) {
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 
 	var follow FollowModel
@@ -87,8 +99,16 @@ func (r *Repository) SetFollow(ctx context.Context, userID int64, targetUserID i
 			if active {
 				delta = 1
 			}
+			if active {
+				if err := createFollowProfileOutbox(tx, follow, outcome); err != nil {
+					return err
+				}
+			}
 		} else {
 			if idempotencyKey != "" && idempotencyKeyValue(follow.IdempotencyKey) == idempotencyKey {
+				if (follow.Status == domainrelation.FollowStatusActive) != active {
+					return domainrelation.ErrFollowIdempotencyConflict
+				}
 				var err error
 				userStat, err = currentStat(tx, userID)
 				if err != nil {
@@ -112,6 +132,11 @@ func (r *Repository) SetFollow(ctx context.Context, userID int64, targetUserID i
 			if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey {
 				if err := tx.Save(&follow).Error; err != nil {
 					return err
+				}
+				if previousStatus != nextStatus {
+					if err := createFollowProfileOutbox(tx, follow, outcome); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -138,6 +163,37 @@ func (r *Repository) SetFollow(ctx context.Context, userID int64, targetUserID i
 	}
 
 	return restoreFollow(follow), restoreStat(userStat), restoreStat(targetStat), nil
+}
+
+func createFollowProfileOutbox(tx *gorm.DB, follow FollowModel, outcome *domainrelation.RecommendationOutcomeContext) error {
+	if follow.ID <= 0 || follow.UpdatedAt.IsZero() {
+		return errors.New("follow projection outbox requires a persisted follow")
+	}
+	return tx.Create(&FollowProfileOutboxModel{
+		EventID:                 fmt.Sprintf("relation:follow:%d:%d:%d", follow.ID, follow.Status, follow.UpdatedAt.UTC().UnixNano()),
+		FollowID:                follow.ID,
+		UserID:                  follow.UserID,
+		TargetUserID:            follow.TargetUserID,
+		Active:                  follow.Status == domainrelation.FollowStatusActive,
+		OccurredAt:              follow.UpdatedAt.UTC(),
+		RecommendationRequestID: outcomeRequestID(outcome),
+		RecommendationVideoID:   outcomeVideoID(outcome),
+		AvailableAt:             follow.UpdatedAt.UTC(),
+	}).Error
+}
+
+func outcomeRequestID(outcome *domainrelation.RecommendationOutcomeContext) string {
+	if outcome == nil {
+		return ""
+	}
+	return outcome.RequestID
+}
+
+func outcomeVideoID(outcome *domainrelation.RecommendationOutcomeContext) int64 {
+	if outcome == nil {
+		return 0
+	}
+	return outcome.VideoID
 }
 
 // IsFollowing reads one relationship with constant work instead of scanning a following list.

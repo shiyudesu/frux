@@ -24,6 +24,12 @@
 | `limit` | query | int | 否 | 10 | 返回数量，最大 100 |
 | `scene` | query | string | 否 | `timeline` | Feed 场景：`timeline`、`hot` |
 
+`POST /api/feed-queries` 是推荐场景的复杂查询入口。`scene=recommend` 必须认证，并携带
+受限的 `context`（request/session ID、refresh index、最近视频、当前视频、network、
+save-data、viewport、播放能力）；完整字段上限和枚举见 [recommendation.md](recommendation.md)。
+推荐 response 保持既有 `items/next_cursor/has_more` 形状，内部策略、分数、画像和 reasons
+不会泄漏给客户端。
+
 响应：
 
 ```json
@@ -101,7 +107,7 @@ Feed 依赖 `video` 和 `video_stat` 读取已发布公开视频与互动计数�
 | `event_id`、`playback_session_id`、`sequence` | 重试安全的播放会话顺序 |
 | `occurred_at` | 有界事件发生时间 |
 | `completed` | 是否完播 |
-| `created_at` | 事件时间 |
+| `created_at` | 服务端持久接收时间；推荐归因窗口使用该可信时间，而非客户端 `occurred_at` |
 
 `exposures`：
 
@@ -159,6 +165,10 @@ feed:hot:window:v1:{windowEndUnix}
 ## 6. Web Feed 顺序预加载
 
 Web 以当前场景已经返回的 `items` 数组作为唯一预加载顺序来源。`timeline`、`hot`、`following` 和 `recommend` 都从活动索引向后截取有效窗口，不再通过 `/api/preload-videos` 重新生成另一套候选顺序。
+
+推荐首页正常情况下由 Redis snapshot 固定排序，签名 cursor 绑定用户、scene 和 request ID；
+后续组装仍重新校验可见性，因此候选私密、下架或删除时会形成安全的页内 gap。Redis 不可用时
+使用确定性 score cursor 并在服务端记录 degraded，客户端仍按普通 cursor 消费。
 
 - 预加载代际绑定 scene、Feed request、登录态代际、video ID 和媒体源版本；切换场景、刷新列表或签名源变化会释放旧资源。
 - 控制器最多保留上一条、当前条和网络策略允许的后续条目；窗口外资源清除监听器、定时器、媒体源和缓冲状态。

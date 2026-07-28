@@ -30,6 +30,8 @@ flowchart LR
 
 Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，PostgreSQL 保存最终事实。
 
+推荐召回还使用每服务 16 个有限 provider slots：不响应取消的下游调用保持占位，后续请求降级而非继续创建 goroutine。
+
 ## 3. P0 优化清单
 
 | 编号 | 问题 | 策略 | 验收指标 |
@@ -240,3 +242,16 @@ feed:hot:window:v1:{windowEndUnix}
 - Feed 只保留 previous/current/next 三个 player slot；高频时间和缓冲变化局限在 adapter 订阅，不重建整页。
 - constrained network/save-data 优先低码率或兼容 MP4，MediaCapabilities 不可用时回退到 `canPlayType`。
 - `buffer_ms` 同时作为 next-slot ready 门槛和切入后 buffering 依据，避免“已预加载”但实际不可播的虚假状态。
+
+## 17. 上下文推荐容量与降级
+
+- 每个 Provider 有独立 deadline 和最多 100 条 bootstrap budget；合并池、snapshot 候选和日志
+  候选均不超过 500。Provider 超时只降低该请求，不能等待全局最长任务。
+- Redis snapshot 默认 TTL 为 300 秒，每用户最多保留 20 个活动 session；snapshot miss、读写错误
+  使用 signed cursor 中的确定性 fallback，不重算已返回页。
+- 请求日志稳定采样 1%，默认保留 30 天；清理使用 `created_at` 索引分批执行。日志只保留
+  归一化 context、候选 ID/reason/分量和 degraded 标志。
+- 运行前可执行：
+  `cd apps/api && go test ./internal/application/recommendation -run '^$' -bench '^BenchmarkRecommendBoundedPool$' -benchtime=5s`。
+  该基准以 100 候选有界池运行并发 `RunParallel`，用于比较提交前的 allocation 与 ns/op，不能替代
+  含 PostgreSQL/Redis 的容量压测。

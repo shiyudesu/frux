@@ -2,6 +2,7 @@ package infraconfig
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	domainmedia "GCFeed/internal/domain/media"
@@ -56,5 +57,46 @@ func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
 	cfg.Telemetry.CleanupInterval = "200h"
 	if err := normalizeAndValidatePlaybackConfig(&cfg); !errors.Is(err, ErrInvalidPlaybackConfig) {
 		t.Fatalf("expected invalid cleanup interval, got %v", err)
+	}
+}
+
+func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
+	validToken := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
+	tests := []struct {
+		name  string
+		cfg   Config
+		valid bool
+	}{
+		{name: "disabled routes permit no token", cfg: Config{Internal: InternalConfig{}}, valid: true},
+		{name: "empty token", cfg: Config{Internal: InternalConfig{Enabled: true}}, valid: false},
+		{name: "placeholder token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "replace-with-internal-token"}}, valid: false},
+		{name: "short token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "short-token"}}, valid: false},
+		{name: "single character class", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, valid: false},
+		{name: "strong token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: validToken}}, valid: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateAPIConfig(&test.cfg)
+			if test.valid && err != nil {
+				t.Fatalf("ValidateAPIConfig() error = %v", err)
+			}
+			if !test.valid && !errors.Is(err, ErrInvalidInternalToken) {
+				t.Fatalf("ValidateAPIConfig() error = %v, want ErrInvalidInternalToken", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
+	token := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
+	t.Setenv("GCFEED_INTERNAL_TOKEN", token)
+
+	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.yaml"))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Internal.Token != token || !cfg.Internal.Enabled {
+		t.Fatalf("internal config = %+v, want enabled environment token", cfg.Internal)
 	}
 }

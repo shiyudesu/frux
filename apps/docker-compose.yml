@@ -83,6 +83,8 @@ services:
       args:
         GOPROXY: https://goproxy.cn,direct
     container_name: gcfeed-api
+    environment:
+      GCFEED_INTERNAL_TOKEN: ${GCFEED_INTERNAL_TOKEN:?set GCFEED_INTERNAL_TOKEN to a strong random value}
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,6 +113,8 @@ services:
       args:
         GOPROXY: https://goproxy.cn,direct
     container_name: gcfeed-worker
+    environment:
+      GCFEED_INTERNAL_TOKEN: ${GCFEED_INTERNAL_TOKEN:?set GCFEED_INTERNAL_TOKEN to a strong random value}
     command: ["./gcfeed-worker"]
     depends_on:
       postgres:

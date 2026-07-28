@@ -11,6 +11,11 @@ import { apiRequest } from "./client";
 
 export type RelationTab = "following" | "followers";
 
+export interface RecommendationOutcomeContext {
+  requestID: string;
+  videoID?: number;
+}
+
 export function relationListPath(tab: RelationTab, cursor = "", limit = 20): string {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) {
@@ -41,23 +46,19 @@ export async function loadFollowingMap(token: string): Promise<Record<number, bo
   return next;
 }
 
-export function likeVideo(token: string, videoID: number, nextLiked: boolean): Promise<InteractionActionResponse> {
+export function likeVideo(token: string, videoID: number, nextLiked: boolean, recommendation?: RecommendationOutcomeContext): Promise<InteractionActionResponse> {
   return apiRequest<InteractionActionResponse>(`/api/videos/${videoID}/like`, {
     method: nextLiked ? "PUT" : "DELETE",
     token,
-    headers: {
-      "Idempotency-Key": `web-like-${videoID}-${Date.now()}`
-    }
+    headers: actionHeaders(`web-like-${videoID}-${Date.now()}`, recommendation)
   });
 }
 
-export function favoriteVideo(token: string, videoID: number, nextFavorited: boolean): Promise<InteractionActionResponse> {
+export function favoriteVideo(token: string, videoID: number, nextFavorited: boolean, recommendation?: RecommendationOutcomeContext): Promise<InteractionActionResponse> {
   return apiRequest<InteractionActionResponse>(`/api/videos/${videoID}/favorite`, {
     method: nextFavorited ? "PUT" : "DELETE",
     token,
-    headers: {
-      "Idempotency-Key": `web-favorite-${videoID}-${Date.now()}`
-    }
+    headers: actionHeaders(`web-favorite-${videoID}-${Date.now()}`, recommendation)
   });
 }
 
@@ -69,15 +70,26 @@ export function followUser(
   token: string,
   targetUserID: number,
   nextFollowing: boolean,
-  keyPrefix: string
+  keyPrefix: string,
+  recommendation?: RecommendationOutcomeContext
 ): Promise<FollowResponse> {
   return apiRequest<FollowResponse>(`/api/users/me/following/${targetUserID}`, {
     method: nextFollowing ? "PUT" : "DELETE",
     token,
-    headers: {
-      "Idempotency-Key": `${keyPrefix}-${targetUserID}-${Date.now()}`
-    }
+    headers: actionHeaders(`${keyPrefix}-${targetUserID}-${Date.now()}`, recommendation)
   });
+}
+
+function actionHeaders(idempotencyKey: string, recommendation?: RecommendationOutcomeContext): Record<string, string> {
+  const headers: Record<string, string> = { "Idempotency-Key": idempotencyKey };
+  const requestID = recommendation?.requestID.trim().slice(0, 64) || "";
+  if (requestID) {
+    headers["X-Recommendation-Request-ID"] = requestID;
+  }
+  if (recommendation?.videoID && recommendation.videoID > 0) {
+    headers["X-Recommendation-Video-ID"] = String(Math.round(recommendation.videoID));
+  }
+  return headers;
 }
 
 export function fetchFollowState(token: string, targetUserID: number): Promise<FollowStateResponse> {

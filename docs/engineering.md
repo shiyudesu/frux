@@ -417,3 +417,19 @@ openspec validate --all --strict
 - Router 完成依赖装配。
 - API 测试覆盖成功和失败路径。
 - 模块文档和产品状态更新。
+
+## 16. 上下文推荐工程约束
+
+- 推荐 context 只使用 `domain/recommendation.RecommendationContext`；HTTP 必须严格绑定并拒绝
+  超限/未知字段，客户端不提供身份、关系、曝光或任意 metadata。
+- `recommendation_policy` 必须经 Domain 校验后才可启用。`EnsureInitialPolicies` 仅以
+  `(scene, version)` conflict-do-nothing 插入 bootstrap 版本，API 和 Worker migration 均可安全调用，
+  不得在启动时覆盖运营策略。
+- 请求日志、反馈、画像事件和 outcome 是耐久事实；行为、反馈、关注和 action 的画像/归因投影使用
+  带租约、指数退避的 Outbox，所有
+  Worker 消费以稳定事件 ID 去重。日志载荷、候选数和保留清理必须有界。
+- Redis snapshot 是优化而非真相：cursor 必须签名并绑定用户/scene/request，页组装必须再次
+  校验可见性，Redis 失败必须走确定性 degraded cursor。
+- 推荐 API-flow 测试覆盖 context、认证、Provider 降级、策略、snapshot、反馈和 outcome；
+  定向并发基准命令为
+  `cd apps/api && go test ./internal/application/recommendation -run '^$' -bench '^BenchmarkRecommendBoundedPool$' -benchtime=5s`。

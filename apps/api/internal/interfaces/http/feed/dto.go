@@ -7,15 +7,28 @@ import (
 
 // feedQueryRequest 是复杂 Feed 查询入口的请求体。
 type feedQueryRequest struct {
-	Scene         string            `json:"scene"`
-	Cursor        string            `json:"cursor"`
-	Limit         *int              `json:"limit"`
-	ClientContext map[string]string `json:"context"`
+	Scene   string                        `json:"scene"`
+	Cursor  string                        `json:"cursor"`
+	Limit   *int                          `json:"limit"`
+	Context *recommendationContextRequest `json:"context"`
+}
+
+type recommendationContextRequest struct {
+	RequestID            string   `json:"request_id"`
+	SessionID            string   `json:"session_id"`
+	RefreshIndex         int      `json:"refresh_index"`
+	RecentVideoIDs       []int64  `json:"recent_video_ids"`
+	CurrentVideoID       int64    `json:"current_video_id"`
+	NetworkClass         string   `json:"network_class"`
+	SaveData             bool     `json:"save_data"`
+	ViewportClass        string   `json:"viewport_class"`
+	PlaybackCapabilities []string `json:"playback_capabilities"`
 }
 
 // feedItemsResponse 是 Feed 游标分页响应。
 type feedItemsResponse struct {
 	Scene      string             `json:"scene"`
+	RequestID  string             `json:"request_id,omitempty"`
 	Items      []feedItemResponse `json:"items"`
 	NextCursor string             `json:"next_cursor"`
 	HasMore    bool               `json:"has_more"`

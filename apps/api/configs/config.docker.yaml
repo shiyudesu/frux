@@ -4,7 +4,8 @@ jwt:
   access_ttl: "15m"
 
 internal:
-  token: "replace-with-internal-token"
+  enabled: true
+  token: "${GCFEED_INTERNAL_TOKEN}"
 
 database:
   host: "postgres"

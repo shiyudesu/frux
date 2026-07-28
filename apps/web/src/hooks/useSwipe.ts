@@ -24,6 +24,7 @@ interface DragState {
   direction: "" | SwipeDirection;
   toIndex?: number;
   height: number;
+  target: HTMLElement;
 }
 
 export function getFeedTrackStyle(swipe: SwipeState | null): { transform: string; transition?: string } {
@@ -63,12 +64,16 @@ export function useSwipe({ index, itemsCount, onIndexChange, stageRef }: UseSwip
   const swipeRef = useRef<SwipeState | null>(null);
   const wheelLocked = useRef(false);
   const transitionTimer = useRef<number | null>(null);
+  const wheelUnlockTimer = useRef<number | null>(null);
   const dragRef = useRef<DragState | null>(null);
 
   useEffect(() => {
     return () => {
       if (transitionTimer.current) {
         window.clearTimeout(transitionTimer.current);
+      }
+      if (wheelUnlockTimer.current) {
+        window.clearTimeout(wheelUnlockTimer.current);
       }
     };
   }, []);
@@ -79,6 +84,25 @@ export function useSwipe({ index, itemsCount, onIndexChange, stageRef }: UseSwip
 
   function getStageHeight() {
     return stageRef.current?.clientHeight || window.innerHeight || 1;
+  }
+
+  function cancelSwipe() {
+    if (transitionTimer.current) {
+      window.clearTimeout(transitionTimer.current);
+      transitionTimer.current = null;
+    }
+    if (wheelUnlockTimer.current) {
+      window.clearTimeout(wheelUnlockTimer.current);
+      wheelUnlockTimer.current = null;
+    }
+    wheelLocked.current = false;
+    const drag = dragRef.current;
+    if (drag?.target.hasPointerCapture(drag.pointerId)) {
+      drag.target.releasePointerCapture(drag.pointerId);
+    }
+    dragRef.current = null;
+    swipeRef.current = null;
+    setSwipe(null);
   }
 
   function moveTo(nextIndex: number) {
@@ -142,7 +166,8 @@ export function useSwipe({ index, itemsCount, onIndexChange, stageRef }: UseSwip
       fromIndex: index,
       active: false,
       direction: "",
-      height: 0
+      height: 0,
+      target: event.currentTarget
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -216,14 +241,16 @@ export function useSwipe({ index, itemsCount, onIndexChange, stageRef }: UseSwip
     } else {
       goPrev();
     }
-    window.setTimeout(() => {
+    wheelUnlockTimer.current = window.setTimeout(() => {
       wheelLocked.current = false;
+      wheelUnlockTimer.current = null;
     }, 420);
   }
 
   return {
     swipe,
     setSwipe,
+    cancelSwipe,
     moveTo,
     handlePointerDown,
     handlePointerMove,

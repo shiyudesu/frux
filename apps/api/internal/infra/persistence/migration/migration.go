@@ -25,6 +25,10 @@ const viewHistoryBackfillKey = "20260724_video_view_history_backfill_v1"
 const viewEventEnvelopeBackfillKey = "20260725_view_event_envelope_backfill_v1"
 const viewHistoryAggregateRepairKey = "20260725_video_view_history_aggregate_repair_v2"
 const recommendationBehaviorBackfillKey = "20260725_recommendation_behavior_backfill_v1"
+const recommendationFeedbackProfileOutboxBackfillKey = "20260727_recommendation_feedback_profile_outbox_v1"
+const relationProfileOutboxBackfillKey = "20260727_relation_profile_outbox_v1"
+const interactionActionProfileOutboxBackfillKey = "20260727_interaction_action_profile_outbox_v1"
+const interactionActionOutcomeOutboxBackfillKey = "20260727_interaction_action_outcome_outbox_v1"
 
 type markerModel struct {
 	Key       string    `gorm:"column:key;size:128;primaryKey"`
@@ -41,6 +45,9 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := prepareExposureSchema(tx); err != nil {
+			return err
+		}
+		if err := prepareRecommendationRequestLogSchema(tx); err != nil {
 			return err
 		}
 		if err := tx.AutoMigrate(
@@ -67,8 +74,17 @@ func AutoMigrate(db *gorm.DB) error {
 			&infraexposure.ViewHistoryDeletionModel{},
 			&infraexposure.ViewEventOutboxModel{},
 			&infrarecommendation.BehaviorEventModel{},
+			&infrarecommendation.PolicyModel{},
+			&infrarecommendation.UserInterestProfileModel{},
+			&infrarecommendation.AppliedProfileEventModel{},
+			&infrarecommendation.FeedbackModel{},
+			&infrarecommendation.FeedbackProfileOutboxModel{},
+			&infrarecommendation.RequestLogModel{},
+			&infrarecommendation.ServedCandidateEvidenceModel{},
+			&infrarecommendation.OutcomeModel{},
 			&infrainteraction.ActionModel{},
 			&infrainteraction.ActionEventModel{},
+			&infrainteraction.ActionIdempotencyReceiptModel{},
 			&infrainteraction.CommentModel{},
 			&inframessage.MessageModel{},
 			&infraplayback.ConfigModel{},
@@ -77,6 +93,7 @@ func AutoMigrate(db *gorm.DB) error {
 			&infraplayback.TelemetryEventModel{},
 			&infrarelation.FollowModel{},
 			&infrarelation.RelationStatModel{},
+			&infrarelation.FollowProfileOutboxModel{},
 			&infralibrary.WatchLaterModel{},
 			&markerModel{},
 		); err != nil {
@@ -115,6 +132,21 @@ func AutoMigrate(db *gorm.DB) error {
 		if err := runOnce(tx, recommendationBehaviorBackfillKey, infrarecommendation.EnsureBehaviorEvents); err != nil {
 			return err
 		}
+		if err := runOnce(tx, recommendationFeedbackProfileOutboxBackfillKey, infrarecommendation.EnsureFeedbackProfileOutbox); err != nil {
+			return err
+		}
+		if err := runOnce(tx, relationProfileOutboxBackfillKey, infrarelation.EnsureFollowProfileOutbox); err != nil {
+			return err
+		}
+		if err := runOnce(tx, interactionActionProfileOutboxBackfillKey, infrainteraction.EnsureActionProfileProjectionOutbox); err != nil {
+			return err
+		}
+		if err := runOnce(tx, interactionActionOutcomeOutboxBackfillKey, infrainteraction.EnsureRecommendationActionOutcomeOutbox); err != nil {
+			return err
+		}
+		if err := infrarecommendation.EnsureInitialPolicies(tx); err != nil {
+			return err
+		}
 		return infrafeed.EnsureTimelineIndex(tx)
 	})
 }
@@ -145,6 +177,28 @@ func prepareExposureSchema(tx *gorm.DB) error {
 					ALTER COLUMN last_event_id TYPE varchar(128)
 					USING CASE WHEN last_event_id > 0 THEN 'legacy-' || last_event_id::text ELSE '' END;
 				ALTER TABLE video_view_history ALTER COLUMN last_event_id SET DEFAULT '';
+			END IF;
+		END $$;
+	`).Error
+}
+
+func prepareRecommendationRequestLogSchema(tx *gorm.DB) error {
+	return tx.Exec(`
+		DO $$
+		BEGIN
+			IF to_regclass('recommendation_request_log') IS NOT NULL THEN
+				IF EXISTS (
+					SELECT 1
+					FROM pg_constraint
+					WHERE conrelid = 'recommendation_request_log'::regclass
+						AND conname = 'uk_recommendation_request_log_request'
+				) THEN
+					ALTER TABLE recommendation_request_log
+						DROP CONSTRAINT uk_recommendation_request_log_request;
+				END IF;
+				IF to_regclass('uk_recommendation_request_log_request') IS NOT NULL THEN
+					DROP INDEX uk_recommendation_request_log_request;
+				END IF;
 			END IF;
 		END $$;
 	`).Error

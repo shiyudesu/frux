@@ -24,6 +24,10 @@ type Repository interface {
 	GetUserProfile(ctx context.Context, userID int64) (*UserProfile, error)
 	// SetAction 设置点赞或收藏状态，并返回最新统计值。
 	SetAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*Action, int, int, error)
+	// SetActionWithAcceptedEvent synchronously validates a public video and,
+	// in the same transaction, persists the action receipt plus its profile
+	// and recommendation-outcome handoffs.
+	SetActionWithAcceptedEvent(ctx context.Context, event *AcceptedActionEvent) (*Action, int, int, error)
 	// CreateComment 创建评论并返回视频最新评论数。
 	CreateComment(ctx context.Context, comment *Comment) (*Comment, int, int, error)
 	// FindCommentByUserAndIdempotencyKey 用于评论创建接口的幂等重放。

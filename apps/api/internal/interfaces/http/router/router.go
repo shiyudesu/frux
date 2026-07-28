@@ -60,6 +60,9 @@ import (
 
 // Register 负责后端依赖装配：数据库模型、仓储、Service、Handler、中间件和路由。
 func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
+	if err := validateAPIConfig(cfg); err != nil {
+		return err
+	}
 	// database/sql 连接池交给 GORM 复用，避免维护两套数据库连接。
 	gormDB, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
 		Conn: db,
@@ -96,9 +99,20 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
 	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))
 	recommendationRepo := infrarecommendation.New(gormDB)
-	recommendationService := applicationrecommendation.New(recommendationRepo)
-	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
-	feedOptions := []applicationfeed.Option{applicationfeed.WithRecommender(recommendationService)}
+	relationRepo := infrarelation.New(gormDB)
+	recommendationOptions := []applicationrecommendation.Option{
+		applicationrecommendation.WithPolicySelector(applicationrecommendation.NewPolicyService(recommendationRepo, nil)),
+		applicationrecommendation.WithRequestLogRepository(recommendationRepo),
+		applicationrecommendation.WithCandidateVisibilityFilter(recommendationRepo),
+		applicationrecommendation.WithRecallProviders(
+			applicationrecommendation.NewFreshContentProvider(recommendationRepo),
+			applicationrecommendation.NewHotContentProvider(recommendationRepo),
+			applicationrecommendation.NewContentSimilarityProvider(recommendationRepo, recommendationRepo, recommendationRepo),
+			applicationrecommendation.NewFollowedAuthorProvider(followedAuthorRecallAdapter{source: relationRepo}, recommendationRepo),
+			applicationrecommendation.NewSessionContinuationProvider(recommendationRepo, recommendationRepo),
+		),
+	}
+	feedOptions := []applicationfeed.Option{}
 	videoOptions := []applicationvideo.Option{}
 	interactionOptions := []applicationinteraction.Option{}
 	var feedCache *infracache.FeedCache
@@ -106,11 +120,21 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
 		feedCache = infracache.NewFeedCache(redisClient)
+		snapshotSigner, signerErr := applicationrecommendation.NewHMACSnapshotCursorSigner(cfg.JWT.Secret)
+		if signerErr != nil {
+			return signerErr
+		}
+		recommendationOptions = append(recommendationOptions,
+			applicationrecommendation.WithSnapshotPagination(infracache.NewRecommendationSnapshotStore(redisClient), snapshotSigner),
+		)
 		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
 		videoOptions = append(videoOptions, applicationvideo.WithVideoCacheInvalidator(feedCache))
 	}
+	recommendationService := applicationrecommendation.New(recommendationRepo, recommendationOptions...)
+	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
+	feedOptions = append(feedOptions, applicationfeed.WithRecommender(recommendationService))
 	feedService := applicationfeed.New(feedRepo, feedOptions...)
 	feedHandler := interfaceshttpfeed.New(feedService)
 	interactionRepo := infrainteraction.New(gormDB)
@@ -208,7 +232,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		privacyReaderAdapter{source: accountRepo},
 	)
 	libraryHandler := interfaceshttplibrary.New(libraryService)
-	relationRepo := infrarelation.New(gormDB)
 	if feedCache != nil {
 		relationOptions = append(relationOptions, applicationrelation.WithFollowFeedBackfiller(NewFollowFeedBackfiller(feedRepo, feedCache)))
 	}
@@ -298,6 +321,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	// Feed 暴露为条目集合，客户端通过游标和 limit 控制分页。
 	api.GET("/feed-items", optionalAuthMiddleware, feedHandler.ListFeedItems)
 	api.POST("/feed-queries", optionalAuthMiddleware, feedHandler.Query)
+	api.POST("/recommendation-feedback", authMiddleware, recommendationHandler.CreateFeedback)
 	api.POST("/video-view-events", authMiddleware, exposureHandler.CreateViewEvent)
 	// 删除评论只需要评论自身 ID，所以放在顶层 comments 资源下。
 	api.DELETE("/comments/:commentId", authMiddleware, interactionHandler.DeleteComment)
@@ -309,12 +333,14 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	api.POST("/playback-qos-reports", authMiddleware, playbackHandler.CreateQoSReport)
 	api.POST("/playback-telemetry-batches", authMiddleware, playbackHandler.CreateTelemetryBatch)
 
-	internal := h.Group("/internal")
-	internal.POST("/recommendation-candidates", recommendationHandler.ListCandidates)
-	internal.POST("/exposure-decisions", recommendationHandler.DecideExposures)
-	internal.POST("/exposures", recommendationHandler.SaveExposures)
-	internal.POST("/messages", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), messageHandler.Create)
-	internal.POST("/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), playbackHandler.CreateInternalQoSReport)
+	if cfg.Internal.Enabled {
+		internal := h.Group("/internal")
+		internal.POST("/recommendation-candidates", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), recommendationHandler.ListCandidates)
+		internal.POST("/exposure-decisions", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), recommendationHandler.DecideExposures)
+		internal.POST("/exposures", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), recommendationHandler.SaveExposures)
+		internal.POST("/messages", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), messageHandler.Create)
+		internal.POST("/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), playbackHandler.CreateInternalQoSReport)
+	}
 
 	infrahttphertz.RegisterTrailingSlashRedirects(h)
 	h.GET("/uploads", infrahttphertz.RedirectTo("/uploads/"))
@@ -334,6 +360,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	})
 
 	return nil
+}
+
+func validateAPIConfig(cfg *infraconfig.Config) error {
+	return infraconfig.ValidateAPIConfig(cfg)
 }
 
 type MessageWriter struct {

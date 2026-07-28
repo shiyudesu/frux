@@ -335,13 +335,42 @@ export interface FeedItem {
 
 export interface FeedItemsResponse extends CursorPage<FeedItem> {
   scene: string;
+  request_id?: string;
+}
+
+export type RecommendationPlaybackCapability = "mp4" | "dash" | "media_source" | "media_capabilities";
+
+export interface RecommendationContext {
+  request_id: string;
+  session_id: string;
+  refresh_index: number;
+  recent_video_ids: number[];
+  current_video_id: number;
+  network_class: PlaybackTelemetryNetworkClass;
+  save_data: boolean;
+  viewport_class: PlaybackTelemetryViewportClass;
+  playback_capabilities: RecommendationPlaybackCapability[];
 }
 
 export interface FeedQueryRequest {
   scene: string;
   cursor: string;
   limit?: number;
-  context?: Record<string, string>;
+  context?: RecommendationContext;
+}
+
+export type RecommendationFeedbackType = "not_interested" | "reduce_author" | "already_seen";
+
+export interface CreateRecommendationFeedbackRequest {
+  video_id: number;
+  request_id: string;
+  feedback_type: RecommendationFeedbackType;
+}
+
+export interface RecommendationFeedbackResponse extends CreateRecommendationFeedbackRequest {
+  id: number;
+  created_at: string;
+  replayed?: boolean;
 }
 
 /** mapFeedItem 的输出：前端 Feed 流内部使用的视频视图模型 */

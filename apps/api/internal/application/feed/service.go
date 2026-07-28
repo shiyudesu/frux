@@ -3,6 +3,7 @@ package applicationfeed
 import (
 	applicationrecommendation "GCFeed/internal/application/recommendation"
 	domainfeed "GCFeed/internal/domain/feed"
+	domainrecommendation "GCFeed/internal/domain/recommendation"
 	inframetrics "GCFeed/internal/infra/metrics"
 	"context"
 	"crypto/sha1"
@@ -38,16 +39,17 @@ type Option func(*Service)
 
 // FeedRequest 是所有 Feed 场景共用的查询参数。
 type FeedRequest struct {
-	Scene         domainfeed.Scene
-	Cursor        string
-	Limit         int
-	ViewerID      int64
-	ClientContext map[string]string
+	Scene                 domainfeed.Scene
+	Cursor                string
+	Limit                 int
+	ViewerID              int64
+	RecommendationContext *domainrecommendation.RecommendationContext
 }
 
 // FeedResult 是游标分页结果，NextCursor 供客户端请求下一页。
 type FeedResult struct {
 	Scene      domainfeed.Scene
+	RequestID  string
 	Items      []*domainfeed.FeedItem
 	NextCursor string
 	HasMore    bool
@@ -118,6 +120,13 @@ type RecommendStrategy struct {
 
 type Recommender interface {
 	Recommend(ctx context.Context, input applicationrecommendation.CandidateRequest) (*applicationrecommendation.CandidateResult, error)
+}
+
+// RecommendationDeliveryRecorder records the exact Feed cards that were
+// returned. Recommendation responses with cards require this durable
+// attribution boundary before they can be returned to an HTTP caller.
+type RecommendationDeliveryRecorder interface {
+	RecordDeliveredCandidates(ctx context.Context, input applicationrecommendation.DeliveredCandidatesInput) error
 }
 
 type timelineCursorPayload struct {
@@ -506,11 +515,11 @@ func (s *RecommendStrategy) List(ctx context.Context, req FeedRequest) (*FeedRes
 	}
 	limit := normalizeLimit(req.Limit)
 	result, err := s.recommender.Recommend(ctx, applicationrecommendation.CandidateRequest{
-		UserID:    req.ViewerID,
-		Scene:     string(domainfeed.SceneRecommend),
-		RequestID: clientContextValue(req.ClientContext, "request_id"),
-		Cursor:    req.Cursor,
-		Limit:     limit,
+		UserID:  req.ViewerID,
+		Scene:   string(domainfeed.SceneRecommend),
+		Context: req.RecommendationContext,
+		Cursor:  req.Cursor,
+		Limit:   limit,
 	})
 	if err != nil {
 		if errors.Is(err, applicationrecommendation.ErrLoadRecommendationFailed) {
@@ -532,8 +541,26 @@ func (s *RecommendStrategy) List(ctx context.Context, req FeedRequest) (*FeedRes
 	if err != nil {
 		return nil, ErrLoadFeedFailed
 	}
+	if len(items) > 0 {
+		recorder, ok := s.recommender.(RecommendationDeliveryRecorder)
+		if !ok {
+			inframetrics.ObserveRecommendationDeliveryFailure()
+			return nil, ErrLoadFeedFailed
+		}
+		if err := recorder.RecordDeliveredCandidates(ctx, applicationrecommendation.DeliveredCandidatesInput{
+			UserID:        result.UserID,
+			RequestID:     result.RequestID,
+			PolicyVersion: result.PolicyVersion,
+			VideoIDs:      feedItemVideoIDs(items),
+			ExpiresAt:     result.DeliveryExpiresAt,
+		}); err != nil {
+			inframetrics.ObserveRecommendationDeliveryFailure()
+			return nil, ErrLoadFeedFailed
+		}
+	}
 	return &FeedResult{
 		Scene:      domainfeed.SceneRecommend,
+		RequestID:  result.RequestID,
 		Items:      items,
 		NextCursor: result.NextCursor,
 		HasMore:    result.HasMore,
@@ -554,13 +581,6 @@ func normalizeLimit(limit int) int {
 		return domainfeed.MaxLimit
 	}
 	return limit
-}
-
-func clientContextValue(context map[string]string, key string) string {
-	if context == nil {
-		return ""
-	}
-	return context[key]
 }
 
 func loadFeedPage(ctx context.Context, cache FeedCache, scene domainfeed.Scene, cursor string, limit int, firstPageTTL time.Duration, pageTTL time.Duration, group *singleflight.Group, load func() (*FeedPage, error)) (*FeedPage, error) {
@@ -610,15 +630,12 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 			stats = cachedStats
 		}
 	}
+	var publicIDs map[int64]struct{}
 	if validator, ok := repo.(PublicVideoValidator); ok {
-		publicIDs, err := validator.BatchPublicVideoIDs(ctx, videoIDs)
+		var err error
+		publicIDs, err = validator.BatchPublicVideoIDs(ctx, videoIDs)
 		if err != nil {
 			return nil, err
-		}
-		for videoID := range cards {
-			if _, readable := publicIDs[videoID]; !readable {
-				delete(cards, videoID)
-			}
 		}
 	}
 
@@ -631,6 +648,13 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 		mergeCards(cards, loadedCards)
 		if cache != nil {
 			_ = cache.SetCards(ctx, loadedCards, feedCardCacheTTL)
+		}
+	}
+	if publicIDs != nil {
+		for videoID := range cards {
+			if _, readable := publicIDs[videoID]; !readable {
+				delete(cards, videoID)
+			}
 		}
 	}
 
@@ -696,6 +720,16 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func feedItemVideoIDs(items []*domainfeed.FeedItem) []int64 {
+	videoIDs := make([]int64, 0, len(items))
+	for _, item := range items {
+		if item != nil && item.VideoID > 0 {
+			videoIDs = append(videoIDs, item.VideoID)
+		}
+	}
+	return videoIDs
 }
 
 func feedPageVideoIDs(items []*domainfeed.FeedPageItem) []int64 {

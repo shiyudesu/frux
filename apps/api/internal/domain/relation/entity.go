@@ -9,8 +9,9 @@ const (
 	FollowStatusActive   = 1
 	FollowStatusCanceled = 2
 
-	MaxIdempotencyKeyLength = 128
-	MaxLimit                = 100
+	MaxIdempotencyKeyLength          = 128
+	MaxRecommendationRequestIDLength = 64
+	MaxLimit                         = 100
 )
 
 // Follow 表示一个用户对另一个用户的关注关系，取关使用软状态保留历史。
@@ -22,6 +23,11 @@ type Follow struct {
 	IdempotencyKey string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+type RecommendationOutcomeContext struct {
+	RequestID string
+	VideoID   int64
 }
 
 // RelationStat 保存用户维度的关注数和粉丝数。
@@ -79,6 +85,23 @@ func NewFollow(userID int64, targetUserID int64, idempotencyKey string) (*Follow
 		Status:         FollowStatusActive,
 		IdempotencyKey: idempotencyKey,
 	}, nil
+}
+
+func NewRecommendationOutcomeContext(requestID string, videoID int64) (*RecommendationOutcomeContext, error) {
+	requestID = strings.TrimSpace(requestID)
+	if len(requestID) > MaxRecommendationRequestIDLength {
+		return nil, ErrRecommendationRequestIDTooLong
+	}
+	if requestID == "" {
+		if videoID != 0 {
+			return nil, ErrInvalidRecommendationVideoID
+		}
+		return nil, nil
+	}
+	if videoID <= 0 {
+		return nil, ErrInvalidRecommendationVideoID
+	}
+	return &RecommendationOutcomeContext{RequestID: requestID, VideoID: videoID}, nil
 }
 
 // RestoreFollow 从数据库记录恢复关注关系。

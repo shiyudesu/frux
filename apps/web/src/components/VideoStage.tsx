@@ -31,9 +31,10 @@ import type {
   PlaybackTelemetryBatch,
   PlaybackTelemetryErrorCategory
 } from "../types";
+import type { RecommendationFeedbackType } from "../types";
 import type { PlaybackQoSMetrics, PublicProfileInput, VideoQoSState } from "../utils";
 import { createVideoQoSState, isVideoSource } from "../utils";
-import { FeedActionRail } from "./FeedActionRail";
+import { FeedActionRail, feedbackStateKey } from "./FeedActionRail";
 import { FeedMetadata } from "./FeedMetadata";
 import { FeedPlayerControls } from "./FeedPlayerControls";
 
@@ -67,6 +68,7 @@ export interface VideoStageProps {
   playerPreferences: PlayerPreferences;
   onUpdatePlayerPreferences: (patch: Partial<PlayerPreferences>) => void;
   onContinuousAdvance: () => void;
+  onRecommendationFeedback?: (item: FeedVideo, type: RecommendationFeedbackType) => Promise<void>;
 }
 
 export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function VideoStage(
@@ -95,7 +97,8 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     playerResource,
     playerPreferences,
     onUpdatePlayerPreferences,
-    onContinuousAdvance
+    onContinuousAdvance,
+    onRecommendationFeedback
   },
   ref
 ) {
@@ -665,6 +668,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       )}
       <FeedMetadata item={item} followError={followError || playbackError} onOpenAuthor={onOpenAuthor} />
       <FeedActionRail
+        key={feedbackStateKey(item)}
         item={item}
         liked={liked}
         favorited={favorited}
@@ -677,6 +681,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
         onFavorite={onFavorite}
         onFollow={onFollow}
         onOpenAuthor={onOpenAuthor}
+        onRecommendationFeedback={onRecommendationFeedback ? (type) => onRecommendationFeedback(item, type) : undefined}
       />
       {showVideo && (
         <FeedPlayerControls

@@ -76,6 +76,15 @@ apps/api/internal/interfaces/http/relation/
 
 关注成功后发布 `FOLLOW_CREATED` 领域事件，供消息模块生成关注通知。
 
+关系变更同时写入关系所属的推荐画像 Outbox。画像 Worker 失败不会改变关注接口的成功结果，且信号会保留到使用稳定事件 ID 的重试投影成功。
+历史 `user_follow` 回填使用单条 `INSERT ... SELECT ... ON CONFLICT DO NOTHING` 生成同一稳定 event ID、状态和发生时间，不全表读取后逐行写入；因此启动迁移的内存和 SQL 往返不随关注总数线性膨胀。
+
+来自推荐流的关注/取关可选传入 `X-Recommendation-Request-ID`（最长 64）和 `X-Recommendation-Video-ID`（正整数，且前者存在时必填）。这两个字段与 durable follow Outbox 一起保存但视为不可信；Worker 只有在耐久推荐证据绑定当前用户、request、视频且该视频作者等于被关注用户时才记录活跃关注 outcome。缺失或伪造归因会跳过 outcome，不回滚关注事实或画像信号；实际 outcome 存储失败仍保留 Outbox 重试。
+
+推荐使用当前有效关注关系进行 followed-author recall 和 follow relation feature；关注/取关的
+`user_follow` 事实与 `user_relation_stat` 仍在同一事务提交，`user_follow_profile_outbox`
+只负责随后画像投影，不是关系接口的可用性依赖。
+
 ### 3.2 取消关注
 
 #### DELETE `/api/users/me/following/{targetUserId}`

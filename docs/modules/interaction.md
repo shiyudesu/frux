@@ -132,17 +132,28 @@ apps/api/internal/interfaces/http/interaction/
 
 点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本，随后使用 RabbitMQ publisher confirm 投递 `ActionChangedEvent`。Worker 消费事件并调用仓储写入 PostgreSQL 行为表和 `video_stat`。
 
-发布确认失败或确认结果不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。发布与同步持久化都失败时，只在 Redis 当前仍是该事件版本时回滚状态和计数；版本计数器不回退，因此重试分配更高版本。若并发更新已经写入更高版本，旧请求不得回滚新状态。相同幂等键的重试会重发原事件，确保 Redis 已接受但尚未持久化的状态不会因 `delta=0` 被跳过。
+推荐流操作可选传入 `X-Recommendation-Request-ID`（最长 64）。该归因字段是不可信输入，随 durable action event 传递后，Worker 仅在耐久推荐证据绑定当前用户、request 和视频时幂等保存 `like` 或 `favorite` outcome；缺失或伪造归因会跳过 outcome，不改变已接受互动或画像信号。
 
-Redis 事务提交后若响应计数读取失败，缓存层会把已提交版本和原事件元数据一并返回给应用层。应用层使用有超时且脱离请求取消/截止时间的上下文做条件回滚；回滚只匹配仍未变化的 `state_version + event_id`。回滚报错时不会静默丢弃，而是重新按 publisher confirm 投递原事件，投递失败再同步写入事件回执；若这些恢复尝试同时失败，Redis 中保留的原事件仍可由相同幂等键重试重新投递。并发更高版本使条件回滚返回未命中时，旧事件不会覆盖或替代新状态。
+每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。发布确认失败或结果不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
+
+发布与同步持久化都失败时，回滚只可撤销仍未确认、仍匹配 `state_version + event_id`、且没有后续依赖回执的版本；版本计数器不回退，因此可重试的撤销会分配更高版本。已确认的版本、依赖该版本的并发 no-op 或更高版本都会让回滚条件不命中，避免旧失败路径撤销已报告的成功。Redis 事务提交后若响应计数读取失败，缓存层会把版本和原事件元数据一并返回给应用层，以同一条件恢复或回滚；恢复失败时未确认事件保留在 Redis，后续重试可再次交接。
 
 同步请求和已接收事件使用不同的持久化入口：
 
-- `SetAction` 服务于新 HTTP 请求，必须在事务内再次锁定并验证视频仍为 `published + public`。
+- `SetActionWithAcceptedEvent` 服务于 Redis/RabbitMQ 不可用时的新 HTTP 请求，必须在事务内再次锁定并验证视频仍为 `published + public`。每个非空 `Idempotency-Key` 都在 `interaction_action_idempotency_receipt` 中绑定目标 active 状态和首次响应计数：同键同目标返回首次结果，同键相反目标返回 409。状态未改变（包括不存在的行为收到取消）只写该回执；只有真实状态转换才创建 action event、画像投影 handoff 和推荐 outcome handoff。
 - `PersistAcceptedActionEvent` 仅供 Worker 使用，表示事件已在入队前通过公开可读校验；视频之后变为私密或下架时仍写入互动事实和统计，但已删除或不存在的视频作为终止事件丢弃。
 - `interaction_action_event` 按 `event_id` 保存版本和完整已处理载荷。同一事件重复投递不再次改变 `interaction_action`、`video_stat` 或作者 `received_like_count`；相同事件 ID 携带不同载荷视为终止冲突。
-- `interaction_action` 为每个 `user_id + video_id + action_type` 保存最新 `latest_event_version + latest_event_occurred_at + latest_event_id`。Worker 首先比较版本；仅在版本相同的兼容事件中使用时间和事件 ID 确定顺序。延迟旧事件与精确重复事件写入/命中回执后成功确认，但不改变状态或聚合。
-- Worker 将格式错误、无效字段、事件 ID 冲突、视频不存在和视频已删除分类为不可重试错误，RabbitMQ 不重新入队；数据库连接等瞬时错误仍重新入队。
+- `interaction_action` 为每个 `user_id + video_id + action_type` 保存最新 `latest_event_version + latest_event_occurred_at + latest_event_id`。Worker 首先比较版本；仅在版本相同的兼容事件中使用时间和事件 ID 确定顺序。任何较新事件（即使目标 active/canceled 状态未变）都推进这组顺序字段和推荐 request 归因，而状态相同的事件不改变统计增量；延迟旧事件与精确重复事件写入/命中回执后成功确认，但不改变物化状态或聚合。
+- Worker 将格式错误、无效字段、事件 ID 冲突、视频不存在和视频已删除分类为不可重试错误，RabbitMQ 不重新入队；数据库连接等瞬时错误保留给受监督的消费者重连，而不会确认尚未完成的 durable handoff。
+
+有效 LIKE/FAVORITE 是推荐画像的正向耐久事实；推荐 Worker 通过稳定 action event ID 消费，
+重复事件不重复加权。互动请求不直接信任或写入客户端推荐画像，避免异步失败扩散到点赞、
+收藏的用户可见结果。
+
+每个已接受 action receipt 同事务持有可租约重试的画像投影和 outcome 归因字段。Action Worker 在该
+事务提交后确认 RabbitMQ；缺失 embedding、待到达的推荐证据和投影失败只由带指数退避的 leased outbox
+重试，不会触发 MQ 热循环。发布或通道恢复失败时，HTTP 的同步持久化路径仍会留下该 durable outbox，
+Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 
 私密或下架视频的互动事实不会放宽任何读取规则：Feed、公开视频详情、公开主页和个人内容库补齐仍按当前可读性过滤内容。
 
@@ -300,7 +311,11 @@ Redis 事务提交后若响应计数读取失败，缓存层会把已提交版�
 
 `interaction_action_event` 保存 Worker 已处理的异步行为事件回执。`event_id` 是主键，`version` 保存 Redis 原子分配的行为版本；事件载荷和回执写入与行为事实、视频统计及作者获赞聚合位于同一事务。
 
-### 4.3 `interaction_comment`
+### 4.3 `interaction_action_idempotency_receipt`
+
+同步回退路径按 `user_id + video_id + action_type + idempotency_key` 唯一保存目标状态、行为 ID 和该类型的首次响应计数。它覆盖真实转换与 no-op，因此后续状态改变也不会改变同键重放结果；无幂等键请求不创建此回执。
+
+### 4.4 `interaction_comment`
 
 `interaction_comment` 保存评论内容，删除采用状态更新。
 
@@ -357,8 +372,8 @@ Redis 事务提交后若响应计数读取失败，缓存层会把已提交版�
 3. 按 `user_id + video_id + action_type` 查询行为记录。
 4. `PUT` 请求将行为记录更新为 `status = 1`，首次生效时对应计数字段加 1。
 5. `DELETE` 请求将行为记录更新为 `status = 2`，首次取消时对应计数字段减 1。
-6. 记录缺失且收到 `DELETE` 请求时创建 `status = 2` 记录，计数保持稳定。
-7. 在同一事务内提交行为记录和 `video_stat` 计数更新。
+6. 记录缺失且收到 `DELETE` 请求时返回取消状态，计数保持稳定，不创建行为事实或异步 handoff。
+7. 在同一事务内提交真实转换的行为记录和 `video_stat` 计数更新；有幂等键的 no-op 仅提交结果回执。
 8. `LIKE` 的真实状态发生变化时，同事务增减作者 `user_content_stat.received_like_count`；Worker 异步落库与无 Redis 的同步路径都复用同一仓储逻辑。
 9. Worker 事件先按 `version` 排序；版本相同才按 `occurred_at`、`event_id` 兼容排序。不大于行为行已保存顺序的事件为成功 no-op，不更新行为、视频计数、作者获赞或行为 `updated_at`。
 
@@ -375,7 +390,7 @@ Redis 事务提交后若响应计数读取失败，缓存层会把已提交版�
 | --- | --- |
 | 生效 | `count + 1` |
 | 取消 | `max(count - 1, 0)` |
-| 幂等命中 | 返回已有结果 |
+| 幂等命中 | 返回首次结果，不改计数 |
 
 个人内容库读取只选择 `status=1` 的行为，按 `updated_at DESC, video_id DESC` 排序。取消后的行为事实保留，但不会出现在喜欢或收藏列表。
 
@@ -413,7 +428,7 @@ Redis 事务提交后若响应计数读取失败，缓存层会把已提交版�
 
 | 场景 | 处理方式 |
 | --- | --- |
-| 点赞/收藏状态变更 | 依赖 `uk_user_video_type` 控制唯一行为记录，重复请求返回当前状态 |
+| 点赞/收藏状态变更 | 按 payload 绑定 durable receipt；同键同目标返回首次结果，同键相反目标返回 409 |
 | 评论创建 | 使用 `uk_user_idempotency(user_id, idempotency_key)` 返回已创建评论 |
 | 评论删除 | 删除操作本身幂等，重复删除返回当前删除结果 |
 
@@ -425,6 +440,7 @@ Redis 事务提交后若响应计数读取失败，缓存层会把已提交版�
 | 401 | 登录态缺失或 Token 失效 | `{"error":"invalid access token"}` |
 | 403 | 删除评论权限校验失败 | `{"error":"comment permission denied"}` |
 | 404 | 视频或评论记录缺失 | `{"error":"resource not found"}` |
+| 409 | 点赞/收藏幂等键复用于相反目标状态 | `{"error":"idempotency key conflicts with another payload"}` |
 | 500 | 服务内部错误 | `{"error":"internal server error"}` |
 
 ## 9. 测试用例

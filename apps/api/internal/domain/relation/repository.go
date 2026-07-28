@@ -15,3 +15,10 @@ type Repository interface {
 	// GetUserProfile 读取用户展示资料，用于关注通知。
 	GetUserProfile(ctx context.Context, userID int64) (*UserProfile, error)
 }
+
+// RecommendationOutcomeRepository is optional during the backward-compatible
+// rollout. Implementations persist recommendation metadata with the existing
+// durable follow projection outbox.
+type RecommendationOutcomeRepository interface {
+	SetFollowWithRecommendation(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string, outcome *RecommendationOutcomeContext) (*Follow, *RelationStat, *RelationStat, error)
+}

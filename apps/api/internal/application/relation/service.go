@@ -92,19 +92,25 @@ func WithFollowFeedBackfiller(backfiller FollowFeedBackfiller) Option {
 
 // WithMessageWriter 为关注成功后的通知写入启用消息中心。
 func WithMessageWriter(writer MessageWriter) Option {
-	return func(s *Service) {
-		s.messageWriter = writer
-	}
+	return func(s *Service) { s.messageWriter = writer }
 }
 
 // Follow 设置当前用户关注目标用户。
 func (s *Service) Follow(ctx context.Context, userID int64, targetUserID int64, idempotencyKey string) (*FollowResult, error) {
-	return s.setFollow(ctx, userID, targetUserID, true, idempotencyKey)
+	return s.FollowWithRecommendation(ctx, userID, targetUserID, idempotencyKey, "", 0)
+}
+
+func (s *Service) FollowWithRecommendation(ctx context.Context, userID int64, targetUserID int64, idempotencyKey string, recommendationRequestID string, recommendationVideoID int64) (*FollowResult, error) {
+	return s.setFollow(ctx, userID, targetUserID, true, idempotencyKey, recommendationRequestID, recommendationVideoID)
 }
 
 // Unfollow 设置当前用户取消关注目标用户。
 func (s *Service) Unfollow(ctx context.Context, userID int64, targetUserID int64, idempotencyKey string) (*FollowResult, error) {
-	return s.setFollow(ctx, userID, targetUserID, false, idempotencyKey)
+	return s.UnfollowWithRecommendation(ctx, userID, targetUserID, idempotencyKey, "", 0)
+}
+
+func (s *Service) UnfollowWithRecommendation(ctx context.Context, userID int64, targetUserID int64, idempotencyKey string, recommendationRequestID string, recommendationVideoID int64) (*FollowResult, error) {
+	return s.setFollow(ctx, userID, targetUserID, false, idempotencyKey, recommendationRequestID, recommendationVideoID)
 }
 
 // GetFollowState directly reads the current user's relationship to one target.
@@ -159,15 +165,28 @@ func (s *Service) ListFollowers(ctx context.Context, userID int64, cursor string
 }
 
 // setFollow 统一处理关注和取关，active 表示目标关系状态。
-func (s *Service) setFollow(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string) (*FollowResult, error) {
+func (s *Service) setFollow(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string, recommendationRequestID string, recommendationVideoID int64) (*FollowResult, error) {
 	if _, err := domainrelation.NewFollow(userID, targetUserID, idempotencyKey); err != nil {
 		return nil, err
 	}
+	outcome, err := domainrelation.NewRecommendationOutcomeContext(recommendationRequestID, recommendationVideoID)
+	if err != nil {
+		return nil, err
+	}
 
-	follow, userStat, targetStat, err := s.repo.SetFollow(ctx, userID, targetUserID, active, idempotencyKey)
+	var follow *domainrelation.Follow
+	var userStat, targetStat *domainrelation.RelationStat
+	if recommendationRepo, ok := s.repo.(domainrelation.RecommendationOutcomeRepository); ok {
+		follow, userStat, targetStat, err = recommendationRepo.SetFollowWithRecommendation(ctx, userID, targetUserID, active, idempotencyKey, outcome)
+	} else {
+		follow, userStat, targetStat, err = s.repo.SetFollow(ctx, userID, targetUserID, active, idempotencyKey)
+	}
 	if err != nil {
 		if errors.Is(err, domainrelation.ErrTargetUserNotFound) {
 			return nil, domainrelation.ErrTargetUserNotFound
+		}
+		if errors.Is(err, domainrelation.ErrFollowIdempotencyConflict) {
+			return nil, domainrelation.ErrFollowIdempotencyConflict
 		}
 		return nil, ErrUpdateRelationFailed
 	}

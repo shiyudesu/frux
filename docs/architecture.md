@@ -278,6 +278,18 @@ sequenceDiagram
 
 ## 4. 数据模型
 
+### 4.1 上下文推荐链路
+
+推荐 Feed 的 `context` 经 HTTP 有界归一化后进入 Recommendation Service。服务并发调用
+fresh、hot、内容相似、followed-author、session-continuation Provider，按策略 budget/deadline
+合并并重新验证可见性；失败 Provider 只标记 degraded。策略和画像存于 PostgreSQL，
+Redis 仅保存短期有序 snapshot，带签名的 cursor 绑定用户、scene、request ID 和 policy version。
+
+观看/互动/关系的耐久事实分别通过 View Event、Action 和 Follow Outbox 投影为画像；投影延迟
+不会阻塞原接口。采样 `recommendation_request_log` 保存有界请求和候选解释，`recommendation_outcome`
+以 request ID 关联曝光、播放、进度、完播、跳过和反馈，供离线评估。Redis、embedding 或单个
+Provider 不可用时保留当前可用召回或 deterministic cursor，不将外部优化组件作为 HTTP 事实提交条件。
+
 这张图聚焦个人主页扩展涉及的实际 GORM 模型及所有权关系。统一迁移还注册 Feed Inbox、消息、关系、播放配置和嵌入等既有模型。
 
 ```mermaid

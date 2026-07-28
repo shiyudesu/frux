@@ -20,6 +20,7 @@ import (
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 type interactionActionAPIResponse struct {
@@ -66,21 +67,31 @@ type memoryInteractionStat struct {
 	FavoriteCount int
 }
 
+type memoryActionIdempotencyReceipt struct {
+	Active    bool
+	ActionID  int64
+	Count     int
+	CreatedAt time.Time
+}
+
 // memoryInteractionRepo 是互动测试用内存仓储，模拟点赞、收藏、评论和计数。
 type memoryInteractionRepo struct {
-	mu             sync.Mutex
-	nextActionID   int64
-	nextCommentID  int64
-	videos         map[int64]memoryInteractionVideo
-	stats          map[int64]memoryInteractionStat
-	actions        map[string]*domaininteraction.Action
-	actionEvents   map[string]*domaininteraction.AcceptedActionEvent
-	latestEvents   map[string]*domaininteraction.AcceptedActionEvent
-	persistErrors  []error
-	persistCtxErr  error
-	persistBounded bool
-	comments       map[int64]*domaininteraction.Comment
-	commentIdem    map[string]int64
+	mu              sync.Mutex
+	nextActionID    int64
+	nextCommentID   int64
+	videos          map[int64]memoryInteractionVideo
+	stats           map[int64]memoryInteractionStat
+	actions         map[string]*domaininteraction.Action
+	actionEvents    map[string]*domaininteraction.AcceptedActionEvent
+	actionReceipts  map[string]memoryActionIdempotencyReceipt
+	latestEvents    map[string]*domaininteraction.AcceptedActionEvent
+	profileHandoffs map[string]*domaininteraction.AcceptedActionEvent
+	outcomeHandoffs map[string]*domaininteraction.AcceptedActionEvent
+	persistErrors   []error
+	persistCtxErr   error
+	persistBounded  bool
+	comments        map[int64]*domaininteraction.Comment
+	commentIdem     map[string]int64
 }
 
 type memoryHotScoreRecorder struct {
@@ -92,6 +103,7 @@ type memoryHotScoreRecorder struct {
 type memoryActionPipeline struct {
 	mu                    sync.Mutex
 	states                map[string]*applicationinteraction.ActionStateResult
+	receipts              map[string]map[string]bool
 	stats                 map[int64]memoryInteractionStat
 	events                []*applicationinteraction.ActionChangedEvent
 	publishErr            error
@@ -167,12 +179,108 @@ func newMemoryInteractionRepo() *memoryInteractionRepo {
 				Visibility: domainvideo.VisibilityPublic,
 			},
 		},
-		stats:        map[int64]memoryInteractionStat{1001: {}, 1002: {}},
-		actions:      map[string]*domaininteraction.Action{},
-		actionEvents: map[string]*domaininteraction.AcceptedActionEvent{},
-		latestEvents: map[string]*domaininteraction.AcceptedActionEvent{},
-		comments:     map[int64]*domaininteraction.Comment{},
-		commentIdem:  map[string]int64{},
+		stats:           map[int64]memoryInteractionStat{1001: {}, 1002: {}},
+		actions:         map[string]*domaininteraction.Action{},
+		actionEvents:    map[string]*domaininteraction.AcceptedActionEvent{},
+		actionReceipts:  map[string]memoryActionIdempotencyReceipt{},
+		latestEvents:    map[string]*domaininteraction.AcceptedActionEvent{},
+		profileHandoffs: map[string]*domaininteraction.AcceptedActionEvent{},
+		outcomeHandoffs: map[string]*domaininteraction.AcceptedActionEvent{},
+		comments:        map[int64]*domaininteraction.Comment{},
+		commentIdem:     map[string]int64{},
+	}
+}
+
+func TestInteractionSyncFallbackSkipsNoTransitionRecommendationHandoffs(t *testing.T) {
+	router, jwtManager, repo := newInteractionRouterWithRepo(t)
+	token := signTestToken(t, jwtManager, 42)
+
+	for _, request := range []struct {
+		path      string
+		key       string
+		requestID string
+	}{
+		{path: "/api/videos/1001/like", key: "sync-first", requestID: "first-request"},
+		{path: "/api/videos/1001/like", key: "sync-repeat", requestID: "second-request"},
+		{path: "/api/videos/1001/like", key: "sync-repeat", requestID: "forged-replay-request"},
+	} {
+		response := performJSONRequestWithHeaders(
+			router,
+			http.MethodPut,
+			request.path,
+			"",
+			ut.Header{Key: "Authorization", Value: "Bearer " + token},
+			ut.Header{Key: "Idempotency-Key", Value: request.key},
+			ut.Header{Key: "X-Recommendation-Request-ID", Value: request.requestID},
+		)
+		requireStatus(t, response, http.StatusOK)
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if len(repo.actionEvents) != 1 || len(repo.profileHandoffs) != 1 || len(repo.outcomeHandoffs) != 1 {
+		t.Fatalf("no-transition sync actions created durable handoffs: receipts=%#v profile=%#v outcome=%#v", repo.actionEvents, repo.profileHandoffs, repo.outcomeHandoffs)
+	}
+	for _, event := range repo.actionEvents {
+		if event.IdempotencyKey != "sync-first" || event.RecommendationRequestID != "first-request" {
+			t.Fatalf("no-transition action overwrote durable signal attribution: %#v", event)
+		}
+	}
+	if got := len(repo.actionReceipts); got != 2 {
+		t.Fatalf("sync no-op keys did not receive durable receipts: %d", got)
+	}
+}
+
+func TestInteractionSyncFallbackReplaysPayloadBoundActionReceipts(t *testing.T) {
+	router, jwtManager, repo := newInteractionRouterWithRepo(t)
+	token := signTestToken(t, jwtManager, 42)
+	request := func(method string, path string, key string) *ut.ResponseRecorder {
+		return performJSONRequestWithHeaders(
+			router,
+			method,
+			path,
+			"",
+			ut.Header{Key: "Authorization", Value: "Bearer " + token},
+			ut.Header{Key: "Idempotency-Key", Value: key},
+		)
+	}
+
+	first := request(http.MethodPut, "/api/videos/1001/like", "like-replay")
+	requireStatus(t, first, http.StatusOK)
+	var original interactionActionAPIResponse
+	decodeJSON(t, first, &original)
+
+	unlike := request(http.MethodDelete, "/api/videos/1001/like", "unlike-new-key")
+	requireStatus(t, unlike, http.StatusOK)
+
+	replay := request(http.MethodPut, "/api/videos/1001/like", "like-replay")
+	requireStatus(t, replay, http.StatusOK)
+	var replayed interactionActionAPIResponse
+	decodeJSON(t, replay, &replayed)
+	if replayed != original {
+		t.Fatalf("same desired action did not replay its original result: got=%+v want=%+v", replayed, original)
+	}
+
+	conflict := request(http.MethodDelete, "/api/videos/1001/like", "like-replay")
+	requireStatus(t, conflict, http.StatusConflict)
+
+	absentUnlike := request(http.MethodDelete, "/api/videos/1002/like", "absent-unlike")
+	requireStatus(t, absentUnlike, http.StatusOK)
+	var absent interactionActionAPIResponse
+	decodeJSON(t, absentUnlike, &absent)
+	if absent.Active || absent.LikeCount != 0 {
+		t.Fatalf("unexpected absent unlike response: %+v", absent)
+	}
+	conflictingAbsentUnlike := request(http.MethodPut, "/api/videos/1002/like", "absent-unlike")
+	requireStatus(t, conflictingAbsentUnlike, http.StatusConflict)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if len(repo.actionEvents) != 2 || len(repo.profileHandoffs) != 2 || len(repo.outcomeHandoffs) != 0 {
+		t.Fatalf("no-op receipts enqueued handoffs: events=%#v profile=%#v outcome=%#v", repo.actionEvents, repo.profileHandoffs, repo.outcomeHandoffs)
+	}
+	if len(repo.actionReceipts) != 3 {
+		t.Fatalf("unexpected durable action receipt count: %#v", repo.actionReceipts)
 	}
 }
 
@@ -208,6 +316,7 @@ func (r *memoryInteractionRepo) GetActionState(ctx context.Context, userID int64
 		UpdatedAt:      action.UpdatedAt,
 	}
 	if latest := r.latestEvents[key]; latest != nil {
+		snapshot.RecommendationRequestID = latest.RecommendationRequestID
 		snapshot.Version = latest.Version
 		snapshot.EventID = latest.EventID
 		snapshot.OccurredAt = latest.OccurredAt
@@ -276,6 +385,12 @@ func (r *memoryInteractionRepo) PersistAcceptedActionEvent(ctx context.Context, 
 		return domaininteraction.ErrVideoNotFound
 	}
 	key := memoryInteractionActionKey(event.UserID, event.VideoID, event.ActionType)
+	cloned := *event
+	r.actionEvents[event.EventID] = &cloned
+	r.profileHandoffs[event.EventID] = &cloned
+	if event.Active && event.RecommendationRequestID != "" {
+		r.outcomeHandoffs[event.EventID] = &cloned
+	}
 	if latest := r.latestEvents[key]; latest != nil && !domaininteraction.ActionEventComesAfter(
 		event.Version,
 		event.OccurredAt,
@@ -284,17 +399,104 @@ func (r *memoryInteractionRepo) PersistAcceptedActionEvent(ctx context.Context, 
 		latest.OccurredAt,
 		latest.EventID,
 	) {
-		cloned := *event
-		r.actionEvents[event.EventID] = &cloned
 		return nil
 	}
 	if _, _, _, err := r.setActionLocked(event.UserID, event.VideoID, event.ActionType, event.Active, event.IdempotencyKey, false); err != nil {
 		return err
 	}
-	cloned := *event
-	r.actionEvents[event.EventID] = &cloned
 	r.latestEvents[key] = &cloned
 	return nil
+}
+
+func (r *memoryInteractionRepo) SetActionWithAcceptedEvent(ctx context.Context, event *domaininteraction.AcceptedActionEvent) (*domaininteraction.Action, int, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if event == nil {
+		return nil, 0, 0, domaininteraction.ErrInvalidActionEvent
+	}
+	if !r.videoPublished(event.VideoID) {
+		return nil, 0, 0, domaininteraction.ErrVideoNotFound
+	}
+	key := memoryInteractionActionKey(event.UserID, event.VideoID, event.ActionType)
+	receiptKey := memoryInteractionActionReceiptKey(event.UserID, event.VideoID, event.ActionType, event.IdempotencyKey)
+	if event.IdempotencyKey != "" {
+		if receipt, exists := r.actionReceipts[receiptKey]; exists {
+			if receipt.Active != event.Active {
+				return nil, 0, 0, domaininteraction.ErrActionIdempotencyConflict
+			}
+			return domaininteraction.RestoreAction(
+				receipt.ActionID, event.UserID, event.VideoID, event.ActionType,
+				actionStatusForTest(receipt.Active), event.IdempotencyKey, receipt.CreatedAt, receipt.CreatedAt,
+			), receipt.Count, 0, nil
+		}
+	}
+	if existing := r.actionEvents[event.EventID]; existing != nil {
+		if !sameMemoryAcceptedActionEvent(existing, event) {
+			return nil, 0, 0, domaininteraction.ErrActionEventConflict
+		}
+		current := r.actions[key]
+		if current == nil {
+			return domaininteraction.RestoreAction(
+				0, event.UserID, event.VideoID, event.ActionType, actionStatusForTest(event.Active), "", time.Time{}, time.Time{},
+			), r.actionCount(event.VideoID, event.ActionType), 0, nil
+		}
+		return cloneInteractionAction(current), r.actionCount(event.VideoID, event.ActionType), 0, nil
+	}
+
+	current := r.actions[key]
+	if current == nil && !event.Active {
+		action := domaininteraction.RestoreAction(
+			0, event.UserID, event.VideoID, event.ActionType, domaininteraction.ActionStatusCanceled, "", time.Time{}, time.Time{},
+		)
+		count := r.actionCount(event.VideoID, event.ActionType)
+		r.storeActionReceipt(event, action, count)
+		return action, count, 0, nil
+	}
+	if current != nil && current.Active() == event.Active {
+		action := cloneInteractionAction(current)
+		count := r.actionCount(event.VideoID, event.ActionType)
+		r.storeActionReceipt(event, action, count)
+		return action, count, 0, nil
+	}
+
+	accepted := *event
+	if accepted.Version == 0 {
+		accepted.Version = 1
+		if latest := r.latestEvents[key]; latest != nil && latest.Version >= accepted.Version {
+			accepted.Version = latest.Version + 1
+		}
+	}
+	action, count, delta, err := r.setActionLocked(accepted.UserID, accepted.VideoID, accepted.ActionType, accepted.Active, accepted.IdempotencyKey, false)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	r.storeActionReceipt(&accepted, action, count)
+	r.actionEvents[accepted.EventID] = &accepted
+	r.latestEvents[key] = &accepted
+	r.profileHandoffs[accepted.EventID] = &accepted
+	if accepted.Active && accepted.RecommendationRequestID != "" {
+		r.outcomeHandoffs[accepted.EventID] = &accepted
+	}
+	return action, count, delta, nil
+}
+
+func (r *memoryInteractionRepo) storeActionReceipt(event *domaininteraction.AcceptedActionEvent, action *domaininteraction.Action, count int) {
+	if event == nil || strings.TrimSpace(event.IdempotencyKey) == "" {
+		return
+	}
+	receipt := memoryActionIdempotencyReceipt{Active: event.Active, Count: count, CreatedAt: time.Now().UTC()}
+	if action != nil {
+		receipt.ActionID = action.ID
+	}
+	r.actionReceipts[memoryInteractionActionReceiptKey(event.UserID, event.VideoID, event.ActionType, event.IdempotencyKey)] = receipt
+}
+
+func actionStatusForTest(active bool) int {
+	if active {
+		return domaininteraction.ActionStatusActive
+	}
+	return domaininteraction.ActionStatusCanceled
 }
 
 func (r *memoryInteractionRepo) setActionLocked(userID int64, videoID int64, actionType string, active bool, idempotencyKey string, respectIdempotency bool) (*domaininteraction.Action, int, int, error) {
@@ -533,6 +735,43 @@ func TestInteractionActionFlow(t *testing.T) {
 	}
 }
 
+func TestInteractionSyncFallbackCreatesRecommendationHandoffs(t *testing.T) {
+	router, jwtManager, repo := newInteractionRouterWithRepo(t)
+	token := signTestToken(t, jwtManager, 42)
+	requestID := strings.Repeat("r", domaininteraction.MaxRecommendationRequestIDLength)
+
+	for _, request := range []struct {
+		path       string
+		key        string
+		actionType string
+	}{
+		{path: "/api/videos/1001/like", key: "sync-recommend-like", actionType: domaininteraction.ActionTypeLike},
+		{path: "/api/videos/1002/favorite", key: "sync-recommend-favorite", actionType: domaininteraction.ActionTypeFavorite},
+	} {
+		response := performJSONRequestWithHeaders(
+			router,
+			http.MethodPut,
+			request.path,
+			"",
+			ut.Header{Key: "Authorization", Value: "Bearer " + token},
+			ut.Header{Key: "Idempotency-Key", Value: request.key},
+			ut.Header{Key: "X-Recommendation-Request-ID", Value: requestID},
+		)
+		requireStatus(t, response, http.StatusOK)
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if len(repo.actionEvents) != 2 || len(repo.profileHandoffs) != 2 || len(repo.outcomeHandoffs) != 2 {
+		t.Fatalf("sync fallback did not atomically retain action/profile/outcome handoffs: receipts=%#v profile=%#v outcome=%#v", repo.actionEvents, repo.profileHandoffs, repo.outcomeHandoffs)
+	}
+	for eventID, event := range repo.actionEvents {
+		if event.RecommendationRequestID != requestID || event.Version <= 0 || repo.profileHandoffs[eventID] == nil || repo.outcomeHandoffs[eventID] == nil {
+			t.Fatalf("sync receipt lost bounded recommendation attribution or handoff: event=%#v", event)
+		}
+	}
+}
+
 // TestInteractionCommentFlow 覆盖创建评论、幂等重放、列表、权限删除和重复删除。
 func TestInteractionCommentFlow(t *testing.T) {
 	router, jwtManager := newInteractionRouter(t)
@@ -714,7 +953,7 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
 	)
 
-	liked, err := service.Like(context.Background(), 42, 1001, "like-async-1")
+	liked, err := service.LikeWithRecommendation(context.Background(), 42, 1001, "like-async-1", "recommendation-request")
 	if err != nil {
 		t.Fatalf("like: %v", err)
 	}
@@ -727,8 +966,25 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 	if pipeline.EventCount() != 1 {
 		t.Fatalf("unexpected event count: %d", pipeline.EventCount())
 	}
+	if event := pipeline.EventsForTest()[0]; event.RecommendationRequestID != "recommendation-request" {
+		t.Fatalf("recommendation request id was not propagated: %#v", event)
+	}
+	noTransition, err := service.LikeWithRecommendation(context.Background(), 42, 1001, "like-async-2", "new-recommendation-request")
+	if err != nil {
+		t.Fatalf("repeat like with a new key: %v", err)
+	}
+	if !noTransition.Active || noTransition.LikeCount != 1 || pipeline.EventCount() != 1 {
+		t.Fatalf("no-transition async like created a new signal: result=%+v events=%d", noTransition, pipeline.EventCount())
+	}
+	replayedNoTransition, err := service.LikeWithRecommendation(context.Background(), 42, 1001, "like-async-2", "different-recommendation-request")
+	if err != nil {
+		t.Fatalf("no-transition like replay: %v", err)
+	}
+	if !replayedNoTransition.Active || replayedNoTransition.LikeCount != 1 || pipeline.EventCount() != 1 {
+		t.Fatalf("no-transition replay created a signal: result=%+v events=%d", replayedNoTransition, pipeline.EventCount())
+	}
 
-	replayed, err := service.Like(context.Background(), 42, 1001, "like-async-1")
+	replayed, err := service.LikeWithRecommendation(context.Background(), 42, 1001, "like-async-1", "different-recommendation-request")
 	if err != nil {
 		t.Fatalf("like replay: %v", err)
 	}
@@ -736,16 +992,18 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 		t.Fatalf("unexpected async replay: result=%+v events=%d", replayed, pipeline.EventCount())
 	}
 
-	replayedUnlike, err := service.Unlike(context.Background(), 42, 1001, "like-async-1")
-	if err != nil {
-		t.Fatalf("unlike replay: %v", err)
+	if _, err := service.Unlike(context.Background(), 42, 1001, "like-async-2"); !errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) {
+		t.Fatalf("opposite no-transition payload did not conflict: %v", err)
 	}
-	if !replayedUnlike.Active || replayedUnlike.LikeCount != 1 || pipeline.EventCount() != 3 {
-		t.Fatalf("unexpected async reverse replay: result=%+v events=%d", replayedUnlike, pipeline.EventCount())
+	if pipeline.EventCount() != 2 {
+		t.Fatalf("conflicting no-transition payload published an event: %d", pipeline.EventCount())
 	}
 	replayedEvents := pipeline.EventsForTest()
-	if replayedEvents[0].EventID != replayedEvents[1].EventID || replayedEvents[0].EventID != replayedEvents[2].EventID {
+	if replayedEvents[0].EventID != replayedEvents[1].EventID {
 		t.Fatalf("idempotent retry must republish the same recoverable event: %+v", replayedEvents)
+	}
+	if replayedEvents[1].RecommendationRequestID != "recommendation-request" {
+		t.Fatalf("idempotent replay reattributed action: %+v", replayedEvents[1])
 	}
 
 	worker := applicationinteraction.NewActionWorker(repo, pipeline)
@@ -799,7 +1057,7 @@ func TestInteractionAsyncActionEventsKeepNewestStateWhenDeliveredOutOfOrder(t *t
 		applicationinteraction.WithAsyncActionPipeline(pipeline, pipeline),
 	)
 
-	if _, err := service.Like(context.Background(), 7, 1001, "ordered-like"); err != nil {
+	if _, err := service.LikeWithRecommendation(context.Background(), 7, 1001, "ordered-like", "ordered-like-request"); err != nil {
 		t.Fatalf("accept like: %v", err)
 	}
 	if _, err := service.Unlike(context.Background(), 7, 1001, "ordered-unlike"); err != nil {
@@ -842,6 +1100,14 @@ func TestInteractionAsyncActionEventsKeepNewestStateWhenDeliveredOutOfOrder(t *t
 	}
 	if got := repo.ActionEventCountForTest(); got != 2 {
 		t.Fatalf("expected receipts for both distinct events, got %d", got)
+	}
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if len(repo.profileHandoffs) != 2 || repo.profileHandoffs[events[0].EventID] == nil {
+		t.Fatalf("stale action was not retained for profile projection: %#v", repo.profileHandoffs)
+	}
+	if len(repo.outcomeHandoffs) != 1 || repo.outcomeHandoffs[events[0].EventID] == nil {
+		t.Fatalf("stale action was not retained for outcome attribution: %#v", repo.outcomeHandoffs)
 	}
 }
 
@@ -1233,6 +1499,12 @@ func (r *memoryInteractionRepo) ActionEventCountForTest() int {
 	return len(r.actionEvents)
 }
 
+func (r *memoryInteractionRepo) ActionReceiptCountForTest() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.actionReceipts)
+}
+
 func (r *memoryInteractionRepo) ActionActiveForTest(userID int64, videoID int64, actionType string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1247,6 +1519,7 @@ func sameMemoryAcceptedActionEvent(left *domaininteraction.AcceptedActionEvent, 
 		left.ActionType == right.ActionType &&
 		left.Active == right.Active &&
 		left.IdempotencyKey == right.IdempotencyKey &&
+		left.RecommendationRequestID == right.RecommendationRequestID &&
 		left.Version == right.Version &&
 		left.OccurredAt.Equal(right.OccurredAt)
 }
@@ -1254,6 +1527,10 @@ func sameMemoryAcceptedActionEvent(left *domaininteraction.AcceptedActionEvent, 
 // memoryInteractionActionKey 模拟 user_id + video_id + action_type 唯一索引。
 func memoryInteractionActionKey(userID int64, videoID int64, actionType string) string {
 	return strings.Join([]string{int64String(userID), int64String(videoID), actionType}, ":")
+}
+
+func memoryInteractionActionReceiptKey(userID int64, videoID int64, actionType string, idempotencyKey string) string {
+	return memoryInteractionActionKey(userID, videoID, actionType) + ":" + strings.TrimSpace(idempotencyKey)
 }
 
 // memoryInteractionCommentIdemKey 模拟 user_id + idempotency_key 唯一索引。
@@ -1333,6 +1610,7 @@ func (r *memoryHotScoreRecorder) EventCount() int {
 func newMemoryActionPipeline() *memoryActionPipeline {
 	return &memoryActionPipeline{
 		states:          map[string]*applicationinteraction.ActionStateResult{},
+		receipts:        map[string]map[string]bool{},
 		stats:           map[int64]memoryInteractionStat{},
 		events:          []*applicationinteraction.ActionChangedEvent{},
 		versionCounters: map[string]int64{},
@@ -1397,28 +1675,51 @@ func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64,
 	previous := domaininteraction.ActionStateSnapshot{}
 	if state != nil {
 		previous = domaininteraction.ActionStateSnapshot{
-			Exists:         true,
-			Active:         state.Active,
-			IdempotencyKey: state.IdempotencyKey,
-			Version:        state.Version,
-			EventID:        state.EventID,
-			OccurredAt:     state.OccurredAt,
-			UpdatedAt:      state.OccurredAt,
+			Exists:                  true,
+			Active:                  state.Active,
+			IdempotencyKey:          state.IdempotencyKey,
+			RecommendationRequestID: state.RecommendationRequestID,
+			Version:                 state.Version,
+			EventID:                 state.EventID,
+			OccurredAt:              state.OccurredAt,
+			UpdatedAt:               state.OccurredAt,
 		}
 	} else if initialState != nil {
 		previous = *initialState
 	}
-	if previous.Exists && idempotencyKey != "" && previous.IdempotencyKey == strings.TrimSpace(idempotencyKey) {
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if receiptPayload, found := p.receipts[key][idempotencyKey]; found {
+		if receiptPayload != active {
+			return nil, domaininteraction.ErrActionIdempotencyConflict
+		}
 		result := &applicationinteraction.ActionStateResult{
 			UserID:         userID,
 			VideoID:        videoID,
 			ActionType:     actionType,
 			Active:         previous.Active,
-			IdempotencyKey: previous.IdempotencyKey,
+			IdempotencyKey: idempotencyKey,
 			Version:        previous.Version,
-			EventID:        previous.EventID,
-			OccurredAt:     previous.OccurredAt,
-			ShouldPublish:  state != nil && previous.EventID != "",
+		}
+		stat := p.stats[videoID]
+		result.LikeCount = stat.LikeCount
+		result.FavoriteCount = stat.FavoriteCount
+		return p.finishActionStateResultLocked(result)
+	}
+	if previous.Exists && idempotencyKey != "" && previous.IdempotencyKey == idempotencyKey {
+		if previous.Active != active {
+			return nil, domaininteraction.ErrActionIdempotencyConflict
+		}
+		result := &applicationinteraction.ActionStateResult{
+			UserID:                  userID,
+			VideoID:                 videoID,
+			ActionType:              actionType,
+			Active:                  previous.Active,
+			IdempotencyKey:          previous.IdempotencyKey,
+			RecommendationRequestID: previous.RecommendationRequestID,
+			Version:                 previous.Version,
+			EventID:                 previous.EventID,
+			OccurredAt:              previous.OccurredAt,
+			ShouldPublish:           state != nil && previous.EventID != "",
 		}
 		stat := p.stats[videoID]
 		result.LikeCount = stat.LikeCount
@@ -1441,6 +1742,32 @@ func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64,
 	if initialState != nil && initialState.Version > p.versionCounters[key] {
 		p.versionCounters[key] = initialState.Version
 	}
+	if delta == 0 {
+		if idempotencyKey != "" {
+			if p.receipts[key] == nil {
+				p.receipts[key] = map[string]bool{}
+			}
+			p.receipts[key][idempotencyKey] = active
+		}
+		result := &applicationinteraction.ActionStateResult{
+			UserID:                  userID,
+			VideoID:                 videoID,
+			ActionType:              actionType,
+			Active:                  previous.Active,
+			IdempotencyKey:          idempotencyKey,
+			RecommendationRequestID: previous.RecommendationRequestID,
+			Version:                 previous.Version,
+			EventID:                 previous.EventID,
+			OccurredAt:              previous.OccurredAt,
+		}
+		stat := p.stats[videoID]
+		result.LikeCount = stat.LikeCount
+		result.FavoriteCount = stat.FavoriteCount
+		if state == nil {
+			p.states[key] = cloneActionStateResult(result)
+		}
+		return p.finishActionStateResultLocked(result)
+	}
 	p.versionCounters[key]++
 
 	stat := p.stats[videoID]
@@ -1452,20 +1779,21 @@ func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64,
 	p.stats[videoID] = stat
 
 	result := &applicationinteraction.ActionStateResult{
-		UserID:         userID,
-		VideoID:        videoID,
-		ActionType:     actionType,
-		Active:         active,
-		LikeCount:      stat.LikeCount,
-		FavoriteCount:  stat.FavoriteCount,
-		Delta:          delta,
-		IdempotencyKey: strings.TrimSpace(idempotencyKey),
-		Version:        p.versionCounters[key],
-		EventID:        mutation.EventID,
-		OccurredAt:     mutation.OccurredAt,
-		ShouldPublish:  true,
-		CanRollback:    true,
-		Previous:       previous,
+		UserID:                  userID,
+		VideoID:                 videoID,
+		ActionType:              actionType,
+		Active:                  active,
+		LikeCount:               stat.LikeCount,
+		FavoriteCount:           stat.FavoriteCount,
+		Delta:                   delta,
+		IdempotencyKey:          strings.TrimSpace(idempotencyKey),
+		RecommendationRequestID: strings.TrimSpace(mutation.RecommendationRequestID),
+		Version:                 p.versionCounters[key],
+		EventID:                 mutation.EventID,
+		OccurredAt:              mutation.OccurredAt,
+		ShouldPublish:           delta != 0,
+		CanRollback:             true,
+		Previous:                previous,
 	}
 	p.states[key] = result
 	return p.finishActionStateResultLocked(result)
@@ -1501,16 +1829,17 @@ func (p *memoryActionPipeline) RollbackActionState(ctx context.Context, state *a
 	p.stats[state.VideoID] = stat
 	if state.Previous.Exists {
 		p.states[key] = &applicationinteraction.ActionStateResult{
-			UserID:         state.UserID,
-			VideoID:        state.VideoID,
-			ActionType:     state.ActionType,
-			Active:         state.Previous.Active,
-			LikeCount:      stat.LikeCount,
-			FavoriteCount:  stat.FavoriteCount,
-			IdempotencyKey: state.Previous.IdempotencyKey,
-			Version:        state.Previous.Version,
-			EventID:        state.Previous.EventID,
-			OccurredAt:     state.Previous.OccurredAt,
+			UserID:                  state.UserID,
+			VideoID:                 state.VideoID,
+			ActionType:              state.ActionType,
+			Active:                  state.Previous.Active,
+			LikeCount:               stat.LikeCount,
+			FavoriteCount:           stat.FavoriteCount,
+			IdempotencyKey:          state.Previous.IdempotencyKey,
+			RecommendationRequestID: state.Previous.RecommendationRequestID,
+			Version:                 state.Previous.Version,
+			EventID:                 state.Previous.EventID,
+			OccurredAt:              state.Previous.OccurredAt,
 		}
 	} else {
 		delete(p.states, key)

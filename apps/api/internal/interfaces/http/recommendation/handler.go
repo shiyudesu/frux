@@ -4,6 +4,7 @@ import (
 	applicationrecommendation "GCFeed/internal/application/recommendation"
 	domainrecommendation "GCFeed/internal/domain/recommendation"
 	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 )
+
+const maxFeedbackBodyBytes = 4 * 1024
 
 type Handler struct {
 	service *applicationrecommendation.Service
@@ -92,6 +95,44 @@ func (h *Handler) DecideExposures(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, exposureDecisionsResponseFromResult(result))
 }
 
+func (h *Handler) CreateFeedback(ctx context.Context, c *app.RequestContext) {
+	userID, ok := recommendationUserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+
+	var req feedbackRequest
+	if err := interfaceshttpbinding.BindStrictJSON(c, &req, maxFeedbackBodyBytes); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	result, err := h.service.SubmitFeedback(ctx, applicationrecommendation.FeedbackInput{
+		UserID:         userID,
+		VideoID:        req.VideoID,
+		RequestID:      req.RequestID,
+		FeedbackType:   req.FeedbackType,
+		IdempotencyKey: string(c.GetHeader("Idempotency-Key")),
+	})
+	if err != nil {
+		writeRecommendationError(c, err)
+		return
+	}
+
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	c.JSON(status, feedbackResponse{
+		ID:           result.Feedback.ID,
+		VideoID:      result.Feedback.VideoID,
+		RequestID:    result.Feedback.RequestID,
+		FeedbackType: result.Feedback.FeedbackType,
+		CreatedAt:    result.Feedback.CreatedAt,
+		Replayed:     result.Replayed,
+	})
+}
+
 func candidateResponseFromResult(result *applicationrecommendation.CandidateResult) candidateResponse {
 	items := make([]candidateItemResponse, 0, len(result.Candidates))
 	for _, candidate := range result.Candidates {
@@ -150,6 +191,10 @@ func exposureDecisionsResponseFromResult(result *applicationrecommendation.Expos
 }
 
 func writeRecommendationError(c *app.RequestContext, err error) {
+	if errors.Is(err, domainrecommendation.ErrFeedbackIdempotencyConflict) {
+		c.JSON(http.StatusConflict, utils.H{"error": err.Error()})
+		return
+	}
 	if isBadRequestError(err) {
 		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
@@ -166,7 +211,28 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainrecommendation.ErrInvalidVideoID) ||
 		errors.Is(err, domainrecommendation.ErrInvalidLimit) ||
 		errors.Is(err, domainrecommendation.ErrEmptyScene) ||
+		errors.Is(err, domainrecommendation.ErrEmptyRequestID) ||
 		errors.Is(err, domainrecommendation.ErrSceneTooLong) ||
 		errors.Is(err, domainrecommendation.ErrRequestIDTooLong) ||
+		errors.Is(err, domainrecommendation.ErrSessionIDTooLong) ||
+		errors.Is(err, domainrecommendation.ErrInvalidRefreshIndex) ||
+		errors.Is(err, domainrecommendation.ErrTooManyRecentVideoIDs) ||
+		errors.Is(err, domainrecommendation.ErrInvalidNetworkClass) ||
+		errors.Is(err, domainrecommendation.ErrInvalidViewportClass) ||
+		errors.Is(err, domainrecommendation.ErrTooManyPlaybackCapabilities) ||
+		errors.Is(err, domainrecommendation.ErrInvalidPlaybackCapability) ||
+		errors.Is(err, domainrecommendation.ErrInvalidFeedbackType) ||
+		errors.Is(err, domainrecommendation.ErrFeedbackRequestMismatch) ||
+		errors.Is(err, domainrecommendation.ErrIdempotencyKeyRequired) ||
+		errors.Is(err, domainrecommendation.ErrIdempotencyKeyTooLong) ||
 		errors.Is(err, domainrecommendation.ErrInvalidCursor)
+}
+
+func recommendationUserIDFromContext(c *app.RequestContext) (int64, bool) {
+	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
+	if !exists {
+		return 0, false
+	}
+	userID, ok := value.(int64)
+	return userID, ok && userID > 0
 }

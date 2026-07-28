@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { fetchFeedPage } from "../api/feed";
+import { buildRecommendationContext, fetchFeedPage } from "../api/feed";
 import {
   clearWatchHistory,
   deleteWatchHistoryItem,
@@ -11,6 +11,7 @@ import {
 } from "../api/library";
 import { apiErrorMessage } from "../api/client";
 import type { AsyncState, LibraryVideoItem, LibraryVideoPage, ProfilePrimaryTab, Video } from "../types";
+import { createFeedRequestID, createFeedSessionID } from "../utils";
 
 export type ProfileLibraryTab = Exclude<ProfilePrimaryTab, "works">;
 
@@ -77,11 +78,27 @@ export function useProfileLibrary(token: string) {
     watchLater: 0
   });
   const historyClearing = useRef(false);
+  const recommendationSessionID = useRef(createFeedSessionID("profile"));
+  const recommendationRequestID = useRef("");
 
   const requestPage = useCallback(
     async (tab: ProfileLibraryTab, cursor: string): Promise<LibraryVideoPage> => {
       if (tab === "recommend") {
-        const data = await fetchFeedPage("recommend", token, cursor, `profile-${Date.now()}`);
+        if (!cursor || !recommendationRequestID.current) {
+          recommendationRequestID.current = createFeedRequestID("profile");
+        }
+        const data = await fetchFeedPage(
+          "recommend",
+          token,
+          cursor,
+          buildRecommendationContext({
+            requestID: recommendationRequestID.current,
+            sessionID: recommendationSessionID.current,
+            refreshIndex: requests.current.recommend,
+            recentVideoIDs: [],
+            currentVideoID: 0
+          })
+        );
         return {
           items: (data.items || []).map((item) => ({
             video: feedVideo(item),

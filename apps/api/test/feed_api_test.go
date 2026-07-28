@@ -1,24 +1,31 @@
 package test
 
 import (
+	applicationrecommendation "GCFeed/internal/application/recommendation"
 	"context"
+	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	applicationfeed "GCFeed/internal/application/feed"
 	domainfeed "GCFeed/internal/domain/feed"
+	domainrecommendation "GCFeed/internal/domain/recommendation"
 	infrajwt "GCFeed/internal/infra/jwt"
+	inframetrics "GCFeed/internal/infra/metrics"
 	interfaceshttpfeed "GCFeed/internal/interfaces/http/feed"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type feedAPIResponse struct {
 	Scene      string                `json:"scene"`
+	RequestID  string                `json:"request_id"`
 	Items      []feedItemAPIResponse `json:"items"`
 	NextCursor string                `json:"next_cursor"`
 	HasMore    bool                  `json:"has_more"`
@@ -65,6 +72,57 @@ type memoryFeedCache struct {
 	hotItems       []*domainfeed.FeedPageItem
 	followingInbox map[int64][]*domainfeed.FeedPageItem
 	authorOutbox   map[int64][]*domainfeed.FeedPageItem
+}
+
+type capturingRecommender struct {
+	mu    sync.Mutex
+	input applicationrecommendation.CandidateRequest
+	err   error
+}
+
+type deliveryCapturingRecommender struct {
+	result    *applicationrecommendation.CandidateResult
+	delivery  applicationrecommendation.DeliveredCandidatesInput
+	recordErr error
+}
+
+type nonDeliveringRecommender struct {
+	result *applicationrecommendation.CandidateResult
+}
+
+func (r *deliveryCapturingRecommender) Recommend(context.Context, applicationrecommendation.CandidateRequest) (*applicationrecommendation.CandidateResult, error) {
+	return r.result, nil
+}
+
+func (r *nonDeliveringRecommender) Recommend(context.Context, applicationrecommendation.CandidateRequest) (*applicationrecommendation.CandidateResult, error) {
+	return r.result, nil
+}
+
+func (r *deliveryCapturingRecommender) RecordDeliveredCandidates(_ context.Context, input applicationrecommendation.DeliveredCandidatesInput) error {
+	r.delivery = input
+	return r.recordErr
+}
+
+func (r *capturingRecommender) Recommend(ctx context.Context, input applicationrecommendation.CandidateRequest) (*applicationrecommendation.CandidateResult, error) {
+	r.mu.Lock()
+	r.input = input
+	err := r.err
+	r.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return &applicationrecommendation.CandidateResult{
+		UserID:     input.UserID,
+		Scene:      input.Scene,
+		RequestID:  input.Context.RequestID,
+		Candidates: []*domainrecommendation.Candidate{},
+	}, nil
+}
+
+func (r *capturingRecommender) Input() applicationrecommendation.CandidateRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.input
 }
 
 func newMemoryFeedRepo(items []*domainfeed.FeedItem) *memoryFeedRepo {
@@ -510,7 +568,7 @@ func TestFeedSceneQuery(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/feed-queries",
-		`{"scene":"timeline","limit":2,"context":{"device":"ios","experiment":"rank_v1"}}`,
+		`{"scene":"timeline","limit":2,"context":{"request_id":"req-timeline","network_class":"4G","viewport_class":"small","playback_capabilities":["MP4"]}}`,
 		"",
 	)
 	requireStatus(t, queryResponse, http.StatusOK)
@@ -523,6 +581,156 @@ func TestFeedSceneQuery(t *testing.T) {
 
 	followingResponse := performJSONRequest(router, http.MethodGet, "/api/feed-items?scene=following&limit=1", "", "")
 	requireStatus(t, followingResponse, http.StatusUnauthorized)
+}
+
+func TestRecommendationFeedAcceptsBoundedContext(t *testing.T) {
+	recommender := &capturingRecommender{}
+	service := applicationfeed.New(newMemoryFeedRepo(seedFeedItems()), applicationfeed.WithRecommender(recommender))
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t, service)
+	token := signTestToken(t, jwtManager, 42)
+
+	response := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/feed-queries",
+		`{"scene":"recommend","limit":2,"context":{"request_id":" req-context ","session_id":" session-1 ","refresh_index":2,"recent_video_ids":[3,2,3],"current_video_id":3,"network_class":"4G","save_data":true,"viewport_class":"SMALL","playback_capabilities":["MP4","media-source","mp4"]}}`,
+		token,
+	)
+	requireStatus(t, response, http.StatusOK)
+
+	input := recommender.Input()
+	context := input.Context
+	if input.UserID != 42 || context == nil {
+		t.Fatalf("recommendation context was not forwarded: %+v", input)
+	}
+	if context.RequestID != "req-context" || context.SessionID != "session-1" || context.RefreshIndex != 2 ||
+		context.CurrentVideoID != 3 || context.NetworkClass != domainrecommendation.NetworkClass4G ||
+		!context.SaveData || context.ViewportClass != domainrecommendation.ViewportClassSmall {
+		t.Fatalf("unexpected normalized context: %+v", context)
+	}
+	if len(context.RecentVideoIDs) != 2 || context.RecentVideoIDs[0] != 3 || context.RecentVideoIDs[1] != 2 {
+		t.Fatalf("unexpected recent video ids: %+v", context.RecentVideoIDs)
+	}
+	if len(context.PlaybackCapabilities) != 2 ||
+		context.PlaybackCapabilities[0] != domainrecommendation.PlaybackCapabilityMP4 ||
+		context.PlaybackCapabilities[1] != domainrecommendation.PlaybackCapabilityMediaSource {
+		t.Fatalf("unexpected playback capabilities: %+v", context.PlaybackCapabilities)
+	}
+	var page feedAPIResponse
+	decodeJSON(t, response, &page)
+	if page.RequestID != "req-context" {
+		t.Fatalf("client request ID was not preserved in Feed response: %+v", page)
+	}
+}
+
+func TestRecommendationFeedReturnsServerResolvedRequestID(t *testing.T) {
+	items := seedFeedItems()
+	recommender := &deliveryCapturingRecommender{
+		result: &applicationrecommendation.CandidateResult{
+			UserID: 42, Scene: "recommend", RequestID: "srv-generated-request", PolicyVersion: 1,
+			Candidates: []*domainrecommendation.Candidate{
+				domainrecommendation.RestoreCandidate(3, 30, 1, 0, 0, 0, "", items[2].PublishedAt),
+			},
+		},
+	}
+	service := applicationfeed.New(newMemoryFeedRepo(items), applicationfeed.WithRecommender(recommender))
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t, service)
+	token := signTestToken(t, jwtManager, 42)
+
+	response := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/feed-queries",
+		`{"scene":"recommend","limit":1,"context":{"request_id":"","network_class":"unknown","viewport_class":"unknown"}}`,
+		token,
+	)
+	requireStatus(t, response, http.StatusOK)
+	var page feedAPIResponse
+	decodeJSON(t, response, &page)
+	if page.RequestID != "srv-generated-request" || len(page.Items) != 1 || page.Items[0].VideoID != 3 {
+		t.Fatalf("resolved recommendation request ID was not returned: %+v", page)
+	}
+}
+
+func TestRecommendationDeliveryUsesFinalCardsAndFailsBeforeHTTPSuccess(t *testing.T) {
+	items := seedFeedItems()
+	recommender := &deliveryCapturingRecommender{
+		result: &applicationrecommendation.CandidateResult{
+			UserID: 42, Scene: "recommend", RequestID: "delivery-test", PolicyVersion: 1,
+			DeliveryExpiresAt: time.Now().UTC().Add(time.Minute),
+			Candidates: []*domainrecommendation.Candidate{
+				domainrecommendation.RestoreCandidate(3, 30, 1, 0, 0, 0, "", items[2].PublishedAt),
+				domainrecommendation.RestoreCandidate(404, 404, 0, 0, 0, 0, "", items[2].PublishedAt),
+			},
+		},
+		recordErr: errors.New("evidence storage unavailable"),
+	}
+	before := testutil.ToFloat64(inframetrics.RecommendationDeliveryFailuresTotal)
+	service := applicationfeed.New(newMemoryFeedRepo(items), applicationfeed.WithRecommender(recommender))
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t, service)
+	response := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/feed-queries",
+		`{"scene":"recommend","limit":2,"context":{"request_id":"delivery-test","network_class":"unknown","viewport_class":"unknown"}}`,
+		signTestToken(t, jwtManager, 42),
+	)
+	requireStatus(t, response, http.StatusInternalServerError)
+	if got := recommender.delivery.VideoIDs; len(got) != 1 || got[0] != 3 {
+		t.Fatalf("delivery evidence used candidates rather than final cards: %#v", recommender.delivery)
+	}
+	if testutil.ToFloat64(inframetrics.RecommendationDeliveryFailuresTotal)-before != 1 {
+		t.Fatal("delivery persistence failure was not observable")
+	}
+}
+
+func TestRecommendationFeedRequiresDurableDeliveryRecorder(t *testing.T) {
+	items := seedFeedItems()
+	recommender := &nonDeliveringRecommender{
+		result: &applicationrecommendation.CandidateResult{
+			UserID: 42, Scene: "recommend", RequestID: "missing-delivery-recorder", PolicyVersion: 1,
+			DeliveryExpiresAt: time.Now().UTC().Add(time.Minute),
+			Candidates: []*domainrecommendation.Candidate{
+				domainrecommendation.RestoreCandidate(3, 30, 1, 0, 0, 0, "", items[2].PublishedAt),
+			},
+		},
+	}
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t,
+		applicationfeed.New(newMemoryFeedRepo(items), applicationfeed.WithRecommender(recommender)),
+	)
+	response := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/feed-queries",
+		`{"scene":"recommend","limit":1,"context":{"request_id":"missing-delivery-recorder","network_class":"unknown","viewport_class":"unknown"}}`,
+		signTestToken(t, jwtManager, 42),
+	)
+	requireStatus(t, response, http.StatusInternalServerError)
+}
+
+func TestRecommendationFeedRejectsExcessiveOrUnknownContext(t *testing.T) {
+	recommender := &capturingRecommender{}
+	service := applicationfeed.New(newMemoryFeedRepo(seedFeedItems()), applicationfeed.WithRecommender(recommender))
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t, service)
+	token := signTestToken(t, jwtManager, 42)
+
+	excessive := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/feed-queries",
+		`{"scene":"recommend","context":{"request_id":"req","recent_video_ids":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]}}`,
+		token,
+	)
+	requireStatus(t, excessive, http.StatusBadRequest)
+
+	unknown := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/feed-queries",
+		`{"scene":"recommend","context":{"request_id":"req","device_token":"prohibited"}}`,
+		token,
+	)
+	requireStatus(t, unknown, http.StatusBadRequest)
 }
 
 func TestFeedIncludesViewerActionState(t *testing.T) {
@@ -725,6 +933,25 @@ func TestFeedAPIValidation(t *testing.T) {
 
 	badCursorResponse := performJSONRequest(router, http.MethodGet, "/api/feed-items?cursor=bad-cursor", "", "")
 	requireStatus(t, badCursorResponse, http.StatusBadRequest)
+}
+
+func TestRecommendFeedMapsSnapshotCursorFailureToBadRequest(t *testing.T) {
+	recommender := &capturingRecommender{err: domainrecommendation.ErrInvalidCursor}
+	service := applicationfeed.New(newMemoryFeedRepo(seedFeedItems()), applicationfeed.WithRecommender(recommender))
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t, service)
+	token := signTestToken(t, jwtManager, 42)
+
+	response := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/feed-queries",
+		`{"scene":"recommend","cursor":"expired-or-tampered","context":{"request_id":"request-1"}}`,
+		token,
+	)
+	requireStatus(t, response, http.StatusBadRequest)
+	if body := response.Body.String(); !strings.Contains(body, `"error":"invalid request"`) || strings.Contains(body, "cursor") {
+		t.Fatalf("cursor failure leaked detail: %s", body)
+	}
 }
 
 // newFeedRouter 只装配 Feed 路由，测试时无需数据库。

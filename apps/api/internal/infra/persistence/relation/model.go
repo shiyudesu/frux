@@ -31,3 +31,28 @@ type RelationStatModel struct {
 func (RelationStatModel) TableName() string {
 	return "user_relation_stat"
 }
+
+// FollowProfileOutboxModel is written with user_follow so recommendation
+// projection is recoverable when the worker is unavailable.
+type FollowProfileOutboxModel struct {
+	ID                      int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	EventID                 string     `gorm:"column:event_id;size:128;not null;uniqueIndex:uk_relation_profile_outbox_event"`
+	FollowID                int64      `gorm:"column:follow_id;not null;index:idx_relation_profile_outbox_follow"`
+	UserID                  int64      `gorm:"column:user_id;not null"`
+	TargetUserID            int64      `gorm:"column:target_user_id;not null"`
+	Active                  bool       `gorm:"column:active;not null"`
+	OccurredAt              time.Time  `gorm:"column:occurred_at;not null;index:idx_relation_profile_outbox_pending,priority:4"`
+	RecommendationRequestID string     `gorm:"column:recommendation_request_id;size:64;not null;default:''"`
+	RecommendationVideoID   int64      `gorm:"column:recommendation_video_id;not null;default:0"`
+	AvailableAt             time.Time  `gorm:"column:available_at;not null;index:idx_relation_profile_outbox_pending,priority:2"`
+	LeasedUntil             *time.Time `gorm:"column:leased_until;index:idx_relation_profile_outbox_pending,priority:3"`
+	DispatchedAt            *time.Time `gorm:"column:dispatched_at;index:idx_relation_profile_outbox_pending,priority:1"`
+	Attempts                int        `gorm:"column:attempts;not null;default:0"`
+	LastError               string     `gorm:"column:last_error;size:1024;not null;default:''"`
+	CreatedAt               time.Time  `gorm:"column:created_at;not null;autoCreateTime"`
+	UpdatedAt               time.Time  `gorm:"column:updated_at;not null;autoUpdateTime"`
+}
+
+func (FollowProfileOutboxModel) TableName() string {
+	return "relation_profile_projection_outbox"
+}

@@ -28,6 +28,7 @@ import (
 	infrapersistencemedia "GCFeed/internal/infra/persistence/media"
 	migration "GCFeed/internal/infra/persistence/migration"
 	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
+	infrarelation "GCFeed/internal/infra/persistence/relation"
 	infravideo "GCFeed/internal/infra/persistence/video"
 
 	gormpostgres "gorm.io/driver/postgres"
@@ -88,8 +89,13 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	redisClient := infracache.NewRedisClient(cfg.Redis)
 	feedCache := infracache.NewFeedCache(redisClient)
 
+	recommendationRepo := infrarecommendation.New(gormDB)
 	interactionRepo := infrainteraction.New(gormDB)
-	actionWorker := applicationinteraction.NewActionWorker(interactionRepo, rabbitMQ)
+	actionWorker := applicationinteraction.NewActionWorker(
+		interactionRepo,
+		rabbitMQ,
+		applicationinteraction.WithRecommendationOutcomeRecorder(recommendationRepo),
+	)
 	if err := actionWorker.Start(ctx); err != nil {
 		return err
 	}
@@ -106,9 +112,22 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 		return err
 	}
 
-	recommendationRepo := infrarecommendation.New(gormDB)
+	if err := applicationrecommendation.NewRequestLogCleanupWorker(recommendationRepo, recommendationRepo).Start(ctx); err != nil {
+		return err
+	}
 	behaviorWorker := applicationrecommendation.NewBehaviorEventWorker(recommendationRepo, rabbitMQ)
 	if err := behaviorWorker.Start(ctx); err != nil {
+		return err
+	}
+	profileOutboxWorker := applicationrecommendation.NewProfileOutboxWorker(
+		applicationrecommendation.NewProfileProjector(recommendationRepo),
+		recommendationRepo,
+		infrarelation.New(gormDB),
+		applicationrecommendation.WithProfileOutboxOutcomeRepository(recommendationRepo),
+		applicationrecommendation.WithActionProfileOutboxStore(interactionRepo),
+		applicationrecommendation.WithBehaviorProfileOutboxStore(recommendationRepo),
+	)
+	if err := profileOutboxWorker.Start(ctx); err != nil {
 		return err
 	}
 

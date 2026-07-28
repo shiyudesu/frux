@@ -143,6 +143,45 @@ var (
 		},
 	)
 
+	ProfileWorkerLagSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{Namespace: "gcfeed", Name: "recommendation_profile_worker_lag_seconds", Help: "Age of the latest processed recommendation profile signal."},
+	)
+	ProfileWorkerEventsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_profile_worker_events_total", Help: "Recommendation profile projection events by result."},
+		[]string{"result"},
+	)
+	RecommendationRecallCandidatesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_recall_candidates_total", Help: "Candidates retained by bounded recall provider."},
+		[]string{"provider"},
+	)
+	RecommendationDegradedRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_degraded_requests_total", Help: "Degraded recommendation requests by bounded provider reason."},
+		[]string{"provider", "reason"},
+	)
+	RecommendationSnapshotOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_snapshot_operations_total", Help: "Recommendation snapshot operation outcomes."},
+		[]string{"result"},
+	)
+	RecommendationRequestLogFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_request_log_failures_total", Help: "Sampled recommendation request-log failures by bounded stage."},
+		[]string{"stage"},
+	)
+	RecommendationDeliveryFailuresTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_delivery_failures_total", Help: "Recommendation delivery evidence writes that failed after Feed assembly."},
+	)
+	RecommendationActivePolicyVersion = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Namespace: "gcfeed", Name: "recommendation_active_policy_version", Help: "Active recommendation policy version by scene."},
+		[]string{"scene"},
+	)
+	RecommendationOutcomesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_outcomes_total", Help: "Recommendation outcomes by bounded type."},
+		[]string{"outcome"},
+	)
+	RecommendationInvalidAttributionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_invalid_attributions_total", Help: "Rejected recommendation attributions by bounded outcome type."},
+		[]string{"outcome"},
+	)
+
 	ViewEventOutboxDispatchTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "gcfeed",
@@ -224,6 +263,16 @@ func init() {
 		ViewEventOutboxPending,
 		ViewEventOutboxLagSeconds,
 		ViewEventOutboxDispatchTotal,
+		ProfileWorkerLagSeconds,
+		ProfileWorkerEventsTotal,
+		RecommendationRecallCandidatesTotal,
+		RecommendationDegradedRequestsTotal,
+		RecommendationSnapshotOperationsTotal,
+		RecommendationRequestLogFailuresTotal,
+		RecommendationDeliveryFailuresTotal,
+		RecommendationActivePolicyVersion,
+		RecommendationOutcomesTotal,
+		RecommendationInvalidAttributionsTotal,
 		MediaObjectOperationsTotal,
 		MediaObjectOperationDuration,
 		MediaProcessingResultsTotal,
@@ -231,6 +280,76 @@ func init() {
 		MediaReconciliationIssuesTotal,
 		MediaCleanupBacklog,
 	)
+}
+
+func ObserveRecommendationRecall(provider string, count int) {
+	if count > 0 {
+		RecommendationRecallCandidatesTotal.WithLabelValues(recommendationProviderLabel(provider)).Add(float64(count))
+	}
+}
+func ObserveRecommendationDegraded(provider, reason string) {
+	RecommendationDegradedRequestsTotal.WithLabelValues(recommendationProviderLabel(provider), recommendationReasonLabel(reason)).Inc()
+}
+func ObserveRecommendationSnapshot(result string) {
+	RecommendationSnapshotOperationsTotal.WithLabelValues(recommendationSnapshotResult(result)).Inc()
+}
+func ObserveRecommendationRequestLogFailure(stage string) {
+	RecommendationRequestLogFailuresTotal.WithLabelValues(recommendationRequestLogStage(stage)).Inc()
+}
+func ObserveRecommendationDeliveryFailure() {
+	RecommendationDeliveryFailuresTotal.Inc()
+}
+func ObserveRecommendationPolicy(scene string, version int) {
+	if version > 0 {
+		RecommendationActivePolicyVersion.WithLabelValues(normalizeLabel(scene, "unknown")).Set(float64(version))
+	}
+}
+func ObserveRecommendationOutcome(outcome string) {
+	RecommendationOutcomesTotal.WithLabelValues(recommendationOutcomeLabel(outcome)).Inc()
+}
+func ObserveRecommendationInvalidAttribution(outcome string) {
+	RecommendationInvalidAttributionsTotal.WithLabelValues(recommendationOutcomeLabel(outcome)).Inc()
+}
+
+func recommendationProviderLabel(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "fresh", "hot", "content_similarity", "followed_author", "session_continuation":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationReasonLabel(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "timeout", "error", "snapshot_unavailable":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationSnapshotResult(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "hit", "miss", "read_failure", "write_success", "write_failure", "maintenance_failure", "degraded_fallback":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationRequestLogStage(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "validation", "storage":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationOutcomeLabel(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "exposed", "play", "progress", "complete", "skip", "like", "favorite", "follow", "not_interested", "reduce_author", "already_seen":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
 }
 
 // HTTPMiddleware records request count and latency with stable route labels.
@@ -325,6 +444,24 @@ func ObserveWorkerJob(job string, duration time.Duration, err error) {
 	result := resultLabel(err)
 	WorkerJobsTotal.WithLabelValues(job, result).Inc()
 	WorkerJobDuration.WithLabelValues(job, result).Observe(duration.Seconds())
+}
+
+// ObserveProfileWorker records bounded worker outcomes without event identifiers as labels.
+func ObserveProfileWorker(occurredAt time.Time, duplicate bool, err error) {
+	result := "updated"
+	if err != nil {
+		result = "failure"
+	} else if duplicate {
+		result = "duplicate"
+	}
+	ProfileWorkerEventsTotal.WithLabelValues(result).Inc()
+	if err == nil && !occurredAt.IsZero() {
+		lag := time.Since(occurredAt).Seconds()
+		if lag < 0 {
+			lag = 0
+		}
+		ProfileWorkerLagSeconds.Set(lag)
+	}
 }
 
 func ObserveViewEventOutbox(pending int64, oldest time.Time, now time.Time, err error) {

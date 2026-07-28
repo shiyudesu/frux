@@ -70,3 +70,18 @@ type exposureItemResponse struct {
 	ExposureCount  int       `json:"exposure_count"`
 	LastScene      string    `json:"last_scene"`
 }
+
+type feedbackRequest struct {
+	VideoID      int64  `json:"video_id"`
+	RequestID    string `json:"request_id"`
+	FeedbackType string `json:"feedback_type"`
+}
+
+type feedbackResponse struct {
+	ID           int64     `json:"id"`
+	VideoID      int64     `json:"video_id"`
+	RequestID    string    `json:"request_id"`
+	FeedbackType string    `json:"feedback_type"`
+	CreatedAt    time.Time `json:"created_at"`
+	Replayed     bool      `json:"replayed,omitempty"`
+}

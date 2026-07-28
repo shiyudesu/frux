@@ -173,9 +173,22 @@ func TestPostgreSQLMigration(t *testing.T) {
 	if err := AutoMigrate(db); err != nil {
 		t.Fatalf("clean migration: %v", err)
 	}
+	if err := db.Model(&infrarecommendation.PolicyModel{}).
+		Where("scene = ? AND version = ?", "recommend", 1).
+		Update("enabled", false).Error; err != nil {
+		t.Fatalf("set operator policy state: %v", err)
+	}
 
 	if err := AutoMigrate(db); err != nil {
 		t.Fatalf("idempotent migration: %v", err)
+	}
+	var bootstrapPolicies []infrarecommendation.PolicyModel
+	if err := db.Where("scene = ?", "recommend").Order("version").Find(&bootstrapPolicies).Error; err != nil {
+		t.Fatalf("load bootstrap policies: %v", err)
+	}
+	if len(bootstrapPolicies) != 2 || bootstrapPolicies[0].Version != 1 || bootstrapPolicies[0].Enabled ||
+		bootstrapPolicies[1].Version != 2 || !bootstrapPolicies[1].Enabled {
+		t.Fatalf("bootstrap policies were missing or overwritten: %#v", bootstrapPolicies)
 	}
 
 	requiredTables := []string{
@@ -202,6 +215,14 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"video_view_history_deletion",
 		"view_event_outbox",
 		"recommendation_behavior_event",
+		"recommendation_policy",
+		"user_interest_profile",
+		"recommendation_applied_profile_event",
+		"recommendation_feedback",
+		"recommendation_feedback_profile_outbox",
+		"recommendation_request_log",
+		"recommendation_served_candidate",
+		"recommendation_outcome",
 		"user_watch_later",
 		"interaction_action",
 		"interaction_action_event",
@@ -213,6 +234,7 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"playback_telemetry_event",
 		"user_follow",
 		"user_relation_stat",
+		"relation_profile_projection_outbox",
 		"app_migration",
 	}
 	for _, table := range requiredTables {
@@ -238,8 +260,21 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infraexposure.ViewHistoryModel{}, "idx_video_view_history_user_last"},
 		{&infraexposure.ViewEventOutboxModel{}, "idx_view_event_outbox_pending"},
 		{&infrarecommendation.BehaviorEventModel{}, "idx_recommendation_behavior_user_occurred"},
+		{&infrarecommendation.PolicyModel{}, "uk_recommendation_policy_scene_version"},
+		{&infrarecommendation.PolicyModel{}, "idx_recommendation_policy_scene_enabled_version"},
+		{&infrarecommendation.UserInterestProfileModel{}, "idx_recommendation_profile_updated"},
+		{&infrarecommendation.AppliedProfileEventModel{}, "idx_recommendation_applied_profile_event_time"},
+		{&infrarecommendation.FeedbackModel{}, "uk_recommendation_feedback_user_key"},
+		{&infrarecommendation.FeedbackProfileOutboxModel{}, "idx_recommendation_feedback_profile_outbox_pending"},
+		{&infrarecommendation.RequestLogModel{}, "uk_recommendation_request_log_user_request"},
+		{&infrarecommendation.RequestLogModel{}, "idx_recommendation_request_log_created"},
+		{&infrarecommendation.ServedCandidateEvidenceModel{}, "uk_recommendation_served_candidate_identity"},
+		{&infrarecommendation.ServedCandidateEvidenceModel{}, "idx_recommendation_served_candidate_request"},
+		{&infrarecommendation.ServedCandidateEvidenceModel{}, "idx_recommendation_served_candidate_expiry"},
+		{&infrarecommendation.OutcomeModel{}, "idx_recommendation_outcome_request"},
 		{&infrainteraction.ActionModel{}, "idx_interaction_action_user_type_status_updated"},
 		{&infralibrary.WatchLaterModel{}, "idx_user_watch_later_user_status_updated"},
+		{&infrarelation.FollowProfileOutboxModel{}, "idx_relation_profile_outbox_pending"},
 		{&inframessage.MessageModel{}, "uk_user_message_user_event"},
 		{&infraplayback.TelemetryBatchModel{}, "uk_playback_telemetry_batch_user_batch"},
 		{&infraplayback.TelemetryBatchModel{}, "uk_playback_telemetry_batch_anon_batch"},
@@ -375,6 +410,44 @@ func TestPostgreSQLMigration(t *testing.T) {
 	}
 	if missingStats != 0 {
 		t.Fatalf("expected complete video_stat rows, found %d missing", missingStats)
+	}
+}
+
+func TestPostgreSQLMigrationReplacesGlobalRequestLogIdentity(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("initial migration: %v", err)
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS uk_recommendation_request_log_user_request").Error; err != nil {
+		t.Fatalf("drop composite request-log index: %v", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_recommendation_request_log_request ON recommendation_request_log (request_id)").Error; err != nil {
+		t.Fatalf("create legacy global request-log index: %v", err)
+	}
+
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("replace legacy request-log index: %v", err)
+	}
+	if db.Migrator().HasIndex(&infrarecommendation.RequestLogModel{}, "uk_recommendation_request_log_request") {
+		t.Fatal("legacy global request-log identity index still exists")
+	}
+	if !db.Migrator().HasIndex(&infrarecommendation.RequestLogModel{}, "uk_recommendation_request_log_user_request") {
+		t.Fatal("composite request-log identity index was not created")
+	}
+
+	now := time.Now().UTC()
+	logs := []infrarecommendation.RequestLogModel{
+		{RequestID: "shared-request", UserID: 1, Scene: "recommend", PolicyVersion: 1, PayloadJSON: `{"candidates":[]}`, CreatedAt: now},
+		{RequestID: "shared-request", UserID: 2, Scene: "recommend", PolicyVersion: 1, PayloadJSON: `{"candidates":[]}`, CreatedAt: now},
+	}
+	if err := db.Create(&logs).Error; err != nil {
+		t.Fatalf("same request ID should be independent per user: %v", err)
+	}
+	if err := db.Create(&infrarecommendation.RequestLogModel{
+		RequestID: "shared-request", UserID: 1, Scene: "recommend", PolicyVersion: 1, PayloadJSON: `{"candidates":[]}`, CreatedAt: now,
+	}).Error; err == nil {
+		t.Fatal("same user request-log identity was not unique")
 	}
 }
 
@@ -1671,6 +1744,115 @@ func TestPostgreSQLAcceptedInteractionEventPersistsAfterPrivacyChange(t *testing
 	}
 }
 
+func TestPostgreSQLSynchronousInteractionCreatesRecommendationHandoffs(t *testing.T) {
+	db, repository, _, actor, video := newPostgresInteractionEventFixture(t)
+	occurredAt := time.Now().UTC().Truncate(time.Microsecond)
+	event, err := domaininteraction.NewAcceptedActionEventWithRecommendation(
+		"sync-recommendation-like",
+		actor.ID,
+		video.ID,
+		domaininteraction.ActionTypeLike,
+		true,
+		"sync-recommendation-key",
+		"sync-recommendation-request",
+		0,
+		occurredAt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, count, delta, err := repository.SetActionWithAcceptedEvent(context.Background(), event)
+	if err != nil {
+		t.Fatalf("synchronously accept recommendation action: %v", err)
+	}
+	if action == nil || !action.Active() || count != 1 || delta != 1 {
+		t.Fatalf("unexpected synchronous action result: action=%#v count=%d delta=%d", action, count, delta)
+	}
+
+	var receipt infrainteraction.ActionEventModel
+	if err := db.Where("event_id = ?", event.EventID).Take(&receipt).Error; err != nil {
+		t.Fatalf("load synchronous action receipt: %v", err)
+	}
+	if receipt.RecommendationRequestID != "sync-recommendation-request" || receipt.Version <= 0 ||
+		receipt.ProfileProjectionAvailableAt.IsZero() || receipt.RecommendationOutcomeAvailableAt.IsZero() ||
+		receipt.ProfileProjectionDispatchedAt != nil || receipt.RecommendationOutcomeDispatchedAt != nil {
+		t.Fatalf("synchronous receipt did not retain pending profile/outcome handoffs: %#v", receipt)
+	}
+
+	retry := *event
+	retry.EventID = "sync-recommendation-retry"
+	if action, count, delta, err = repository.SetActionWithAcceptedEvent(context.Background(), &retry); err != nil || action == nil || !action.Active() || count != 1 || delta != 0 {
+		t.Fatalf("synchronous idempotent retry = action=%#v count=%d delta=%d err=%v", action, count, delta, err)
+	}
+	var receipts int64
+	if err := db.Model(&infrainteraction.ActionEventModel{}).Where("user_id = ? AND video_id = ?", actor.ID, video.ID).Count(&receipts).Error; err != nil {
+		t.Fatalf("count synchronous receipts: %v", err)
+	}
+	if receipts != 1 {
+		t.Fatalf("idempotent synchronous retry created a second handoff: %d", receipts)
+	}
+}
+
+func TestPostgreSQLSynchronousInteractionStoresNoOpIdempotencyReceipts(t *testing.T) {
+	db, repository, _, actor, video := newPostgresInteractionEventFixture(t)
+	ctx := context.Background()
+	occurredAt := time.Now().UTC().Truncate(time.Microsecond)
+	newEvent := func(eventID string, active bool, key string) *domaininteraction.AcceptedActionEvent {
+		t.Helper()
+		event, err := domaininteraction.NewAcceptedActionEvent(
+			eventID, actor.ID, video.ID, domaininteraction.ActionTypeLike, active, key, 0, occurredAt,
+		)
+		if err != nil {
+			t.Fatalf("new action event %q: %v", eventID, err)
+		}
+		return event
+	}
+
+	first := newEvent("sync-like-original", true, "sync-like-original-key")
+	action, count, delta, err := repository.SetActionWithAcceptedEvent(ctx, first)
+	if err != nil || action == nil || !action.Active() || count != 1 || delta != 1 {
+		t.Fatalf("initial like = action=%#v count=%d delta=%d err=%v", action, count, delta, err)
+	}
+	unlike := newEvent("sync-unlike-new-key", false, "sync-unlike-new-key")
+	if _, count, delta, err = repository.SetActionWithAcceptedEvent(ctx, unlike); err != nil || count != 0 || delta != -1 {
+		t.Fatalf("new-key unlike = count=%d delta=%d err=%v", count, delta, err)
+	}
+	replay := newEvent("sync-like-replay", true, "sync-like-original-key")
+	action, count, delta, err = repository.SetActionWithAcceptedEvent(ctx, replay)
+	if err != nil || action == nil || !action.Active() || count != 1 || delta != 0 {
+		t.Fatalf("same-key replay did not return its original result: action=%#v count=%d delta=%d err=%v", action, count, delta, err)
+	}
+	conflict := newEvent("sync-like-key-conflict", false, "sync-like-original-key")
+	if _, _, _, err := repository.SetActionWithAcceptedEvent(ctx, conflict); !errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) {
+		t.Fatalf("opposite desired action with the same key = %v, want conflict", err)
+	}
+
+	absentUnlike := &domaininteraction.AcceptedActionEvent{
+		EventID: "sync-absent-favorite-unlike", UserID: actor.ID, VideoID: video.ID,
+		ActionType: domaininteraction.ActionTypeFavorite, Active: false, IdempotencyKey: "sync-absent-favorite-key",
+		OccurredAt: occurredAt,
+	}
+	action, count, delta, err = repository.SetActionWithAcceptedEvent(ctx, absentUnlike)
+	if err != nil || action == nil || action.Active() || count != 0 || delta != 0 {
+		t.Fatalf("absent unlike = action=%#v count=%d delta=%d err=%v", action, count, delta, err)
+	}
+
+	var handoffs int64
+	if err := db.Model(&infrainteraction.ActionEventModel{}).Where("user_id = ? AND video_id = ?", actor.ID, video.ID).Count(&handoffs).Error; err != nil {
+		t.Fatalf("count state-change handoffs: %v", err)
+	}
+	if handoffs != 2 {
+		t.Fatalf("same-state and absent-unlike requests created handoffs: %d", handoffs)
+	}
+	var receipts int64
+	if err := db.Model(&infrainteraction.ActionIdempotencyReceiptModel{}).Where("user_id = ? AND video_id = ?", actor.ID, video.ID).Count(&receipts).Error; err != nil {
+		t.Fatalf("count idempotency receipts: %v", err)
+	}
+	if receipts != 3 {
+		t.Fatalf("expected transition and no-op idempotency receipts, got %d", receipts)
+	}
+}
+
 func TestPostgreSQLInteractionActionOrderBackfill(t *testing.T) {
 	db, _, _, actor, video := newPostgresInteractionEventFixture(t)
 
@@ -1727,7 +1909,7 @@ func TestPostgreSQLInteractionEventsApplyDeterministicLatestOrder(t *testing.T) 
 	ctx := context.Background()
 	base := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
 
-	newerUnlike := mustAcceptedActionEvent(
+	newerUnlike := mustAcceptedActionEventWithRecommendation(
 		t,
 		"newer-unlike",
 		actor.ID,
@@ -1735,10 +1917,11 @@ func TestPostgreSQLInteractionEventsApplyDeterministicLatestOrder(t *testing.T) 
 		domaininteraction.ActionTypeLike,
 		false,
 		"newer-unlike-request",
+		"newer-unlike-recommendation",
 		2,
 		base,
 	)
-	olderLike := mustAcceptedActionEvent(
+	olderLike := mustAcceptedActionEventWithRecommendation(
 		t,
 		"older-like",
 		actor.ID,
@@ -1746,6 +1929,7 @@ func TestPostgreSQLInteractionEventsApplyDeterministicLatestOrder(t *testing.T) 
 		domaininteraction.ActionTypeLike,
 		true,
 		"older-like-request",
+		"older-like-recommendation",
 		1,
 		base.Add(time.Second),
 	)
@@ -1761,7 +1945,7 @@ func TestPostgreSQLInteractionEventsApplyDeterministicLatestOrder(t *testing.T) 
 	assertPostgreSQLLikeState(t, db, author.ID, actor.ID, video.ID, false, 0, 0)
 
 	tieTime := base.Add(2 * time.Second)
-	tieLike := mustAcceptedActionEvent(
+	tieLike := mustAcceptedActionEventWithRecommendation(
 		t,
 		"tie-a-like",
 		actor.ID,
@@ -1769,10 +1953,11 @@ func TestPostgreSQLInteractionEventsApplyDeterministicLatestOrder(t *testing.T) 
 		domaininteraction.ActionTypeLike,
 		true,
 		"tie-like-request",
+		"tie-like-recommendation",
 		3,
 		tieTime,
 	)
-	tieUnlike := mustAcceptedActionEvent(
+	tieUnlike := mustAcceptedActionEventWithRecommendation(
 		t,
 		"tie-z-unlike",
 		actor.ID,
@@ -1780,6 +1965,7 @@ func TestPostgreSQLInteractionEventsApplyDeterministicLatestOrder(t *testing.T) 
 		domaininteraction.ActionTypeLike,
 		false,
 		"tie-unlike-request",
+		"tie-unlike-recommendation",
 		3,
 		tieTime,
 	)
@@ -1824,12 +2010,118 @@ func TestPostgreSQLInteractionEventsApplyDeterministicLatestOrder(t *testing.T) 
 	if action.LatestEventVersion != 3 {
 		t.Fatalf("expected latest action version 3, got %+v", action)
 	}
-	var receiptCount int64
-	if err := db.Model(&infrainteraction.ActionEventModel{}).Count(&receiptCount).Error; err != nil {
-		t.Fatalf("count ordered action receipts: %v", err)
+
+	var receipts []infrainteraction.ActionEventModel
+	if err := db.Order("event_id ASC").Find(&receipts).Error; err != nil {
+		t.Fatalf("list ordered action receipts: %v", err)
 	}
-	if receiptCount != 4 {
-		t.Fatalf("expected receipts for four distinct events, got %d", receiptCount)
+	if len(receipts) != 4 {
+		t.Fatalf("expected receipts for four distinct events, got %d", len(receipts))
+	}
+	expectedReceiptTimes := map[string]time.Time{
+		newerUnlike.EventID: newerUnlike.OccurredAt,
+		olderLike.EventID:   olderLike.OccurredAt,
+		tieLike.EventID:     tieLike.OccurredAt,
+		tieUnlike.EventID:   tieUnlike.OccurredAt,
+	}
+	for _, receipt := range receipts {
+		occurredAt, ok := expectedReceiptTimes[receipt.EventID]
+		if !ok {
+			t.Fatalf("unexpected action receipt: %+v", receipt)
+		}
+		delete(expectedReceiptTimes, receipt.EventID)
+		if receipt.ProfileProjectionDispatchedAt != nil || !receipt.ProfileProjectionAvailableAt.Equal(occurredAt) {
+			t.Fatalf("receipt missing profile-projection handoff: %+v", receipt)
+		}
+		if receipt.RecommendationOutcomeDispatchedAt != nil || !receipt.RecommendationOutcomeAvailableAt.Equal(occurredAt) {
+			t.Fatalf("receipt missing recommendation-outcome handoff: %+v", receipt)
+		}
+	}
+	if len(expectedReceiptTimes) != 0 {
+		t.Fatalf("missing action receipts: %#v", expectedReceiptTimes)
+	}
+
+	leaseNow := base.Add(time.Minute)
+	profiles, err := repo.ClaimActionProfileProjections(ctx, 10, leaseNow, leaseNow.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("claim profile projection handoffs: %v", err)
+	}
+	if len(profiles) != 4 {
+		t.Fatalf("expected four profile handoffs, got %+v", profiles)
+	}
+	profileIDs := map[string]bool{}
+	for _, profile := range profiles {
+		profileIDs[profile.EventID] = true
+	}
+	for _, eventID := range []string{
+		newerUnlike.EventID,
+		olderLike.EventID,
+		tieLike.EventID,
+		tieUnlike.EventID,
+	} {
+		if !profileIDs[eventID] {
+			t.Fatalf("missing profile handoff for %q: %+v", eventID, profiles)
+		}
+	}
+
+	outcomes, err := repo.ClaimRecommendationActionOutcomes(ctx, 10, leaseNow, leaseNow.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("claim recommendation outcome handoffs: %v", err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("expected stale and current active outcome handoffs, got %+v", outcomes)
+	}
+	outcomeIDs := map[string]bool{}
+	for _, outcome := range outcomes {
+		outcomeIDs[outcome.EventID] = true
+	}
+	if !outcomeIDs[olderLike.EventID] || !outcomeIDs[tieLike.EventID] {
+		t.Fatalf("missing immutable active outcome handoff: %+v", outcomes)
+	}
+
+	sameStateBase := base.Add(3 * time.Second)
+	activeV1 := mustAcceptedActionEventWithRecommendation(
+		t, "favorite-active-v1", actor.ID, video.ID, domaininteraction.ActionTypeFavorite, true,
+		"favorite-v1", "favorite-request-v1", 1, sameStateBase,
+	)
+	activeV3 := mustAcceptedActionEventWithRecommendation(
+		t, "favorite-active-v3", actor.ID, video.ID, domaininteraction.ActionTypeFavorite, true,
+		"favorite-v3", "favorite-request-v3", 3, sameStateBase.Add(2*time.Second),
+	)
+	inactiveV2 := mustAcceptedActionEventWithRecommendation(
+		t, "favorite-inactive-v2", actor.ID, video.ID, domaininteraction.ActionTypeFavorite, false,
+		"favorite-v2", "favorite-request-v2", 2, sameStateBase.Add(time.Second),
+	)
+	for _, event := range []*domaininteraction.AcceptedActionEvent{activeV1, activeV3, inactiveV2} {
+		if err := repo.PersistAcceptedActionEvent(ctx, event); err != nil {
+			t.Fatalf("persist same-state ordering event %q: %v", event.EventID, err)
+		}
+	}
+	var favorite infrainteraction.ActionModel
+	if err := db.Where(
+		"user_id = ? AND video_id = ? AND action_type = ?",
+		actor.ID,
+		video.ID,
+		domaininteraction.ActionTypeFavorite,
+	).Take(&favorite).Error; err != nil {
+		t.Fatalf("load same-state ordered favorite: %v", err)
+	}
+	if favorite.Status != domaininteraction.ActionStatusActive || favorite.LatestEventVersion != activeV3.Version ||
+		favorite.LatestEventID == nil || *favorite.LatestEventID != activeV3.EventID ||
+		favorite.RecommendationRequestID != activeV3.RecommendationRequestID {
+		t.Fatalf("newer same-state event did not protect against stale reversal: %+v", favorite)
+	}
+	var favoriteReceipts []infrainteraction.ActionEventModel
+	if err := db.Where("action_type = ?", domaininteraction.ActionTypeFavorite).Order("event_id ASC").Find(&favoriteReceipts).Error; err != nil {
+		t.Fatalf("load same-state action receipts: %v", err)
+	}
+	if len(favoriteReceipts) != 3 {
+		t.Fatalf("expected every same-state/stale action receipt and handoff, got %+v", favoriteReceipts)
+	}
+	for _, receipt := range favoriteReceipts {
+		if receipt.ProfileProjectionDispatchedAt != nil || receipt.RecommendationOutcomeDispatchedAt != nil {
+			t.Fatalf("same-state event lost its durable handoff: %+v", receipt)
+		}
 	}
 }
 
@@ -1936,6 +2228,68 @@ func TestPostgreSQLDirectFollowState(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLFollowProfileOutboxBackfillIsSetBasedAndIdempotent(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := db.AutoMigrate(&infrarelation.FollowModel{}, &infrarelation.FollowProfileOutboxModel{}); err != nil {
+		t.Fatalf("migrate relation backfill tables: %v", err)
+	}
+	updatedAt := time.Date(2026, 7, 27, 7, 0, 0, 123000000, time.UTC)
+	follows := []infrarelation.FollowModel{
+		{UserID: 1, TargetUserID: 2, Status: domainrelation.FollowStatusActive, UpdatedAt: updatedAt},
+		{UserID: 1, TargetUserID: 3, Status: domainrelation.FollowStatusCanceled, UpdatedAt: updatedAt.Add(time.Microsecond)},
+	}
+	if err := db.Create(&follows).Error; err != nil {
+		t.Fatalf("seed follows: %v", err)
+	}
+	if err := db.Order("id ASC").Find(&follows).Error; err != nil {
+		t.Fatalf("reload seeded follows: %v", err)
+	}
+
+	counter := &queryCounterLogger{Interface: logger.Default.LogMode(logger.Silent)}
+	backfillDB := db.Session(&gorm.Session{Logger: counter})
+	if err := infrarelation.EnsureFollowProfileOutbox(backfillDB); err != nil {
+		t.Fatalf("set-based follow outbox backfill: %v", err)
+	}
+	if got := counter.count.Load(); got != 1 {
+		t.Fatalf("follow outbox backfill issued %d queries, want one INSERT ... SELECT", got)
+	}
+	var outboxes []infrarelation.FollowProfileOutboxModel
+	if err := db.Order("follow_id ASC").Find(&outboxes).Error; err != nil {
+		t.Fatalf("load backfilled follow outboxes: %v", err)
+	}
+	if len(outboxes) != len(follows) {
+		t.Fatalf("backfill rows = %d, want %d", len(outboxes), len(follows))
+	}
+	for index, follow := range follows {
+		outbox := outboxes[index]
+		expectedEventID := fmt.Sprintf(
+			"relation:follow:%d:%d:%d",
+			follow.ID,
+			follow.Status,
+			follow.UpdatedAt.UTC().UnixNano(),
+		)
+		if outbox.EventID != expectedEventID || outbox.FollowID != follow.ID ||
+			outbox.UserID != follow.UserID || outbox.TargetUserID != follow.TargetUserID ||
+			outbox.Active != (follow.Status == domainrelation.FollowStatusActive) ||
+			!outbox.OccurredAt.Equal(follow.UpdatedAt) || !outbox.AvailableAt.Equal(follow.UpdatedAt) ||
+			outbox.RecommendationRequestID != "" || outbox.RecommendationVideoID != 0 {
+			t.Fatalf("backfill changed stable follow signal: follow=%+v outbox=%+v", follow, outbox)
+		}
+	}
+
+	if err := infrarelation.EnsureFollowProfileOutbox(db); err != nil {
+		t.Fatalf("repeat follow outbox backfill: %v", err)
+	}
+	var count int64
+	if err := db.Model(&infrarelation.FollowProfileOutboxModel{}).Count(&count).Error; err != nil {
+		t.Fatalf("count repeated follow outbox backfill: %v", err)
+	}
+	if count != int64(len(follows)) {
+		t.Fatalf("repeat backfill was not idempotent: %d rows", count)
+	}
+}
+
 func newPostgresInteractionEventFixture(t *testing.T) (*gorm.DB, *infrainteraction.Repository, *domainaccount.User, *domainaccount.User, *domainvideo.Video) {
 	t.Helper()
 	fixture := newPostgresFixture(t)
@@ -1980,13 +2334,19 @@ func newPostgresInteractionEventFixture(t *testing.T) (*gorm.DB, *infrainteracti
 
 func mustAcceptedActionEvent(t *testing.T, eventID string, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, version int64, occurredAt time.Time) *domaininteraction.AcceptedActionEvent {
 	t.Helper()
-	event, err := domaininteraction.NewAcceptedActionEvent(
+	return mustAcceptedActionEventWithRecommendation(t, eventID, userID, videoID, actionType, active, idempotencyKey, "", version, occurredAt)
+}
+
+func mustAcceptedActionEventWithRecommendation(t *testing.T, eventID string, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, recommendationRequestID string, version int64, occurredAt time.Time) *domaininteraction.AcceptedActionEvent {
+	t.Helper()
+	event, err := domaininteraction.NewAcceptedActionEventWithRecommendation(
 		eventID,
 		userID,
 		videoID,
 		actionType,
 		active,
 		idempotencyKey,
+		recommendationRequestID,
 		version,
 		occurredAt,
 	)

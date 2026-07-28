@@ -17,6 +17,7 @@ import (
 	interfaceshttprelation "GCFeed/internal/interfaces/http/relation"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 )
 
 type relationFollowAPIResponse struct {
@@ -64,6 +65,7 @@ type memoryRelationRepo struct {
 	follows  map[string]*domainrelation.Follow
 	stats    map[int64]*domainrelation.RelationStat
 	clockSeq int64
+	outcomes []*domainrelation.RecommendationOutcomeContext
 }
 
 type memoryFollowFeedBackfiller struct {
@@ -122,6 +124,9 @@ func (r *memoryRelationRepo) SetFollow(ctx context.Context, userID int64, target
 	key := memoryRelationKey(userID, targetUserID)
 	follow, exists := r.follows[key]
 	if exists && idempotencyKey != "" && follow.IdempotencyKey == strings.TrimSpace(idempotencyKey) {
+		if follow.Active() != active {
+			return nil, nil, nil, domainrelation.ErrFollowIdempotencyConflict
+		}
 		return cloneFollow(follow), cloneStat(r.ensureStat(userID)), cloneStat(r.ensureStat(targetUserID)), nil
 	}
 
@@ -167,6 +172,16 @@ func (r *memoryRelationRepo) SetFollow(ctx context.Context, userID int64, target
 		targetStat.FollowerCount = clampMemoryCount(targetStat.FollowerCount + delta)
 	}
 	return cloneFollow(follow), cloneStat(r.ensureStat(userID)), cloneStat(r.ensureStat(targetUserID)), nil
+}
+
+func (r *memoryRelationRepo) SetFollowWithRecommendation(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string, outcome *domainrelation.RecommendationOutcomeContext) (*domainrelation.Follow, *domainrelation.RelationStat, *domainrelation.RelationStat, error) {
+	r.mu.Lock()
+	if outcome != nil {
+		cloned := *outcome
+		r.outcomes = append(r.outcomes, &cloned)
+	}
+	r.mu.Unlock()
+	return r.SetFollow(ctx, userID, targetUserID, active, idempotencyKey)
 }
 
 func (r *memoryRelationRepo) IsFollowing(ctx context.Context, userID int64, targetUserID int64) (bool, error) {
@@ -430,6 +445,11 @@ func TestRelationValidation(t *testing.T) {
 }
 
 func newRelationRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
+	router, jwtManager, _ := newRelationRouterWithRepo(t)
+	return router, jwtManager
+}
+
+func newRelationRouterWithRepo(t *testing.T) (*server.Hertz, *infrajwt.Manager, *memoryRelationRepo) {
 	t.Helper()
 
 	router := server.New()
@@ -452,7 +472,26 @@ func newRelationRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 	users.GET("/me/following", authMiddleware, handler.ListFollowing)
 	users.GET("/me/followers", authMiddleware, handler.ListFollowers)
 
-	return router, jwtManager
+	return router, jwtManager, repo
+}
+
+func TestRelationFollowCarriesRecommendationOutcomeHeaders(t *testing.T) {
+	router, jwtManager, repo := newRelationRouterWithRepo(t)
+	token := signTestToken(t, jwtManager, 42)
+	response := performJSONRequestWithHeaders(
+		router,
+		http.MethodPut,
+		"/api/users/me/following/77",
+		"",
+		ut.Header{Key: "Authorization", Value: "Bearer " + token},
+		ut.Header{Key: "Idempotency-Key", Value: "follow-recommendation"},
+		ut.Header{Key: "X-Recommendation-Request-ID", Value: "recommendation-request"},
+		ut.Header{Key: "X-Recommendation-Video-ID", Value: "1001"},
+	)
+	requireStatus(t, response, http.StatusOK)
+	if len(repo.outcomes) != 1 || repo.outcomes[0].RequestID != "recommendation-request" || repo.outcomes[0].VideoID != 1001 {
+		t.Fatalf("follow recommendation metadata = %#v", repo.outcomes)
+	}
 }
 
 func (r *memoryRelationRepo) userActive(userID int64) bool {

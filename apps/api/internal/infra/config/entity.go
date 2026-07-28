@@ -60,7 +60,8 @@ type JWTConfig struct {
 
 // InternalConfig 保存内部接口服务鉴权配置。
 type InternalConfig struct {
-	Token string `yaml:"token"`
+	Enabled bool   `yaml:"enabled"`
+	Token   string `yaml:"token"`
 }
 
 // DatabaseConfig 保存 PostgreSQL 连接参数。
