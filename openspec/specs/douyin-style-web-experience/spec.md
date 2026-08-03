@@ -67,19 +67,27 @@ For video media, the Feed stage SHALL expose play/pause, elapsed and duration va
 - **THEN** the image remains visible and video-only controls are hidden or disabled
 
 ### Requirement: Desktop details and comments panel
-On wide desktop, opening comments SHALL add a 346px details panel beside the active player and SHALL reduce the player column rather than covering it. The panel SHALL expose available item details and the existing comment list and form without adding unsupported AI or private source-site features.
+On wide desktop, opening comments SHALL add a 346px details panel beside the active player and SHALL reduce the player column rather than covering it. The panel SHALL expose item details plus a complete threaded comment surface with hot/latest sorting, root pagination, bounded reply previews, reply expansion, comment likes, permission-aware deletion, reply composition, and truthful loading, empty, busy, and error states.
 
 #### Scenario: Comment panel pushes the stage
 - **WHEN** the user opens comments at a viewport width of at least 1280px
 - **THEN** a 346px side panel becomes visible, the player width decreases, and the action rail remains attached to the player edge
 
-#### Scenario: Comment behavior is preserved
+#### Scenario: Threaded comments are operable
 - **WHEN** comments are opened for the current item
-- **THEN** existing loading, error, empty, list, retry, authenticated submit, and unauthenticated-disabled states remain available
+- **THEN** the user can switch hot/latest sorting, load additional roots, expand and collapse replies, like visible comments, target a reply, and use allowed delete controls without changing the active Feed item
+
+#### Scenario: Comment composer reflects authentication and target
+- **WHEN** an authenticated user selects a root or reply target
+- **THEN** the composer identifies the target, preserves a per-video draft, enforces the content limit, and exposes independent submitting and failure states
+
+#### Scenario: Unauthenticated user attempts to participate
+- **WHEN** an unauthenticated user activates comment, reply, or comment-like controls
+- **THEN** public discussion remains readable and the interface offers a functional login action rather than only a disabled input
 
 #### Scenario: Closing comments restores the stage
 - **WHEN** the user closes the details panel
-- **THEN** the Feed returns to a single player column without changing the active item
+- **THEN** the Feed returns to a single player column without changing the active item and focus returns to the comment action
 
 ### Requirement: Douyin-style authentication presentation
 The login/register route SHALL use a dimmed short-video backdrop and a centered light authentication dialog while preserving GCFeed's account, password, nickname, login, and registration behavior. The interface MUST NOT present nonfunctional QR, phone, or third-party authentication methods.
@@ -127,7 +135,7 @@ Messages, upload, relation lists, profile editing, and work-viewer overlays SHAL
 - **THEN** the redesigned overlay supports tab switching, pagination, retry, and available follow actions
 
 ### Requirement: Responsive user experience
-The redesigned frontend SHALL provide explicit wide-desktop, compact-desktop/tablet, mobile, and small-mobile layouts. It SHALL avoid horizontal page overflow, preserve touch targets of at least 44px for primary mobile controls, and convert desktop comments to a bottom sheet on mobile.
+The redesigned frontend SHALL provide explicit wide-desktop, compact-desktop/tablet, mobile, and small-mobile layouts. It SHALL avoid horizontal page overflow, preserve touch targets of at least 44px for primary mobile controls, and convert desktop threaded comments to a scrollable bottom sheet on mobile without losing sort, draft, reply-expansion, or focused-thread state.
 
 #### Scenario: Compact desktop collapses navigation
 - **WHEN** the viewport is between 901px and 1279px
@@ -137,9 +145,28 @@ The redesigned frontend SHALL provide explicit wide-desktop, compact-desktop/tab
 - **WHEN** the viewport is 900px wide or narrower
 - **THEN** the desktop rail is replaced by bottom navigation, the Feed uses a 9:16 presentation, and the page has no horizontal overflow
 
-#### Scenario: Mobile comments render as a sheet
+#### Scenario: Mobile threaded comments render as a sheet
 - **WHEN** comments are opened on mobile
-- **THEN** they appear as a vertically scrollable bottom sheet that leaves a visible close affordance and preserves the comment form state
+- **THEN** sorting, root pagination, reply expansion, comment actions, and the composer remain vertically reachable in a bottom sheet with a visible close affordance
+
+#### Scenario: Mobile sheet preserves discussion state
+- **WHEN** the user temporarily closes and reopens comments for the same active video
+- **THEN** the per-video draft, selected sort, loaded roots, and expanded reply threads remain available for the current session
+
+### Requirement: Typed video discussion destination
+The frontend SHALL add a typed `/videos/{videoId}` route using the existing hand-written History API router. The route SHALL support validated comment-focus search parameters and SHALL reuse shared video and threaded-comment components without adding a routing library.
+
+#### Scenario: Video discussion route opens directly
+- **WHEN** a user navigates to a valid video-detail URL with root and target comment parameters
+- **THEN** the readable video renders with its comment panel focused on the requested discussion
+
+#### Scenario: Invalid discussion parameters are supplied
+- **WHEN** comment-focus search values are missing, malformed, or inconsistent
+- **THEN** the route still renders the readable video and presents a safe unfocused or unavailable-comment state
+
+#### Scenario: Invalid typed route is authored
+- **WHEN** frontend code attempts to navigate to an unsupported video-detail path
+- **THEN** strict TypeScript compilation rejects the invalid navigation target
 
 ### Requirement: Accessible and reduced-motion interaction
 The redesigned controls SHALL expose accessible names, visible keyboard focus, logical tab order, sufficient contrast, and reduced-motion behavior. Existing keyboard Feed shortcuts SHALL remain available and SHALL NOT fire while the user is editing an input or textarea.
