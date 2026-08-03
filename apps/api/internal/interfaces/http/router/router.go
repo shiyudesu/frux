@@ -309,7 +309,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videos.PUT("/:videoId/watch-later", authMiddleware, libraryHandler.AddWatchLater)
 	videos.DELETE("/:videoId/watch-later", authMiddleware, libraryHandler.RemoveWatchLater)
 	videos.POST("/:videoId/comments", authMiddleware, interactionHandler.CreateComment)
-	videos.GET("/:videoId/comments", interactionHandler.ListComments)
+	videos.POST("/:videoId/comments/:commentId/replies", authMiddleware, interactionHandler.CreateReply)
+	videos.GET("/:videoId/comments", optionalAuthMiddleware, interactionHandler.ListComments)
 
 	uploads := api.Group("/uploads", authMiddleware)
 	uploads.POST("", uploadHandler.Create)
@@ -325,6 +326,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	api.POST("/video-view-events", authMiddleware, exposureHandler.CreateViewEvent)
 	// 删除评论只需要评论自身 ID，所以放在顶层 comments 资源下。
 	api.DELETE("/comments/:commentId", authMiddleware, interactionHandler.DeleteComment)
+	api.GET("/comments/:commentId/replies", optionalAuthMiddleware, interactionHandler.ListReplies)
+	api.GET("/comments/:commentId/thread", optionalAuthMiddleware, interactionHandler.GetThreadContext)
+	api.PUT("/comments/:commentId/like", authMiddleware, interactionHandler.LikeComment)
+	api.DELETE("/comments/:commentId/like", authMiddleware, interactionHandler.UnlikeComment)
 	api.GET("/messages", authMiddleware, messageHandler.List)
 	api.PATCH("/messages", authMiddleware, messageHandler.MarkRead)
 	api.GET("/message-stats/unread", authMiddleware, messageHandler.CountUnread)

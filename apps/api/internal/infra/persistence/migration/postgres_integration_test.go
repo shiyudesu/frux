@@ -227,6 +227,8 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"interaction_action",
 		"interaction_action_event",
 		"interaction_comment",
+		"interaction_comment_like",
+		"interaction_comment_like_idempotency_receipt",
 		"user_message",
 		"playback_config",
 		"playback_qos_log",
@@ -273,6 +275,12 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infrarecommendation.ServedCandidateEvidenceModel{}, "idx_recommendation_served_candidate_expiry"},
 		{&infrarecommendation.OutcomeModel{}, "idx_recommendation_outcome_request"},
 		{&infrainteraction.ActionModel{}, "idx_interaction_action_user_type_status_updated"},
+		{&infrainteraction.CommentModel{}, "idx_interaction_comment_root_latest"},
+		{&infrainteraction.CommentModel{}, "idx_interaction_comment_root_hot"},
+		{&infrainteraction.CommentModel{}, "idx_interaction_comment_replies"},
+		{&infrainteraction.CommentModel{}, "idx_interaction_comment_direct_target"},
+		{&infrainteraction.CommentLikeModel{}, "uk_interaction_comment_like_user_comment"},
+		{&infrainteraction.CommentLikeModel{}, "idx_interaction_comment_like_comment_status"},
 		{&infralibrary.WatchLaterModel{}, "idx_user_watch_later_user_status_updated"},
 		{&infrarelation.FollowProfileOutboxModel{}, "idx_relation_profile_outbox_pending"},
 		{&inframessage.MessageModel{}, "uk_user_message_user_event"},
@@ -285,6 +293,13 @@ func TestPostgreSQLMigration(t *testing.T) {
 	for _, index := range requiredIndexes {
 		if !db.Migrator().HasIndex(index.model, index.name) {
 			t.Errorf("missing index %s", index.name)
+		}
+		var threadedMarkerCount int64
+		if err := db.Model(&markerModel{}).Where("key = ?", threadedCommentBackfillKey).Count(&threadedMarkerCount).Error; err != nil {
+			t.Fatalf("load threaded comment migration marker: %v", err)
+		}
+		if threadedMarkerCount != 1 {
+			t.Fatalf("expected one threaded comment migration marker, got %d", threadedMarkerCount)
 		}
 	}
 
@@ -1524,6 +1539,311 @@ func TestPostgreSQLCommentListingRequiresPublicPublishedVideo(t *testing.T) {
 		t.Fatalf("delete video: %v", err)
 	}
 	assertList(false)
+}
+
+func TestPostgreSQLThreadedCommentPersistence(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("migrate threaded comment schema: %v", err)
+	}
+
+	ctx := context.Background()
+	accountRepo := infraaccount.New(db)
+	users := make([]*domainaccount.User, 0, 3)
+	for _, definition := range []struct {
+		account  string
+		nickname string
+	}{
+		{account: "thread-author", nickname: "Author"},
+		{account: "thread-root-user", nickname: "Root User"},
+		{account: "thread-reply-user", nickname: "Reply User"},
+	} {
+		user, err := domainaccount.New(definition.account, "CaseSensitivePassword", definition.nickname)
+		if err != nil {
+			t.Fatalf("new threaded comment account: %v", err)
+		}
+		if err := accountRepo.Save(ctx, user); err != nil {
+			t.Fatalf("save threaded comment account: %v", err)
+		}
+		users = append(users, user)
+	}
+
+	videoRepo := infravideo.New(db)
+	video, err := domainvideo.NewPublished(
+		users[0].ID,
+		"Threaded comments",
+		"",
+		"/uploads/threaded-comments.mp4",
+		"/uploads/threaded-comments.jpg",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("new threaded comment video: %v", err)
+	}
+	if err := videoRepo.Save(ctx, video); err != nil {
+		t.Fatalf("save threaded comment video: %v", err)
+	}
+
+	repo := infrainteraction.New(db)
+	rootInput, err := domaininteraction.NewRootComment(video.ID, users[1].ID, "root", "thread-root-key")
+	if err != nil {
+		t.Fatalf("new root comment: %v", err)
+	}
+	rootMutation, err := repo.CreateThreadedComment(ctx, rootInput)
+	if err != nil {
+		t.Fatalf("create root comment: %v", err)
+	}
+	replayed, err := repo.CreateThreadedComment(ctx, rootInput)
+	if err != nil || replayed.Comment.ID != rootMutation.Comment.ID || replayed.VideoDelta != 0 {
+		t.Fatalf("root replay changed facts: replay=%+v err=%v", replayed, err)
+	}
+	conflictingRoot, err := domaininteraction.NewRootComment(video.ID, users[1].ID, "other payload", "thread-root-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateThreadedComment(ctx, conflictingRoot); !errors.Is(err, domaininteraction.ErrCommentIdempotencyConflict) {
+		t.Fatalf("expected payload-aware root conflict, got %v", err)
+	}
+	conflictingTarget, err := domaininteraction.NewReplyComment(
+		video.ID, users[1].ID, 999999, "other payload", "thread-root-key",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateThreadedComment(ctx, conflictingTarget); !errors.Is(err, domaininteraction.ErrCommentIdempotencyConflict) {
+		t.Fatalf("changed missing target should preserve idempotency conflict, got %v", err)
+	}
+
+	firstReplyInput, err := domaininteraction.NewReplyComment(
+		video.ID, users[2].ID, rootMutation.Comment.ID, "first reply", "thread-reply-key-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstReply, err := repo.CreateThreadedComment(ctx, firstReplyInput)
+	if err != nil {
+		t.Fatalf("create first reply: %v", err)
+	}
+	secondReplyInput, err := domaininteraction.NewReplyComment(
+		video.ID, users[0].ID, firstReply.Comment.ID, "reply to reply", "thread-reply-key-2",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondReply, err := repo.CreateThreadedComment(ctx, secondReplyInput)
+	if err != nil {
+		t.Fatalf("create reply to reply: %v", err)
+	}
+	if secondReply.Comment.RootCommentID != rootMutation.Comment.ID ||
+		secondReply.Comment.ReplyToCommentID != firstReply.Comment.ID {
+		t.Fatalf("reply-to-reply nesting was not flattened: %+v", secondReply.Comment)
+	}
+
+	like, err := repo.SetCommentLike(ctx, rootMutation.Comment.ID, users[0].ID, true, "thread-like-key")
+	if err != nil {
+		t.Fatalf("like root comment: %v", err)
+	}
+	if !like.Liked || like.LikeCount != 1 {
+		t.Fatalf("unexpected root like result: %+v", like)
+	}
+	if _, err := repo.SetCommentLike(ctx, firstReply.Comment.ID, users[0].ID, false, "thread-like-key"); !errors.Is(err, domaininteraction.ErrCommentLikeIdempotencyConflict) {
+		t.Fatalf("expected comment-like receipt conflict, got %v", err)
+	}
+
+	page, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID:      video.ID,
+		Viewer:       domaininteraction.CommentViewer{UserID: users[0].ID, Role: domainaccount.RoleUser},
+		Sort:         domaininteraction.CommentSortHot,
+		Limit:        10,
+		PreviewLimit: 3,
+	})
+	if err != nil {
+		t.Fatalf("list hot roots: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ReplyCount != 2 || page.Items[0].HotScore != 13 ||
+		len(page.Items[0].ReplyPreviews) != 2 || !page.Items[0].Liked || !page.Items[0].CanDelete {
+		t.Fatalf("unexpected hydrated root page: %+v", page)
+	}
+
+	thread, err := repo.GetCommentThreadContext(
+		ctx, secondReply.Comment.ID,
+		domaininteraction.CommentViewer{UserID: users[1].ID, Role: domainaccount.RoleUser},
+		10,
+	)
+	if err != nil {
+		t.Fatalf("load direct thread context: %v", err)
+	}
+	if thread.Root.ID != rootMutation.Comment.ID || thread.Target.ID != secondReply.Comment.ID || len(thread.Replies) != 2 {
+		t.Fatalf("unexpected direct thread context: %+v", thread)
+	}
+
+	if err := db.Model(&infrainteraction.CommentModel{}).Where("id = ?", rootMutation.Comment.ID).Updates(map[string]any{
+		"reply_count": 99, "like_count": 99, "hot_score": 999,
+	}).Error; err != nil {
+		t.Fatalf("corrupt root counters: %v", err)
+	}
+	if err := db.Model(&infravideo.VideoStatModel{}).Where("video_id = ?", video.ID).Update("comment_count", 99).Error; err != nil {
+		t.Fatalf("corrupt video comment count: %v", err)
+	}
+	if err := repo.ReconcileCommentCounters(ctx); err != nil {
+		t.Fatalf("reconcile threaded counters: %v", err)
+	}
+	var reconciledRoot infrainteraction.CommentModel
+	if err := db.Where("id = ?", rootMutation.Comment.ID).Take(&reconciledRoot).Error; err != nil {
+		t.Fatalf("load reconciled root: %v", err)
+	}
+	var reconciledStat infravideo.VideoStatModel
+	if err := db.Where("video_id = ?", video.ID).Take(&reconciledStat).Error; err != nil {
+		t.Fatalf("load reconciled video stat: %v", err)
+	}
+	if reconciledRoot.ReplyCount != 2 || reconciledRoot.LikeCount != 1 || reconciledRoot.HotScore != 13 ||
+		reconciledStat.CommentCount != 3 {
+		t.Fatalf("unexpected reconciled counters: root=%+v stat=%+v", reconciledRoot, reconciledStat)
+	}
+
+	rootDeleted, err := repo.DeleteThreadedComment(
+		ctx, rootMutation.Comment.ID, users[1].ID, domainaccount.RoleUser,
+	)
+	if err != nil {
+		t.Fatalf("self-delete root with replies: %v", err)
+	}
+	if !rootDeleted.Tombstone || rootDeleted.CommentCount != 2 {
+		t.Fatalf("unexpected root tombstone result: %+v", rootDeleted)
+	}
+	tombstoneThread, err := repo.GetCommentThreadContext(
+		ctx, firstReply.Comment.ID,
+		domaininteraction.CommentViewer{UserID: users[2].ID, Role: domainaccount.RoleUser},
+		10,
+	)
+	if err != nil {
+		t.Fatalf("load tombstone thread: %v", err)
+	}
+	if tombstoneThread.Root.UserID != 0 || tombstoneThread.Root.Content != "" ||
+		tombstoneThread.Target.ReplyToUserID != 0 ||
+		tombstoneThread.Target.ReplyToUserNickname != "" ||
+		tombstoneThread.Target.ReplyToUserAvatarURL != "" {
+		t.Fatalf("tombstone identity leaked through thread metadata: %+v", tombstoneThread)
+	}
+
+	if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", video.ID).
+		Update("visibility", domainvideo.VisibilityPrivate).Error; err != nil {
+		t.Fatalf("make threaded comment video private: %v", err)
+	}
+	if _, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID: video.ID, Sort: domaininteraction.CommentSortLatest, Limit: 10,
+	}); !errors.Is(err, domaininteraction.ErrVideoNotFound) {
+		t.Fatalf("private threaded comments remained readable: %v", err)
+	}
+	if _, err := repo.CreateThreadedComment(ctx, rootInput); !errors.Is(err, domaininteraction.ErrVideoNotFound) {
+		t.Fatalf("comment replay exposed a private video: %v", err)
+	}
+	deleted, err := repo.DeleteThreadedComment(
+		ctx, firstReply.Comment.ID, users[2].ID, domainaccount.RoleUser,
+	)
+	if err != nil {
+		t.Fatalf("delete reply after privacy change: %v", err)
+	}
+	if deleted.Comment.Status != domaininteraction.CommentStatusSelfDeleted ||
+		deleted.RootReplyCount != 1 || deleted.CommentCount != 1 {
+		t.Fatalf("unexpected private-video deletion result: %+v", deleted)
+	}
+}
+
+func TestPostgreSQLThreadedCommentLegacyBackfill(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := db.AutoMigrate(
+		&infraaccount.UserModel{},
+		&infravideo.VideoModel{},
+		&infravideo.VideoStatModel{},
+	); err != nil {
+		t.Fatalf("migrate legacy comment dependencies: %v", err)
+	}
+	if err := db.Exec(`
+		CREATE TABLE interaction_comment (
+			id bigserial PRIMARY KEY,
+			video_id bigint NOT NULL,
+			user_id bigint NOT NULL,
+			content varchar(1000) NOT NULL,
+			status smallint NOT NULL DEFAULT 1,
+			idempotency_key varchar(128),
+			created_at timestamptz NOT NULL,
+			updated_at timestamptz NOT NULL
+		)
+	`).Error; err != nil {
+		t.Fatalf("create legacy interaction_comment: %v", err)
+	}
+
+	user := infraaccount.UserModel{
+		ID: 1, Account: "legacy-thread-user", Password: "hash", Nickname: "legacy",
+		Status: domainaccount.StatusNormal, Role: domainaccount.RoleUser,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create legacy comment user: %v", err)
+	}
+	publishedAt := time.Now().UTC()
+	video := infravideo.VideoModel{
+		ID: 1, AuthorID: user.ID, Title: "legacy thread",
+		MediaURL: "/uploads/legacy-thread.mp4", CoverURL: "/uploads/legacy-thread.jpg",
+		Status: domainvideo.StatusPublished, Visibility: domainvideo.VisibilityPublic,
+		MediaStatus: domainmedia.MediaStatusLegacyReady, PublishedAt: &publishedAt,
+	}
+	if err := db.Create(&video).Error; err != nil {
+		t.Fatalf("create legacy comment video: %v", err)
+	}
+	if err := db.Create(&infravideo.VideoStatModel{VideoID: video.ID, CommentCount: 1}).Error; err != nil {
+		t.Fatalf("create legacy comment stat: %v", err)
+	}
+	if err := db.Exec(`
+		INSERT INTO interaction_comment
+			(video_id, user_id, content, status, idempotency_key, created_at, updated_at)
+		VALUES
+			(?, ?, 'legacy visible', 1, 'legacy-visible-key', NOW(), NOW()),
+			(?, ?, 'legacy deleted', 2, 'legacy-deleted-key', NOW(), NOW())
+	`, video.ID, user.ID, video.ID, user.ID).Error; err != nil {
+		t.Fatalf("insert legacy comments: %v", err)
+	}
+
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("upgrade legacy comments: %v", err)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("repeat legacy comment migration: %v", err)
+	}
+
+	var comments []infrainteraction.CommentModel
+	if err := db.Order("id ASC").Find(&comments).Error; err != nil {
+		t.Fatalf("load migrated legacy comments: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("unexpected migrated legacy comments: %+v", comments)
+	}
+	for _, comment := range comments {
+		if comment.RootCommentID != nil || comment.ReplyToCommentID != nil ||
+			comment.ReplyCount != 0 || comment.LikeCount != 0 || comment.HotScore != 0 ||
+			comment.RequestFingerprint != "" {
+			t.Fatalf("legacy comment was not safely initialized as a root: %+v", comment)
+		}
+	}
+	if comments[0].Status != domaininteraction.CommentStatusNormal ||
+		comments[1].Status != domaininteraction.CommentStatusSelfDeleted {
+		t.Fatalf("legacy statuses were not preserved safely: %+v", comments)
+	}
+	var stat infravideo.VideoStatModel
+	if err := db.Where("video_id = ?", video.ID).Take(&stat).Error; err != nil {
+		t.Fatalf("load migrated legacy stat: %v", err)
+	}
+	if stat.CommentCount != 1 {
+		t.Fatalf("legacy visible comment total changed: %+v", stat)
+	}
+	var markerCount int64
+	if err := db.Model(&markerModel{}).Where("key = ?", threadedCommentBackfillKey).Count(&markerCount).Error; err != nil {
+		t.Fatalf("load legacy threaded marker: %v", err)
+	}
+	if markerCount != 1 {
+		t.Fatalf("threaded migration marker was not idempotent: %d", markerCount)
+	}
 }
 
 func TestPostgreSQLAcceptedInteractionEventPersistsAfterPrivacyChange(t *testing.T) {

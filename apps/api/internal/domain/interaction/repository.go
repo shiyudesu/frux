@@ -11,6 +11,16 @@ type AcceptedActionEventRepository interface {
 	PersistAcceptedActionEvent(ctx context.Context, event *AcceptedActionEvent) error
 }
 
+type ThreadedCommentRepository interface {
+	CreateThreadedComment(ctx context.Context, comment *Comment) (*CommentMutationResult, error)
+	ListCommentRoots(ctx context.Context, query CommentRootQuery) (*CommentPage, error)
+	ListCommentReplies(ctx context.Context, query CommentReplyQuery) (*CommentPage, error)
+	GetCommentThreadContext(ctx context.Context, targetCommentID int64, viewer CommentViewer, replyLimit int) (*CommentThreadContext, error)
+	SetCommentLike(ctx context.Context, commentID int64, userID int64, active bool, idempotencyKey string) (*CommentLikeResult, error)
+	DeleteThreadedComment(ctx context.Context, commentID int64, userID int64, role string) (*CommentDeletionResult, error)
+	ReconcileCommentCounters(ctx context.Context) error
+}
+
 // Repository 定义互动领域需要的持久化能力。
 type Repository interface {
 	AcceptedActionEventRepository

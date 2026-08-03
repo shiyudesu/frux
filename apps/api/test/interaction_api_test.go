@@ -32,26 +32,68 @@ type interactionActionAPIResponse struct {
 }
 
 type interactionCommentAPIResponse struct {
-	ID            int64     `json:"id"`
-	VideoID       int64     `json:"video_id"`
-	UserID        int64     `json:"user_id"`
-	UserNickname  string    `json:"user_nickname"`
-	UserAvatarURL string    `json:"user_avatar_url"`
-	Content       string    `json:"content"`
-	CreatedAt     time.Time `json:"created_at"`
-	CommentCount  int       `json:"comment_count"`
+	ID                  int64                           `json:"id"`
+	VideoID             int64                           `json:"video_id"`
+	UserID              int64                           `json:"user_id"`
+	UserNickname        string                          `json:"user_nickname"`
+	UserAvatarURL       string                          `json:"user_avatar_url"`
+	RootCommentID       int64                           `json:"root_comment_id"`
+	ReplyToCommentID    int64                           `json:"reply_to_comment_id"`
+	ReplyToUserID       int64                           `json:"reply_to_user_id"`
+	ReplyToUserNickname string                          `json:"reply_to_user_nickname"`
+	Content             string                          `json:"content"`
+	Status              int                             `json:"status"`
+	Deleted             bool                            `json:"deleted"`
+	ReplyCount          int                             `json:"reply_count"`
+	ReplyPreviews       []interactionCommentAPIResponse `json:"reply_previews"`
+	LikeCount           int                             `json:"like_count"`
+	Liked               bool                            `json:"liked"`
+	CanDelete           bool                            `json:"can_delete"`
+	HotScore            int64                           `json:"hot_score"`
+	CreatedAt           time.Time                       `json:"created_at"`
+	CommentCount        int                             `json:"comment_count"`
 }
 
 type interactionCommentListAPIResponse struct {
-	Items      []interactionCommentAPIResponse `json:"items"`
-	NextCursor string                          `json:"next_cursor"`
-	HasMore    bool                            `json:"has_more"`
+	Items        []interactionCommentAPIResponse `json:"items"`
+	NextCursor   string                          `json:"next_cursor"`
+	HasMore      bool                            `json:"has_more"`
+	CommentCount int                             `json:"comment_count"`
+	Sort         string                          `json:"sort"`
+}
+
+type interactionReplyListAPIResponse struct {
+	RootCommentID int64                           `json:"root_comment_id"`
+	Items         []interactionCommentAPIResponse `json:"items"`
+	NextCursor    string                          `json:"next_cursor"`
+	HasMore       bool                            `json:"has_more"`
+	CommentCount  int                             `json:"comment_count"`
+}
+
+type interactionThreadContextAPIResponse struct {
+	Root         interactionCommentAPIResponse   `json:"root"`
+	Replies      []interactionCommentAPIResponse `json:"replies"`
+	Target       interactionCommentAPIResponse   `json:"target"`
+	NextCursor   string                          `json:"next_cursor"`
+	HasMore      bool                            `json:"has_more"`
+	CommentCount int                             `json:"comment_count"`
+}
+
+type interactionCommentLikeAPIResponse struct {
+	CommentID     int64 `json:"comment_id"`
+	RootCommentID int64 `json:"root_comment_id"`
+	Liked         bool  `json:"liked"`
+	LikeCount     int   `json:"like_count"`
 }
 
 type interactionDeleteCommentAPIResponse struct {
-	CommentID    int64 `json:"comment_id"`
-	Status       int   `json:"status"`
-	CommentCount int   `json:"comment_count"`
+	CommentID      int64 `json:"comment_id"`
+	Status         int   `json:"status"`
+	CommentCount   int   `json:"comment_count"`
+	RootReplyCount int   `json:"root_reply_count"`
+	DeletedCount   int   `json:"deleted_count"`
+	ThreadHidden   bool  `json:"thread_hidden"`
+	Tombstone      bool  `json:"tombstone"`
 }
 
 type memoryInteractionVideo struct {
@@ -92,6 +134,14 @@ type memoryInteractionRepo struct {
 	persistBounded  bool
 	comments        map[int64]*domaininteraction.Comment
 	commentIdem     map[string]int64
+	commentLikes    map[string]bool
+	commentLikeIdem map[string]memoryCommentLikeReceipt
+}
+
+type memoryCommentLikeReceipt struct {
+	CommentID int64
+	Active    bool
+	LikeCount int
 }
 
 type memoryHotScoreRecorder struct {
@@ -188,6 +238,8 @@ func newMemoryInteractionRepo() *memoryInteractionRepo {
 		outcomeHandoffs: map[string]*domaininteraction.AcceptedActionEvent{},
 		comments:        map[int64]*domaininteraction.Comment{},
 		commentIdem:     map[string]int64{},
+		commentLikes:    map[string]bool{},
+		commentLikeIdem: map[string]memoryCommentLikeReceipt{},
 	}
 }
 
@@ -788,13 +840,10 @@ func TestInteractionCommentFlow(t *testing.T) {
 		t.Fatalf("unexpected comment response: %+v", created)
 	}
 
-	replayResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos/1001/comments", `{"content":"changed"}`, commenterToken, "comment-1")
+	replayResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos/1001/comments", `{"content":"first comment"}`, commenterToken, "comment-1")
 	requireStatus(t, replayResponse, http.StatusCreated)
-	var replayed interactionCommentAPIResponse
-	decodeJSON(t, replayResponse, &replayed)
-	if replayed.ID != created.ID || replayed.Content != created.Content || replayed.CommentCount != 1 {
-		t.Fatalf("unexpected replay comment response: %+v", replayed)
-	}
+	conflictResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos/1001/comments", `{"content":"changed"}`, commenterToken, "comment-1")
+	requireStatus(t, conflictResponse, http.StatusConflict)
 
 	listResponse := performJSONRequest(router, http.MethodGet, "/api/videos/1001/comments?limit=10", "", "")
 	requireStatus(t, listResponse, http.StatusOK)
@@ -811,7 +860,7 @@ func TestInteractionCommentFlow(t *testing.T) {
 	requireStatus(t, authorDelete, http.StatusOK)
 	var deleted interactionDeleteCommentAPIResponse
 	decodeJSON(t, authorDelete, &deleted)
-	if deleted.CommentID != created.ID || deleted.Status != domaininteraction.CommentStatusDeleted || deleted.CommentCount != 0 {
+	if deleted.CommentID != created.ID || deleted.Status != domaininteraction.CommentStatusModerated || deleted.CommentCount != 0 {
 		t.Fatalf("unexpected delete response: %+v", deleted)
 	}
 
@@ -867,7 +916,7 @@ func TestInteractionHotScoreRecorder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create comment: %v", err)
 	}
-	if _, err := service.CreateComment(context.Background(), 77, 1001, "hot comment replay", "comment-1"); err != nil {
+	if _, err := service.CreateComment(context.Background(), 77, 1001, "hot comment", "comment-1"); err != nil {
 		t.Fatalf("comment replay: %v", err)
 	}
 	if _, err := service.DeleteComment(context.Background(), created.Comment.ID, 77, domainaccount.RoleUser); err != nil {
@@ -1429,6 +1478,7 @@ func newInteractionRouterWithRepo(t *testing.T) (*server.Hertz, *infrajwt.Manage
 	service := applicationinteraction.New(repo)
 	handler := interfaceshttpinteraction.New(service)
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
+	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
 
 	api := router.Group("/api")
 	videos := api.Group("/videos")
@@ -1437,8 +1487,13 @@ func newInteractionRouterWithRepo(t *testing.T) (*server.Hertz, *infrajwt.Manage
 	videos.PUT("/:videoId/favorite", authMiddleware, handler.Favorite)
 	videos.DELETE("/:videoId/favorite", authMiddleware, handler.Unfavorite)
 	videos.POST("/:videoId/comments", authMiddleware, handler.CreateComment)
-	videos.GET("/:videoId/comments", handler.ListComments)
+	videos.POST("/:videoId/comments/:commentId/replies", authMiddleware, handler.CreateReply)
+	videos.GET("/:videoId/comments", optionalAuthMiddleware, handler.ListComments)
 	api.DELETE("/comments/:commentId", authMiddleware, handler.DeleteComment)
+	api.GET("/comments/:commentId/replies", optionalAuthMiddleware, handler.ListReplies)
+	api.GET("/comments/:commentId/thread", optionalAuthMiddleware, handler.GetThreadContext)
+	api.PUT("/comments/:commentId/like", authMiddleware, handler.LikeComment)
+	api.DELETE("/comments/:commentId/like", authMiddleware, handler.UnlikeComment)
 
 	return router, jwtManager, repo
 }

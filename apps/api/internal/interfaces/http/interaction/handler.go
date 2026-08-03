@@ -92,12 +92,96 @@ func (h *Handler) ListComments(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	result, err := h.service.ListComments(ctx, videoID, c.Query("cursor"), limit)
+	viewerID, _ := userIDFromContext(c)
+	result, err := h.service.ListCommentRoots(ctx, videoID, viewerID, roleFromContext(c), c.Query("sort"), c.Query("cursor"), limit)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, commentListResponseFromResult(result))
+}
+
+func (h *Handler) CreateReply(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	targetCommentID, err := parsePositiveInt64(c.Param("commentId"), domaininteraction.ErrInvalidReplyTargetID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	var req createCommentRequest
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		return
+	}
+	result, err := h.service.CreateReply(
+		ctx, userID, videoID, targetCommentID, req.Content, string(c.GetHeader("Idempotency-Key")),
+	)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, commentResponseFromResult(result))
+}
+
+func (h *Handler) ListReplies(ctx context.Context, c *app.RequestContext) {
+	rootCommentID, err := parsePositiveInt64(c.Param("commentId"), domaininteraction.ErrInvalidRootCommentID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	limit, err := parseLimit(c.Query("limit"))
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	viewerID, _ := userIDFromContext(c)
+	result, err := h.service.ListCommentReplies(
+		ctx, rootCommentID, viewerID, roleFromContext(c), c.Query("cursor"), limit,
+	)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, replyListResponseFromResult(result))
+}
+
+func (h *Handler) GetThreadContext(ctx context.Context, c *app.RequestContext) {
+	targetCommentID, err := parsePositiveInt64(c.Param("commentId"), domaininteraction.ErrInvalidCommentID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	limit, err := parseLimit(c.Query("limit"))
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	viewerID, _ := userIDFromContext(c)
+	result, err := h.service.GetCommentThreadContext(
+		ctx, targetCommentID, viewerID, roleFromContext(c), limit,
+	)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, threadContextResponseFromResult(result))
+}
+
+func (h *Handler) LikeComment(ctx context.Context, c *app.RequestContext) {
+	h.setCommentLike(ctx, c, true)
+}
+
+func (h *Handler) UnlikeComment(ctx context.Context, c *app.RequestContext) {
+	h.setCommentLike(ctx, c, false)
 }
 
 // DeleteComment 删除评论，权限判断交给应用层和仓储层完成。
@@ -122,9 +206,36 @@ func (h *Handler) DeleteComment(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(http.StatusOK, deleteCommentResponse{
-		CommentID:    result.CommentID,
-		Status:       result.Status,
-		CommentCount: result.CommentCount,
+		CommentID: result.CommentID, Status: result.Status, CommentCount: result.CommentCount,
+		RootReplyCount: result.RootReplyCount, DeletedCount: result.DeletedCount,
+		ThreadHidden: result.ThreadHidden, Tombstone: result.Tombstone,
+	})
+}
+
+func (h *Handler) setCommentLike(ctx context.Context, c *app.RequestContext, active bool) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		return
+	}
+	commentID, err := parsePositiveInt64(c.Param("commentId"), domaininteraction.ErrInvalidCommentID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	var result *applicationinteraction.CommentLikeResult
+	if active {
+		result, err = h.service.LikeComment(ctx, commentID, userID, string(c.GetHeader("Idempotency-Key")))
+	} else {
+		result, err = h.service.UnlikeComment(ctx, commentID, userID, string(c.GetHeader("Idempotency-Key")))
+	}
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, commentLikeResponse{
+		CommentID: result.CommentID, RootCommentID: result.RootCommentID,
+		Liked: result.Liked, LikeCount: result.LikeCount,
 	})
 }
 
@@ -250,21 +361,57 @@ func commentListResponseFromResult(result *applicationinteraction.CommentListRes
 		items = append(items, commentResponseFromDomain(item))
 	}
 	return commentListResponse{
-		Items:      items,
-		NextCursor: result.NextCursor,
-		HasMore:    result.HasMore,
+		Items:        items,
+		NextCursor:   result.NextCursor,
+		HasMore:      result.HasMore,
+		CommentCount: result.CommentCount,
+		Sort:         result.Sort,
 	}
 }
 
+func replyListResponseFromResult(result *applicationinteraction.ReplyListResult) replyListResponse {
+	return replyListResponse{
+		RootCommentID: result.RootCommentID,
+		Items:         commentResponsesFromDomain(result.Items),
+		NextCursor:    result.NextCursor,
+		HasMore:       result.HasMore,
+		CommentCount:  result.CommentCount,
+	}
+}
+
+func threadContextResponseFromResult(result *applicationinteraction.ThreadContextResult) threadContextResponse {
+	return threadContextResponse{
+		Root:         commentResponseFromDomain(result.Root),
+		Replies:      commentResponsesFromDomain(result.Replies),
+		Target:       commentResponseFromDomain(result.Target),
+		NextCursor:   result.NextCursor,
+		HasMore:      result.HasMore,
+		CommentCount: result.CommentCount,
+	}
+}
+
+func commentResponsesFromDomain(comments []*domaininteraction.Comment) []commentResponse {
+	items := make([]commentResponse, 0, len(comments))
+	for _, comment := range comments {
+		items = append(items, commentResponseFromDomain(comment))
+	}
+	return items
+}
+
 func commentResponseFromDomain(comment *domaininteraction.Comment) commentResponse {
+	if comment == nil {
+		return commentResponse{}
+	}
 	return commentResponse{
-		ID:            comment.ID,
-		VideoID:       comment.VideoID,
-		UserID:        comment.UserID,
-		UserNickname:  comment.UserNickname,
-		UserAvatarURL: comment.UserAvatarURL,
-		Content:       comment.Content,
-		CreatedAt:     comment.CreatedAt,
+		ID: comment.ID, VideoID: comment.VideoID, UserID: comment.UserID,
+		UserNickname: comment.UserNickname, UserAvatarURL: comment.UserAvatarURL,
+		RootCommentID: comment.RootCommentID, ReplyToCommentID: comment.ReplyToCommentID,
+		ReplyToUserID: comment.ReplyToUserID, ReplyToUserNickname: comment.ReplyToUserNickname,
+		ReplyToUserAvatarURL: comment.ReplyToUserAvatarURL,
+		Content:              comment.Content, Status: comment.Status, Deleted: comment.Deleted(),
+		ReplyCount: comment.ReplyCount, ReplyPreviews: commentResponsesFromDomain(comment.ReplyPreviews),
+		LikeCount: comment.LikeCount, Liked: comment.Liked, CanDelete: comment.CanDelete,
+		HotScore: comment.HotScore, CreatedAt: comment.CreatedAt,
 	}
 }
 
@@ -274,7 +421,11 @@ func writeInteractionError(c *app.RequestContext, err error) {
 		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
 		return
 	}
-	if errors.Is(err, domaininteraction.ErrVideoNotFound) || errors.Is(err, domaininteraction.ErrCommentNotFound) {
+	if errors.Is(err, domaininteraction.ErrVideoNotFound) ||
+		errors.Is(err, domaininteraction.ErrCommentNotFound) ||
+		errors.Is(err, domaininteraction.ErrCommentUnavailable) ||
+		errors.Is(err, domaininteraction.ErrCommentModerated) ||
+		errors.Is(err, domaininteraction.ErrReplyTargetUnavailable) {
 		c.JSON(http.StatusNotFound, utils.H{"error": "resource not found"})
 		return
 	}
@@ -282,7 +433,9 @@ func writeInteractionError(c *app.RequestContext, err error) {
 		c.JSON(http.StatusForbidden, utils.H{"error": "comment permission denied"})
 		return
 	}
-	if errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) {
+	if errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) ||
+		errors.Is(err, domaininteraction.ErrCommentIdempotencyConflict) ||
+		errors.Is(err, domaininteraction.ErrCommentLikeIdempotencyConflict) {
 		c.JSON(http.StatusConflict, utils.H{"error": "idempotency key conflicts with another payload"})
 		return
 	}
@@ -293,9 +446,12 @@ func isBadRequestError(err error) bool {
 	return errors.Is(err, domaininteraction.ErrInvalidUserID) ||
 		errors.Is(err, domaininteraction.ErrInvalidVideoID) ||
 		errors.Is(err, domaininteraction.ErrInvalidCommentID) ||
+		errors.Is(err, domaininteraction.ErrInvalidRootCommentID) ||
+		errors.Is(err, domaininteraction.ErrInvalidReplyTargetID) ||
 		errors.Is(err, domaininteraction.ErrInvalidActionType) ||
 		errors.Is(err, domaininteraction.ErrInvalidLimit) ||
 		errors.Is(err, domaininteraction.ErrInvalidCursor) ||
+		errors.Is(err, domaininteraction.ErrInvalidCommentSort) ||
 		errors.Is(err, domaininteraction.ErrEmptyCommentContent) ||
 		errors.Is(err, domaininteraction.ErrCommentContentTooLong) ||
 		errors.Is(err, domaininteraction.ErrIdempotencyKeyTooLong) ||

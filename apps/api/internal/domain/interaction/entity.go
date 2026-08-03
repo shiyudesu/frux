@@ -1,8 +1,12 @@
 package domaininteraction
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -12,8 +16,17 @@ const (
 	ActionStatusActive   = 1
 	ActionStatusCanceled = 2
 
-	CommentStatusNormal  = 1
-	CommentStatusDeleted = 2
+	CommentStatusNormal      = 1
+	CommentStatusSelfDeleted = 2
+	CommentStatusModerated   = 3
+	// CommentStatusDeleted is retained for source compatibility with flat-comment callers.
+	CommentStatusDeleted = CommentStatusSelfDeleted
+
+	CommentSortLatest = "latest"
+	CommentSortHot    = "hot"
+
+	CommentCursorVersion = 1
+	ReplyPreviewLimit    = 3
 
 	MaxCommentContentLength          = 1000
 	MaxIdempotencyKeyLength          = 128
@@ -87,22 +100,100 @@ func ActionEventComesAfter(version int64, occurredAt time.Time, eventID string, 
 
 // Comment 表示视频评论，包含评论者展示信息和软删除状态。
 type Comment struct {
-	ID             int64
-	VideoID        int64
-	UserID         int64
-	UserNickname   string
-	UserAvatarURL  string
-	Content        string
-	Status         int
-	IdempotencyKey string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                   int64
+	VideoID              int64
+	UserID               int64
+	UserNickname         string
+	UserAvatarURL        string
+	RootCommentID        int64
+	ReplyToCommentID     int64
+	ReplyToUserID        int64
+	ReplyToUserNickname  string
+	ReplyToUserAvatarURL string
+	Content              string
+	Status               int
+	ReplyCount           int
+	LikeCount            int
+	HotScore             int64
+	RequestFingerprint   string
+	IdempotencyKey       string
+	Liked                bool
+	CanDelete            bool
+	ReplyPreviews        []*Comment
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
-// CommentCursor 保存评论列表分页的排序字段。
+// CommentCursor stores a sort-bound root page position.
 type CommentCursor struct {
+	Version   int
+	Sort      string
+	HotScore  int64
 	CreatedAt time.Time
 	CommentID int64
+}
+
+type ReplyCursor struct {
+	Version   int
+	CreatedAt time.Time
+	CommentID int64
+}
+
+type CommentViewer struct {
+	UserID int64
+	Role   string
+}
+
+type CommentRootQuery struct {
+	VideoID      int64
+	Viewer       CommentViewer
+	Sort         string
+	Cursor       *CommentCursor
+	Limit        int
+	PreviewLimit int
+}
+
+type CommentReplyQuery struct {
+	RootCommentID int64
+	Viewer        CommentViewer
+	Cursor        *ReplyCursor
+	Limit         int
+}
+
+type CommentPage struct {
+	Items        []*Comment
+	CommentCount int
+}
+
+type CommentThreadContext struct {
+	Root         *Comment
+	Replies      []*Comment
+	Target       *Comment
+	CommentCount int
+}
+
+type CommentLikeResult struct {
+	CommentID     int64
+	RootCommentID int64
+	Liked         bool
+	LikeCount     int
+}
+
+type CommentMutationResult struct {
+	Comment        *Comment
+	CommentCount   int
+	VideoDelta     int
+	RootReplyDelta int
+}
+
+type CommentDeletionResult struct {
+	Comment        *Comment
+	CommentCount   int
+	RootReplyCount int
+	VideoDelta     int
+	DeletedCount   int
+	ThreadHidden   bool
+	Tombstone      bool
 }
 
 // VideoStat 保存互动模块需要的视频统计快照。
@@ -177,6 +268,21 @@ func NewAcceptedActionEventWithRecommendation(eventID string, userID int64, vide
 
 // NewComment 创建评论领域对象，负责校验视频、用户、内容和幂等键。
 func NewComment(videoID int64, userID int64, content string, idempotencyKey string) (*Comment, error) {
+	return NewRootComment(videoID, userID, content, idempotencyKey)
+}
+
+func NewRootComment(videoID int64, userID int64, content string, idempotencyKey string) (*Comment, error) {
+	return newComment(videoID, userID, 0, 0, content, idempotencyKey)
+}
+
+func NewReplyComment(videoID int64, userID int64, targetCommentID int64, content string, idempotencyKey string) (*Comment, error) {
+	if targetCommentID <= 0 {
+		return nil, ErrInvalidReplyTargetID
+	}
+	return newComment(videoID, userID, 0, targetCommentID, content, idempotencyKey)
+}
+
+func newComment(videoID int64, userID int64, rootCommentID int64, replyToCommentID int64, content string, idempotencyKey string) (*Comment, error) {
 	if videoID <= 0 {
 		return nil, ErrInvalidVideoID
 	}
@@ -189,21 +295,44 @@ func NewComment(videoID int64, userID int64, content string, idempotencyKey stri
 	if content == "" {
 		return nil, ErrEmptyCommentContent
 	}
-	if len(content) > MaxCommentContentLength {
+	if utf8.RuneCountInString(content) > MaxCommentContentLength {
 		return nil, ErrCommentContentTooLong
 	}
 	if len(idempotencyKey) > MaxIdempotencyKeyLength {
 		return nil, ErrIdempotencyKeyTooLong
 	}
 
-	// 新评论默认处于正常状态，删除时再切换为 CommentStatusDeleted。
-	return &Comment{
-		VideoID:        videoID,
-		UserID:         userID,
-		Content:        content,
-		Status:         CommentStatusNormal,
-		IdempotencyKey: idempotencyKey,
-	}, nil
+	comment := &Comment{
+		VideoID:          videoID,
+		UserID:           userID,
+		RootCommentID:    rootCommentID,
+		ReplyToCommentID: replyToCommentID,
+		Content:          content,
+		Status:           CommentStatusNormal,
+		IdempotencyKey:   idempotencyKey,
+	}
+	comment.RequestFingerprint = CommentRequestFingerprint(videoID, rootCommentID, replyToCommentID, content)
+	return comment, nil
+}
+
+func CommentRequestFingerprint(videoID int64, rootCommentID int64, replyToCommentID int64, content string) string {
+	canonical := strconv.FormatInt(videoID, 10) + "\n" +
+		strconv.FormatInt(rootCommentID, 10) + "\n" +
+		strconv.FormatInt(replyToCommentID, 10) + "\n" +
+		strings.TrimSpace(content)
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
+}
+
+func NormalizeCommentSort(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return CommentSortLatest, nil
+	}
+	if value != CommentSortLatest && value != CommentSortHot {
+		return "", ErrInvalidCommentSort
+	}
+	return value, nil
 }
 
 // RestoreAction 从数据库记录恢复互动行为，供仓储层返回领域对象。
@@ -228,6 +357,35 @@ func RestoreAction(id int64, userID int64, videoID int64, actionType string, sta
 
 // RestoreComment 从数据库查询结果恢复评论对象，并清洗展示字段。
 func RestoreComment(id int64, videoID int64, userID int64, userNickname string, userAvatarURL string, content string, status int, idempotencyKey string, createdAt time.Time, updatedAt time.Time) *Comment {
+	return RestoreThreadedComment(
+		id, videoID, userID, userNickname, userAvatarURL, 0, 0, 0, "", "",
+		content, status, 0, 0, 0, "", idempotencyKey, false, false, createdAt, updatedAt,
+	)
+}
+
+func RestoreThreadedComment(
+	id int64,
+	videoID int64,
+	userID int64,
+	userNickname string,
+	userAvatarURL string,
+	rootCommentID int64,
+	replyToCommentID int64,
+	replyToUserID int64,
+	replyToUserNickname string,
+	replyToUserAvatarURL string,
+	content string,
+	status int,
+	replyCount int,
+	likeCount int,
+	hotScore int64,
+	requestFingerprint string,
+	idempotencyKey string,
+	liked bool,
+	canDelete bool,
+	createdAt time.Time,
+	updatedAt time.Time,
+) *Comment {
 	content = strings.TrimSpace(content)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	if status == 0 {
@@ -235,16 +393,27 @@ func RestoreComment(id int64, videoID int64, userID int64, userNickname string, 
 	}
 
 	return &Comment{
-		ID:             id,
-		VideoID:        videoID,
-		UserID:         userID,
-		UserNickname:   strings.TrimSpace(userNickname),
-		UserAvatarURL:  strings.TrimSpace(userAvatarURL),
-		Content:        content,
-		Status:         status,
-		IdempotencyKey: idempotencyKey,
-		CreatedAt:      createdAt,
-		UpdatedAt:      updatedAt,
+		ID:                   id,
+		VideoID:              videoID,
+		UserID:               userID,
+		UserNickname:         strings.TrimSpace(userNickname),
+		UserAvatarURL:        strings.TrimSpace(userAvatarURL),
+		RootCommentID:        rootCommentID,
+		ReplyToCommentID:     replyToCommentID,
+		ReplyToUserID:        replyToUserID,
+		ReplyToUserNickname:  strings.TrimSpace(replyToUserNickname),
+		ReplyToUserAvatarURL: strings.TrimSpace(replyToUserAvatarURL),
+		Content:              content,
+		Status:               status,
+		ReplyCount:           clampDomainCount(replyCount),
+		LikeCount:            clampDomainCount(likeCount),
+		HotScore:             maxInt64(hotScore, 0),
+		RequestFingerprint:   strings.TrimSpace(requestFingerprint),
+		IdempotencyKey:       idempotencyKey,
+		Liked:                liked,
+		CanDelete:            canDelete,
+		CreatedAt:            createdAt,
+		UpdatedAt:            updatedAt,
 	}
 }
 
@@ -255,5 +424,56 @@ func (a *Action) Active() bool {
 
 // Deleted 判断评论是否已经被软删除。
 func (c *Comment) Deleted() bool {
-	return c.Status == CommentStatusDeleted
+	return c.Status != CommentStatusNormal
+}
+
+func (c *Comment) IsRoot() bool {
+	return c != nil && c.RootCommentID == 0
+}
+
+func (c *Comment) EffectiveRootCommentID() int64 {
+	if c == nil {
+		return 0
+	}
+	if c.RootCommentID > 0 {
+		return c.RootCommentID
+	}
+	return c.ID
+}
+
+func (c *Comment) EligibleForPublicProjection() bool {
+	if c == nil {
+		return false
+	}
+	if c.Status == CommentStatusNormal {
+		return true
+	}
+	return c.IsRoot() && c.Status == CommentStatusSelfDeleted && c.ReplyCount > 0
+}
+
+func (c *Comment) ApplyPublicProjection() {
+	if c == nil || c.Status != CommentStatusSelfDeleted || !c.IsRoot() {
+		return
+	}
+	c.UserID = 0
+	c.UserNickname = ""
+	c.UserAvatarURL = ""
+	c.Content = ""
+	c.Liked = false
+	c.CanDelete = false
+	c.LikeCount = 0
+}
+
+func clampDomainCount(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }

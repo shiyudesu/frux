@@ -29,6 +29,7 @@ const recommendationFeedbackProfileOutboxBackfillKey = "20260727_recommendation_
 const relationProfileOutboxBackfillKey = "20260727_relation_profile_outbox_v1"
 const interactionActionProfileOutboxBackfillKey = "20260727_interaction_action_profile_outbox_v1"
 const interactionActionOutcomeOutboxBackfillKey = "20260727_interaction_action_outcome_outbox_v1"
+const threadedCommentBackfillKey = "20260803_threaded_comment_backfill_v1"
 
 type markerModel struct {
 	Key       string    `gorm:"column:key;size:128;primaryKey"`
@@ -86,6 +87,8 @@ func AutoMigrate(db *gorm.DB) error {
 			&infrainteraction.ActionEventModel{},
 			&infrainteraction.ActionIdempotencyReceiptModel{},
 			&infrainteraction.CommentModel{},
+			&infrainteraction.CommentLikeModel{},
+			&infrainteraction.CommentLikeIdempotencyReceiptModel{},
 			&inframessage.MessageModel{},
 			&infraplayback.ConfigModel{},
 			&infraplayback.QoSLogModel{},
@@ -115,6 +118,12 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := infrainteraction.BackfillActionEventOrder(tx); err != nil {
+			return err
+		}
+		if err := runOnce(tx, threadedCommentBackfillKey, infrainteraction.BackfillThreadedComments); err != nil {
+			return err
+		}
+		if err := infrainteraction.ReconcileCommentCounters(tx); err != nil {
 			return err
 		}
 		if err := infravideo.ReconcileContentStats(tx); err != nil {

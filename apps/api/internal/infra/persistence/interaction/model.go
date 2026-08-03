@@ -73,17 +73,49 @@ func (ActionIdempotencyReceiptModel) TableName() string {
 
 // CommentModel 映射 interaction_comment 表，评论采用软删除状态。
 type CommentModel struct {
-	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	VideoID        int64     `gorm:"column:video_id;not null;index:idx_interaction_comment_video_status_created,priority:1"`
-	UserID         int64     `gorm:"column:user_id;not null;index:idx_interaction_comment_user_created,priority:1;uniqueIndex:uk_interaction_comment_user_idempotency,priority:1"`
-	Content        string    `gorm:"column:content;size:1000;not null"`
-	Status         int       `gorm:"column:status;type:smallint;not null;default:1;index:idx_interaction_comment_video_status_created,priority:2"`
-	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128;uniqueIndex:uk_interaction_comment_user_idempotency,priority:2"`
-	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime;index:idx_interaction_comment_video_status_created,priority:3;index:idx_interaction_comment_user_created,priority:2"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime;index:idx_interaction_comment_video_status_created,priority:4"`
+	ID                 int64     `gorm:"column:id;primaryKey;autoIncrement;index:idx_interaction_comment_root_latest,priority:5,sort:desc;index:idx_interaction_comment_root_hot,priority:6,sort:desc;index:idx_interaction_comment_replies,priority:4"`
+	VideoID            int64     `gorm:"column:video_id;not null;index:idx_interaction_comment_video_status_created,priority:1;index:idx_interaction_comment_root_latest,priority:1;index:idx_interaction_comment_root_hot,priority:1"`
+	UserID             int64     `gorm:"column:user_id;not null;index:idx_interaction_comment_user_created,priority:1;uniqueIndex:uk_interaction_comment_user_idempotency,priority:1"`
+	RootCommentID      *int64    `gorm:"column:root_comment_id;index:idx_interaction_comment_root_latest,priority:3;index:idx_interaction_comment_root_hot,priority:3;index:idx_interaction_comment_replies,priority:1"`
+	ReplyToCommentID   *int64    `gorm:"column:reply_to_comment_id;index:idx_interaction_comment_direct_target"`
+	Content            string    `gorm:"column:content;size:1000;not null"`
+	Status             int       `gorm:"column:status;type:smallint;not null;default:1;index:idx_interaction_comment_video_status_created,priority:2;index:idx_interaction_comment_root_latest,priority:2;index:idx_interaction_comment_root_hot,priority:2;index:idx_interaction_comment_replies,priority:2"`
+	ReplyCount         int       `gorm:"column:reply_count;not null;default:0"`
+	LikeCount          int       `gorm:"column:like_count;not null;default:0"`
+	HotScore           int64     `gorm:"column:hot_score;not null;default:0;index:idx_interaction_comment_root_hot,priority:4,sort:desc"`
+	RequestFingerprint string    `gorm:"column:request_fingerprint;size:64;not null;default:''"`
+	IdempotencyKey     *string   `gorm:"column:idempotency_key;size:128;uniqueIndex:uk_interaction_comment_user_idempotency,priority:2"`
+	CreatedAt          time.Time `gorm:"column:created_at;autoCreateTime;index:idx_interaction_comment_video_status_created,priority:3;index:idx_interaction_comment_user_created,priority:2;index:idx_interaction_comment_root_latest,priority:4,sort:desc;index:idx_interaction_comment_root_hot,priority:5,sort:desc;index:idx_interaction_comment_replies,priority:3"`
+	UpdatedAt          time.Time `gorm:"column:updated_at;autoUpdateTime;index:idx_interaction_comment_video_status_created,priority:4"`
 }
 
 // TableName 指定评论表名。
 func (CommentModel) TableName() string {
 	return "interaction_comment"
+}
+
+type CommentLikeModel struct {
+	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID    int64     `gorm:"column:user_id;not null;uniqueIndex:uk_interaction_comment_like_user_comment,priority:1"`
+	CommentID int64     `gorm:"column:comment_id;not null;uniqueIndex:uk_interaction_comment_like_user_comment,priority:2;index:idx_interaction_comment_like_comment_status,priority:1"`
+	Status    int       `gorm:"column:status;type:smallint;not null;default:1;index:idx_interaction_comment_like_comment_status,priority:2"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (CommentLikeModel) TableName() string {
+	return "interaction_comment_like"
+}
+
+type CommentLikeIdempotencyReceiptModel struct {
+	UserID         int64     `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;size:128;primaryKey"`
+	CommentID      int64     `gorm:"column:comment_id;not null"`
+	Active         bool      `gorm:"column:active;not null"`
+	LikeCount      int       `gorm:"column:like_count;not null;default:0"`
+	CreatedAt      time.Time `gorm:"column:created_at;not null;autoCreateTime"`
+}
+
+func (CommentLikeIdempotencyReceiptModel) TableName() string {
+	return "interaction_comment_like_idempotency_receipt"
 }

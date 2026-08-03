@@ -124,18 +124,27 @@ type CreateCommentResult struct {
 }
 
 type DeleteCommentResult struct {
-	CommentID    int64
-	Status       int
-	CommentCount int
+	CommentID      int64
+	Status         int
+	CommentCount   int
+	RootReplyCount int
+	DeletedCount   int
+	ThreadHidden   bool
+	Tombstone      bool
 }
 
 type CommentListResult struct {
-	Items      []*domaininteraction.Comment
-	NextCursor string
-	HasMore    bool
+	Items        []*domaininteraction.Comment
+	NextCursor   string
+	HasMore      bool
+	CommentCount int
+	Sort         string
 }
 
 type commentCursorPayload struct {
+	Version   int    `json:"v,omitempty"`
+	Sort      string `json:"sort,omitempty"`
+	HotScore  int64  `json:"hot_score,omitempty"`
 	CreatedAt string `json:"created_at"`
 	CommentID int64  `json:"comment_id"`
 }
@@ -215,25 +224,25 @@ func (s *Service) UnfavoriteWithRecommendation(ctx context.Context, userID int64
 
 // CreateComment 创建评论，并通过幂等键防止客户端重试生成重复评论。
 func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64, content string, idempotencyKey string) (*CreateCommentResult, error) {
-	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if len(idempotencyKey) > domaininteraction.MaxIdempotencyKeyLength {
-		return nil, domaininteraction.ErrIdempotencyKeyTooLong
-	}
-
-	if idempotencyKey != "" {
-		// 幂等键命中时返回已创建的评论，客户端重试可以拿到同一结果。
-		comment, count, err := s.repo.FindCommentByUserAndIdempotencyKey(ctx, userID, idempotencyKey)
-		if err == nil {
-			return &CreateCommentResult{Comment: comment, CommentCount: count}, nil
-		}
-		if !errors.Is(err, domaininteraction.ErrCommentNotFound) {
-			return nil, ErrLoadInteractionFailed
-		}
-	}
-
-	comment, err := domaininteraction.NewComment(videoID, userID, content, idempotencyKey)
+	comment, err := domaininteraction.NewRootComment(videoID, userID, content, idempotencyKey)
 	if err != nil {
 		return nil, err
+	}
+	if threaded, ok := s.repo.(domaininteraction.ThreadedCommentRepository); ok {
+		mutation, err := threaded.CreateThreadedComment(ctx, comment)
+		if err != nil {
+			if errors.Is(err, domaininteraction.ErrVideoNotFound) ||
+				errors.Is(err, domaininteraction.ErrCommentIdempotencyConflict) {
+				return nil, err
+			}
+			return nil, ErrSaveInteractionFailed
+		}
+		s.recordHotScore(ctx, mutation.Comment.VideoID, mutation.VideoDelta*hotScoreCommentWeight)
+		s.syncCommentCount(ctx, mutation.Comment.VideoID, mutation.CommentCount)
+		if mutation.VideoDelta > 0 {
+			s.notifyComment(ctx, mutation.Comment)
+		}
+		return &CreateCommentResult{Comment: mutation.Comment, CommentCount: mutation.CommentCount}, nil
 	}
 
 	created, count, delta, err := s.repo.CreateComment(ctx, comment)
@@ -254,43 +263,56 @@ func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64
 
 // ListComments 使用游标分页查询评论，返回下一页游标和 has_more。
 func (s *Service) ListComments(ctx context.Context, videoID int64, cursor string, limit int) (*CommentListResult, error) {
+	return s.ListCommentRoots(ctx, videoID, 0, "", domaininteraction.CommentSortLatest, cursor, limit)
+}
+
+func (s *Service) ListCommentRoots(ctx context.Context, videoID int64, viewerID int64, viewerRole string, sortMode string, cursor string, limit int) (*CommentListResult, error) {
 	if videoID <= 0 {
 		return nil, domaininteraction.ErrInvalidVideoID
 	}
+	sortMode, err := domaininteraction.NormalizeCommentSort(sortMode)
+	if err != nil {
+		return nil, err
+	}
 
-	parsedCursor, err := parseCommentCursor(cursor)
+	parsedCursor, err := parseRootCommentCursor(cursor, sortMode)
 	if err != nil {
 		return nil, err
 	}
 	limit = normalizeCommentLimit(limit)
 
-	// 多查 1 条用于判断是否还有下一页，返回给客户端时再裁掉。
-	items, err := s.repo.ListComments(ctx, videoID, parsedCursor, limit+1)
+	threaded, ok := s.repo.(domaininteraction.ThreadedCommentRepository)
+	if !ok {
+		if sortMode != domaininteraction.CommentSortLatest || viewerID > 0 {
+			return nil, ErrLoadInteractionFailed
+		}
+		items, err := s.repo.ListComments(ctx, videoID, parsedCursor, limit+1)
+		if err != nil {
+			if errors.Is(err, domaininteraction.ErrVideoNotFound) {
+				return nil, domaininteraction.ErrVideoNotFound
+			}
+			return nil, ErrLoadInteractionFailed
+		}
+		return buildRootCommentListResult(items, 0, sortMode, limit), nil
+	}
+	page, err := threaded.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID:      videoID,
+		Viewer:       domaininteraction.CommentViewer{UserID: viewerID, Role: viewerRole},
+		Sort:         sortMode,
+		Cursor:       parsedCursor,
+		Limit:        limit + 1,
+		PreviewLimit: domaininteraction.ReplyPreviewLimit,
+	})
 	if err != nil {
 		if errors.Is(err, domaininteraction.ErrVideoNotFound) {
 			return nil, domaininteraction.ErrVideoNotFound
 		}
+		if errors.Is(err, domaininteraction.ErrInvalidCursor) || errors.Is(err, domaininteraction.ErrInvalidCommentSort) {
+			return nil, err
+		}
 		return nil, ErrLoadInteractionFailed
 	}
-
-	hasMore := len(items) > limit
-	if hasMore {
-		items = items[:limit]
-	}
-
-	nextCursor := ""
-	if len(items) > 0 {
-		nextCursor = encodeCommentCursor(&domaininteraction.CommentCursor{
-			CreatedAt: items[len(items)-1].CreatedAt,
-			CommentID: items[len(items)-1].ID,
-		})
-	}
-
-	return &CommentListResult{
-		Items:      items,
-		NextCursor: nextCursor,
-		HasMore:    hasMore,
-	}, nil
+	return buildRootCommentListResult(page.Items, page.CommentCount, sortMode, limit), nil
 }
 
 // DeleteComment 删除评论并返回删除后的评论状态和视频评论数。
@@ -300,6 +322,28 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 	}
 	if userID <= 0 {
 		return nil, domaininteraction.ErrInvalidUserID
+	}
+
+	if threaded, ok := s.repo.(domaininteraction.ThreadedCommentRepository); ok {
+		deletion, err := threaded.DeleteThreadedComment(ctx, commentID, userID, role)
+		if err != nil {
+			if errors.Is(err, domaininteraction.ErrCommentNotFound) ||
+				errors.Is(err, domaininteraction.ErrCommentPermissionDenied) {
+				return nil, err
+			}
+			return nil, ErrUpdateInteractionFailed
+		}
+		s.recordHotScore(ctx, deletion.Comment.VideoID, deletion.VideoDelta*hotScoreCommentWeight)
+		s.syncCommentCount(ctx, deletion.Comment.VideoID, deletion.CommentCount)
+		return &DeleteCommentResult{
+			CommentID:      deletion.Comment.ID,
+			Status:         deletion.Comment.Status,
+			CommentCount:   deletion.CommentCount,
+			RootReplyCount: deletion.RootReplyCount,
+			DeletedCount:   deletion.DeletedCount,
+			ThreadHidden:   deletion.ThreadHidden,
+			Tombstone:      deletion.Tombstone,
+		}, nil
 	}
 
 	comment, count, delta, err := s.repo.DeleteComment(ctx, commentID, userID, role)
@@ -664,6 +708,10 @@ func normalizeCommentLimit(limit int) int {
 
 // parseCommentCursor 解析上一页返回的游标，游标内保存最后一条评论的排序字段。
 func parseCommentCursor(raw string) (*domaininteraction.CommentCursor, error) {
+	return parseRootCommentCursor(raw, domaininteraction.CommentSortLatest)
+}
+
+func parseRootCommentCursor(raw string, sortMode string) (*domaininteraction.CommentCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -686,8 +734,18 @@ func parseCommentCursor(raw string) (*domaininteraction.CommentCursor, error) {
 	if err != nil || payload.CommentID <= 0 {
 		return nil, domaininteraction.ErrInvalidCursor
 	}
+	if payload.Version == 0 && payload.Sort == "" {
+		payload.Version = domaininteraction.CommentCursorVersion
+		payload.Sort = domaininteraction.CommentSortLatest
+	}
+	if payload.Version != domaininteraction.CommentCursorVersion || payload.Sort != sortMode {
+		return nil, domaininteraction.ErrInvalidCursor
+	}
 
 	return &domaininteraction.CommentCursor{
+		Version:   payload.Version,
+		Sort:      payload.Sort,
+		HotScore:  payload.HotScore,
 		CreatedAt: createdAt,
 		CommentID: payload.CommentID,
 	}, nil
@@ -700,6 +758,9 @@ func encodeCommentCursor(cursor *domaininteraction.CommentCursor) string {
 	}
 
 	content, err := json.Marshal(commentCursorPayload{
+		Version:   cursor.Version,
+		Sort:      cursor.Sort,
+		HotScore:  cursor.HotScore,
 		CreatedAt: cursor.CreatedAt.UTC().Format(time.RFC3339Nano),
 		CommentID: cursor.CommentID,
 	})
