@@ -245,6 +245,15 @@ export function profileFromComment(comment: Comment): PublicProfileInput {
   };
 }
 
+export function profileFromReplyTarget(comment: Comment): PublicProfileInput {
+  return {
+    id: comment.reply_to_user_id,
+    nickname: comment.reply_to_user_nickname || `用户_${comment.reply_to_user_id}`,
+    avatar_url: comment.reply_to_user_avatar_url || image.currentUser,
+    bio: ""
+  };
+}
+
 export function readPublicProfiles(): Record<string, StoredPublicProfile> {
   return parseStoredPublicProfiles(localStorage.getItem(PUBLIC_PROFILE_KEY));
 }

@@ -807,7 +807,18 @@ video.stage-media {
 }
 
 .comment-reply-label {
+  display: inline;
+  padding: 0;
   color: var(--gc-cyan);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.comment-reply-label:hover,
+.comment-reply-label:focus-visible {
+  text-decoration: underline;
 }
 
 .comment-actions {

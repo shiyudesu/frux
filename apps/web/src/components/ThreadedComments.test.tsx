@@ -143,6 +143,42 @@ describe("threaded comment components", () => {
     expect(document.activeElement).toBe(replyButton);
   });
 
+  it("opens the directly replied user's profile from the @ target", () => {
+    const onOpenUser = vi.fn();
+    const reply = comment(2, {
+      root_comment_id: 1,
+      reply_to_comment_id: 1,
+      reply_to_user_id: 7,
+      reply_to_user_nickname: "目标用户",
+      reply_to_user_avatar_url: "/target-avatar.png",
+      content: "回复内容"
+    });
+    const rootComment = comment(1, {
+      reply_count: 1,
+      reply_previews: [reply]
+    });
+    render(
+      <ThreadedComments
+        controller={controller({
+          roots: [rootComment],
+          entities: { 1: rootComment, 2: reply }
+        })}
+        authenticated
+        canModerateThreads={false}
+        user={emptyProfile}
+        onOpenUser={onOpenUser}
+      />
+    );
+
+    click(buttonByText("@目标用户"));
+    expect(onOpenUser).toHaveBeenCalledWith({
+      id: 7,
+      nickname: "目标用户",
+      avatar_url: "/target-avatar.png",
+      bio: ""
+    });
+  });
+
   it("counts Unicode code points and blocks over-limit submission behaviorally", () => {
     const target = comment(1);
     render(<InteractiveThreadedComments entities={{ 1: target }} roots={[target]} />);

@@ -3,7 +3,7 @@ import { image } from "../constants";
 import { COMMENT_CONTENT_LIMIT, type CommentsController } from "../hooks/useComments";
 import type { Comment, SessionUser } from "../types";
 import type { PublicProfileInput } from "../utils";
-import { formatMetric, formatRelativeTime, profileFromComment } from "../utils";
+import { formatMetric, formatRelativeTime, profileFromComment, profileFromReplyTarget } from "../utils";
 import { Icon } from "./Icon";
 import { CommentMessage } from "./StatusMessages";
 
@@ -325,7 +325,17 @@ function CommentCard({
         {!tombstone && (
           <p>
             {comment.reply_to_user_id > 0 && (
-              <span className="comment-reply-label">回复 @{comment.reply_to_user_nickname || `用户_${comment.reply_to_user_id}`}：</span>
+              <>
+                <span>回复 </span>
+                <button
+                  className="comment-reply-label"
+                  type="button"
+                  onClick={() => onOpenUser(profileFromReplyTarget(comment))}
+                >
+                  @{comment.reply_to_user_nickname || `用户_${comment.reply_to_user_id}`}
+                </button>
+                <span>：</span>
+              </>
             )}
             {comment.content}
           </p>
