@@ -69,9 +69,9 @@
 
 ## 8. Documentation and End-to-End Validation
 
-- [ ] 8.1 Update `docs/modules/interaction.md` with the threaded schema, APIs, sorting, counters, likes, deletion rules, visibility, idempotency, outbox, and test matrix.
-- [ ] 8.2 Update `docs/modules/message.md`, `docs/product.md`, `docs/uiux.md`, and `docs/engineering.md` for actionable targets, message types, typed video routing, responsive threaded UI, and module boundaries.
-- [ ] 8.3 Run targeted Go interaction, message, migration, and Worker tests, then run `go test ./...` if targeted validation exposes shared-package risk.
+- [x] 8.1 Update `docs/modules/interaction.md` with the threaded schema, APIs, sorting, counters, likes, deletion rules, visibility, idempotency, outbox, and test matrix.
+- [x] 8.2 Update `docs/modules/message.md`, `docs/product.md`, `docs/uiux.md`, and `docs/engineering.md` for actionable targets, message types, typed video routing, responsive threaded UI, and module boundaries.
+- [x] 8.3 Run targeted Go interaction, message, migration, and Worker tests, then run `go test ./...` if targeted validation exposes shared-package risk.
 - [x] 8.4 Run the existing frontend unit tests and `pnpm -C apps/web run build` with strict TypeScript.
 - [ ] 8.5 Validate desktop and mobile root/reply creation, likes, pagination, sorting, deletion semantics, and message deep links in Windows Chrome through the mounted Windows executable.
 - [ ] 8.6 Capture required threaded-comment desktop/mobile screenshots, inspect console/network failures, and verify the video-detail target survives direct reload.

@@ -52,6 +52,8 @@ apps/api/
 
 跨模块聚合仍遵守领域所有权。以个人内容库为例，`application/library.Service` 只依赖 `ActionIndex`、`HistoryIndex`、`WatchLaterRepository`、`VideoCatalog`、`PrivacyReader` 等窄接口；`interfaces/http/router/library_adapters.go` 把 interaction、exposure、video、account 的接口适配为 library 需要的形状。不要让聚合 Handler 直接查询多个 GORM Repository，也不要让一个 Domain 包导入另一个模块的 Infrastructure。
 
+评论通知同样遵守所有权：`interaction` 拥有根/回复/评论点赞事实、计数和 `interaction_comment_notification_outbox`；Worker 通过 Application 层的窄 `CommentNotificationMessageWriter` 调用 `message.Service`。message 只持久化消息和结构化目标，不反查互动表；interaction Domain/Application 不导入 message Infrastructure。
+
 ## 3. 新增后端模块文件组
 
 ```text
@@ -139,6 +141,7 @@ Application 层负责用例编排。
 - 用例返回结构，例如 `LoginResult`、`CreateResult`、`CommentListResult`。
 - 跨实体流程，例如发布视频时处理幂等键。
 - 游标解析和编码。
+- 同一资源有多种排序时，游标必须包含版本和 sort discriminator；跨排序复用必须拒绝。两级评论根游标绑定 `latest/hot`，回复游标独立按正序元组编码。
 - 默认分页大小和最大分页裁剪。
 - 基础设施能力的最小接口，例如 `TokenSigner`。
 
@@ -171,6 +174,7 @@ GORM Repository 规则：
 - `gorm.go` 实现 Domain Repository 接口。
 - 写操作尽量保持事务边界清晰。
 - 列表查询使用稳定排序字段和游标。
+- 聚合列表水合必须保持查询次数有界。根评论页最多 100 根时，回复预览使用 window function 每根上限 3 条，作者、直接目标和 viewer 状态批量读取；禁止在 Application/Handler 中逐根调用 Repository。
 - 返回 Domain 实体，避免把 GORM 模型泄漏到 Application。
 - PostgreSQL 唯一约束错误由启用 `TranslateError` 的 GORM 统一映射为 `gorm.ErrDuplicatedKey`。
 - 显式索引名使用表名前缀，避免 PostgreSQL schema 级索引命名冲突。
@@ -178,6 +182,7 @@ GORM Repository 规则：
 - `AutoMigrate` 后的模块回填保持显式且有顺序：补齐视频统计和可见性默认值、补齐资料隐私设置、用版本 `0` 与现有行为 `updated_at` 回填异步互动最新事件顺序、重建内容聚合、仅在 `app_migration` 无持久标记时从原始事件回填观看历史，再创建 Feed 专用索引。可删除投影的原始事实回填不得在每次启动重复执行。
 - 跨表聚合计数写入和事实变化放在同一事务；提供基于事实表的 reconciliation 函数作为迁移和修复入口。
 - 在线实例可能并发写聚合时，reconciliation 不得绝对覆盖统计行；应基于同一语句快照计算“事实值 - 快照聚合值”差量，再叠加到获得行锁后的当前值。
+- 由业务模块拥有的 Transactional Outbox 与业务事实同事务提交。通用 Worker 模式为：有界批次、`FOR UPDATE SKIP LOCKED`、稳定 lease owner、租约超时、指数退避、terminal 分类、稳定 event ID 下游去重和受监督 shutdown；不得让 message 或 RabbitMQ 成为互动 HTTP 事务的提交前依赖。
 
 ## 8. Interfaces 规则
 
@@ -194,6 +199,8 @@ Handler 职责：
 Hertz Handler 使用 `func(context.Context, *app.RequestContext)` 签名。标准 `context.Context` 传入 Application Service，并启用客户端断开取消；鉴权身份等同步请求数据保存在 `RequestContext.Keys`，不得让池化的 `RequestContext` 逃逸请求生命周期。JSON 请求统一使用 HTTP binding 包的有界解码器，避免流式请求体被无限读入内存；隐私或协议敏感接口使用 `BindStrictJSON` 拒绝未知字段和尾随 JSON。
 
 Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
+
+公开读取需要 viewer 状态时使用 optional-auth middleware：无 Token 或无效 Token 继续匿名读取，有效 access JWT 只把 user/role 写入 `RequestContext.Keys`。根评论、回复和 thread context 使用该模式返回匿名公共数据，并仅在有效 viewer 下补充 `liked`、`can_delete`；创建、点赞和删除仍使用强制鉴权。optional-auth 不得放宽父视频 `published + public + media-ready` 校验。
 
 本地 `/uploads` 中的视频和封面必须记录不可变认证上传者。发布保护 URL 时验证上传者与作者一致；读取时同时验证不可变所有权、同所有者视频引用、生命周期、可见性与当前身份，再交给标准库文件服务并保留 Range/HEAD 语义。不得仅因“任意公开视频引用该 URL”就授权。浏览器媒体标签通过仅限 `/uploads` 的 HttpOnly 资产 Cookie 携带身份；Cookie 身份还必须同时具备 Web 会话维护的 SameSite=Strict、非 HttpOnly 活跃标记。退出时 Web 先同步删除活跃标记和本地登录态，再尽力请求无 Cookie 副作用的无状态登出接口，因此离线退出立即关闭私有资产访问，旧登出响应也不能清除更新登录的资产 Token；普通鉴权响应不得刷新资产 Cookie。不得把访问 Token 放入媒体 URL。头像和普通文件维持公开兼容。
 
@@ -251,7 +258,9 @@ DELETE /api/videos/{videoId}/like
 | 列表 | 排序 |
 | --- | --- |
 | Timeline Feed | `published_at DESC, id DESC` |
-| 评论列表 | `created_at DESC, id DESC` |
+| 评论根列表（最新） | `created_at DESC, id DESC` |
+| 评论根列表（热门） | `hot_score DESC, created_at DESC, id DESC` |
+| 评论回复 | `created_at ASC, id ASC` |
 | 关注列表 | `updated_at DESC, target_user_id DESC` |
 | 粉丝列表 | `updated_at DESC, user_id DESC` |
 | 创作者作品查询 | `created_at DESC, id DESC` |
@@ -296,6 +305,8 @@ DELETE /api/videos/{videoId}/like
 播放技术遥测使用独立版本化批次，不进入观看历史或推荐行为投影。批次和事件载荷先规范化再计算哈希；同一 reporter 的写入用事务 advisory lock 串行，安全重放只计 duplicate，同 ID 异载荷回滚整批。原始遥测按 `created_at` 有界清理。
 
 需要可靠投递到 RabbitMQ、但不能让外部队列决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和 publisher confirm 分发，下游继续按业务事件 ID 去重。
+
+Outbox 不要求最终目标一定是 RabbitMQ。评论通知 Outbox 由 Worker 直接调用 message Application 窄接口：互动事务只提交 durable event，消息写入失败后按租约重试，`recipient + event_id` 去重；历史迁移不得合成旧通知。
 
 账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。
 
@@ -345,11 +356,13 @@ apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 - 组件使用函数组件，props 全部显式 interface 类型化。
 - API 调用集中使用 `api/src/client.ts` 的 `apiRequest<T>`，按域拆分 fetch 函数。
 - 会话与导航通过 `useSession`/`useNavigate` 分发，不做多层 props 透传。
+- 手写路由的 search 参数也必须类型化和验证。视频讨论使用 `NavigationTarget` 构造 `/videos/${number}`，只接受正整数 `comment`/`highlight`，且 `highlight` 不能脱离根 `comment`；不得让页面直接拼接未校验 query。
 - localStorage 读出的 JSON 必须过 `types.ts` 的 type guard 窄化。
 - 禁止 `@ts-nocheck`/`@ts-expect-error`/显式 `any`；构建门禁为 `tsc --noEmit && vite build`。
 - 服务端错误显示为用户可理解文案。
 - 页面状态保持清楚：loading、error、empty、success。
 - 多 Tab 页面为每个 Tab 独立保存 items、cursor、hasMore、loading 和 error；切换 Tab 不得用另一列表覆盖已加载页。
+- 多排序/嵌套列表按资源和排序分区保存状态。评论 controller 按 video+sort 保存根页、按 root 保存回复页，并对 preview/context/page 实体按 ID 去重；草稿、展开、focused target 和各操作 busy/error 不能互相覆盖。
 - 个人内容正文不写入 localStorage；当前仅公开资料摘要可通过既有 type guard 缓存。
 - 公开主页只渲染后端明确允许的能力。收藏、观看历史、稍后再看和私密作品不出现在公开页面；没有领域模型的“短剧”和“我的预约”不得添加占位 Tab。
 - CSS class 使用语义命名。
