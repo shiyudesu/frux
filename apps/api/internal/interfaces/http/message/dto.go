@@ -11,6 +11,9 @@ type createMessageRequest struct {
 	ActorID        int64  `json:"actor_id"`
 	ActorNickname  string `json:"actor_nickname"`
 	ActorAvatarURL string `json:"actor_avatar_url"`
+	VideoID        int64  `json:"video_id"`
+	CommentID      int64  `json:"comment_id"`
+	RootCommentID  int64  `json:"root_comment_id"`
 }
 
 type markReadRequest struct {
@@ -27,6 +30,9 @@ type messageResponse struct {
 	ActorID        int64      `json:"actor_id,omitempty"`
 	ActorNickname  string     `json:"actor_nickname,omitempty"`
 	ActorAvatarURL string     `json:"actor_avatar_url,omitempty"`
+	VideoID        int64      `json:"video_id,omitempty"`
+	CommentID      int64      `json:"comment_id,omitempty"`
+	RootCommentID  int64      `json:"root_comment_id,omitempty"`
 	IsRead         bool       `json:"is_read"`
 	CreatedAt      time.Time  `json:"created_at"`
 	ReadAt         *time.Time `json:"read_at,omitempty"`

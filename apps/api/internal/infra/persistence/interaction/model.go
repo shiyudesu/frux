@@ -119,3 +119,28 @@ type CommentLikeIdempotencyReceiptModel struct {
 func (CommentLikeIdempotencyReceiptModel) TableName() string {
 	return "interaction_comment_like_idempotency_receipt"
 }
+
+type CommentNotificationOutboxModel struct {
+	EventID       string     `gorm:"column:event_id;size:64;primaryKey"`
+	RecipientID   int64      `gorm:"column:recipient_id;not null;index:idx_interaction_comment_notification_outbox_recipient,priority:1"`
+	ActorID       int64      `gorm:"column:actor_id;not null"`
+	MessageType   string     `gorm:"column:message_type;size:32;not null"`
+	Title         string     `gorm:"column:title;size:128;not null"`
+	Content       string     `gorm:"column:content;size:1024;not null"`
+	VideoID       int64      `gorm:"column:video_id;not null"`
+	RootCommentID int64      `gorm:"column:root_comment_id;not null"`
+	CommentID     int64      `gorm:"column:comment_id;not null"`
+	State         string     `gorm:"column:state;size:16;not null;default:'pending';index:idx_interaction_comment_notification_outbox_pending,priority:1"`
+	Attempts      int        `gorm:"column:attempts;not null;default:0"`
+	AvailableAt   time.Time  `gorm:"column:available_at;not null;index:idx_interaction_comment_notification_outbox_pending,priority:2"`
+	LeaseOwner    string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil    *time.Time `gorm:"column:lease_until;index:idx_interaction_comment_notification_outbox_pending,priority:3"`
+	LastError     string     `gorm:"column:last_error;size:1024;not null;default:''"`
+	DeliveredAt   *time.Time `gorm:"column:delivered_at"`
+	CreatedAt     time.Time  `gorm:"column:created_at;not null;autoCreateTime;index:idx_interaction_comment_notification_outbox_recipient,priority:2"`
+	UpdatedAt     time.Time  `gorm:"column:updated_at;not null;autoUpdateTime"`
+}
+
+func (CommentNotificationOutboxModel) TableName() string {
+	return "interaction_comment_notification_outbox"
+}

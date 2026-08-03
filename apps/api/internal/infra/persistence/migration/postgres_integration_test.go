@@ -281,6 +281,7 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infrainteraction.CommentModel{}, "idx_interaction_comment_direct_target"},
 		{&infrainteraction.CommentLikeModel{}, "uk_interaction_comment_like_user_comment"},
 		{&infrainteraction.CommentLikeModel{}, "idx_interaction_comment_like_comment_status"},
+		{&infrainteraction.CommentNotificationOutboxModel{}, "idx_interaction_comment_notification_outbox_pending"},
 		{&infralibrary.WatchLaterModel{}, "idx_user_watch_later_user_status_updated"},
 		{&infrarelation.FollowProfileOutboxModel{}, "idx_relation_profile_outbox_pending"},
 		{&inframessage.MessageModel{}, "uk_user_message_user_event"},
@@ -1369,9 +1370,13 @@ func TestPostgreSQLRepositorySemantics(t *testing.T) {
 		t.Fatalf("create first message: created=%v err=%v", created, err)
 	}
 	repeatedMessage, _ := domainmessage.New(alice.ID, domainmessage.TypeSystem, "Title", "Content", "Event-Key")
+	repeatedMessage.WithTargets(video.ID, 3002, 3001)
 	savedRepeated, created, err := messageRepo.Create(ctx, repeatedMessage, "Request-Key")
 	if err != nil || created || savedRepeated.ID != savedFirst.ID {
 		t.Fatalf("repeat exact message: created=%v saved=%+v err=%v", created, savedRepeated, err)
+	}
+	if savedRepeated.VideoID != video.ID || savedRepeated.CommentID != 3002 || savedRepeated.RootCommentID != 3001 {
+		t.Fatalf("idempotent replay did not persist structured targets: %+v", savedRepeated)
 	}
 	caseVariantMessage, _ := domainmessage.New(alice.ID, domainmessage.TypeSystem, "Title", "Content", "event-key")
 	savedVariant, created, err := messageRepo.Create(ctx, caseVariantMessage, "request-key")
@@ -1748,6 +1753,95 @@ func TestPostgreSQLThreadedCommentPersistence(t *testing.T) {
 		deleted.RootReplyCount != 1 || deleted.CommentCount != 1 {
 		t.Fatalf("unexpected private-video deletion result: %+v", deleted)
 	}
+
+	notificationVideo, err := domainvideo.NewPublished(
+		users[0].ID,
+		"Notification outbox",
+		"",
+		"/uploads/comment-notification.mp4",
+		"/uploads/comment-notification.jpg",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := videoRepo.Save(ctx, notificationVideo); err != nil {
+		t.Fatalf("save notification video: %v", err)
+	}
+	if _, err := repo.CreateThreadedComment(ctx, mustRootComment(t, notificationVideo.ID, users[0].ID, "self root", "notification-self-root")); err != nil {
+		t.Fatalf("create self root: %v", err)
+	}
+	notificationRoot, err := repo.CreateThreadedComment(ctx, mustRootComment(t, notificationVideo.ID, users[1].ID, "root notification", "notification-root"))
+	if err != nil {
+		t.Fatalf("create notification root: %v", err)
+	}
+	if replay, err := repo.CreateThreadedComment(ctx, mustRootComment(t, notificationVideo.ID, users[1].ID, "root notification", "notification-root")); err != nil || replay.VideoDelta != 0 {
+		t.Fatalf("replay notification root: replay=%+v err=%v", replay, err)
+	}
+	if _, err := repo.CreateThreadedComment(ctx, mustReplyComment(t, notificationVideo.ID, users[1].ID, notificationRoot.Comment.ID, "self reply", "notification-self-reply")); err != nil {
+		t.Fatalf("create self reply: %v", err)
+	}
+	notificationReply, err := repo.CreateThreadedComment(ctx, mustReplyComment(t, notificationVideo.ID, users[2].ID, notificationRoot.Comment.ID, "reply notification", "notification-reply"))
+	if err != nil {
+		t.Fatalf("create notification reply: %v", err)
+	}
+	if _, err := repo.SetCommentLike(ctx, notificationReply.Comment.ID, users[2].ID, true, "notification-self-like"); err != nil {
+		t.Fatalf("self like reply: %v", err)
+	}
+	if _, err := repo.SetCommentLike(ctx, notificationReply.Comment.ID, users[0].ID, true, "notification-like"); err != nil {
+		t.Fatalf("like reply: %v", err)
+	}
+	if _, err := repo.SetCommentLike(ctx, notificationReply.Comment.ID, users[0].ID, false, "notification-unlike"); err != nil {
+		t.Fatalf("unlike reply: %v", err)
+	}
+	if _, err := repo.SetCommentLike(ctx, notificationReply.Comment.ID, users[0].ID, true, "notification-relike"); err != nil {
+		t.Fatalf("relike reply: %v", err)
+	}
+
+	var notifications []infrainteraction.CommentNotificationOutboxModel
+	if err := db.Where("video_id = ?", notificationVideo.ID).Order("created_at ASC").Find(&notifications).Error; err != nil {
+		t.Fatalf("load comment notifications: %v", err)
+	}
+	if len(notifications) != 3 {
+		t.Fatalf("expected root, reply, and like notifications only, got %+v", notifications)
+	}
+	byType := make(map[string]infrainteraction.CommentNotificationOutboxModel, len(notifications))
+	for _, notification := range notifications {
+		byType[notification.MessageType] = notification
+	}
+	rootNotification := byType[domaininteraction.CommentNotificationTypeRoot]
+	if rootNotification.RecipientID != users[0].ID || rootNotification.ActorID != users[1].ID ||
+		rootNotification.CommentID != notificationRoot.Comment.ID || rootNotification.RootCommentID != notificationRoot.Comment.ID {
+		t.Fatalf("unexpected root notification: %+v", rootNotification)
+	}
+	replyNotification := byType[domaininteraction.CommentNotificationTypeReply]
+	if replyNotification.RecipientID != users[1].ID || replyNotification.ActorID != users[2].ID ||
+		replyNotification.CommentID != notificationReply.Comment.ID || replyNotification.RootCommentID != notificationRoot.Comment.ID {
+		t.Fatalf("unexpected reply notification: %+v", replyNotification)
+	}
+	likeNotification := byType[domaininteraction.CommentNotificationTypeLike]
+	if likeNotification.RecipientID != users[2].ID || likeNotification.ActorID != users[0].ID ||
+		likeNotification.CommentID != notificationReply.Comment.ID || likeNotification.RootCommentID != notificationRoot.Comment.ID {
+		t.Fatalf("unexpected like notification: %+v", likeNotification)
+	}
+}
+
+func mustRootComment(t *testing.T, videoID int64, userID int64, content string, key string) *domaininteraction.Comment {
+	t.Helper()
+	comment, err := domaininteraction.NewRootComment(videoID, userID, content, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return comment
+}
+
+func mustReplyComment(t *testing.T, videoID int64, userID int64, targetID int64, content string, key string) *domaininteraction.Comment {
+	t.Helper()
+	comment, err := domaininteraction.NewReplyComment(videoID, userID, targetID, content, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return comment
 }
 
 func TestPostgreSQLThreadedCommentLegacyBackfill(t *testing.T) {

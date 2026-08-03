@@ -28,6 +28,14 @@ const (
 	CommentCursorVersion = 1
 	ReplyPreviewLimit    = 3
 
+	CommentNotificationTypeRoot  = "COMMENT"
+	CommentNotificationTypeReply = "COMMENT_REPLY"
+	CommentNotificationTypeLike  = "COMMENT_LIKE"
+
+	CommentNotificationStatePending   = "pending"
+	CommentNotificationStateDelivered = "delivered"
+	CommentNotificationStateTerminal  = "terminal"
+
 	MaxCommentContentLength          = 1000
 	MaxIdempotencyKeyLength          = 128
 	MaxActionEventIDLength           = 128
@@ -196,6 +204,27 @@ type CommentDeletionResult struct {
 	Tombstone      bool
 }
 
+type CommentNotification struct {
+	EventID       string
+	RecipientID   int64
+	ActorID       int64
+	MessageType   string
+	Title         string
+	Content       string
+	VideoID       int64
+	RootCommentID int64
+	CommentID     int64
+	State         string
+	Attempts      int
+	AvailableAt   time.Time
+	LeaseOwner    string
+	LeaseUntil    *time.Time
+	LastError     string
+	DeliveredAt   *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
 // VideoStat 保存互动模块需要的视频统计快照。
 type VideoStat struct {
 	VideoID       int64
@@ -333,6 +362,39 @@ func NormalizeCommentSort(value string) (string, error) {
 		return "", ErrInvalidCommentSort
 	}
 	return value, nil
+}
+
+func NewCommentNotification(eventID string, recipientID int64, actorID int64, messageType string, title string, content string, videoID int64, rootCommentID int64, commentID int64, availableAt time.Time) (*CommentNotification, error) {
+	eventID = strings.TrimSpace(eventID)
+	messageType = strings.ToUpper(strings.TrimSpace(messageType))
+	title = strings.TrimSpace(title)
+	content = strings.TrimSpace(content)
+	if eventID == "" || len(eventID) > 64 || recipientID <= 0 || actorID <= 0 ||
+		videoID <= 0 || rootCommentID <= 0 || commentID <= 0 || title == "" || content == "" ||
+		(messageType != CommentNotificationTypeRoot &&
+			messageType != CommentNotificationTypeReply &&
+			messageType != CommentNotificationTypeLike) {
+		return nil, ErrInvalidCommentNotification
+	}
+	if availableAt.IsZero() {
+		availableAt = time.Now().UTC()
+	}
+	return &CommentNotification{
+		EventID: eventID, RecipientID: recipientID, ActorID: actorID, MessageType: messageType,
+		Title: title, Content: content, VideoID: videoID, RootCommentID: rootCommentID,
+		CommentID: commentID, State: CommentNotificationStatePending, AvailableAt: availableAt.UTC(),
+	}, nil
+}
+
+func RestoreCommentNotification(eventID string, recipientID int64, actorID int64, messageType string, title string, content string, videoID int64, rootCommentID int64, commentID int64, state string, attempts int, availableAt time.Time, leaseOwner string, leaseUntil *time.Time, lastError string, deliveredAt *time.Time, createdAt time.Time, updatedAt time.Time) *CommentNotification {
+	return &CommentNotification{
+		EventID: strings.TrimSpace(eventID), RecipientID: recipientID, ActorID: actorID,
+		MessageType: strings.ToUpper(strings.TrimSpace(messageType)), Title: strings.TrimSpace(title),
+		Content: strings.TrimSpace(content), VideoID: videoID, RootCommentID: rootCommentID,
+		CommentID: commentID, State: strings.TrimSpace(state), Attempts: attempts,
+		AvailableAt: availableAt, LeaseOwner: strings.TrimSpace(leaseOwner), LeaseUntil: leaseUntil,
+		LastError: strings.TrimSpace(lastError), DeliveredAt: deliveredAt, CreatedAt: createdAt, UpdatedAt: updatedAt,
+	}
 }
 
 // RestoreAction 从数据库记录恢复互动行为，供仓储层返回领域对象。

@@ -3,13 +3,16 @@ package domainmessage
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	TypeLike    = "LIKE"
-	TypeComment = "COMMENT"
-	TypeFollow  = "FOLLOW"
-	TypeSystem  = "SYSTEM"
+	TypeLike         = "LIKE"
+	TypeComment      = "COMMENT"
+	TypeCommentReply = "COMMENT_REPLY"
+	TypeCommentLike  = "COMMENT_LIKE"
+	TypeFollow       = "FOLLOW"
+	TypeSystem       = "SYSTEM"
 
 	MaxTitleLength          = 128
 	MaxContentLength        = 1024
@@ -29,6 +32,9 @@ type Message struct {
 	ActorID        int64
 	ActorNickname  string
 	ActorAvatarURL string
+	VideoID        int64
+	CommentID      int64
+	RootCommentID  int64
 	IsRead         bool
 	CreatedAt      time.Time
 	ReadAt         *time.Time
@@ -57,13 +63,13 @@ func New(userID int64, messageType string, title string, content string, eventID
 	if title == "" {
 		return nil, ErrEmptyTitle
 	}
-	if len(title) > MaxTitleLength {
+	if utf8.RuneCountInString(title) > MaxTitleLength {
 		return nil, ErrTitleTooLong
 	}
 	if content == "" {
 		return nil, ErrEmptyContent
 	}
-	if len(content) > MaxContentLength {
+	if utf8.RuneCountInString(content) > MaxContentLength {
 		return nil, ErrContentTooLong
 	}
 	if len(eventID) > MaxEventIDLength {
@@ -92,6 +98,35 @@ func (m *Message) WithActor(actorID int64, nickname string, avatarURL string) {
 	m.ActorAvatarURL = strings.TrimSpace(avatarURL)
 }
 
+// WithTargets writes optional structured discussion targets.
+func (m *Message) WithTargets(videoID int64, commentID int64, rootCommentID int64) {
+	if m == nil {
+		return
+	}
+	if videoID > 0 {
+		m.VideoID = videoID
+	}
+	if commentID > 0 {
+		m.CommentID = commentID
+	}
+	if rootCommentID > 0 {
+		m.RootCommentID = rootCommentID
+	}
+}
+
+func (m *Message) ValidateTargets() error {
+	if m == nil {
+		return ErrInvalidMessageTarget
+	}
+	if !IsCommentType(m.Type) {
+		return nil
+	}
+	if m.VideoID <= 0 || m.CommentID <= 0 || m.RootCommentID <= 0 {
+		return ErrInvalidMessageTarget
+	}
+	return nil
+}
+
 // Restore 从数据库记录恢复消息领域对象。
 func Restore(id int64, userID int64, messageType string, title string, content string, eventID string, isRead bool, createdAt time.Time, readAt *time.Time) *Message {
 	messageType, _ = NormalizeType(messageType)
@@ -115,13 +150,25 @@ func RestoreWithActor(id int64, userID int64, messageType string, title string, 
 	return message
 }
 
+// RestoreWithActorAndTargets restores actor display data and optional discussion targets.
+func RestoreWithActorAndTargets(id int64, userID int64, messageType string, title string, content string, eventID string, actorID int64, actorNickname string, actorAvatarURL string, videoID int64, commentID int64, rootCommentID int64, isRead bool, createdAt time.Time, readAt *time.Time) *Message {
+	message := RestoreWithActor(id, userID, messageType, title, content, eventID, actorID, actorNickname, actorAvatarURL, isRead, createdAt, readAt)
+	message.WithTargets(videoID, commentID, rootCommentID)
+	return message
+}
+
 // NormalizeType 统一消息类型大小写。
 func NormalizeType(value string) (string, error) {
 	value = strings.ToUpper(strings.TrimSpace(value))
 	switch value {
-	case TypeLike, TypeComment, TypeFollow, TypeSystem:
+	case TypeLike, TypeComment, TypeCommentReply, TypeCommentLike, TypeFollow, TypeSystem:
 		return value, nil
 	default:
 		return "", ErrInvalidMessageType
 	}
+}
+
+func IsCommentType(value string) bool {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	return value == TypeComment || value == TypeCommentReply || value == TypeCommentLike
 }

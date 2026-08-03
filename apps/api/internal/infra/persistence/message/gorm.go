@@ -32,6 +32,9 @@ func (r *Repository) Create(ctx context.Context, message *domainmessage.Message,
 		ActorID:        message.ActorID,
 		ActorNickname:  message.ActorNickname,
 		ActorAvatarURL: message.ActorAvatarURL,
+		VideoID:        optionalInt64(message.VideoID),
+		CommentID:      optionalInt64(message.CommentID),
+		RootCommentID:  optionalInt64(message.RootCommentID),
 		EventID:        optionalString(message.EventID),
 		IdempotencyKey: optionalString(idempotencyKey),
 		IsRead:         false,
@@ -53,6 +56,33 @@ func (r *Repository) Create(ctx context.Context, message *domainmessage.Message,
 	existing, findErr := r.findExisting(ctx, message.UserID, message.EventID, idempotencyKey)
 	if findErr != nil {
 		return nil, false, findErr
+	}
+	if sameMessageEvent(existing, message) && targetsCompatible(existing, message) &&
+		(message.VideoID > 0 || message.CommentID > 0 || message.RootCommentID > 0) {
+		updates := map[string]any{}
+		if existing.VideoID == nil && message.VideoID > 0 {
+			updates["video_id"] = message.VideoID
+		}
+		if existing.CommentID == nil && message.CommentID > 0 {
+			updates["comment_id"] = message.CommentID
+		}
+		if existing.RootCommentID == nil && message.RootCommentID > 0 {
+			updates["root_comment_id"] = message.RootCommentID
+		}
+		if len(updates) > 0 {
+			if updateErr := r.db.WithContext(ctx).Model(&MessageModel{}).Where("id = ?", existing.ID).Updates(updates).Error; updateErr != nil {
+				return nil, false, updateErr
+			}
+			if existing.VideoID == nil && message.VideoID > 0 {
+				existing.VideoID = optionalInt64(message.VideoID)
+			}
+			if existing.CommentID == nil && message.CommentID > 0 {
+				existing.CommentID = optionalInt64(message.CommentID)
+			}
+			if existing.RootCommentID == nil && message.RootCommentID > 0 {
+				existing.RootCommentID = optionalInt64(message.RootCommentID)
+			}
+		}
 	}
 	return restore(existing), false, nil
 }
@@ -144,7 +174,7 @@ func (r *Repository) findExisting(ctx context.Context, userID int64, eventID str
 }
 
 func restore(model MessageModel) *domainmessage.Message {
-	return domainmessage.RestoreWithActor(
+	return domainmessage.RestoreWithActorAndTargets(
 		model.ID,
 		model.UserID,
 		model.Type,
@@ -154,10 +184,38 @@ func restore(model MessageModel) *domainmessage.Message {
 		model.ActorID,
 		model.ActorNickname,
 		model.ActorAvatarURL,
+		int64Value(model.VideoID),
+		int64Value(model.CommentID),
+		int64Value(model.RootCommentID),
 		model.IsRead,
 		model.CreatedAt,
 		model.ReadAt,
 	)
+}
+
+func sameMessageEvent(existing MessageModel, message *domainmessage.Message) bool {
+	return existing.EventID != nil && strings.TrimSpace(*existing.EventID) != "" &&
+		strings.TrimSpace(*existing.EventID) == strings.TrimSpace(message.EventID)
+}
+
+func targetsCompatible(existing MessageModel, message *domainmessage.Message) bool {
+	return (existing.VideoID == nil || message.VideoID <= 0 || *existing.VideoID == message.VideoID) &&
+		(existing.CommentID == nil || message.CommentID <= 0 || *existing.CommentID == message.CommentID) &&
+		(existing.RootCommentID == nil || message.RootCommentID <= 0 || *existing.RootCommentID == message.RootCommentID)
+}
+
+func optionalInt64(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func int64Value(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func optionalString(value string) *string {

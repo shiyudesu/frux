@@ -92,7 +92,7 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	result, err := h.service.CreateFromActorEvent(
+	result, err := h.service.CreateFromTargetedActorEvent(
 		ctx,
 		req.UserID,
 		req.Type,
@@ -103,6 +103,9 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 		req.ActorID,
 		req.ActorNickname,
 		req.ActorAvatarURL,
+		req.VideoID,
+		req.CommentID,
+		req.RootCommentID,
 	)
 	if err != nil {
 		writeMessageError(c, err)
@@ -160,6 +163,9 @@ func responseFromDomain(message *domainmessage.Message) messageResponse {
 		ActorID:        message.ActorID,
 		ActorNickname:  message.ActorNickname,
 		ActorAvatarURL: message.ActorAvatarURL,
+		VideoID:        message.VideoID,
+		CommentID:      message.CommentID,
+		RootCommentID:  message.RootCommentID,
 		IsRead:         message.IsRead,
 		CreatedAt:      message.CreatedAt,
 		ReadAt:         message.ReadAt,
@@ -180,6 +186,7 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainmessage.ErrInvalidLimit) ||
 		errors.Is(err, domainmessage.ErrInvalidCursor) ||
 		errors.Is(err, domainmessage.ErrInvalidMessageType) ||
+		errors.Is(err, domainmessage.ErrInvalidMessageTarget) ||
 		errors.Is(err, domainmessage.ErrEmptyTitle) ||
 		errors.Is(err, domainmessage.ErrTitleTooLong) ||
 		errors.Is(err, domainmessage.ErrEmptyContent) ||

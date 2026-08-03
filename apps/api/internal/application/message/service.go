@@ -25,6 +25,21 @@ type CreateResult struct {
 	Created bool
 }
 
+type CreateEventInput struct {
+	UserID         int64
+	MessageType    string
+	Title          string
+	Content        string
+	EventID        string
+	IdempotencyKey string
+	ActorID        int64
+	ActorNickname  string
+	ActorAvatarURL string
+	VideoID        int64
+	CommentID      int64
+	RootCommentID  int64
+}
+
 type ListResult struct {
 	Items      []*domainmessage.Message
 	NextCursor string
@@ -55,18 +70,36 @@ func (s *Service) CreateFromEvent(ctx context.Context, userID int64, messageType
 
 // CreateFromActorEvent 将内部事件转换成带触发用户信息的消息。
 func (s *Service) CreateFromActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string) (*CreateResult, error) {
-	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if len(idempotencyKey) > domainmessage.MaxIdempotencyKeyLength {
+	return s.CreateFromTargetedActorEvent(ctx, userID, messageType, title, content, eventID, idempotencyKey, actorID, actorNickname, actorAvatarURL, 0, 0, 0)
+}
+
+// CreateFromTargetedActorEvent creates an idempotent message with optional structured discussion targets.
+func (s *Service) CreateFromTargetedActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string, videoID int64, commentID int64, rootCommentID int64) (*CreateResult, error) {
+	return s.Create(ctx, CreateEventInput{
+		UserID: userID, MessageType: messageType, Title: title, Content: content,
+		EventID: eventID, IdempotencyKey: idempotencyKey, ActorID: actorID,
+		ActorNickname: actorNickname, ActorAvatarURL: actorAvatarURL,
+		VideoID: videoID, CommentID: commentID, RootCommentID: rootCommentID,
+	})
+}
+
+func (s *Service) Create(ctx context.Context, input CreateEventInput) (*CreateResult, error) {
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if len(input.IdempotencyKey) > domainmessage.MaxIdempotencyKeyLength {
 		return nil, domainmessage.ErrIdempotencyKeyTooLong
 	}
 
-	message, err := domainmessage.New(userID, messageType, title, content, eventID)
+	message, err := domainmessage.New(input.UserID, input.MessageType, input.Title, input.Content, input.EventID)
 	if err != nil {
 		return nil, err
 	}
-	message.WithActor(actorID, actorNickname, actorAvatarURL)
+	message.WithActor(input.ActorID, input.ActorNickname, input.ActorAvatarURL)
+	message.WithTargets(input.VideoID, input.CommentID, input.RootCommentID)
+	if err := message.ValidateTargets(); err != nil {
+		return nil, err
+	}
 
-	created, inserted, err := s.repo.Create(ctx, message, idempotencyKey)
+	created, inserted, err := s.repo.Create(ctx, message, input.IdempotencyKey)
 	if err != nil {
 		return nil, ErrSaveMessageFailed
 	}

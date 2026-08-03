@@ -387,6 +387,29 @@ func (w *MessageWriter) CreateFromActorEvent(ctx context.Context, userID int64, 
 	return w.service.CreateFromActorEvent(ctx, userID, messageType, title, content, eventID, idempotencyKey, actorID, actorNickname, actorAvatarURL)
 }
 
+func (w *MessageWriter) CreateFromTargetedActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string, videoID int64, commentID int64, rootCommentID int64) (any, error) {
+	return w.service.CreateFromTargetedActorEvent(ctx, userID, messageType, title, content, eventID, idempotencyKey, actorID, actorNickname, actorAvatarURL, videoID, commentID, rootCommentID)
+}
+
+func (w *MessageWriter) WriteCommentNotification(ctx context.Context, notification applicationinteraction.CommentNotificationDelivery) error {
+	_, err := w.service.CreateFromTargetedActorEvent(
+		ctx,
+		notification.RecipientID,
+		notification.MessageType,
+		notification.Title,
+		notification.Content,
+		notification.EventID,
+		notification.EventID,
+		notification.ActorID,
+		notification.ActorNickname,
+		notification.ActorAvatarURL,
+		notification.VideoID,
+		notification.CommentID,
+		notification.RootCommentID,
+	)
+	return err
+}
+
 type FollowFeedBackfiller struct {
 	feedRepo interface {
 		CountFollowers(ctx context.Context, authorID int64) (int, error)

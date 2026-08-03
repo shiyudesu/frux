@@ -2,8 +2,8 @@
 
 - [x] 1.1 Extend the interaction comment entity with root/direct-target IDs, reply/like/hot counters, normal/self-deleted/moderated statuses, Unicode content validation, viewer state, permissions, and tombstone projection rules.
 - [x] 1.2 Extend interaction repository interfaces and domain errors for root pages, reply pages, direct thread context, comment likes, payload-aware creation replay, differentiated deletion, and reconciliation.
-- [ ] 1.3 Add GORM models for threaded comment fields, comment likes, comment-like idempotency receipts, and the leased comment-notification outbox.
-- [ ] 1.4 Add advisory-locked migration steps and explicit indexes for root latest/hot ordering, reply ordering, direct targets, likes, receipts, and pending outbox leases.
+- [x] 1.3 Add GORM models for threaded comment fields, comment likes, comment-like idempotency receipts, and the leased comment-notification outbox.
+- [x] 1.4 Add advisory-locked migration steps and explicit indexes for root latest/hot ordering, reply ordering, direct targets, likes, receipts, and pending outbox leases.
 - [x] 1.5 Backfill existing comments as roots, map legacy deleted rows safely, initialize counters and scores, and add an idempotent persistent migration marker.
 - [x] 1.6 Implement snapshot-delta reconciliation for video comment totals, root reply counts, comment like counts, and materialized hot scores.
 
@@ -21,7 +21,7 @@
 ## 3. Comment Application and HTTP APIs
 
 - [x] 3.1 Add application inputs/results and cursor codecs for root sorting, replies, direct thread context, comment likes, viewer state, and deletion outcomes.
-- [ ] 3.2 Add service orchestration for root/reply creation, hot/latest listing, reply expansion, thread context, like transitions, deletion, cache synchronization, hot ranking, and outbox creation.
+- [x] 3.2 Add service orchestration for root/reply creation, hot/latest listing, reply expansion, thread context, like transitions, deletion, cache synchronization, hot ranking, and outbox creation.
 - [x] 3.3 Extend comment DTOs with root/direct-target metadata, reply previews/counts, likes, viewer permissions, deleted state, and total comment counts while keeping existing fields compatible.
 - [x] 3.4 Keep `POST /api/videos/{videoId}/comments` for roots and add reply creation, reply listing, thread context, and comment like/unlike endpoints.
 - [x] 3.5 Add optional JWT authentication to public comment and thread reads so anonymous access remains available and authenticated responses include viewer-specific state.
@@ -30,12 +30,12 @@
 
 ## 4. Durable Comment Notifications
 
-- [ ] 4.1 Add `COMMENT_REPLY` and `COMMENT_LIKE` message types plus structured `video_id`, `comment_id`, and `root_comment_id` fields across message domain, persistence, internal DTOs, and public DTOs.
-- [ ] 4.2 Extend the narrow interaction-to-message writer contract to carry structured targets while preserving existing like, follow, system, and legacy comment messages.
-- [ ] 4.3 Insert root-comment, reply, and new comment-like outbox events in the same interaction transaction with stable event IDs and self-notification suppression.
-- [ ] 4.4 Implement leased Worker delivery with bounded batches, exponential backoff, idempotent message creation, terminal error handling, and processing metrics.
-- [ ] 4.5 Register the comment-notification outbox worker in `cmd/worker` and ensure shutdown, retry, and database-error behavior follows existing supervised worker patterns.
-- [ ] 4.6 Backfill no synthetic notifications for historical comments and verify existing messages without target metadata remain readable and markable as read.
+- [x] 4.1 Add `COMMENT_REPLY` and `COMMENT_LIKE` message types plus structured `video_id`, `comment_id`, and `root_comment_id` fields across message domain, persistence, internal DTOs, and public DTOs.
+- [x] 4.2 Extend the narrow interaction-to-message writer contract to carry structured targets while preserving existing like, follow, system, and legacy comment messages.
+- [x] 4.3 Insert root-comment, reply, and new comment-like outbox events in the same interaction transaction with stable event IDs and self-notification suppression.
+- [x] 4.4 Implement leased Worker delivery with bounded batches, exponential backoff, idempotent message creation, terminal error handling, and processing metrics.
+- [x] 4.5 Register the comment-notification outbox worker in `cmd/worker` and ensure shutdown, retry, and database-error behavior follows existing supervised worker patterns.
+- [x] 4.6 Backfill no synthetic notifications for historical comments and verify existing messages without target metadata remain readable and markable as read.
 
 ## 5. Frontend Data and Routing
 
@@ -62,7 +62,7 @@
 - [ ] 7.1 Add interaction domain/application tests for Unicode limits, payload fingerprints, root resolution, reply-to-reply flattening, hot-score deltas, and all deletion modes.
 - [ ] 7.2 Extend interaction API-flow tests for compatible root creation, hot/latest cursors, reply pages, preview bounds, optional viewer state, comment likes, permissions, idempotency conflicts, and hidden-video behavior.
 - [ ] 7.3 Add PostgreSQL repository and migration tests for backfill, indexes, stable ordering, bounded hydration query counts, concurrent counter reconciliation, cascade moderation, and repeated migration.
-- [ ] 7.4 Add message/outbox tests for root, reply, and comment-like events, self-suppression, transient retry, stable deduplication, structured targets, and legacy messages.
+- [x] 7.4 Add message/outbox tests for root, reply, and comment-like events, self-suppression, transient retry, stable deduplication, structured targets, and legacy messages.
 - [ ] 7.5 Add frontend API and threaded-comment state tests for page merging, sort switching, reply expansion, draft isolation, optimistic rollback, creation, deletion, and authentication transitions.
 - [ ] 7.6 Add component tests for desktop panel, mobile sheet, tombstones, moderator confirmation, reply targeting, character limits, focus restoration, and unavailable discussion.
 - [ ] 7.7 Add router and message-navigation tests for valid typed video targets, malformed search parameters, root/reply highlighting, reload persistence, and removed targets.

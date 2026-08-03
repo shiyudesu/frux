@@ -12,6 +12,7 @@ import (
 	applicationexposure "GCFeed/internal/application/exposure"
 	applicationinteraction "GCFeed/internal/application/interaction"
 	applicationmedia "GCFeed/internal/application/media"
+	applicationmessage "GCFeed/internal/application/message"
 	applicationrecommendation "GCFeed/internal/application/recommendation"
 	applicationvideo "GCFeed/internal/application/video"
 	domainmedia "GCFeed/internal/domain/media"
@@ -26,6 +27,7 @@ import (
 	infrafeed "GCFeed/internal/infra/persistence/feed"
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	infrapersistencemedia "GCFeed/internal/infra/persistence/media"
+	inframessage "GCFeed/internal/infra/persistence/message"
 	migration "GCFeed/internal/infra/persistence/migration"
 	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
 	infrarelation "GCFeed/internal/infra/persistence/relation"
@@ -91,6 +93,15 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 
 	recommendationRepo := infrarecommendation.New(gormDB)
 	interactionRepo := infrainteraction.New(gormDB)
+	messageService := applicationmessage.New(inframessage.New(gormDB))
+	commentNotificationWorker := applicationinteraction.NewCommentNotificationWorker(
+		interactionRepo,
+		interactionRepo,
+		&commentNotificationMessageWriter{service: messageService},
+	)
+	if err := commentNotificationWorker.Start(ctx); err != nil {
+		return err
+	}
 	actionWorker := applicationinteraction.NewActionWorker(
 		interactionRepo,
 		rabbitMQ,
@@ -187,6 +198,29 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 		applicationmedia.WithMediaStateNotifier(mediaPublication),
 	)
 	return mediaWorker.Start(ctx)
+}
+
+type commentNotificationMessageWriter struct {
+	service *applicationmessage.Service
+}
+
+func (w *commentNotificationMessageWriter) WriteCommentNotification(ctx context.Context, notification applicationinteraction.CommentNotificationDelivery) error {
+	_, err := w.service.CreateFromTargetedActorEvent(
+		ctx,
+		notification.RecipientID,
+		notification.MessageType,
+		notification.Title,
+		notification.Content,
+		notification.EventID,
+		notification.EventID,
+		notification.ActorID,
+		notification.ActorNickname,
+		notification.ActorAvatarURL,
+		notification.VideoID,
+		notification.CommentID,
+		notification.RootCommentID,
+	)
+	return err
 }
 
 func closeSQL(db *sql.DB) {

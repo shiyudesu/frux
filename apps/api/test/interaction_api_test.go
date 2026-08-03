@@ -954,7 +954,8 @@ func TestInteractionCommentSyncsStatCache(t *testing.T) {
 	}
 }
 
-// TestInteractionMessageWriter 覆盖点赞和评论成功后给视频作者写消息。
+// TestInteractionMessageWriter covers the synchronous video-like notification.
+// Threaded comment notifications are delivered from the durable outbox.
 func TestInteractionMessageWriter(t *testing.T) {
 	repo := newMemoryInteractionRepo()
 	writer := newMemoryInteractionMessageWriter()
@@ -974,20 +975,14 @@ func TestInteractionMessageWriter(t *testing.T) {
 	}
 
 	messages := writer.Messages()
-	if len(messages) != 2 {
-		t.Fatalf("expected 2 messages, got %+v", messages)
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 synchronous message, got %+v", messages)
 	}
 	if messages[0].UserID != 42 || messages[0].Type != "LIKE" {
 		t.Fatalf("unexpected like message: %+v", messages[0])
 	}
 	if messages[0].ActorID != 77 || messages[0].ActorNickname != memoryInteractionNickname(77) || messages[0].ActorAvatarURL != memoryInteractionAvatar(77) {
 		t.Fatalf("unexpected like actor: %+v", messages[0])
-	}
-	if messages[1].UserID != 42 || messages[1].Type != "COMMENT" {
-		t.Fatalf("unexpected comment message: %+v", messages[1])
-	}
-	if messages[1].ActorID != 77 || messages[1].ActorNickname != memoryInteractionNickname(77) || messages[1].ActorAvatarURL != memoryInteractionAvatar(77) {
-		t.Fatalf("unexpected comment actor: %+v", messages[1])
 	}
 }
 

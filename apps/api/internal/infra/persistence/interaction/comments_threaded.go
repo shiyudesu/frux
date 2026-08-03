@@ -9,6 +9,7 @@ import (
 	infravideo "GCFeed/internal/infra/persistence/video"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -56,12 +57,16 @@ func (r *Repository) CreateThreadedComment(ctx context.Context, comment *domaini
 	var count, videoDelta, rootReplyDelta int
 	var resolvedFingerprint string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := lockPublishedVideo(tx, comment.VideoID); err != nil {
+		video, err := lockPublishedVideo(tx, comment.VideoID)
+		if err != nil {
 			return err
 		}
 
 		rootCommentID := int64(0)
 		replyToCommentID := comment.ReplyToCommentID
+		recipientID := video.AuthorID
+		messageType := domaininteraction.CommentNotificationTypeRoot
+		title := "收到评论"
 		if replyToCommentID > 0 {
 			var target CommentModel
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", replyToCommentID).Take(&target).Error; err != nil {
@@ -73,6 +78,9 @@ func (r *Repository) CreateThreadedComment(ctx context.Context, comment *domaini
 			if target.VideoID != comment.VideoID || target.Status != domaininteraction.CommentStatusNormal {
 				return domaininteraction.ErrReplyTargetUnavailable
 			}
+			recipientID = target.UserID
+			messageType = domaininteraction.CommentNotificationTypeReply
+			title = "收到回复"
 			if target.RootCommentID == nil {
 				rootCommentID = target.ID
 			} else {
@@ -148,6 +156,28 @@ func (r *Repository) CreateThreadedComment(ctx context.Context, comment *domaini
 				return err
 			}
 			rootReplyDelta = 1
+		}
+		notificationRootID := model.ID
+		if rootCommentID > 0 {
+			notificationRootID = rootCommentID
+		}
+		notification, err := domaininteraction.NewCommentNotification(
+			fmt.Sprintf("interaction:comment:%d", model.ID),
+			recipientID,
+			model.UserID,
+			messageType,
+			title,
+			model.Content,
+			model.VideoID,
+			notificationRootID,
+			model.ID,
+			model.CreatedAt,
+		)
+		if err != nil {
+			return err
+		}
+		if err := createCommentNotificationOutbox(tx, notification); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -451,6 +481,26 @@ func (r *Repository) SetCommentLike(ctx context.Context, commentID int64, userID
 				updates["hot_score"] = comment.HotScore
 			}
 			if err := tx.Model(&CommentModel{}).Where("id = ?", comment.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		if delta > 0 && active && comment.UserID != userID {
+			notification, err := domaininteraction.NewCommentNotification(
+				fmt.Sprintf("interaction:comment-like:%d:%d", comment.ID, userID),
+				comment.UserID,
+				userID,
+				domaininteraction.CommentNotificationTypeLike,
+				"评论获赞",
+				"点赞了你的评论",
+				comment.VideoID,
+				rootID,
+				comment.ID,
+				time.Now().UTC(),
+			)
+			if err != nil {
+				return err
+			}
+			if err := createCommentNotificationOutbox(tx, notification); err != nil {
 				return err
 			}
 		}

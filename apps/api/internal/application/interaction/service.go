@@ -98,6 +98,10 @@ type ActorMessageWriter interface {
 	CreateFromActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string) (any, error)
 }
 
+type TargetedActorMessageWriter interface {
+	CreateFromTargetedActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string, videoID int64, commentID int64, rootCommentID int64) (any, error)
+}
+
 type ActionChangedEvent struct {
 	EventID                 string    `json:"event_id"`
 	UserID                  int64     `json:"user_id"`
@@ -239,9 +243,6 @@ func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64
 		}
 		s.recordHotScore(ctx, mutation.Comment.VideoID, mutation.VideoDelta*hotScoreCommentWeight)
 		s.syncCommentCount(ctx, mutation.Comment.VideoID, mutation.CommentCount)
-		if mutation.VideoDelta > 0 {
-			s.notifyComment(ctx, mutation.Comment)
-		}
 		return &CreateCommentResult{Comment: mutation.Comment, CommentCount: mutation.CommentCount}, nil
 	}
 
@@ -665,6 +666,21 @@ func (s *Service) notifyComment(ctx context.Context, comment *domaininteraction.
 		return
 	}
 	eventID := fmt.Sprintf("interaction:comment:%d", comment.ID)
+	if writer, ok := s.messageWriter.(TargetedActorMessageWriter); ok {
+		actor, _ := s.repo.GetUserProfile(ctx, comment.UserID)
+		actorNickname := ""
+		actorAvatarURL := ""
+		if actor != nil {
+			actorNickname = actor.Nickname
+			actorAvatarURL = actor.AvatarURL
+		}
+		_, _ = writer.CreateFromTargetedActorEvent(
+			ctx, authorID, domainmessage.TypeComment, "收到评论", comment.Content,
+			eventID, "", comment.UserID, actorNickname, actorAvatarURL,
+			comment.VideoID, comment.ID, comment.ID,
+		)
+		return
+	}
 	s.createInteractionMessage(ctx, authorID, domainmessage.TypeComment, "收到评论", comment.Content, eventID, comment.UserID)
 }
 

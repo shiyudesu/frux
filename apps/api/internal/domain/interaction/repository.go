@@ -1,6 +1,9 @@
 package domaininteraction
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type ActionIndex interface {
 	ListActiveActionVideoIDs(ctx context.Context, userID int64, actionType string, cursor *ActionCursor, limit int) ([]ActionVideo, error)
@@ -19,6 +22,12 @@ type ThreadedCommentRepository interface {
 	SetCommentLike(ctx context.Context, commentID int64, userID int64, active bool, idempotencyKey string) (*CommentLikeResult, error)
 	DeleteThreadedComment(ctx context.Context, commentID int64, userID int64, role string) (*CommentDeletionResult, error)
 	ReconcileCommentCounters(ctx context.Context) error
+}
+
+type CommentNotificationOutboxRepository interface {
+	ClaimCommentNotifications(ctx context.Context, leaseOwner string, limit int, now time.Time, leaseUntil time.Time) ([]*CommentNotification, error)
+	MarkCommentNotificationDelivered(ctx context.Context, eventID string, leaseOwner string, deliveredAt time.Time) error
+	MarkCommentNotificationFailed(ctx context.Context, eventID string, leaseOwner string, availableAt time.Time, reason string, terminal bool) error
 }
 
 // Repository 定义互动领域需要的持久化能力。

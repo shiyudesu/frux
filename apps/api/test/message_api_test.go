@@ -30,6 +30,9 @@ type messageAPIResponse struct {
 	ActorID        int64      `json:"actor_id"`
 	ActorNickname  string     `json:"actor_nickname"`
 	ActorAvatarURL string     `json:"actor_avatar_url"`
+	VideoID        int64      `json:"video_id"`
+	CommentID      int64      `json:"comment_id"`
+	RootCommentID  int64      `json:"root_comment_id"`
 	IsRead         bool       `json:"is_read"`
 	CreatedAt      time.Time  `json:"created_at"`
 	ReadAt         *time.Time `json:"read_at"`
@@ -81,6 +84,16 @@ func (r *memoryMessageRepo) Create(ctx context.Context, message *domainmessage.M
 
 	if message.EventID != "" {
 		if id, exists := r.byUserEvent[memoryMessageUniqueKey{UserID: message.UserID, Key: message.EventID}]; exists {
+			existing := r.messages[id]
+			if existing.VideoID == 0 {
+				existing.VideoID = message.VideoID
+			}
+			if existing.CommentID == 0 {
+				existing.CommentID = message.CommentID
+			}
+			if existing.RootCommentID == 0 {
+				existing.RootCommentID = message.RootCommentID
+			}
 			return cloneMessage(r.messages[id]), false, nil
 		}
 	}
@@ -193,7 +206,7 @@ func TestMessageAPIFlow(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/internal/messages",
-		`{"user_id":42,"type":"like","title":"收到点赞","content":"点赞了你的视频","event_id":"evt-1","actor_id":77,"actor_nickname":"测试用户","actor_avatar_url":"https://cdn.test/avatar.png"}`,
+		`{"user_id":42,"type":"comment_reply","title":"收到回复","content":"回复内容","event_id":"evt-1","actor_id":77,"actor_nickname":"测试用户","actor_avatar_url":"https://cdn.test/avatar.png","video_id":1001,"comment_id":3002,"root_comment_id":3001}`,
 		testInternalToken,
 		"msg-1",
 	)
@@ -201,11 +214,14 @@ func TestMessageAPIFlow(t *testing.T) {
 
 	var first messageAPIResponse
 	decodeJSON(t, firstResponse, &first)
-	if first.ID == 0 || first.UserID != 42 || first.Type != domainmessage.TypeLike || first.IsRead {
+	if first.ID == 0 || first.UserID != 42 || first.Type != domainmessage.TypeCommentReply || first.IsRead {
 		t.Fatalf("unexpected created message: %+v", first)
 	}
 	if first.ActorID != 77 || first.ActorNickname != "测试用户" || first.ActorAvatarURL != "https://cdn.test/avatar.png" {
 		t.Fatalf("unexpected created actor: %+v", first)
+	}
+	if first.VideoID != 1001 || first.CommentID != 3002 || first.RootCommentID != 3001 {
+		t.Fatalf("unexpected structured targets: %+v", first)
 	}
 
 	replayResponse := performInternalMessageRequest(
@@ -226,8 +242,11 @@ func TestMessageAPIFlow(t *testing.T) {
 	if replay.ActorID != 77 || replay.ActorNickname != "测试用户" || replay.ActorAvatarURL != "https://cdn.test/avatar.png" {
 		t.Fatalf("unexpected replay actor: %+v", replay)
 	}
+	if replay.VideoID != first.VideoID || replay.CommentID != first.CommentID || replay.RootCommentID != first.RootCommentID {
+		t.Fatalf("replay lost structured targets: %+v", replay)
+	}
 
-	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"comment","title":"收到评论","content":"有人评论了你的作品","event_id":"evt-2"}`, testInternalToken, "msg-2"), http.StatusCreated)
+	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"comment","title":"收到评论","content":"有人评论了你的作品","event_id":"evt-2","video_id":1002,"comment_id":4001,"root_comment_id":4001}`, testInternalToken, "msg-2"), http.StatusCreated)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"follow","title":"新增关注","content":"有人关注了你","event_id":"evt-3"}`, testInternalToken, "msg-3"), http.StatusCreated)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":77,"type":"system","title":"系统通知","content":"欢迎回来","event_id":"evt-4"}`, testInternalToken, "msg-4"), http.StatusCreated)
 
@@ -288,6 +307,16 @@ func TestMessageAPIFlow(t *testing.T) {
 		t.Fatalf("expected remaining message marked read, got %+v", markAll)
 	}
 
+	targetedListResponse := performJSONRequest(router, http.MethodGet, "/api/messages?limit=10", "", token)
+	requireStatus(t, targetedListResponse, http.StatusOK)
+	var targetedList messageListAPIResponse
+	decodeJSON(t, targetedListResponse, &targetedList)
+	for _, item := range targetedList.Items {
+		if item.EventID == "evt-2" && (item.VideoID != 1002 || item.CommentID != 4001 || item.RootCommentID != 4001) {
+			t.Fatalf("comment message lost required targets: %+v", item)
+		}
+	}
+
 	emptyStatResponse := performJSONRequest(router, http.MethodGet, "/api/message-stats/unread", "", token)
 	requireStatus(t, emptyStatResponse, http.StatusOK)
 	decodeJSON(t, emptyStatResponse, &stat)
@@ -310,6 +339,7 @@ func TestMessageAPIValidation(t *testing.T) {
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"bad","title":"x","content":"x"}`, testInternalToken, ""), http.StatusBadRequest)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":0,"type":"system","title":"x","content":"x"}`, testInternalToken, ""), http.StatusBadRequest)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"","content":"x"}`, testInternalToken, ""), http.StatusBadRequest)
+	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"comment","title":"x","content":"x","event_id":"comment-without-target"}`, testInternalToken, ""), http.StatusBadRequest)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"x","content":"x"}`, "", ""), http.StatusUnauthorized)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"x","content":"x"}`, "wrong-token", ""), http.StatusUnauthorized)
 }

@@ -89,6 +89,7 @@ func AutoMigrate(db *gorm.DB) error {
 			&infrainteraction.CommentModel{},
 			&infrainteraction.CommentLikeModel{},
 			&infrainteraction.CommentLikeIdempotencyReceiptModel{},
+			&infrainteraction.CommentNotificationOutboxModel{},
 			&inframessage.MessageModel{},
 			&infraplayback.ConfigModel{},
 			&infraplayback.QoSLogModel{},
