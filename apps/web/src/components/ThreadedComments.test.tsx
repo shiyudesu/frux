@@ -1,5 +1,7 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+import { act, useState, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyProfile } from "../constants";
 import type { CommentsController } from "../hooks/useComments";
 import type { Comment, FeedVideo } from "../types";
@@ -11,12 +13,28 @@ import {
 } from "./ThreadedComments";
 
 describe("threaded comment components", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    container.id = "root";
+    document.body.appendChild(container);
+    root = createRoot(container);
+    stubAnimationFrame();
+    stubMatchMedia(false);
+  });
+
   afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("renders the shared desktop panel shell used by responsive drawer and sheet layouts", () => {
-    const html = renderToStaticMarkup(
+  it("mounts distinct desktop panel and mobile sheet markers", () => {
+    render(
       <FeedDetailsPanel
         item={video()}
         open
@@ -28,22 +46,14 @@ describe("threaded comment components", () => {
         onOpenUser={() => {}}
       />
     );
-    expect(html).toContain('data-ui="details-panel"');
-    expect(html).toContain('class="details-panel open"');
-    expect(html).toContain('aria-label="关闭评论"');
-    expect(html).toContain("热门");
-    expect(html).toContain("最新");
-  });
+    const desktop = required<HTMLElement>('[data-ui="details-panel"]');
+    expect(desktop.dataset.presentation).toBe("panel");
+    expect(desktop.getAttribute("role")).toBe("complementary");
 
-  it("switches the shared panel to an accessible dialog for compact and mobile sheet viewports", () => {
-    vi.stubGlobal("window", {
-      matchMedia: () => ({
-        matches: true,
-        addEventListener: () => {},
-        removeEventListener: () => {}
-      })
-    });
-    const html = renderToStaticMarkup(
+    act(() => root.unmount());
+    root = createRoot(container);
+    stubMatchMedia(true);
+    render(
       <FeedDetailsPanel
         item={video()}
         open
@@ -55,12 +65,13 @@ describe("threaded comment components", () => {
         onOpenUser={() => {}}
       />
     );
-    expect(html).toContain('role="dialog"');
-    expect(html).toContain('aria-modal="true"');
+    const mobile = required<HTMLElement>('[data-ui="details-panel"]');
+    expect(mobile.dataset.presentation).toBe("sheet");
+    expect(mobile.getAttribute("role")).toBe("dialog");
+    expect(mobile.getAttribute("aria-modal")).toBe("true");
   });
 
-  it("renders tombstones, reply targets, character limits, and unavailable discussions safely", () => {
-    const replyTarget = comment(4, { user_nickname: "被回复者" });
+  it("renders a safe tombstone and unavailable discussion in a mounted tree", () => {
     const tombstone = comment(1, {
       user_id: 0,
       user_nickname: "",
@@ -70,18 +81,11 @@ describe("threaded comment components", () => {
       reply_count: 1,
       reply_previews: [comment(2, { root_comment_id: 1, content: "仍可阅读的回复" })]
     });
-    const html = renderToStaticMarkup(
+    render(
       <ThreadedComments
         controller={controller({
           roots: [tombstone],
-          entities: {
-            1: tombstone,
-            2: tombstone.reply_previews[0]!,
-            4: replyTarget
-          },
-          replyTarget,
-          draft: "🙂评论",
-          draftLength: 3,
+          entities: { 1: tombstone, 2: tombstone.reply_previews[0]! },
           focusUnavailable: true
         })}
         authenticated
@@ -90,56 +94,102 @@ describe("threaded comment components", () => {
         onOpenUser={() => {}}
       />
     );
-    expect(html).toContain("该评论已被作者删除");
-    expect(html).toContain("仍可阅读的回复");
-    expect(html).toContain("回复 被回复者");
-    expect(html).toContain("3/1000");
-    expect(html).toContain("该讨论已不可用");
-    expect(html).toContain('data-reply-comment-id="2"');
+    expect(container.textContent).toContain("该评论已被作者删除");
+    expect(container.textContent).toContain("仍可阅读的回复");
+    expect(container.textContent).toContain("该讨论已不可用");
+    expect(required<HTMLElement>('[data-comment-id="1"]').classList.contains("tombstone")).toBe(true);
+    expect(container.textContent).not.toContain("评论内容");
   });
 
-  it("exposes login action, busy/error states, and moderator cascade confirmation rules", () => {
-    const root = comment(1, { user_id: 8, can_delete: true });
-    const html = renderToStaticMarkup(
+  it("confirms moderator cascades before deleting a root thread", () => {
+    const removeComment = vi.fn(async () => {});
+    const rootComment = comment(1, { user_id: 8, can_delete: true, reply_count: 2 });
+    render(
       <ThreadedComments
         controller={controller({
-          roots: [root],
-          entities: { 1: root },
-          createState: { busy: false, error: "发送失败" }
+          roots: [rootComment],
+          entities: { 1: rootComment },
+          removeComment
         })}
-        authenticated={false}
+        authenticated
         canModerateThreads
         user={{ ...emptyProfile, id: 3 }}
         onOpenUser={() => {}}
       />
     );
-    expect(html).toContain("登录后参与讨论");
-    expect(html).toContain("发送失败");
-    expect(requiresModeratorConfirmation({ ...root, reply_count: 1 }, true)).toBe(true);
-    expect(requiresModeratorConfirmation({ ...root, reply_count: 1 }, false)).toBe(false);
-    expect(requiresModeratorConfirmation(root, true)).toBe(false);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    click(buttonByText("删除"));
+    expect(confirm).toHaveBeenCalledWith("删除该根评论会隐藏整个讨论串，确认继续吗？");
+    expect(removeComment).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    click(buttonByText("删除"));
+    expect(removeComment).toHaveBeenCalledWith(1);
+    expect(requiresModeratorConfirmation(rootComment, true)).toBe(true);
   });
 
-  it("marks focused targets and disables submission beyond the Unicode character limit", () => {
-    const root = comment(1);
-    const html = renderToStaticMarkup(
+  it("targets and cancels replies while restoring composer and trigger focus", () => {
+    const target = comment(1, { user_nickname: "被回复者" });
+    render(<InteractiveThreadedComments entities={{ 1: target }} roots={[target]} />);
+
+    const replyButton = required<HTMLButtonElement>('[data-reply-comment-id="1"]');
+    click(replyButton);
+    expect(container.textContent).toContain("回复 被回复者");
+    const composer = required<HTMLTextAreaElement>('textarea[aria-label="回复评论"]');
+    expect(document.activeElement).toBe(composer);
+
+    click(buttonByText("取消"));
+    expect(container.textContent).not.toContain("回复 被回复者");
+    expect(document.activeElement).toBe(replyButton);
+  });
+
+  it("counts Unicode code points and blocks over-limit submission behaviorally", () => {
+    const target = comment(1);
+    render(<InteractiveThreadedComments entities={{ 1: target }} roots={[target]} />);
+    const composer = required<HTMLTextAreaElement>('textarea[aria-label="发表评论"]');
+
+    input(composer, "界".repeat(999) + "🙂");
+    expect(container.textContent).toContain("1000/1000");
+    expect(required<HTMLButtonElement>('button[aria-label="发送评论"]').disabled).toBe(false);
+
+    input(composer, "界".repeat(1000) + "🙂");
+    expect(container.textContent).toContain("1001/1000");
+    expect(required<HTMLButtonElement>('button[aria-label="发送评论"]').disabled).toBe(true);
+  });
+
+  it("restores panel focus and scrolls a newly focused discussion target", () => {
+    stubMatchMedia(true);
+    render(<PanelFocusHarness />);
+    const opener = required<HTMLButtonElement>('[data-testid="open-comments"]');
+    act(() => opener.focus());
+    click(opener);
+    expect(document.activeElement).toBe(required<HTMLButtonElement>('button[aria-label="关闭评论"]'));
+    click(required<HTMLButtonElement>('button[aria-label="关闭评论"]'));
+    expect(document.activeElement).toBe(opener);
+
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView
+    });
+    const focused = comment(9);
+    act(() => root.render(
       <ThreadedComments
         controller={controller({
-          roots: [root],
-          entities: { 1: root },
-          focusedTargetID: 1,
-          draft: "界".repeat(1001),
-          draftLength: 1001
+          roots: [focused],
+          entities: { 9: focused },
+          focusedRootID: 9,
+          focusedTargetID: 9,
+          focusRevision: 1
         })}
         authenticated
         canModerateThreads={false}
         user={emptyProfile}
         onOpenUser={() => {}}
       />
-    );
-    expect(html).toContain("comment-item root  focused");
-    expect(html).toContain("1001/1000");
-    expect(html).toContain('disabled=""');
+    ));
+    expect(required<HTMLElement>('[data-comment-id="9"]').classList.contains("focused")).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
   });
 
   it("keeps separately loaded deep-link targets visible in chronological order", () => {
@@ -150,7 +200,109 @@ describe("threaded comment components", () => {
     };
     expect(mergeVisibleReplyIDs([2], [2, 3], [9], entities)).toEqual([2, 9, 3]);
   });
+
+  function render(node: ReactNode) {
+    act(() => root.render(node));
+  }
+
+  function required<T extends Element>(selector: string): T {
+    const element = container.querySelector<T>(selector);
+    if (!element) throw new Error(`missing element: ${selector}`);
+    return element;
+  }
+
+  function buttonByText(text: string): HTMLButtonElement {
+    const button = [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === text);
+    if (!button) throw new Error(`missing button: ${text}`);
+    return button;
+  }
 });
+
+function InteractiveThreadedComments({
+  entities,
+  roots
+}: {
+  entities: Record<number, Comment>;
+  roots: Comment[];
+}) {
+  const [draft, setDraft] = useState("");
+  const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
+  return (
+    <ThreadedComments
+      controller={controller({
+        roots,
+        entities,
+        draft,
+        draftLength: Array.from(draft).length,
+        replyTarget,
+        setDraft,
+        selectReplyTarget: (id) => setReplyTarget(entities[id] || null),
+        cancelReply: () => setReplyTarget(null)
+      })}
+      authenticated
+      canModerateThreads={false}
+      user={emptyProfile}
+      onOpenUser={() => {}}
+    />
+  );
+}
+
+function PanelFocusHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button data-testid="open-comments" type="button" onClick={() => setOpen(true)}>打开评论</button>
+      <FeedDetailsPanel
+        item={video()}
+        open={open}
+        onClose={() => setOpen(false)}
+        user={emptyProfile}
+        count={0}
+        comments={controller()}
+        authenticated
+        onOpenUser={() => {}}
+      />
+    </>
+  );
+}
+
+function click(element: HTMLElement) {
+  act(() => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+function input(element: HTMLTextAreaElement, value: string) {
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function stubAnimationFrame() {
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    callback(0);
+    return 1;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+}
+
+function stubMatchMedia(matches: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true
+    }))
+  });
+}
 
 function controller(patch: Partial<CommentsController> = {}): CommentsController {
   return {
@@ -221,7 +373,7 @@ function video(): FeedVideo {
     video_id: 3,
     author_id: 2,
     title: "视频",
-    media_url: "/video.mp4",
+    media_url: "/cover.jpg",
     cover_url: "/cover.jpg",
     like_count: 1,
     comment_count: 2,

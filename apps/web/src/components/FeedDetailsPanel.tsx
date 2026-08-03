@@ -62,6 +62,7 @@ export function FeedDetailsPanel({
         aria-modal={modalViewport && open ? "true" : undefined}
         aria-hidden={!open}
         className={`details-panel ${open ? "open" : ""}`}
+        data-presentation={modalViewport ? "sheet" : "panel"}
         data-ui="details-panel"
         role={modalViewport ? "dialog" : "complementary"}
       >

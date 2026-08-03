@@ -59,13 +59,13 @@
 
 ## 7. Backend and Frontend Automated Tests
 
-- [ ] 7.1 Add interaction domain/application tests for Unicode limits, payload fingerprints, root resolution, reply-to-reply flattening, hot-score deltas, and all deletion modes.
-- [ ] 7.2 Extend interaction API-flow tests for compatible root creation, hot/latest cursors, reply pages, preview bounds, optional viewer state, comment likes, permissions, idempotency conflicts, and hidden-video behavior.
-- [ ] 7.3 Add PostgreSQL repository and migration tests for backfill, indexes, stable ordering, bounded hydration query counts, concurrent counter reconciliation, cascade moderation, and repeated migration.
+- [x] 7.1 Add interaction domain/application tests for Unicode limits, payload fingerprints, root resolution, reply-to-reply flattening, hot-score deltas, and all deletion modes.
+- [x] 7.2 Extend interaction API-flow tests for compatible root creation, hot/latest cursors, reply pages, preview bounds, optional viewer state, comment likes, permissions, idempotency conflicts, and hidden-video behavior.
+- [x] 7.3 Add PostgreSQL repository and migration tests for backfill, indexes, stable ordering, bounded hydration query counts, concurrent counter reconciliation, cascade moderation, and repeated migration.
 - [x] 7.4 Add message/outbox tests for root, reply, and comment-like events, self-suppression, transient retry, stable deduplication, structured targets, and legacy messages.
 - [x] 7.5 Add frontend API and threaded-comment state tests for page merging, sort switching, reply expansion, draft isolation, optimistic rollback, creation, deletion, and authentication transitions.
-- [ ] 7.6 Add component tests for desktop panel, mobile sheet, tombstones, moderator confirmation, reply targeting, character limits, focus restoration, and unavailable discussion.
-- [ ] 7.7 Add router and message-navigation tests for valid typed video targets, malformed search parameters, root/reply highlighting, reload persistence, and removed targets.
+- [x] 7.6 Add component tests for desktop panel, mobile sheet, tombstones, moderator confirmation, reply targeting, character limits, focus restoration, and unavailable discussion.
+- [x] 7.7 Add router and message-navigation tests for valid typed video targets, malformed search parameters, root/reply highlighting, reload persistence, and removed targets.
 
 ## 8. Documentation and End-to-End Validation
 

@@ -31,6 +31,20 @@ func TestCommentUnicodeLimitAndFingerprint(t *testing.T) {
 	if rootFingerprint == CommentRequestFingerprint(10, 11, 12, "hello") {
 		t.Fatal("thread target fields were not bound into the request fingerprint")
 	}
+	if rootFingerprint == CommentRequestFingerprint(11, 0, 0, "hello") {
+		t.Fatal("video identity was not bound into the request fingerprint")
+	}
+	if rootFingerprint == CommentRequestFingerprint(10, 0, 0, "hello!") {
+		t.Fatal("canonical content was not bound into the request fingerprint")
+	}
+
+	reply, err := NewReplyComment(10, 20, 12, " hello ", "reply-key")
+	if err != nil {
+		t.Fatalf("create reply fingerprint fixture: %v", err)
+	}
+	if reply.RequestFingerprint != CommentRequestFingerprint(10, 0, 12, "hello") {
+		t.Fatalf("reply constructor stored a non-canonical fingerprint: %q", reply.RequestFingerprint)
+	}
 }
 
 func TestCommentTombstoneProjection(t *testing.T) {

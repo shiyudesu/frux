@@ -255,6 +255,27 @@ func (r *memoryInteractionRepo) DeleteThreadedComment(_ context.Context, comment
 	result := &domaininteraction.CommentDeletionResult{
 		Comment: cloneInteractionComment(comment), CommentCount: r.stats[comment.VideoID].CommentCount,
 	}
+	if comment.Status == domaininteraction.CommentStatusSelfDeleted && comment.IsRoot() && isModerator {
+		deleted := 0
+		for _, reply := range r.comments {
+			if reply.RootCommentID == comment.ID && reply.Status == domaininteraction.CommentStatusNormal {
+				reply.Status = domaininteraction.CommentStatusModerated
+				deleted++
+			}
+		}
+		comment.Status = domaininteraction.CommentStatusModerated
+		comment.ReplyCount = 0
+		comment.HotScore = 0
+		stat := r.stats[comment.VideoID]
+		stat.CommentCount = clampMemoryCount(stat.CommentCount - deleted)
+		r.stats[comment.VideoID] = stat
+		result.Comment = cloneInteractionComment(comment)
+		result.CommentCount = stat.CommentCount
+		result.VideoDelta = -deleted
+		result.DeletedCount = deleted
+		result.ThreadHidden = true
+		return result, nil
+	}
 	if comment.Status != domaininteraction.CommentStatusNormal {
 		result.RootReplyCount = comment.ReplyCount
 		result.ThreadHidden = comment.Status == domaininteraction.CommentStatusModerated

@@ -44,6 +44,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -101,6 +102,10 @@ func newPostgresFixture(t *testing.T) *postgresFixture {
 }
 
 func (f *postgresFixture) openGORM(t *testing.T) *gorm.DB {
+	return f.openGORMWithMaxOpenConns(t, 20)
+}
+
+func (f *postgresFixture) openGORMWithMaxOpenConns(t *testing.T, maxOpenConns int) *gorm.DB {
 	t.Helper()
 
 	connConfig, err := pgx.ParseConfig(postgresDSNWithSchema(f.dsn, f.schema))
@@ -108,8 +113,8 @@ func (f *postgresFixture) openGORM(t *testing.T) *gorm.DB {
 		t.Fatalf("parse schema PostgreSQL connection: %v", err)
 	}
 	sqlDB := stdlib.OpenDB(*connConfig, stdlib.OptionAfterConnect(configureTestUTCCodecs))
-	sqlDB.SetMaxIdleConns(4)
-	sqlDB.SetMaxOpenConns(20)
+	sqlDB.SetMaxIdleConns(maxOpenConns)
+	sqlDB.SetMaxOpenConns(maxOpenConns)
 	if err := sqlDB.Ping(); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("ping schema PostgreSQL connection: %v", err)
@@ -1937,6 +1942,449 @@ func TestPostgreSQLThreadedCommentLegacyBackfill(t *testing.T) {
 	}
 	if markerCount != 1 {
 		t.Fatalf("threaded migration marker was not idempotent: %d", markerCount)
+	}
+	for _, indexName := range []string{
+		"idx_interaction_comment_root_latest",
+		"idx_interaction_comment_root_hot",
+		"idx_interaction_comment_replies",
+		"idx_interaction_comment_direct_target",
+	} {
+		if !db.Migrator().HasIndex(&infrainteraction.CommentModel{}, indexName) {
+			t.Fatalf("repeated legacy migration is missing index %s", indexName)
+		}
+	}
+	for _, index := range []struct {
+		model any
+		name  string
+	}{
+		{&infrainteraction.CommentLikeModel{}, "uk_interaction_comment_like_user_comment"},
+		{&infrainteraction.CommentLikeModel{}, "idx_interaction_comment_like_comment_status"},
+		{&infrainteraction.CommentNotificationOutboxModel{}, "idx_interaction_comment_notification_outbox_pending"},
+	} {
+		if !db.Migrator().HasIndex(index.model, index.name) {
+			t.Fatalf("repeated legacy migration is missing index %s", index.name)
+		}
+	}
+}
+
+func TestPostgreSQLThreadedCommentOrderingHydrationAndCascadeModeration(t *testing.T) {
+	_, db, repo, users, video := newPostgresThreadedCommentFixture(t, "ordering")
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+
+	roots := []infrainteraction.CommentModel{
+		{
+			VideoID: video.ID, UserID: users[1].ID, Content: "old hottest",
+			Status: domaininteraction.CommentStatusNormal, ReplyCount: 4, HotScore: 50,
+			CreatedAt: base, UpdatedAt: base,
+		},
+		{
+			VideoID: video.ID, UserID: users[2].ID, Content: "middle cold",
+			Status: domaininteraction.CommentStatusNormal, ReplyCount: 4, HotScore: 10,
+			CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute),
+		},
+		{
+			VideoID: video.ID, UserID: users[3].ID, Content: "new warm",
+			Status: domaininteraction.CommentStatusNormal, ReplyCount: 4, HotScore: 30,
+			CreatedAt: base.Add(2 * time.Minute), UpdatedAt: base.Add(2 * time.Minute),
+		},
+	}
+	if err := db.Create(&roots).Error; err != nil {
+		t.Fatalf("seed ordered roots: %v", err)
+	}
+	replies := make([]infrainteraction.CommentModel, 0, len(roots)*4)
+	for rootIndex := range roots {
+		for replyIndex := 0; replyIndex < 4; replyIndex++ {
+			rootID := roots[rootIndex].ID
+			targetID := rootID
+			if replyIndex > 0 {
+				targetID = replies[len(replies)-1].ID
+				if targetID == 0 {
+					targetID = rootID
+				}
+			}
+			replies = append(replies, infrainteraction.CommentModel{
+				VideoID: video.ID, UserID: users[(rootIndex+replyIndex)%3+1].ID,
+				RootCommentID: &rootID, ReplyToCommentID: &targetID,
+				Content:   fmt.Sprintf("reply-%d-%d", rootIndex, replyIndex),
+				Status:    domaininteraction.CommentStatusNormal,
+				CreatedAt: base.Add(time.Duration(rootIndex*10+replyIndex) * time.Second),
+				UpdatedAt: base.Add(time.Duration(rootIndex*10+replyIndex) * time.Second),
+			})
+		}
+	}
+	if err := db.Create(&replies).Error; err != nil {
+		t.Fatalf("seed ordered replies: %v", err)
+	}
+	if err := db.Model(&infravideo.VideoStatModel{}).Where("video_id = ?", video.ID).
+		Update("comment_count", len(roots)+len(replies)).Error; err != nil {
+		t.Fatalf("seed ordered comment count: %v", err)
+	}
+	if err := db.Create(&infrainteraction.CommentLikeModel{
+		UserID: users[0].ID, CommentID: roots[0].ID, Status: domaininteraction.ActionStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("seed ordered viewer like: %v", err)
+	}
+
+	latest, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID: video.ID, Sort: domaininteraction.CommentSortLatest, Limit: 2,
+		PreviewLimit: domaininteraction.ReplyPreviewLimit,
+	})
+	if err != nil {
+		t.Fatalf("list latest roots: %v", err)
+	}
+	if len(latest.Items) != 2 || latest.Items[0].ID != roots[2].ID || latest.Items[1].ID != roots[1].ID {
+		t.Fatalf("latest root order is unstable: %+v", latest.Items)
+	}
+	latestNext, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID: video.ID, Sort: domaininteraction.CommentSortLatest, Limit: 2,
+		Cursor: &domaininteraction.CommentCursor{
+			Version: domaininteraction.CommentCursorVersion, Sort: domaininteraction.CommentSortLatest,
+			CreatedAt: latest.Items[1].CreatedAt, CommentID: latest.Items[1].ID,
+		},
+	})
+	if err != nil || len(latestNext.Items) != 1 || latestNext.Items[0].ID != roots[0].ID {
+		t.Fatalf("latest cursor did not advance stably: page=%+v err=%v", latestNext, err)
+	}
+
+	hot, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID: video.ID, Sort: domaininteraction.CommentSortHot, Limit: 2,
+		PreviewLimit: domaininteraction.ReplyPreviewLimit,
+	})
+	if err != nil {
+		t.Fatalf("list hot roots: %v", err)
+	}
+	if len(hot.Items) != 2 || hot.Items[0].ID != roots[0].ID || hot.Items[1].ID != roots[2].ID {
+		t.Fatalf("hot root order is unstable: %+v", hot.Items)
+	}
+	if len(hot.Items[0].ReplyPreviews) != domaininteraction.ReplyPreviewLimit ||
+		hot.Items[0].ReplyPreviews[0].Content != "reply-0-0" ||
+		hot.Items[0].ReplyPreviews[2].Content != "reply-0-2" {
+		t.Fatalf("reply previews were not capped and ordered: %+v", hot.Items[0].ReplyPreviews)
+	}
+	hotNext, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID: video.ID, Sort: domaininteraction.CommentSortHot, Limit: 2,
+		Cursor: &domaininteraction.CommentCursor{
+			Version: domaininteraction.CommentCursorVersion, Sort: domaininteraction.CommentSortHot,
+			HotScore: hot.Items[1].HotScore, CreatedAt: hot.Items[1].CreatedAt, CommentID: hot.Items[1].ID,
+		},
+	})
+	if err != nil || len(hotNext.Items) != 1 || hotNext.Items[0].ID != roots[1].ID {
+		t.Fatalf("hot cursor did not advance stably: page=%+v err=%v", hotNext, err)
+	}
+
+	bulkRoots := make([]infrainteraction.CommentModel, 0, 100)
+	for index := 0; index < 100; index++ {
+		createdAt := base.Add(-time.Duration(index+1) * time.Minute)
+		bulkRoots = append(bulkRoots, infrainteraction.CommentModel{
+			VideoID: video.ID, UserID: users[index%3+1].ID,
+			Content: fmt.Sprintf("bulk-root-%03d", index), Status: domaininteraction.CommentStatusNormal,
+			ReplyCount: 4, HotScore: int64(index % 17), CreatedAt: createdAt, UpdatedAt: createdAt,
+		})
+	}
+	if err := db.CreateInBatches(&bulkRoots, 100).Error; err != nil {
+		t.Fatalf("seed bounded-hydration roots: %v", err)
+	}
+	bulkReplies := make([]infrainteraction.CommentModel, 0, 400)
+	for rootIndex := range bulkRoots {
+		for replyIndex := 0; replyIndex < 4; replyIndex++ {
+			rootID := bulkRoots[rootIndex].ID
+			targetID := rootID
+			bulkReplies = append(bulkReplies, infrainteraction.CommentModel{
+				VideoID: video.ID, UserID: users[(rootIndex+replyIndex)%3+1].ID,
+				RootCommentID: &rootID, ReplyToCommentID: &targetID,
+				Content:   fmt.Sprintf("bulk-reply-%03d-%d", rootIndex, replyIndex),
+				Status:    domaininteraction.CommentStatusNormal,
+				CreatedAt: base.Add(-time.Duration(rootIndex+1)*time.Minute + time.Duration(replyIndex)*time.Second),
+				UpdatedAt: base,
+			})
+		}
+	}
+	if err := db.CreateInBatches(&bulkReplies, 100).Error; err != nil {
+		t.Fatalf("seed bounded-hydration replies: %v", err)
+	}
+	if err := db.Model(&infravideo.VideoStatModel{}).Where("video_id = ?", video.ID).
+		Update("comment_count", len(roots)+len(replies)+len(bulkRoots)+len(bulkReplies)).Error; err != nil {
+		t.Fatalf("update bounded-hydration comment count: %v", err)
+	}
+	smallCounter := &queryCounterLogger{Interface: logger.Default.LogMode(logger.Silent)}
+	smallPage, err := infrainteraction.New(db.Session(&gorm.Session{Logger: smallCounter})).ListCommentRoots(
+		ctx,
+		domaininteraction.CommentRootQuery{
+			VideoID: video.ID,
+			Viewer:  domaininteraction.CommentViewer{UserID: users[0].ID, Role: domainaccount.RoleUser},
+			Sort:    domaininteraction.CommentSortLatest, Limit: 1,
+			PreviewLimit: domaininteraction.ReplyPreviewLimit,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list small hydrated root page: %v", err)
+	}
+	if len(smallPage.Items) != 1 {
+		t.Fatalf("small hydration returned %d roots, want 1", len(smallPage.Items))
+	}
+
+	largeCounter := &queryCounterLogger{Interface: logger.Default.LogMode(logger.Silent)}
+	bounded, err := infrainteraction.New(db.Session(&gorm.Session{Logger: largeCounter})).ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
+		VideoID: video.ID,
+		Viewer:  domaininteraction.CommentViewer{UserID: users[0].ID, Role: domainaccount.RoleUser},
+		Sort:    domaininteraction.CommentSortLatest, Limit: 100,
+		PreviewLimit: domaininteraction.ReplyPreviewLimit,
+	})
+	if err != nil {
+		t.Fatalf("list bounded hydrated roots: %v", err)
+	}
+	const maxHydrationQueries = 8
+	smallQueries := smallCounter.count.Load()
+	largeQueries := largeCounter.count.Load()
+	if smallQueries > maxHydrationQueries || largeQueries > maxHydrationQueries {
+		t.Fatalf(
+			"root hydration exceeded %d queries: small=%d large=%d",
+			maxHydrationQueries, smallQueries, largeQueries,
+		)
+	}
+	if largeQueries != smallQueries {
+		t.Fatalf("root hydration query count grew with page size: small=%d large=%d", smallQueries, largeQueries)
+	}
+	if len(bounded.Items) != 100 {
+		t.Fatalf("bounded hydration returned %d roots, want 100", len(bounded.Items))
+	}
+	for _, root := range bounded.Items {
+		if len(root.ReplyPreviews) > domaininteraction.ReplyPreviewLimit {
+			t.Fatalf("root %d returned %d previews", root.ID, len(root.ReplyPreviews))
+		}
+	}
+
+	moderationVideo, err := domainvideo.NewPublished(
+		users[0].ID, "cascade moderation", "", "/uploads/cascade.mp4", "/uploads/cascade.jpg", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := infravideo.New(db).Save(ctx, moderationVideo); err != nil {
+		t.Fatalf("save cascade moderation video: %v", err)
+	}
+	moderatedRoot, err := repo.CreateThreadedComment(
+		ctx, mustRootComment(t, moderationVideo.ID, users[1].ID, "moderated root", "cascade-root"),
+	)
+	if err != nil {
+		t.Fatalf("create moderated root: %v", err)
+	}
+	for index := 0; index < 2; index++ {
+		if _, err := repo.CreateThreadedComment(
+			ctx,
+			mustReplyComment(
+				t, moderationVideo.ID, users[index+2].ID, moderatedRoot.Comment.ID,
+				fmt.Sprintf("cascade reply %d", index), fmt.Sprintf("cascade-reply-%d", index),
+			),
+		); err != nil {
+			t.Fatalf("create cascade reply %d: %v", index, err)
+		}
+	}
+	cascade, err := repo.DeleteThreadedComment(
+		ctx, moderatedRoot.Comment.ID, users[0].ID, domainaccount.RoleUser,
+	)
+	if err != nil {
+		t.Fatalf("cascade moderate root: %v", err)
+	}
+	if !cascade.ThreadHidden || cascade.DeletedCount != 3 || cascade.CommentCount != 0 {
+		t.Fatalf("unexpected cascade moderation result: %+v", cascade)
+	}
+	var visibleThreadRows int64
+	if err := db.Model(&infrainteraction.CommentModel{}).
+		Where("(id = ? OR root_comment_id = ?) AND status <> ?",
+			moderatedRoot.Comment.ID, moderatedRoot.Comment.ID, domaininteraction.CommentStatusModerated).
+		Count(&visibleThreadRows).Error; err != nil {
+		t.Fatalf("count cascade moderation rows: %v", err)
+	}
+	if visibleThreadRows != 0 {
+		t.Fatalf("cascade moderation left %d non-moderated rows", visibleThreadRows)
+	}
+}
+
+func TestPostgreSQLThreadedCommentReconciliationPreservesConcurrentDelta(t *testing.T) {
+	fixture, db, repo, users, video := newPostgresThreadedCommentFixture(t, "reconcile")
+	concurrentDB := db.Session(&gorm.Session{NewDB: true})
+	ctx := context.Background()
+
+	rootMutation, err := repo.CreateThreadedComment(
+		ctx, mustRootComment(t, video.ID, users[1].ID, "root", "reconcile-root"),
+	)
+	if err != nil {
+		t.Fatalf("create reconciliation root: %v", err)
+	}
+	if _, err := repo.CreateThreadedComment(
+		ctx, mustReplyComment(t, video.ID, users[2].ID, rootMutation.Comment.ID, "first reply", "reconcile-reply-1"),
+	); err != nil {
+		t.Fatalf("create reconciliation reply: %v", err)
+	}
+	if err := db.Model(&infrainteraction.CommentModel{}).Where("id = ?", rootMutation.Comment.ID).
+		Updates(map[string]any{"reply_count": 0, "like_count": 0, "hot_score": 0}).Error; err != nil {
+		t.Fatalf("corrupt reconciliation root counters: %v", err)
+	}
+	if err := db.Model(&infravideo.VideoStatModel{}).Where("video_id = ?", video.ID).
+		Update("comment_count", 1).Error; err != nil {
+		t.Fatalf("corrupt reconciliation video count: %v", err)
+	}
+
+	tx := concurrentDB.Begin()
+	if tx.Error != nil {
+		t.Fatalf("begin concurrent threaded transaction: %v", tx.Error)
+	}
+	var lockedRoot infrainteraction.CommentModel
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", rootMutation.Comment.ID).Take(&lockedRoot).Error; err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("lock reconciliation root: %v", err)
+	}
+	var lockedStat infravideo.VideoStatModel
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("video_id = ?", video.ID).Take(&lockedStat).Error; err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("lock reconciliation video stat: %v", err)
+	}
+	rootID := rootMutation.Comment.ID
+	if err := tx.Create(&infrainteraction.CommentModel{
+		VideoID: video.ID, UserID: users[3].ID, RootCommentID: &rootID, ReplyToCommentID: &rootID,
+		Content: "concurrent reply", Status: domaininteraction.CommentStatusNormal,
+	}).Error; err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("create concurrent reply fact: %v", err)
+	}
+	if err := tx.Create(&infrainteraction.CommentLikeModel{
+		UserID: users[0].ID, CommentID: rootID, Status: domaininteraction.ActionStatusActive,
+	}).Error; err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("create concurrent like fact: %v", err)
+	}
+	if err := tx.Model(&infrainteraction.CommentModel{}).Where("id = ?", rootID).Updates(map[string]any{
+		"reply_count": gorm.Expr("reply_count + 1"),
+		"like_count":  gorm.Expr("like_count + 1"),
+		"hot_score":   gorm.Expr("(like_count + 1) * 3 + (reply_count + 1) * 5"),
+	}).Error; err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("apply concurrent root counter delta: %v", err)
+	}
+	if err := tx.Model(&infravideo.VideoStatModel{}).Where("video_id = ?", video.ID).
+		Update("comment_count", gorm.Expr("comment_count + 1")).Error; err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("apply concurrent video counter delta: %v", err)
+	}
+
+	reconcileDB := fixture.openGORMWithMaxOpenConns(t, 1)
+	var reconcileBackendPID int
+	if err := reconcileDB.Raw("SELECT pg_backend_pid()").Scan(&reconcileBackendPID).Error; err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("read reconciliation backend PID: %v", err)
+	}
+	reconcileErr := make(chan error, 1)
+	go func() {
+		reconcileErr <- infrainteraction.New(reconcileDB).ReconcileCommentCounters(context.Background())
+	}()
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelWait()
+	if err := waitForPostgreSQLBlockedBackend(waitCtx, fixture.admin, reconcileBackendPID); err != nil {
+		_ = tx.Rollback()
+		select {
+		case reconcileResult := <-reconcileErr:
+			t.Fatalf("threaded reconciliation completed before reaching the held lock: %v", reconcileResult)
+		default:
+			t.Fatalf("threaded reconciliation was not observed blocked by the held lock: %v", err)
+		}
+	}
+	if err := tx.Commit().Error; err != nil {
+		t.Fatalf("commit concurrent threaded delta: %v", err)
+	}
+	if err := <-reconcileErr; err != nil {
+		t.Fatalf("reconcile threaded counters: %v", err)
+	}
+
+	var reconciledRoot infrainteraction.CommentModel
+	if err := db.Where("id = ?", rootID).Take(&reconciledRoot).Error; err != nil {
+		t.Fatalf("load concurrently reconciled root: %v", err)
+	}
+	var reconciledStat infravideo.VideoStatModel
+	if err := db.Where("video_id = ?", video.ID).Take(&reconciledStat).Error; err != nil {
+		t.Fatalf("load concurrently reconciled video stat: %v", err)
+	}
+	if reconciledRoot.ReplyCount != 2 || reconciledRoot.LikeCount != 1 ||
+		reconciledRoot.HotScore != 13 || reconciledStat.CommentCount != 3 {
+		t.Fatalf("reconciliation overwrote a concurrent delta: root=%+v stat=%+v", reconciledRoot, reconciledStat)
+	}
+}
+
+func newPostgresThreadedCommentFixture(
+	t *testing.T,
+	suffix string,
+) (*postgresFixture, *gorm.DB, *infrainteraction.Repository, []*domainaccount.User, *domainvideo.Video) {
+	t.Helper()
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("migrate threaded comment %s fixture: %v", suffix, err)
+	}
+	ctx := context.Background()
+	accountRepo := infraaccount.New(db)
+	users := make([]*domainaccount.User, 0, 4)
+	for index := 0; index < 4; index++ {
+		user, err := domainaccount.New(
+			fmt.Sprintf("thread-%s-%d", suffix, index),
+			"CaseSensitivePassword",
+			fmt.Sprintf("Thread %s %d", suffix, index),
+		)
+		if err != nil {
+			t.Fatalf("new threaded fixture account %d: %v", index, err)
+		}
+		if err := accountRepo.Save(ctx, user); err != nil {
+			t.Fatalf("save threaded fixture account %d: %v", index, err)
+		}
+		users = append(users, user)
+	}
+	video, err := domainvideo.NewPublished(
+		users[0].ID,
+		"Threaded "+suffix,
+		"",
+		"/uploads/threaded-"+suffix+".mp4",
+		"/uploads/threaded-"+suffix+".jpg",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("new threaded fixture video: %v", err)
+	}
+	if err := infravideo.New(db).Save(ctx, video); err != nil {
+		t.Fatalf("save threaded fixture video: %v", err)
+	}
+	return fixture, db, infrainteraction.New(db), users, video
+}
+
+func waitForPostgreSQLBlockedBackend(ctx context.Context, db *sql.DB, backendPID int) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		var state string
+		var waitEventType string
+		var blockingCount int
+		err := db.QueryRowContext(ctx, `
+			SELECT state, COALESCE(wait_event_type, ''), cardinality(pg_blocking_pids(pid))
+			FROM pg_stat_activity
+			WHERE pid = $1
+		`, backendPID).Scan(&state, &waitEventType, &blockingCount)
+		if err != nil {
+			return fmt.Errorf("inspect PostgreSQL backend %d: %w", backendPID, err)
+		}
+		if state == "active" && waitEventType == "Lock" && blockingCount > 0 {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf(
+				"backend %d did not block on a PostgreSQL lock (state=%q wait_event_type=%q blockers=%d): %w",
+				backendPID, state, waitEventType, blockingCount, ctx.Err(),
+			)
+		case <-ticker.C:
+		}
 	}
 }
 
