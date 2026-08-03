@@ -424,19 +424,68 @@ export interface InteractionActionResponse {
   favorite_count: number;
 }
 
+export type CommentSort = "hot" | "latest";
+export type CommentStatus = 1 | 2 | 3;
+
 export interface Comment {
   id: number;
   video_id: number;
   user_id: number;
   user_nickname: string;
   user_avatar_url: string;
+  root_comment_id: number;
+  reply_to_comment_id: number;
+  reply_to_user_id: number;
+  reply_to_user_nickname: string;
+  reply_to_user_avatar_url: string;
   content: string;
+  status: CommentStatus;
+  deleted: boolean;
+  reply_count: number;
+  reply_previews: Comment[];
+  like_count: number;
+  liked: boolean;
+  can_delete: boolean;
+  hot_score: number;
   created_at: string;
-  /** 仅创建评论的响应中返回（视频最新评论数） */
   comment_count?: number;
 }
 
-export type CommentListResponse = CursorPage<Comment>;
+export interface CommentListResponse extends CursorPage<Comment> {
+  comment_count: number;
+  sort: CommentSort;
+}
+
+export interface CommentReplyListResponse extends CursorPage<Comment> {
+  root_comment_id: number;
+  comment_count: number;
+}
+
+export interface CommentThreadContextResponse {
+  root: Comment;
+  replies: Comment[];
+  target: Comment;
+  next_cursor: string;
+  has_more: boolean;
+  comment_count: number;
+}
+
+export interface CommentLikeResponse {
+  comment_id: number;
+  root_comment_id: number;
+  liked: boolean;
+  like_count: number;
+}
+
+export interface DeleteCommentResponse {
+  comment_id: number;
+  status: CommentStatus;
+  comment_count: number;
+  root_reply_count: number;
+  deleted_count: number;
+  thread_hidden: boolean;
+  tombstone: boolean;
+}
 
 // ---------- 关系 ----------
 
@@ -467,16 +516,21 @@ export type RelationListResponse = CursorPage<RelationUser>;
 
 // ---------- 消息 ----------
 
+export type MessageType = "LIKE" | "COMMENT" | "COMMENT_REPLY" | "COMMENT_LIKE" | "FOLLOW" | "SYSTEM";
+
 export interface Message {
   id: number;
   user_id: number;
-  type: string;
+  type: MessageType;
   title: string;
   content: string;
   event_id?: string;
   actor_id?: number;
   actor_nickname?: string;
   actor_avatar_url?: string;
+  video_id?: number;
+  comment_id?: number;
+  root_comment_id?: number;
   is_read: boolean;
   created_at: string;
   read_at?: string;

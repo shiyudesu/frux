@@ -45,6 +45,7 @@ export interface VideoStageHandle {
 export interface VideoStageProps {
   item: FeedVideo;
   active: boolean;
+  showSocialActions?: boolean;
   liked: boolean;
   favorited: boolean;
   following: boolean;
@@ -75,6 +76,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   {
     item,
     active,
+    showSocialActions = true,
     liked,
     favorited,
     following,
@@ -670,6 +672,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       <FeedActionRail
         key={feedbackStateKey(item)}
         item={item}
+        showSocialActions={showSocialActions}
         liked={liked}
         favorited={favorited}
         following={following}

@@ -4,9 +4,18 @@ import { apiErrorMessage, isUnauthorized } from "../api/client";
 import { fetchMessages, markMessagesRead } from "../api/messages";
 import { PageMessage } from "../components/StatusMessages";
 import { useNavigate } from "../router";
+import type { NavigationTarget } from "../router";
 import { useSession, useUnreadCount } from "../session";
 import type { Message } from "../types";
-import { appendMessages, formatRelativeTime, messageActor, messageBody, messageIcon } from "../utils";
+import {
+  appendMessages,
+  formatRelativeTime,
+  messageActor,
+  messageBody,
+  messageDiscussionTarget,
+  messageIcon,
+  messageTypeLabel
+} from "../utils";
 import { Icon } from "../components/Icon";
 
 type MessagesState = "loading" | "loadingMore" | "ready" | "error";
@@ -56,8 +65,9 @@ export function MessagesPage() {
     loadMessages("", false);
   }, [loadMessages]);
 
-  async function markMessageRead(message: Message) {
-    if (!message || message.is_read || busyID || markingAll) return;
+  async function markMessageRead(message: Message): Promise<boolean> {
+    if (!message || message.is_read) return true;
+    if (busyID || markingAll) return false;
     setBusyID(message.id);
     try {
       await markMessagesRead(session.token, [message.id]);
@@ -65,16 +75,22 @@ export function MessagesPage() {
         current.map((item) => (item.id === message.id ? { ...item, is_read: true, read_at: new Date().toISOString() } : item))
       );
       await refreshUnreadCount();
+      return true;
     } catch (markError) {
       if (isUnauthorized(markError)) {
         session.clearAuth();
         navigate("/auth");
-        return;
+        return false;
       }
       setError(apiErrorMessage(markError, "已读操作失败"));
+      return false;
     } finally {
       setBusyID(0);
     }
+  }
+
+  async function activateMessage(message: Message) {
+    await activateMessageNavigation(message, markMessageRead, navigate);
   }
 
   async function markAllRead() {
@@ -132,12 +148,13 @@ export function MessagesPage() {
           {items.map((message) => {
             const actor = messageActor(message);
             const body = messageBody(message);
+            const target = messageDiscussionTarget(message);
             return (
               <button
-                className={`message-item ${message.is_read ? "read" : "unread"}`}
+                className={`message-item ${message.is_read ? "read" : "unread"} ${target ? "actionable" : "read-only"}`}
                 key={message.id}
                 type="button"
-                onClick={() => markMessageRead(message)}
+                onClick={() => activateMessage(message)}
                 disabled={busyID === message.id}
               >
                 <span className={`message-icon ${message.is_read ? "" : "active"}`}>
@@ -145,7 +162,7 @@ export function MessagesPage() {
                 </span>
                 <span className="message-copy">
                   <span className="message-title-row">
-                    <strong>{message.title}</strong>
+                    <strong><span className="message-type-label">{messageTypeLabel(message.type)}</span>{message.title}</strong>
                     <small>{formatRelativeTime(message.created_at)}</small>
                   </span>
                   {actor && (
@@ -156,7 +173,9 @@ export function MessagesPage() {
                   )}
                   <span className="message-content-text">{body}</span>
                 </span>
-                <span className="message-state">{message.is_read ? "已读" : busyID === message.id ? "处理中" : "未读"}</span>
+                <span className="message-state">
+                  {target ? "查看讨论" : message.is_read ? "已读" : busyID === message.id ? "处理中" : "未读"}
+                </span>
               </button>
             );
           })}
@@ -170,4 +189,17 @@ export function MessagesPage() {
       </section>
     </main>
   );
+}
+
+export async function activateMessageNavigation(
+  message: Message,
+  markRead: (message: Message) => Promise<boolean>,
+  navigate: (target: NavigationTarget) => void
+): Promise<boolean> {
+  const marked = await markRead(message);
+  if (!marked) return false;
+  const target = messageDiscussionTarget(message);
+  if (!target) return true;
+  navigate(target);
+  return true;
 }

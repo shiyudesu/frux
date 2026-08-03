@@ -87,17 +87,15 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
       }
     : undefined;
 
-  const {
-    commentsOpen,
-    setCommentsOpen,
-    comments,
-    commentsState,
-    commentsError,
-    commentText,
-    setCommentText,
-    loadComments,
-    submitComment
-  } = useComments({ current, updateCurrentItem });
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const handleCommentCountChange = useCallback((count: number) => {
+    if (current && count >= 0) updateCurrentItem(current.video_id, { comment_count: count });
+  }, [current, updateCurrentItem]);
+  const comments = useComments({
+    videoID: current?.video_id || 0,
+    enabled: commentsOpen,
+    onCommentCountChange: handleCommentCountChange
+  });
 
   feedUICallbacksRef.current = {
     resetSwipe: cancelSwipe,
@@ -503,16 +501,10 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
       <FeedDetailsPanel
         item={current}
         open={commentsOpen}
-        value={commentText}
-        onChange={setCommentText}
         onClose={closeCommentsWithFocus}
-        onSubmit={submitComment}
         user={session.user || emptyProfile}
         count={current?.comment_count || 0}
         comments={comments}
-        state={commentsState}
-        error={commentsError}
-        onRetry={loadComments}
         authenticated={Boolean(session.token && session.user)}
         onOpenUser={(profile) => openPublicProfile(profile, navigate)}
       />

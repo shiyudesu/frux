@@ -1,7 +1,12 @@
 // 互动域 API：关注/粉丝列表、关注、点赞、收藏、评论。
 import type {
   Comment,
+  CommentLikeResponse,
   CommentListResponse,
+  CommentReplyListResponse,
+  CommentSort,
+  CommentThreadContextResponse,
+  DeleteCommentResponse,
   FollowResponse,
   FollowStateResponse,
   InteractionActionResponse,
@@ -96,19 +101,93 @@ export function fetchFollowState(token: string, targetUserID: number): Promise<F
   return apiRequest<FollowStateResponse>(`/api/users/me/following/${targetUserID}`, { token });
 }
 
-export function fetchComments(videoID: number): Promise<CommentListResponse> {
-  return apiRequest<CommentListResponse>(`/api/videos/${videoID}/comments?limit=50`);
+export function fetchComments(
+  videoID: number,
+  sort: CommentSort = "hot",
+  cursor = "",
+  limit = 20,
+  token = ""
+): Promise<CommentListResponse> {
+  const params = new URLSearchParams({ sort, limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return apiRequest<CommentListResponse>(`/api/videos/${videoID}/comments?${params.toString()}`, { token });
 }
 
-export function createComment(token: string, videoID: number, content: string): Promise<Comment> {
+export function fetchCommentReplies(
+  rootCommentID: number,
+  cursor = "",
+  limit = 20,
+  token = ""
+): Promise<CommentReplyListResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return apiRequest<CommentReplyListResponse>(`/api/comments/${rootCommentID}/replies?${params.toString()}`, { token });
+}
+
+export function fetchCommentThread(
+  commentID: number,
+  limit = 20,
+  token = ""
+): Promise<CommentThreadContextResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return apiRequest<CommentThreadContextResponse>(`/api/comments/${commentID}/thread?${params.toString()}`, { token });
+}
+
+export function createComment(
+  token: string,
+  videoID: number,
+  content: string,
+  idempotencyKey = createCommentOperationKey("root", videoID)
+): Promise<Comment> {
   return apiRequest<Comment>(`/api/videos/${videoID}/comments`, {
     method: "POST",
     token,
-    headers: {
-      "Idempotency-Key": `web-comment-${videoID}-${Date.now()}`
-    },
-    body: {
-      content
-    }
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: { content }
   });
+}
+
+export function createCommentReply(
+  token: string,
+  videoID: number,
+  targetCommentID: number,
+  content: string,
+  idempotencyKey = createCommentOperationKey("reply", targetCommentID)
+): Promise<Comment> {
+  return apiRequest<Comment>(`/api/videos/${videoID}/comments/${targetCommentID}/replies`, {
+    method: "POST",
+    token,
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: { content }
+  });
+}
+
+export function setCommentLike(
+  token: string,
+  commentID: number,
+  liked: boolean,
+  idempotencyKey = createCommentOperationKey(liked ? "like" : "unlike", commentID)
+): Promise<CommentLikeResponse> {
+  return apiRequest<CommentLikeResponse>(`/api/comments/${commentID}/like`, {
+    method: liked ? "PUT" : "DELETE",
+    token,
+    headers: { "Idempotency-Key": idempotencyKey }
+  });
+}
+
+export function deleteComment(
+  token: string,
+  commentID: number,
+  idempotencyKey = createCommentOperationKey("delete", commentID)
+): Promise<DeleteCommentResponse> {
+  return apiRequest<DeleteCommentResponse>(`/api/comments/${commentID}`, {
+    method: "DELETE",
+    token,
+    headers: { "Idempotency-Key": idempotencyKey }
+  });
+}
+
+export function createCommentOperationKey(kind: string, targetID: number): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `web-comment-${kind}-${targetID}-${Date.now()}-${random}`.slice(0, 128);
 }

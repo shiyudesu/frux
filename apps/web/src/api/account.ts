@@ -74,6 +74,10 @@ export function fetchUserVideos(userID: number, limit = 24): Promise<VideoListRe
   return apiRequest<VideoListResponse>(`/api/users/${userID}/videos?limit=${limit}`);
 }
 
+export function fetchVideo(videoID: number): Promise<Video> {
+  return apiRequest<Video>(`/api/videos/${videoID}`);
+}
+
 export function createVideo(token: string, body: CreateVideoRequest, idempotencyKey: string): Promise<Video> {
   return apiRequest<Video>("/api/videos", {
     method: "POST",

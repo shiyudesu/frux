@@ -4,7 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { DEFAULT_PLAYBACK_CONFIG, PUBLIC_PROFILE_KEY, image } from "./constants";
 import type { IconName } from "./components/Icon";
 import { playbackNetworkType, readFeedPreloadEnvironment } from "./feedPreload";
-import type { Route } from "./router";
+import type { Route, VideoDiscussionNavigation } from "./router";
 import {
   parseStoredPublicProfiles,
   type Comment,
@@ -295,6 +295,10 @@ export function messageIcon(type: string): IconName {
       return "heart";
     case "COMMENT":
       return "comment";
+    case "COMMENT_REPLY":
+      return "reply";
+    case "COMMENT_LIKE":
+      return "heart";
     case "FOLLOW":
       return "user-plus";
     case "SYSTEM":
@@ -302,6 +306,42 @@ export function messageIcon(type: string): IconName {
     default:
       return "bell";
   }
+}
+
+export function messageTypeLabel(type: string): string {
+  switch (String(type || "").toUpperCase()) {
+    case "COMMENT":
+      return "新评论";
+    case "COMMENT_REPLY":
+      return "新回复";
+    case "COMMENT_LIKE":
+      return "评论获赞";
+    case "LIKE":
+      return "视频获赞";
+    case "FOLLOW":
+      return "新增关注";
+    case "SYSTEM":
+      return "系统通知";
+    default:
+      return "消息";
+  }
+}
+
+export function messageDiscussionTarget(message: Message): VideoDiscussionNavigation | null {
+  if (!["COMMENT", "COMMENT_REPLY", "COMMENT_LIKE"].includes(message.type)) return null;
+  const videoID = positiveMessageID(message.video_id);
+  const rootID = positiveMessageID(message.root_comment_id || message.comment_id);
+  const commentID = positiveMessageID(message.comment_id || message.root_comment_id);
+  if (!videoID || !rootID || !commentID) return null;
+  return {
+    route: `/videos/${videoID}`,
+    comment: rootID,
+    highlight: commentID
+  };
+}
+
+function positiveMessageID(value: number | undefined): number {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : 0;
 }
 
 // ---------- 消息列表合并 ----------

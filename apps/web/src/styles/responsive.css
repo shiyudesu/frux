@@ -52,6 +52,10 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .video-detail-page {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 38vw);
+  }
+
   .details-scrim {
     position: absolute;
     z-index: 29;
@@ -323,9 +327,45 @@
     grid-template-columns: 30px minmax(0, 1fr) 44px;
   }
 
-  .comment-form button {
+  .comment-form > button,
+  .comment-composer-footer > button {
     width: 44px;
     height: 44px;
+  }
+
+  .comment-actions button,
+  .comment-thread-controls button,
+  .comment-delete-menu summary {
+    min-height: 44px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .comment-delete-menu summary {
+    min-width: 44px;
+  }
+
+  .comment-sort button {
+    min-height: 38px;
+  }
+
+  .video-detail-page {
+    display: block;
+    overflow-y: auto;
+    padding: 0;
+  }
+
+  .video-detail-stage {
+    width: 100%;
+    height: min(62dvh, calc(100vw * 16 / 9));
+    min-height: 280px;
+  }
+
+  .video-detail-discussion {
+    min-height: 70dvh;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
   }
 
   .profile-page,

@@ -8,6 +8,7 @@ import { ActionButton } from "./ActionButton";
 
 interface FeedActionRailProps {
   item: FeedVideo;
+  showSocialActions?: boolean;
   liked: boolean;
   favorited: boolean;
   following: boolean;
@@ -28,6 +29,7 @@ export function feedbackStateKey(item: Pick<FeedVideo, "video_id">): string {
 
 export function FeedActionRail({
   item,
+  showSocialActions = true,
   liked,
   favorited,
   following,
@@ -60,32 +62,36 @@ export function FeedActionRail({
   const showRecommendationFeedback = item.feed_scene === "recommend" && Boolean(onRecommendationFeedback);
   return (
     <div className="action-rail" data-ui="action-rail">
-      <div className="rail-author-group">
-        <button
-          className="rail-author"
-          type="button"
-          onClick={() => onOpenAuthor(profileFromFeedItem(item))}
-          aria-label={`查看 ${item.author} 的主页`}
-        >
-          <img src={item.avatar_url || image.creator} alt="" />
-        </button>
-        <button
-          aria-label={ownVideo ? "本人作品" : following ? "取消关注" : "关注作者"}
-          className={`rail-follow ${following ? "active" : ""}`}
-          type="button"
-          disabled={followBusy || ownVideo}
-          onClick={onFollow}
-        >
-          {ownVideo ? "我" : followBusy ? "…" : following ? "✓" : "+"}
-        </button>
-      </div>
-      <ActionButton
-        icon="heart"
-        label={formatMetric(item.like_count)}
-        ariaLabel={liked ? "取消点赞" : "点赞"}
-        active={liked}
-        onClick={onLike}
-      />
+      {showSocialActions && (
+        <>
+          <div className="rail-author-group">
+            <button
+              className="rail-author"
+              type="button"
+              onClick={() => onOpenAuthor(profileFromFeedItem(item))}
+              aria-label={`查看 ${item.author} 的主页`}
+            >
+              <img src={item.avatar_url || image.creator} alt="" />
+            </button>
+            <button
+              aria-label={ownVideo ? "本人作品" : following ? "取消关注" : "关注作者"}
+              className={`rail-follow ${following ? "active" : ""}`}
+              type="button"
+              disabled={followBusy || ownVideo}
+              onClick={onFollow}
+            >
+              {ownVideo ? "我" : followBusy ? "…" : following ? "✓" : "+"}
+            </button>
+          </div>
+          <ActionButton
+            icon="heart"
+            label={formatMetric(item.like_count)}
+            ariaLabel={liked ? "取消点赞" : "点赞"}
+            active={liked}
+            onClick={onLike}
+          />
+        </>
+      )}
       <ActionButton
         icon="comment"
         label={formatMetric(item.comment_count)}
@@ -94,27 +100,31 @@ export function FeedActionRail({
         buttonRef={commentButtonRef}
         onClick={onComment}
       />
-      <ActionButton
-        icon="bookmark"
-        label={formatMetric(item.favorite_count)}
-        ariaLabel={favorited ? "取消收藏" : "收藏"}
-        active={favorited}
-        onClick={onFavorite}
-      />
-      <ActionButton icon="share" label="分享" ariaLabel="分享视频" compact />
-      <div className="rail-more">
-        <ActionButton icon="more" label="" ariaLabel="更多操作" compact onClick={() => setMoreOpen((open) => !open)} />
-        {moreOpen && showRecommendationFeedback && (
-          <div className="recommendation-feedback-menu" role="menu" aria-label="推荐反馈">
-            <p role="status" aria-live="polite">
-              {feedbackState === "loading" ? "正在提交反馈…" : feedbackState === "success" ? "反馈已提交" : feedbackError}
-            </p>
-            <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("not_interested")}>不感兴趣</button>
-            <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("reduce_author")}>减少此作者内容</button>
-            <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("already_seen")}>已看过</button>
+      {showSocialActions && (
+        <>
+          <ActionButton
+            icon="bookmark"
+            label={formatMetric(item.favorite_count)}
+            ariaLabel={favorited ? "取消收藏" : "收藏"}
+            active={favorited}
+            onClick={onFavorite}
+          />
+          <ActionButton icon="share" label="分享" ariaLabel="分享视频" compact />
+          <div className="rail-more">
+            <ActionButton icon="more" label="" ariaLabel="更多操作" compact onClick={() => setMoreOpen((open) => !open)} />
+            {moreOpen && showRecommendationFeedback && (
+              <div className="recommendation-feedback-menu" role="menu" aria-label="推荐反馈">
+                <p role="status" aria-live="polite">
+                  {feedbackState === "loading" ? "正在提交反馈…" : feedbackState === "success" ? "反馈已提交" : feedbackError}
+                </p>
+                <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("not_interested")}>不感兴趣</button>
+                <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("reduce_author")}>减少此作者内容</button>
+                <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("already_seen")}>已看过</button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

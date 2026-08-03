@@ -29,6 +29,7 @@ export type IconName =
   | "plus"
   | "publish"
   | "refresh"
+  | "reply"
   | "save"
   | "search"
   | "send"
@@ -202,6 +203,8 @@ function renderIcon(name: IconName, filled: boolean) {
       );
     case "refresh":
       return <path d="M19 7v5h-5M5.4 17a8 8 0 0 0 13.2-3M5 17v-5h5M18.6 7A8 8 0 0 0 5.4 10" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />;
+    case "reply":
+      return <path d="m10 7-6 5 6 5v-3c4.8 0 7.8 1.4 10 4-1-5.8-4.2-9-10-9V7Z" fill={fill} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.7" />;
     case "save":
       return (
         <>

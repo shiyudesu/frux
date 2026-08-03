@@ -56,4 +56,27 @@ describe("VideoStage", () => {
     expect(html).toContain("portrait-media");
     expect(html).not.toContain('data-ui="player-controls"');
   });
+
+  it("can expose playback and comments without unknown social viewer state", () => {
+    const html = renderToStaticMarkup(
+      <VideoStage
+        {...callbacks}
+        item={baseItem}
+        active
+        showSocialActions={false}
+        liked={false}
+        favorited={false}
+        following={false}
+        followBusy={false}
+        ownVideo={false}
+        followError=""
+        playerPreferences={{ quality: "auto", playbackRate: 1, continuousPlay: false }}
+      />
+    );
+
+    expect(html).toContain('aria-label="查看评论"');
+    expect(html).not.toContain('aria-label="点赞"');
+    expect(html).not.toContain('aria-label="收藏"');
+    expect(html).not.toContain('aria-label="关注作者"');
+  });
 });

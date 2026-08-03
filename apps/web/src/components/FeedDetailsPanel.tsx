@@ -1,26 +1,20 @@
 import { useEffect, useState } from "react";
-import { image } from "../constants";
+import type { CommentsController } from "../hooks/useComments";
 import { useDialogFocus } from "../hooks/useDialogFocus";
-import type { CommentsState } from "../hooks/useComments";
-import type { Comment, FeedVideo, SessionUser } from "../types";
+import type { FeedVideo, SessionUser } from "../types";
 import type { PublicProfileInput } from "../utils";
-import { formatMetric, formatRelativeTime, profileFromComment, profileFromFeedItem } from "../utils";
-import { CommentMessage } from "./StatusMessages";
+import { formatMetric } from "../utils";
 import { Icon } from "./Icon";
+import { ThreadedComments } from "./ThreadedComments";
+import { VideoDetails } from "./VideoDetails";
 
 interface FeedDetailsPanelProps {
   item: FeedVideo | null;
   open: boolean;
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: () => void;
   onClose: () => void;
   user: SessionUser;
   count: number;
-  comments: Comment[];
-  state: CommentsState;
-  error: string;
-  onRetry: () => void;
+  comments: CommentsController;
   authenticated: boolean;
   onOpenUser: (profile: PublicProfileInput) => void;
 }
@@ -30,16 +24,10 @@ type DetailsTab = "details" | "comments";
 export function FeedDetailsPanel({
   item,
   open,
-  value,
-  onChange,
-  onSubmit,
   onClose,
   user,
   count,
   comments,
-  state,
-  error,
-  onRetry,
   authenticated,
   onOpenUser
 }: FeedDetailsPanelProps) {
@@ -50,9 +38,7 @@ export function FeedDetailsPanel({
   const closeButtonRef = useDialogFocus<HTMLButtonElement>(open && modalViewport, onClose);
 
   useEffect(() => {
-    if (open) {
-      setTab("comments");
-    }
+    if (open) setTab("comments");
   }, [item?.video_id, open]);
 
   useEffect(() => {
@@ -104,76 +90,18 @@ export function FeedDetailsPanel({
             <Icon name="close" size={20} />
           </button>
         </header>
-
         {tab === "details" ? (
-          <div className="details-content">
-            {item && (
-              <>
-                <button
-                  className="details-author"
-                  type="button"
-                  onClick={() => onOpenUser(profileFromFeedItem(item))}
-                >
-                  <img src={item.avatar_url || image.creator} alt="" />
-                  <span>
-                    <strong>@{item.author}</strong>
-                    <small>查看作者主页</small>
-                  </span>
-                </button>
-                <h2>{item.title}</h2>
-                <p>{item.description || "作者暂未填写视频简介。"}</p>
-                <div className="details-metrics" aria-label="视频互动统计">
-                  <span><strong>{formatMetric(item.like_count)}</strong>点赞</span>
-                  <span><strong>{formatMetric(item.comment_count)}</strong>评论</span>
-                  <span><strong>{formatMetric(item.favorite_count)}</strong>收藏</span>
-                </div>
-              </>
-            )}
-          </div>
+          <VideoDetails item={item} onOpenUser={onOpenUser} />
         ) : (
-          <>
-            <div className="comment-list">
-              {state === "loading" && <CommentMessage icon="hourglass" title="正在加载评论" />}
-              {state === "error" && (
-                <CommentMessage icon="alert" title={error || "评论加载失败"} action="重试" onAction={onRetry} />
-              )}
-              {state === "ready" && comments.length === 0 && <CommentMessage icon="comment" title="暂无评论" />}
-              {comments.map((comment) => (
-                <article className="comment-item" key={comment.id}>
-                  <button className="comment-user-button" type="button" onClick={() => onOpenUser(profileFromComment(comment))}>
-                    <img src={comment.user_avatar_url || image.currentUser} alt="" />
-                  </button>
-                  <div>
-                    <div className="comment-meta">
-                      <button type="button" onClick={() => onOpenUser(profileFromComment(comment))}>
-                        {comment.user_nickname || `用户_${comment.user_id}`}
-                      </button>
-                      <span>{formatRelativeTime(comment.created_at)}</span>
-                    </div>
-                    <p>{comment.content}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-            <form
-              className="comment-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                onSubmit();
-              }}
-            >
-              <img src={user.avatar_url || image.currentUser} alt="" />
-              <input
-                value={value}
-                onChange={(event) => onChange(event.target.value)}
-                placeholder={authenticated ? "留下你的评论" : "登录后评论"}
-                disabled={!authenticated}
-              />
-              <button aria-label="发送评论" disabled={!authenticated || !value.trim()}>
-                <Icon name="send" size={18} />
-              </button>
-            </form>
-          </>
+          <ThreadedComments
+            controller={comments}
+            authenticated={authenticated}
+            user={user}
+            canModerateThreads={Boolean(
+              item && user.id > 0 && (item.author_id === user.id || user.role === "admin")
+            )}
+            onOpenUser={onOpenUser}
+          />
         )}
       </aside>
     </>

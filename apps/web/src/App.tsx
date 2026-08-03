@@ -7,7 +7,15 @@ import { MessagesPage } from "./pages/MessagesPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { PublicProfilePage } from "./pages/PublicProfilePage";
 import { UploadPage } from "./pages/UploadPage";
-import { RouterProvider, feedSceneFromRoute, publicUserIDFromRoute, useNavigate, useRoute } from "./router";
+import { VideoDetailPage } from "./pages/VideoDetailPage";
+import {
+  RouterProvider,
+  feedSceneFromRoute,
+  publicUserIDFromRoute,
+  useNavigate,
+  useRoute,
+  useVideoDiscussionRoute
+} from "./router";
 import { SessionProvider, useSession } from "./session";
 
 export default function App() {
@@ -22,6 +30,7 @@ export default function App() {
 
 function AppRoutes() {
   const route = useRoute();
+  const videoDiscussion = useVideoDiscussionRoute();
   const navigate = useNavigate();
   const { token, user } = useSession();
 
@@ -47,6 +56,14 @@ function AppRoutes() {
     return (
       <AppShell>
         <ProfilePage />
+      </AppShell>
+    );
+  }
+
+  if (videoDiscussion) {
+    return (
+      <AppShell>
+        <VideoDetailPage {...videoDiscussion} />
       </AppShell>
     );
   }

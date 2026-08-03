@@ -15,12 +15,29 @@ export type Route =
   | "/profile"
   | "/upload"
   | "/messages"
-  | `/users/${number}`;
+  | `/users/${number}`
+  | `/videos/${number}`;
+
+export interface VideoDiscussionNavigation {
+  route: `/videos/${number}`;
+  comment?: number;
+  highlight?: number;
+}
+
+export type NavigationTarget = Route | VideoDiscussionNavigation;
+
+export interface VideoDiscussionRoute {
+  videoID: number;
+  commentID: number;
+  highlightID: number;
+  invalidFocus: boolean;
+}
 
 export function normalizeRoute(pathname: string): Route {
   if (pathname === "/login") return "/auth";
   if (pathname === "/me") return "/profile";
   if (/^\/users\/\d+$/.test(pathname)) return pathname as `/users/${number}`;
+  if (/^\/videos\/\d+$/.test(pathname)) return pathname as `/videos/${number}`;
   switch (pathname) {
     case "/":
       return "/";
@@ -56,29 +73,61 @@ export function publicUserIDFromRoute(route: Route): number {
   return Number(match[1]);
 }
 
+export function videoDiscussionFromLocation(route: Route, search: string): VideoDiscussionRoute | null {
+  const match = /^\/videos\/(\d+)$/.exec(route);
+  if (!match) return null;
+  const videoID = positiveInteger(match[1]);
+  const params = new URLSearchParams(search);
+  const rawComment = params.get("comment");
+  const rawHighlight = params.get("highlight");
+  const commentID = rawComment === null ? 0 : positiveInteger(rawComment);
+  const highlightID = rawHighlight === null ? 0 : positiveInteger(rawHighlight);
+  const invalidFocus =
+    (rawComment !== null && commentID === 0) ||
+    (rawHighlight !== null && highlightID === 0) ||
+    (highlightID > 0 && commentID === 0);
+  return { videoID, commentID, highlightID, invalidFocus };
+}
+
+export function videoDiscussionPath(target: VideoDiscussionNavigation): string {
+  const params = new URLSearchParams();
+  if (target.comment && target.comment > 0) params.set("comment", String(Math.round(target.comment)));
+  if (target.highlight && target.highlight > 0) params.set("highlight", String(Math.round(target.highlight)));
+  const search = params.toString();
+  return search ? `${target.route}?${search}` : target.route;
+}
+
 interface RouterValue {
   route: Route;
-  navigate: (path: Route) => void;
+  search: string;
+  navigate: (path: NavigationTarget) => void;
 }
 
 const RouterContext = createContext<RouterValue | null>(null);
 
 export function RouterProvider({ children }: { children: ReactNode }) {
   const [route, setRoute] = useState<Route>(() => normalizeRoute(window.location.pathname));
+  const [search, setSearch] = useState(() => window.location.search);
 
   useEffect(() => {
-    const handlePopState = () => setRoute(normalizeRoute(window.location.pathname));
+    const handlePopState = () => {
+      setRoute(normalizeRoute(window.location.pathname));
+      setSearch(window.location.search);
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const navigate = useCallback((path: Route) => {
-    const nextPath = normalizeRoute(path);
-    window.history.pushState({}, "", nextPath);
+  const navigate = useCallback((target: NavigationTarget) => {
+    const authoredPath = typeof target === "string" ? target : videoDiscussionPath(target);
+    const url = new URL(authoredPath, window.location.origin);
+    const nextPath = normalizeRoute(url.pathname);
+    window.history.pushState({}, "", `${nextPath}${url.search}`);
     setRoute(nextPath);
+    setSearch(url.search);
   }, []);
 
-  const value = useMemo(() => ({ route, navigate }), [route, navigate]);
+  const value = useMemo(() => ({ route, search, navigate }), [navigate, route, search]);
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;
 }
 
@@ -94,6 +143,17 @@ export function useRoute(): Route {
   return useRouterValue().route;
 }
 
-export function useNavigate(): (path: Route) => void {
+export function useNavigate(): (path: NavigationTarget) => void {
   return useRouterValue().navigate;
+}
+
+export function useVideoDiscussionRoute(): VideoDiscussionRoute | null {
+  const { route, search } = useRouterValue();
+  return useMemo(() => videoDiscussionFromLocation(route, search), [route, search]);
+}
+
+function positiveInteger(value: string): number {
+  if (!/^\d+$/.test(value)) return 0;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
