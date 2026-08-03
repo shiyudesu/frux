@@ -224,7 +224,7 @@ export function useComments({
       const items = data.items || [];
       if (
         data.sort !== sort ||
-        items.some((item) => item.video_id !== videoID || item.root_comment_id !== 0)
+        items.some((item) => item.video_id !== videoID || Number(item.root_comment_id || 0) !== 0)
       ) {
         throw new Error("invalid root page context");
       }
@@ -1036,7 +1036,7 @@ export function isValidCommentThreadContext(
   if (
     root.id <= 0 ||
     root.video_id !== videoID ||
-    root.root_comment_id !== 0 ||
+    Number(root.root_comment_id || 0) !== 0 ||
     target.id !== targetCommentID ||
     target.video_id !== videoID ||
     (requestedRootID > 0 && root.id !== requestedRootID)
@@ -1044,8 +1044,8 @@ export function isValidCommentThreadContext(
     return false;
   }
   const targetBelongsToRoot = target.id === root.id
-    ? target.root_comment_id === 0
-    : target.root_comment_id === root.id;
+    ? Number(target.root_comment_id || 0) === 0
+    : Number(target.root_comment_id || 0) === root.id;
   if (!targetBelongsToRoot) return false;
   return (data.replies || []).every((reply) =>
     reply.video_id === videoID && reply.root_comment_id === root.id

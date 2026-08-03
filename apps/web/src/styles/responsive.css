@@ -323,14 +323,23 @@
     transform: translateY(0);
   }
 
-  .comment-form {
+  .comment-form:not(.threaded) {
     grid-template-columns: 30px minmax(0, 1fr) 44px;
   }
 
-  .comment-form > button,
-  .comment-composer-footer > button {
+  .comment-form > button {
     width: 44px;
     height: 44px;
+  }
+
+  .comment-composer-footer > button {
+    width: auto;
+    min-width: 76px;
+    height: 44px;
+    flex: 0 0 auto;
+    padding-right: 12px;
+    padding-left: 12px;
+    white-space: nowrap;
   }
 
   .comment-actions button,

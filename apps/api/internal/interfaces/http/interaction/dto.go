@@ -23,9 +23,9 @@ type commentResponse struct {
 	UserID               int64             `json:"user_id,omitempty"`
 	UserNickname         string            `json:"user_nickname"`
 	UserAvatarURL        string            `json:"user_avatar_url"`
-	RootCommentID        int64             `json:"root_comment_id,omitempty"`
-	ReplyToCommentID     int64             `json:"reply_to_comment_id,omitempty"`
-	ReplyToUserID        int64             `json:"reply_to_user_id,omitempty"`
+	RootCommentID        int64             `json:"root_comment_id"`
+	ReplyToCommentID     int64             `json:"reply_to_comment_id"`
+	ReplyToUserID        int64             `json:"reply_to_user_id"`
 	ReplyToUserNickname  string            `json:"reply_to_user_nickname,omitempty"`
 	ReplyToUserAvatarURL string            `json:"reply_to_user_avatar_url,omitempty"`
 	Content              string            `json:"content"`
