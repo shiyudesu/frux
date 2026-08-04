@@ -10,6 +10,7 @@ import {
   reportVideoViewEvent as reportVideoViewEventRequest
 } from "../api/feed";
 import { favoriteVideo, followUser, likeVideo, loadFollowingMap } from "../api/social";
+import { setWatchLater } from "../api/library";
 import { FeedDetailsPanel } from "../components/FeedDetailsPanel";
 import { FeedMessage } from "../components/StatusMessages";
 import { VideoStage } from "../components/VideoStage";
@@ -308,6 +309,19 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     }
   }, [current, following, navigate, requireLogin, session, swipe]);
 
+  const addWatchLater = useCallback(async () => {
+    if (!current || swipe || !requireLogin()) return;
+    try {
+      await setWatchLater(session.token, current.video_id, true);
+    } catch (error) {
+      if (isUnauthorized(error)) {
+        session.clearAuth();
+        navigate("/auth");
+      }
+      throw error;
+    }
+  }, [current, navigate, requireLogin, session, swipe]);
+
   const openComments = useCallback(() => {
     setCommentsOpen(true);
   }, [setCommentsOpen]);
@@ -425,6 +439,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onUpdatePlayerPreferences={updatePlayerPreferences}
                     onContinuousAdvance={handleContinuousAdvance}
                     onRecommendationFeedback={submitRecommendationFeedback}
+                    watchLaterAction={session.token ? "add" : undefined}
+                    onWatchLater={session.token ? addWatchLater : undefined}
                   />
                 </div>
               )}
@@ -457,6 +473,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   onUpdatePlayerPreferences={updatePlayerPreferences}
                   onContinuousAdvance={handleContinuousAdvance}
                   onRecommendationFeedback={submitRecommendationFeedback}
+                  watchLaterAction={session.token ? "add" : undefined}
+                  onWatchLater={session.token ? addWatchLater : undefined}
                 />
               </div>
               {swipe?.direction === "next" && visibleNext && (
@@ -487,6 +505,8 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onUpdatePlayerPreferences={updatePlayerPreferences}
                     onContinuousAdvance={handleContinuousAdvance}
                     onRecommendationFeedback={submitRecommendationFeedback}
+                    watchLaterAction={session.token ? "add" : undefined}
+                    onWatchLater={session.token ? addWatchLater : undefined}
                   />
                 </div>
               )}

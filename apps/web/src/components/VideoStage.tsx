@@ -70,6 +70,8 @@ export interface VideoStageProps {
   onUpdatePlayerPreferences: (patch: Partial<PlayerPreferences>) => void;
   onContinuousAdvance: () => void;
   onRecommendationFeedback?: (item: FeedVideo, type: RecommendationFeedbackType) => Promise<void>;
+  watchLaterAction?: "add" | "remove";
+  onWatchLater?: () => Promise<void>;
 }
 
 export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function VideoStage(
@@ -100,7 +102,9 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     playerPreferences,
     onUpdatePlayerPreferences,
     onContinuousAdvance,
-    onRecommendationFeedback
+    onRecommendationFeedback,
+    watchLaterAction,
+    onWatchLater
   },
   ref
 ) {
@@ -685,6 +689,8 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
         onFollow={onFollow}
         onOpenAuthor={onOpenAuthor}
         onRecommendationFeedback={onRecommendationFeedback ? (type) => onRecommendationFeedback(item, type) : undefined}
+        watchLaterAction={watchLaterAction}
+        onWatchLater={onWatchLater}
       />
       {showVideo && (
         <FeedPlayerControls

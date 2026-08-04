@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from "react";
-import { buildRecommendationContext, fetchFeedPage } from "../api/feed";
 import {
   clearWatchHistory,
   deleteWatchHistoryItem,
@@ -11,7 +10,6 @@ import {
 } from "../api/library";
 import { apiErrorMessage } from "../api/client";
 import type { AsyncState, LibraryVideoItem, LibraryVideoPage, ProfilePrimaryTab, Video } from "../types";
-import { createFeedRequestID, createFeedSessionID } from "../utils";
 
 export type ProfileLibraryTab = Exclude<ProfilePrimaryTab, "works">;
 
@@ -23,6 +21,9 @@ export interface ProfileLibraryState {
   error: string;
 }
 
+export type LibraryActionType = "like" | "favorite";
+export type LibraryActionCounts = Partial<Pick<Video, "like_count" | "favorite_count">>;
+
 function createState(): ProfileLibraryState {
   return { items: [], nextCursor: "", hasMore: false, state: "idle", error: "" };
 }
@@ -32,82 +33,57 @@ function compareLibraryItems(left: LibraryVideoItem, right: LibraryVideoItem): n
   return updatedOrder || right.video.id - left.video.id;
 }
 
-function feedVideo(item: {
-  video_id: number;
-  author_id: number;
-  title: string;
-  description: string;
-  media_url: string;
-  cover_url: string;
-  like_count: number;
-  comment_count: number;
-  favorite_count: number;
-  published_at: string;
-}): Video {
-  return {
-    id: item.video_id,
-    author_id: item.author_id,
-    title: item.title,
-    description: item.description,
-    media_url: item.media_url,
-    cover_url: item.cover_url,
-    status: 2,
-    visibility: "public",
-    like_count: item.like_count,
-    comment_count: item.comment_count,
-    favorite_count: item.favorite_count,
-    published_at: item.published_at,
-    created_at: item.published_at,
-    updated_at: item.published_at
-  };
+export function restoreLibraryItem(
+  items: LibraryVideoItem[],
+  item: LibraryVideoItem
+): LibraryVideoItem[] {
+  if (items.some((candidate) => candidate.video.id === item.video.id)) return items;
+  return [...items, item].sort(compareLibraryItems);
+}
+
+export function upsertLibraryItem(
+  items: LibraryVideoItem[],
+  item: LibraryVideoItem
+): LibraryVideoItem[] {
+  return [
+    item,
+    ...items.filter((candidate) => candidate.video.id !== item.video.id)
+  ].sort(compareLibraryItems);
+}
+
+export function appendLibraryItems(
+  current: LibraryVideoItem[],
+  incoming: LibraryVideoItem[]
+): LibraryVideoItem[] {
+  const seen = new Set(current.map((item) => item.video.id));
+  const appended = incoming.filter((item) => {
+    if (seen.has(item.video.id)) return false;
+    seen.add(item.video.id);
+    return true;
+  });
+  return appended.length > 0 ? [...current, ...appended] : current;
 }
 
 export function useProfileLibrary(token: string) {
   const [tabs, setTabs] = useState<Record<ProfileLibraryTab, ProfileLibraryState>>({
-    recommend: createState(),
     likes: createState(),
     favorites: createState(),
     history: createState(),
     watchLater: createState()
   });
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
   const requests = useRef<Record<ProfileLibraryTab, number>>({
-    recommend: 0,
     likes: 0,
     favorites: 0,
     history: 0,
     watchLater: 0
   });
+  const loadingTabs = useRef(new Set<ProfileLibraryTab>());
   const historyClearing = useRef(false);
-  const recommendationSessionID = useRef(createFeedSessionID("profile"));
-  const recommendationRequestID = useRef("");
 
   const requestPage = useCallback(
     async (tab: ProfileLibraryTab, cursor: string): Promise<LibraryVideoPage> => {
-      if (tab === "recommend") {
-        if (!cursor || !recommendationRequestID.current) {
-          recommendationRequestID.current = createFeedRequestID("profile");
-        }
-        const data = await fetchFeedPage(
-          "recommend",
-          token,
-          cursor,
-          buildRecommendationContext({
-            requestID: recommendationRequestID.current,
-            sessionID: recommendationSessionID.current,
-            refreshIndex: requests.current.recommend,
-            recentVideoIDs: [],
-            currentVideoID: 0
-          })
-        );
-        return {
-          items: (data.items || []).map((item) => ({
-            video: feedVideo(item),
-            updated_at: item.published_at
-          })),
-          next_cursor: data.next_cursor,
-          has_more: data.has_more
-        };
-      }
       if (tab === "likes") return fetchLikedVideos(token, cursor);
       if (tab === "favorites") return fetchFavoriteVideos(token, cursor);
       if (tab === "history") return fetchWatchHistory(token, cursor);
@@ -119,13 +95,17 @@ export function useProfileLibrary(token: string) {
   const loadTab = useCallback(
     async (tab: ProfileLibraryTab, reset = false) => {
       if (!token || (tab === "history" && historyClearing.current)) return;
-      const current = tabs[tab];
+      if (loadingTabs.current.has(tab)) return;
+      const current = tabsRef.current[tab];
+      if (!reset && current.state !== "idle" && !current.hasMore) return;
       const shouldReset = reset || current.state === "idle";
+      const showInitialLoading = shouldReset || current.items.length === 0;
       const requestID = requests.current[tab] + 1;
       requests.current[tab] = requestID;
+      loadingTabs.current.add(tab);
       setTabs((state) => ({
         ...state,
-        [tab]: { ...state[tab], state: shouldReset ? "loading" : "loadingMore", error: "" }
+        [tab]: { ...state[tab], state: showInitialLoading ? "loading" : "loadingMore", error: "" }
       }));
       try {
         const data = await requestPage(tab, shouldReset ? "" : current.nextCursor);
@@ -133,7 +113,7 @@ export function useProfileLibrary(token: string) {
         setTabs((state) => ({
           ...state,
           [tab]: {
-            items: shouldReset ? data.items || [] : [...state[tab].items, ...(data.items || [])],
+            items: shouldReset ? data.items || [] : appendLibraryItems(state[tab].items, data.items || []),
             nextCursor: data.next_cursor || "",
             hasMore: Boolean(data.has_more && data.next_cursor),
             state: "ready",
@@ -146,24 +126,27 @@ export function useProfileLibrary(token: string) {
           ...state,
           [tab]: { ...state[tab], state: "error", error: apiErrorMessage(error, "内容加载失败") }
         }));
+      } finally {
+        if (requests.current[tab] === requestID) loadingTabs.current.delete(tab);
       }
     },
-    [requestPage, tabs, token]
+    [requestPage, token]
   );
 
   const ensureTab = useCallback(
     (tab: ProfileLibraryTab) => {
-      if (tabs[tab].state === "idle") void loadTab(tab, true);
+      if (tabsRef.current[tab].state === "idle") void loadTab(tab, true);
     },
-    [loadTab, tabs]
+    [loadTab]
   );
 
   const removeWatchLater = useCallback(
-    async (videoID: number) => {
-      if (!token) return;
-      const previous = tabs.watchLater.items;
+    async (videoID: number): Promise<boolean> => {
+      if (!token) return false;
+      const previous = tabsRef.current.watchLater.items;
       const removedItem = previous.find((item) => item.video.id === videoID) || null;
-      if (!removedItem) return;
+      if (!removedItem) return true;
+      const shouldContinue = previous.length === 1 && tabsRef.current.watchLater.hasMore;
       setTabs((state) => ({
         ...state,
         watchLater: {
@@ -173,21 +156,107 @@ export function useProfileLibrary(token: string) {
       }));
       try {
         await setWatchLater(token, videoID, false);
+        if (shouldContinue) {
+          await loadTab("watchLater");
+        }
+        return true;
       } catch (error) {
         setTabs((state) => ({
           ...state,
           watchLater: {
             ...state.watchLater,
-            items: state.watchLater.items.some((item) => item.video.id === videoID)
-              ? state.watchLater.items
-              : [...state.watchLater.items, removedItem].sort(compareLibraryItems),
+            items: restoreLibraryItem(state.watchLater.items, removedItem),
             error: apiErrorMessage(error, "移除稍后再看失败")
           }
         }));
+        return false;
       }
     },
-    [tabs.watchLater.items, token]
+    [loadTab, token]
   );
+
+  const addWatchLater = useCallback((item: LibraryVideoItem, updatedAt: string) => {
+    const current = tabsRef.current.watchLater;
+    if (current.state !== "ready") {
+      requests.current.watchLater += 1;
+      loadingTabs.current.delete("watchLater");
+      setTabs((state) => ({ ...state, watchLater: createState() }));
+      return;
+    }
+    const existing = current.items.some((candidate) => candidate.video.id === item.video.id);
+    if (current.hasMore && !existing) {
+      requests.current.watchLater += 1;
+      loadingTabs.current.delete("watchLater");
+      setTabs((state) => ({ ...state, watchLater: createState() }));
+      return;
+    }
+    const nextItem = { ...item, updated_at: updatedAt };
+    setTabs((state) => ({
+      ...state,
+      watchLater: {
+        ...state.watchLater,
+        items: upsertLibraryItem(state.watchLater.items, nextItem),
+        error: ""
+      }
+    }));
+  }, []);
+
+  const applyVideoAction = useCallback((
+    source: ProfileLibraryTab,
+    videoID: number,
+    action: LibraryActionType,
+    active: boolean,
+    counts: LibraryActionCounts
+  ) => {
+    const membershipTab: ProfileLibraryTab = action === "like" ? "likes" : "favorites";
+    const membership = tabsRef.current[membershipTab];
+    const membershipContains = membership.items.some((item) => item.video.id === videoID);
+    const invalidateMembership =
+      membership.state !== "idle"
+      && membershipTab !== source
+      && (
+        membership.state !== "ready"
+        || (active && !membershipContains)
+      );
+    if (invalidateMembership) {
+      requests.current[membershipTab] += 1;
+      loadingTabs.current.delete(membershipTab);
+    }
+    const continueMembershipPage =
+      !active
+      && membershipTab === source
+      && membership.items.length === 1
+      && membership.hasMore;
+    setTabs((state) => {
+      const next = { ...state };
+      for (const tab of Object.keys(state) as ProfileLibraryTab[]) {
+        if (invalidateMembership && tab === membershipTab) {
+          next[tab] = createState();
+          continue;
+        }
+        const removeMembership = !active && tab === membershipTab;
+        next[tab] = {
+          ...state[tab],
+          items: state[tab].items
+            .filter((item) => !removeMembership || item.video.id !== videoID)
+            .map((item) => item.video.id === videoID
+              ? {
+                  ...item,
+                  video: {
+                    ...item.video,
+                    liked: action === "like" ? active : item.video.liked,
+                    favorited: action === "favorite" ? active : item.video.favorited,
+                    like_count: counts.like_count ?? item.video.like_count,
+                    favorite_count: counts.favorite_count ?? item.video.favorite_count
+                  }
+                }
+              : item)
+        };
+      }
+      return next;
+    });
+    if (continueMembershipPage) void loadTab(membershipTab);
+  }, [loadTab]);
 
   const removeHistory = useCallback(
     async (videoID: number) => {
@@ -208,6 +277,7 @@ export function useProfileLibrary(token: string) {
     if (!token) return;
     const requestID = requests.current.history + 1;
     requests.current.history = requestID;
+    loadingTabs.current.delete("history");
     historyClearing.current = true;
     setTabs((state) => ({
       ...state,
@@ -231,5 +301,31 @@ export function useProfileLibrary(token: string) {
     }
   }, [token]);
 
-  return { tabs, ensureTab, loadTab, removeWatchLater, removeHistory, clearHistory };
+  const patchVideo = useCallback((
+    tab: ProfileLibraryTab,
+    videoID: number,
+    patch: Partial<Video>
+  ) => {
+    setTabs((state) => ({
+      ...state,
+      [tab]: {
+        ...state[tab],
+        items: state[tab].items.map((item) => item.video.id === videoID
+          ? { ...item, video: { ...item.video, ...patch } }
+          : item)
+      }
+    }));
+  }, []);
+
+  return {
+    tabs,
+    ensureTab,
+    loadTab,
+    patchVideo,
+    applyVideoAction,
+    addWatchLater,
+    removeWatchLater,
+    removeHistory,
+    clearHistory
+  };
 }

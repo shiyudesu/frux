@@ -47,6 +47,12 @@ type ProfileSetting struct {
 	FavoriteVisibility string
 }
 
+type AuthorDisplay struct {
+	UserID    int64
+	Nickname  string
+	AvatarURL string
+}
+
 // NormalizeAccount returns the canonical identity used for storage and lookup.
 func NormalizeAccount(account string) string {
 	return strings.ToLower(strings.TrimSpace(account))
@@ -128,6 +134,14 @@ func RestoreUserWithDashboard(id int64, account, password, nickname, avatarURL, 
 		PrivateWorkCount:  clampCount(privateWorkCount),
 		ReceivedLikeCount: clampCount(receivedLikeCount),
 		CollectionCount:   clampCount(collectionCount),
+	}
+}
+
+func RestoreAuthorDisplay(userID int64, nickname, avatarURL string) *AuthorDisplay {
+	return &AuthorDisplay{
+		UserID:    userID,
+		Nickname:  strings.TrimSpace(nickname),
+		AvatarURL: strings.TrimSpace(avatarURL),
 	}
 }
 

@@ -32,6 +32,12 @@ type userWithStatModel struct {
 	CollectionCount   int
 }
 
+type authorDisplayModel struct {
+	ID        int64
+	Nickname  string
+	AvatarURL string
+}
+
 // New 创建账号仓储实现，db 由路由装配阶段注入。
 func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
@@ -118,6 +124,25 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainaccount.Use
 	}
 
 	return restoreUser(user), nil
+}
+
+func (r *Repository) BatchGetAuthorDisplays(ctx context.Context, userIDs []int64) (map[int64]*domainaccount.AuthorDisplay, error) {
+	result := make(map[int64]*domainaccount.AuthorDisplay, len(userIDs))
+	if len(userIDs) == 0 {
+		return result, nil
+	}
+	var models []authorDisplayModel
+	if err := r.db.WithContext(ctx).
+		Table("account").
+		Select("id, nickname, avatar_url").
+		Where("id IN ?", userIDs).
+		Scan(&models).Error; err != nil {
+		return nil, err
+	}
+	for _, model := range models {
+		result[model.ID] = domainaccount.RestoreAuthorDisplay(model.ID, model.Nickname, model.AvatarURL)
+	}
+	return result, nil
 }
 
 // UpdateProfile 只更新资料字段，账号、密码、角色等字段保持原值。

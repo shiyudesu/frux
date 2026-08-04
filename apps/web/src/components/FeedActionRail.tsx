@@ -21,6 +21,8 @@ interface FeedActionRailProps {
   onFollow: () => void;
   onOpenAuthor: (profile: PublicProfileInput) => void;
   onRecommendationFeedback?: (type: RecommendationFeedbackType) => Promise<void>;
+  watchLaterAction?: "add" | "remove";
+  onWatchLater?: () => Promise<void>;
 }
 
 export function feedbackStateKey(item: Pick<FeedVideo, "video_id">): string {
@@ -41,11 +43,15 @@ export function FeedActionRail({
   onFavorite,
   onFollow,
   onOpenAuthor,
-  onRecommendationFeedback
+  onRecommendationFeedback,
+  watchLaterAction,
+  onWatchLater
 }: FeedActionRailProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [feedbackState, setFeedbackState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [feedbackError, setFeedbackError] = useState("");
+  const [watchLaterState, setWatchLaterState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [watchLaterError, setWatchLaterError] = useState("");
   const submitFeedback = async (type: RecommendationFeedbackType) => {
     if (!onRecommendationFeedback || feedbackState === "loading") return;
     setFeedbackState("loading");
@@ -60,6 +66,20 @@ export function FeedActionRail({
     }
   };
   const showRecommendationFeedback = item.feed_scene === "recommend" && Boolean(onRecommendationFeedback);
+  const showWatchLater = Boolean(watchLaterAction && onWatchLater);
+  const submitWatchLater = async () => {
+    if (!onWatchLater || watchLaterState === "loading") return;
+    setWatchLaterState("loading");
+    setWatchLaterError("");
+    try {
+      await onWatchLater();
+      setWatchLaterState("success");
+      if (watchLaterAction === "remove") setMoreOpen(false);
+    } catch (error) {
+      setWatchLaterState("error");
+      setWatchLaterError(error instanceof Error ? error.message : "操作未完成，请重试");
+    }
+  };
   return (
     <div className="action-rail" data-ui="action-rail">
       {showSocialActions && (
@@ -112,14 +132,36 @@ export function FeedActionRail({
           <ActionButton icon="share" label="分享" ariaLabel="分享视频" compact />
           <div className="rail-more">
             <ActionButton icon="more" label="" ariaLabel="更多操作" compact onClick={() => setMoreOpen((open) => !open)} />
-            {moreOpen && showRecommendationFeedback && (
-              <div className="recommendation-feedback-menu" role="menu" aria-label="推荐反馈">
+            {moreOpen && (showRecommendationFeedback || showWatchLater) && (
+              <div className="recommendation-feedback-menu" role="menu" aria-label="更多操作">
                 <p role="status" aria-live="polite">
-                  {feedbackState === "loading" ? "正在提交反馈…" : feedbackState === "success" ? "反馈已提交" : feedbackError}
+                  {watchLaterState === "loading"
+                    ? "正在更新稍后再看…"
+                    : watchLaterState === "success"
+                      ? watchLaterAction === "remove" ? "已移除" : "已加入稍后再看"
+                      : watchLaterError || (
+                        feedbackState === "loading"
+                          ? "正在提交反馈…"
+                          : feedbackState === "success" ? "反馈已提交" : feedbackError
+                      )}
                 </p>
-                <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("not_interested")}>不感兴趣</button>
-                <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("reduce_author")}>减少此作者内容</button>
-                <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("already_seen")}>已看过</button>
+                {showWatchLater && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={watchLaterState === "loading"}
+                    onClick={() => void submitWatchLater()}
+                  >
+                    {watchLaterAction === "remove" ? "从稍后再看移除" : "稍后再看"}
+                  </button>
+                )}
+                {showRecommendationFeedback && (
+                  <>
+                    <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("not_interested")}>不感兴趣</button>
+                    <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("reduce_author")}>减少此作者内容</button>
+                    <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("already_seen")}>已看过</button>
+                  </>
+                )}
               </div>
             )}
           </div>

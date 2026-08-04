@@ -65,6 +65,12 @@ type ActionVideo struct {
 	UpdatedAt time.Time
 }
 
+type ViewerActionState struct {
+	VideoID   int64
+	Liked     bool
+	Favorited bool
+}
+
 // ActionStateSnapshot is the durable baseline used when Redis has no action state.
 type ActionStateSnapshot struct {
 	Exists                  bool

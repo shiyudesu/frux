@@ -37,6 +37,8 @@ type Cursor struct {
 type VideoCard struct {
 	ID              int64
 	AuthorID        int64
+	AuthorNickname  string
+	AuthorAvatarURL string
 	Title           string
 	Description     string
 	MediaURL        string
@@ -51,6 +53,20 @@ type VideoCard struct {
 	UpdatedAt       time.Time
 	MediaStatus     string
 	PlaybackSources []domainmedia.PlaybackSource
+	Liked           bool
+	Favorited       bool
+}
+
+type AuthorDisplay struct {
+	AuthorID  int64
+	Nickname  string
+	AvatarURL string
+}
+
+type ViewerActionState struct {
+	VideoID   int64
+	Liked     bool
+	Favorited bool
 }
 
 type VideoCandidate struct {
@@ -121,4 +137,12 @@ type VideoCatalog interface {
 
 type PrivacyReader interface {
 	LikedVideosPublic(ctx context.Context, userID int64) (bool, error)
+}
+
+type AuthorDisplayReader interface {
+	BatchGetAuthorDisplays(ctx context.Context, authorIDs []int64) (map[int64]*AuthorDisplay, error)
+}
+
+type ViewerActionReader interface {
+	BatchGetViewerActionStates(ctx context.Context, viewerID int64, videoIDs []int64) (map[int64]*ViewerActionState, error)
 }

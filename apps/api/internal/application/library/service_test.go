@@ -55,6 +55,42 @@ func (s privacyStub) LikedVideosPublic(context.Context, int64) (bool, error) {
 	return bool(s), nil
 }
 
+type authorReaderStub struct {
+	displays  map[int64]*domainlibrary.AuthorDisplay
+	calls     int
+	requested [][]int64
+}
+
+func (s *authorReaderStub) BatchGetAuthorDisplays(_ context.Context, authorIDs []int64) (map[int64]*domainlibrary.AuthorDisplay, error) {
+	s.calls++
+	s.requested = append(s.requested, append([]int64(nil), authorIDs...))
+	return s.displays, nil
+}
+
+type viewerActionReaderStub struct {
+	states    map[int64]*domainlibrary.ViewerActionState
+	calls     int
+	viewerIDs []int64
+	requested [][]int64
+}
+
+func (s *viewerActionReaderStub) BatchGetViewerActionStates(_ context.Context, viewerID int64, videoIDs []int64) (map[int64]*domainlibrary.ViewerActionState, error) {
+	s.calls++
+	s.viewerIDs = append(s.viewerIDs, viewerID)
+	s.requested = append(s.requested, append([]int64(nil), videoIDs...))
+	return s.states, nil
+}
+
+func newTestService(
+	actions domainlibrary.ActionIndex,
+	history domainlibrary.HistoryIndex,
+	watchLater domainlibrary.WatchLaterRepository,
+	videos domainlibrary.VideoCatalog,
+	privacy domainlibrary.PrivacyReader,
+) *Service {
+	return New(actions, history, watchLater, videos, privacy, &authorReaderStub{}, &viewerActionReaderStub{})
+}
+
 type watchLaterStub struct {
 	facts     map[int64]*domainlibrary.WatchLater
 	listCalls int
@@ -153,7 +189,7 @@ func TestLikedLibraryReplenishesAndPaginates(t *testing.T) {
 		2: {ID: 2, Visibility: "public"},
 		1: {ID: 1, Visibility: "public"},
 	}
-	service := New(actionIndexStub{items: candidates}, &historyStub{}, &watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}}, catalogStub{cards: cards}, privacyStub(true))
+	service := newTestService(actionIndexStub{items: candidates}, &historyStub{}, &watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}}, catalogStub{cards: cards}, privacyStub(true))
 	page, err := service.ListLiked(context.Background(), 7, "", 2)
 	if err != nil {
 		t.Fatalf("list liked: %v", err)
@@ -178,7 +214,7 @@ func TestHistoryLibraryReplenishesUnreadableCandidates(t *testing.T) {
 			VideoID: id, UpdatedAt: now.Add(time.Duration(id) * time.Second), LastWatchMs: int(id) * 100,
 		})
 	}
-	service := New(
+	service := newTestService(
 		actionIndexStub{},
 		history,
 		&watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}},
@@ -213,7 +249,7 @@ func TestWatchLaterLibraryReplenishesUnreadableCandidates(t *testing.T) {
 			CreatedAt: now, UpdatedAt: now.Add(time.Duration(id) * time.Second),
 		}
 	}
-	service := New(
+	service := newTestService(
 		actionIndexStub{},
 		&historyStub{},
 		watchLater,
@@ -247,7 +283,7 @@ func TestHistoryLibraryLimitsReplenishmentRounds(t *testing.T) {
 			VideoID: id, UpdatedAt: now.Add(time.Duration(id) * time.Second), LastWatchMs: int(id) * 100,
 		})
 	}
-	service := New(
+	service := newTestService(
 		actionIndexStub{},
 		history,
 		&watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}},
@@ -284,7 +320,7 @@ func TestWatchLaterLibraryLimitsReplenishmentRounds(t *testing.T) {
 			CreatedAt: now, UpdatedAt: now.Add(time.Duration(id) * time.Second),
 		}
 	}
-	service := New(
+	service := newTestService(
 		actionIndexStub{},
 		&historyStub{},
 		watchLater,
@@ -315,12 +351,17 @@ func TestWatchLaterLibraryLimitsReplenishmentRounds(t *testing.T) {
 func TestPublicLikesPrivacyAndWatchLaterIdempotency(t *testing.T) {
 	watchLater := &watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}}
 	catalog := catalogStub{cards: map[int64]*domainlibrary.VideoCard{10: {ID: 10, Visibility: "public"}}}
-	privateService := New(actionIndexStub{}, &historyStub{}, watchLater, catalog, privacyStub(false))
+	authors := &authorReaderStub{}
+	viewerActions := &viewerActionReaderStub{}
+	privateService := New(actionIndexStub{}, &historyStub{}, watchLater, catalog, privacyStub(false), authors, viewerActions)
 	if _, err := privateService.ListPublicLiked(context.Background(), 7, "", 20); !errors.Is(err, domainlibrary.ErrLikedVideosPrivate) {
 		t.Fatalf("expected privacy error, got %v", err)
 	}
+	if authors.calls != 0 || viewerActions.calls != 0 {
+		t.Fatalf("private likes triggered hydration reads: authors=%d viewer_actions=%d", authors.calls, viewerActions.calls)
+	}
 
-	service := New(actionIndexStub{}, &historyStub{}, watchLater, catalog, privacyStub(true))
+	service := newTestService(actionIndexStub{}, &historyStub{}, watchLater, catalog, privacyStub(true))
 	first, err := service.SetWatchLater(context.Background(), 7, 10, true)
 	if err != nil {
 		t.Fatalf("add watch later: %v", err)
@@ -339,7 +380,7 @@ func TestPublicLikesPrivacyAndWatchLaterIdempotency(t *testing.T) {
 
 func TestHistoryDeletionOnlyMutatesProjection(t *testing.T) {
 	history := &historyStub{items: []domainlibrary.HistoryCandidate{{VideoID: 1}, {VideoID: 2}}}
-	service := New(actionIndexStub{}, history, &watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}}, catalogStub{}, privacyStub(true))
+	service := newTestService(actionIndexStub{}, history, &watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}}, catalogStub{}, privacyStub(true))
 	if err := service.DeleteHistory(context.Background(), 7, 1); err != nil {
 		t.Fatalf("delete history: %v", err)
 	}
@@ -348,5 +389,93 @@ func TestHistoryDeletionOnlyMutatesProjection(t *testing.T) {
 	}
 	if err := service.ClearHistory(context.Background(), 7); err != nil || len(history.items) != 0 {
 		t.Fatalf("clear history: err=%v items=%+v", err, history.items)
+	}
+}
+
+func TestLibraryHydratesQueueCardsWithBoundedBatchReaders(t *testing.T) {
+	now := time.Now().UTC()
+	sourceCards := map[int64]*domainlibrary.VideoCard{
+		3: {ID: 3, AuthorID: 9, Visibility: "public", AuthorNickname: "stale", Liked: true},
+		2: {ID: 2, AuthorID: 9, Visibility: "public", AuthorAvatarURL: "stale", Favorited: true},
+	}
+	authors := &authorReaderStub{displays: map[int64]*domainlibrary.AuthorDisplay{
+		9: {AuthorID: 9, Nickname: "author", AvatarURL: "avatar"},
+	}}
+	viewerActions := &viewerActionReaderStub{states: map[int64]*domainlibrary.ViewerActionState{
+		3: {VideoID: 3, Liked: true},
+		2: {VideoID: 2, Favorited: true},
+	}}
+	service := New(
+		actionIndexStub{items: []domainlibrary.VideoCandidate{
+			{VideoID: 3, UpdatedAt: now.Add(3 * time.Second)},
+			{VideoID: 2, UpdatedAt: now.Add(2 * time.Second)},
+		}},
+		&historyStub{},
+		&watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}},
+		catalogStub{cards: sourceCards},
+		privacyStub(true),
+		authors,
+		viewerActions,
+	)
+
+	page, err := service.ListLiked(context.Background(), 7, "", 2)
+	if err != nil {
+		t.Fatalf("list liked: %v", err)
+	}
+	if len(page.Items) != 2 || page.Items[0].Video.ID != 3 || page.Items[1].Video.ID != 2 {
+		t.Fatalf("library order changed during hydration: %+v", page.Items)
+	}
+	first, second := page.Items[0].Video, page.Items[1].Video
+	if first.AuthorNickname != "author" || first.AuthorAvatarURL != "avatar" || !first.Liked || first.Favorited {
+		t.Fatalf("unexpected first queue card: %+v", first)
+	}
+	if second.AuthorNickname != "author" || second.AuthorAvatarURL != "avatar" || second.Liked || !second.Favorited {
+		t.Fatalf("unexpected second queue card: %+v", second)
+	}
+	if authors.calls != 1 || len(authors.requested) != 1 || len(authors.requested[0]) != 1 || authors.requested[0][0] != 9 {
+		t.Fatalf("author display reads were not one bounded batch: calls=%d requested=%v", authors.calls, authors.requested)
+	}
+	if viewerActions.calls != 1 || len(viewerActions.viewerIDs) != 1 || viewerActions.viewerIDs[0] != 7 ||
+		len(viewerActions.requested) != 1 || len(viewerActions.requested[0]) != 2 ||
+		viewerActions.requested[0][0] != 3 || viewerActions.requested[0][1] != 2 {
+		t.Fatalf("viewer action reads were not one bounded batch: calls=%d viewers=%v requested=%v", viewerActions.calls, viewerActions.viewerIDs, viewerActions.requested)
+	}
+	if sourceCards[3].AuthorNickname != "stale" || !sourceCards[3].Liked ||
+		sourceCards[2].AuthorAvatarURL != "stale" || !sourceCards[2].Favorited {
+		t.Fatalf("catalog cards were mutated with viewer hydration: %+v", sourceCards)
+	}
+}
+
+func TestPublicLibraryHydratesAuthorWithoutViewerActionRead(t *testing.T) {
+	now := time.Now().UTC()
+	authors := &authorReaderStub{displays: map[int64]*domainlibrary.AuthorDisplay{
+		9: {AuthorID: 9, Nickname: "public author", AvatarURL: "public avatar"},
+	}}
+	viewerActions := &viewerActionReaderStub{}
+	service := New(
+		actionIndexStub{items: []domainlibrary.VideoCandidate{{VideoID: 3, UpdatedAt: now}}},
+		&historyStub{},
+		&watchLaterStub{facts: map[int64]*domainlibrary.WatchLater{}},
+		catalogStub{cards: map[int64]*domainlibrary.VideoCard{
+			3: {ID: 3, AuthorID: 9, Visibility: "public", Liked: true, Favorited: true},
+		}},
+		privacyStub(true),
+		authors,
+		viewerActions,
+	)
+
+	page, err := service.ListPublicLiked(context.Background(), 42, "", 20)
+	if err != nil {
+		t.Fatalf("list public liked: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("unexpected public page: %+v", page)
+	}
+	card := page.Items[0].Video
+	if card.AuthorNickname != "public author" || card.AuthorAvatarURL != "public avatar" || card.Liked || card.Favorited {
+		t.Fatalf("anonymous public queue card leaked viewer state: %+v", card)
+	}
+	if authors.calls != 1 || viewerActions.calls != 0 {
+		t.Fatalf("unexpected public hydration calls: authors=%d viewer_actions=%d", authors.calls, viewerActions.calls)
 	}
 }

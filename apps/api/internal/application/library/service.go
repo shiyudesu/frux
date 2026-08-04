@@ -2,6 +2,7 @@ package applicationlibrary
 
 import (
 	domainlibrary "GCFeed/internal/domain/library"
+	domainmedia "GCFeed/internal/domain/media"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -14,11 +15,13 @@ const (
 )
 
 type Service struct {
-	actions    domainlibrary.ActionIndex
-	history    domainlibrary.HistoryIndex
-	watchLater domainlibrary.WatchLaterRepository
-	videos     domainlibrary.VideoCatalog
-	privacy    domainlibrary.PrivacyReader
+	actions       domainlibrary.ActionIndex
+	history       domainlibrary.HistoryIndex
+	watchLater    domainlibrary.WatchLaterRepository
+	videos        domainlibrary.VideoCatalog
+	privacy       domainlibrary.PrivacyReader
+	authors       domainlibrary.AuthorDisplayReader
+	viewerActions domainlibrary.ViewerActionReader
 }
 
 type Page struct {
@@ -27,8 +30,19 @@ type Page struct {
 	HasMore    bool
 }
 
-func New(actions domainlibrary.ActionIndex, history domainlibrary.HistoryIndex, watchLater domainlibrary.WatchLaterRepository, videos domainlibrary.VideoCatalog, privacy domainlibrary.PrivacyReader) *Service {
-	return &Service{actions: actions, history: history, watchLater: watchLater, videos: videos, privacy: privacy}
+func New(
+	actions domainlibrary.ActionIndex,
+	history domainlibrary.HistoryIndex,
+	watchLater domainlibrary.WatchLaterRepository,
+	videos domainlibrary.VideoCatalog,
+	privacy domainlibrary.PrivacyReader,
+	authors domainlibrary.AuthorDisplayReader,
+	viewerActions domainlibrary.ViewerActionReader,
+) *Service {
+	return &Service{
+		actions: actions, history: history, watchLater: watchLater, videos: videos,
+		privacy: privacy, authors: authors, viewerActions: viewerActions,
+	}
 }
 
 func (s *Service) ListLiked(ctx context.Context, userID int64, cursor string, limit int) (*Page, error) {
@@ -91,7 +105,7 @@ func (s *Service) listActions(ctx context.Context, ownerID, viewerID int64, acti
 			if card == nil {
 				continue
 			}
-			items = append(items, &domainlibrary.VideoItem{Video: card, UpdatedAt: candidate.UpdatedAt})
+			items = append(items, &domainlibrary.VideoItem{Video: cloneVideoCard(card), UpdatedAt: candidate.UpdatedAt})
 			if len(items) == limit {
 				hasMore = index < len(candidates)-1 || len(candidates) == requestLimit
 				filled = true
@@ -110,7 +124,7 @@ func (s *Service) listActions(ctx context.Context, ownerID, viewerID int64, acti
 	if hasMore && cursor != nil {
 		next = encodeCursor(cursor)
 	}
-	return &Page{Items: items, NextCursor: next, HasMore: hasMore}, nil
+	return s.hydratePage(ctx, viewerID, &Page{Items: items, NextCursor: next, HasMore: hasMore})
 }
 
 func (s *Service) ListHistory(ctx context.Context, userID int64, cursorValue string, limit int) (*Page, error) {
@@ -146,7 +160,7 @@ func (s *Service) ListHistory(ctx context.Context, userID int64, cursorValue str
 			candidate := candidates[index]
 			cursor = &domainlibrary.Cursor{UpdatedAt: candidate.UpdatedAt, VideoID: candidate.VideoID}
 			if card := cards[candidate.VideoID]; card != nil {
-				items = append(items, &domainlibrary.VideoItem{Video: card, UpdatedAt: candidate.UpdatedAt, History: &candidate})
+				items = append(items, &domainlibrary.VideoItem{Video: cloneVideoCard(card), UpdatedAt: candidate.UpdatedAt, History: &candidate})
 			}
 			if len(items) == limit {
 				hasMore = index < len(candidates)-1 || len(candidates) == requestLimit
@@ -167,7 +181,7 @@ func (s *Service) ListHistory(ctx context.Context, userID int64, cursorValue str
 	if hasMore && cursor != nil {
 		next = encodeCursor(cursor)
 	}
-	return &Page{Items: items, NextCursor: next, HasMore: hasMore}, nil
+	return s.hydratePage(ctx, userID, &Page{Items: items, NextCursor: next, HasMore: hasMore})
 }
 
 func (s *Service) DeleteHistory(ctx context.Context, userID, videoID int64) error {
@@ -236,7 +250,7 @@ func (s *Service) ListWatchLater(ctx context.Context, userID int64, cursorValue 
 		for index, candidate := range candidates {
 			cursor = &domainlibrary.Cursor{UpdatedAt: candidate.UpdatedAt, VideoID: candidate.VideoID}
 			if card := cards[candidate.VideoID]; card != nil {
-				items = append(items, &domainlibrary.VideoItem{Video: card, UpdatedAt: candidate.UpdatedAt})
+				items = append(items, &domainlibrary.VideoItem{Video: cloneVideoCard(card), UpdatedAt: candidate.UpdatedAt})
 			}
 			if len(items) == limit {
 				hasMore = index < len(candidates)-1 || len(candidates) == requestLimit
@@ -257,7 +271,77 @@ func (s *Service) ListWatchLater(ctx context.Context, userID int64, cursorValue 
 	if hasMore && cursor != nil {
 		next = encodeCursor(cursor)
 	}
-	return &Page{Items: items, NextCursor: next, HasMore: hasMore}, nil
+	return s.hydratePage(ctx, userID, &Page{Items: items, NextCursor: next, HasMore: hasMore})
+}
+
+func (s *Service) hydratePage(ctx context.Context, viewerID int64, page *Page) (*Page, error) {
+	if page == nil || len(page.Items) == 0 {
+		return page, nil
+	}
+	authorIDs := make([]int64, 0, len(page.Items))
+	videoIDs := make([]int64, 0, len(page.Items))
+	seenAuthors := make(map[int64]struct{}, len(page.Items))
+	seenVideos := make(map[int64]struct{}, len(page.Items))
+	for _, item := range page.Items {
+		if item == nil || item.Video == nil {
+			continue
+		}
+		if item.Video.ID > 0 {
+			if _, exists := seenVideos[item.Video.ID]; !exists {
+				seenVideos[item.Video.ID] = struct{}{}
+				videoIDs = append(videoIDs, item.Video.ID)
+			}
+		}
+		if item.Video.AuthorID > 0 {
+			if _, exists := seenAuthors[item.Video.AuthorID]; exists {
+				continue
+			}
+			seenAuthors[item.Video.AuthorID] = struct{}{}
+			authorIDs = append(authorIDs, item.Video.AuthorID)
+		}
+	}
+	authors := map[int64]*domainlibrary.AuthorDisplay{}
+	var err error
+	if len(authorIDs) > 0 {
+		authors, err = s.authors.BatchGetAuthorDisplays(ctx, authorIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	viewerActions := map[int64]*domainlibrary.ViewerActionState{}
+	if viewerID > 0 && len(videoIDs) > 0 {
+		viewerActions, err = s.viewerActions.BatchGetViewerActionStates(ctx, viewerID, videoIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, item := range page.Items {
+		if item == nil || item.Video == nil {
+			continue
+		}
+		if author := authors[item.Video.AuthorID]; author != nil {
+			item.Video.AuthorNickname = author.Nickname
+			item.Video.AuthorAvatarURL = author.AvatarURL
+		}
+		if state := viewerActions[item.Video.ID]; state != nil {
+			item.Video.Liked = state.Liked
+			item.Video.Favorited = state.Favorited
+		}
+	}
+	return page, nil
+}
+
+func cloneVideoCard(card *domainlibrary.VideoCard) *domainlibrary.VideoCard {
+	if card == nil {
+		return nil
+	}
+	cloned := *card
+	cloned.PlaybackSources = append([]domainmedia.PlaybackSource(nil), card.PlaybackSources...)
+	cloned.AuthorNickname = ""
+	cloned.AuthorAvatarURL = ""
+	cloned.Liked = false
+	cloned.Favorited = false
+	return &cloned
 }
 
 func replenishmentLimit(remaining int) int {

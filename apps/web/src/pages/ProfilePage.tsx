@@ -17,10 +17,12 @@ import { ProfileEditor } from "../components/ProfileEditor";
 import type { ProfileEditorValue } from "../components/ProfileEditor";
 import { RelationModal } from "../components/RelationModal";
 import { WorkViewer } from "../components/WorkViewer";
+import { CollectionQueueViewer } from "../components/CollectionQueueViewer";
 import { emptyProfile } from "../constants";
 import { useCreatorContent } from "../hooks/useCreatorContent";
 import type { CreatorFilters } from "../hooks/useCreatorContent";
 import { useProfileLibrary } from "../hooks/useProfileLibrary";
+import type { ProfileLibraryTab } from "../hooks/useProfileLibrary";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
 import type {
@@ -34,9 +36,8 @@ import type {
 
 type RelationState = "idle" | "loading" | "loadingMore" | "ready" | "error";
 
-const primaryTabs = [
+export const PROFILE_PRIMARY_TABS = [
   { id: "works", label: "作品" },
-  { id: "recommend", label: "推荐" },
   { id: "likes", label: "喜欢" },
   { id: "favorites", label: "收藏" },
   { id: "history", label: "观看历史" },
@@ -78,6 +79,7 @@ export function ProfilePage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIDs, setSelectedIDs] = useState<Set<number>>(new Set());
   const [selectedWork, setSelectedWork] = useState<Video | null>(null);
+  const [libraryQueue, setLibraryQueue] = useState<{ source: ProfileLibraryTab; videoID: number } | null>(null);
   const [editing, setEditing] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorMessage, setEditorMessage] = useState("");
@@ -433,7 +435,6 @@ export function ProfilePage() {
     if (primaryTab === "works") return null;
     const current = library.tabs[primaryTab];
     const labels: Record<typeof primaryTab, [string, string]> = {
-      recommend: ["暂无推荐内容", "推荐内容会在这里持续更新"],
       likes: ["暂无喜欢作品", "点赞过的作品会显示在这里"],
       favorites: ["暂无收藏作品", "收藏过的作品会显示在这里"],
       history: ["暂无观看历史", "观看过的作品会显示在这里"],
@@ -457,7 +458,7 @@ export function ProfilePage() {
         state={current.state}
         onLoadMore={() => void library.loadTab(primaryTab)}
         onRetry={() => void library.loadTab(primaryTab, true)}
-        onSelect={setSelectedWork}
+        onSelect={(video) => setLibraryQueue({ source: primaryTab, videoID: video.id })}
       />
     );
   }
@@ -474,7 +475,7 @@ export function ProfilePage() {
       <section className="profile-content">
         <ProfilePrimaryTabs
           active={primaryTab}
-          tabs={primaryTabs.map((tab) => tab.id === "works" ? { ...tab, count: baseUser.public_work_count } : tab)}
+          tabs={PROFILE_PRIMARY_TABS.map((tab) => tab.id === "works" ? { ...tab, count: baseUser.public_work_count } : tab)}
           actions={
             primaryTab === "history" && library.tabs.history.items.length > 0 ? (
               <button className="profile-manage-button" type="button" onClick={() => void library.clearHistory()}>
@@ -517,6 +518,21 @@ export function ProfilePage() {
         />
       )}
       {selectedWork && <WorkViewer video={selectedWork} onClose={() => setSelectedWork(null)} />}
+      {libraryQueue && (
+        <CollectionQueueViewer
+          source={libraryQueue.source}
+          sourceState={library.tabs[libraryQueue.source]}
+          selectedVideoID={libraryQueue.videoID}
+          onClose={() => setLibraryQueue(null)}
+          onLoadMore={() => void library.loadTab(libraryQueue.source)}
+          onPatchVideo={(videoID, patch) => library.patchVideo(libraryQueue.source, videoID, patch)}
+          onApplyVideoAction={(videoID, action, active, counts) => {
+            library.applyVideoAction(libraryQueue.source, videoID, action, active, counts);
+          }}
+          onAddWatchLater={library.addWatchLater}
+          onRemoveWatchLater={library.removeWatchLater}
+        />
+      )}
       {editing && (
         <ProfileEditor
           key={baseUser.id}

@@ -29,3 +29,7 @@ type Repository interface {
 	// UpdateProfileAndSetting 在一个持久化事务中更新资料和隐私设置；nil 表示不更新对应部分。
 	UpdateProfileAndSetting(ctx context.Context, profile *ProfileUpdate, setting *ProfileSettingUpdate) error
 }
+
+type AuthorDisplayReader interface {
+	BatchGetAuthorDisplays(ctx context.Context, userIDs []int64) (map[int64]*AuthorDisplay, error)
+}

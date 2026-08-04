@@ -8,6 +8,8 @@ import (
 type videoResponse struct {
 	ID              int64                        `json:"id"`
 	AuthorID        int64                        `json:"author_id"`
+	AuthorNickname  string                       `json:"author_nickname"`
+	AuthorAvatarURL string                       `json:"author_avatar_url"`
 	Title           string                       `json:"title"`
 	Description     string                       `json:"description"`
 	MediaURL        string                       `json:"media_url"`
@@ -22,6 +24,8 @@ type videoResponse struct {
 	UpdatedAt       time.Time                    `json:"updated_at"`
 	MediaStatus     string                       `json:"media_status"`
 	PlaybackSources []domainmedia.PlaybackSource `json:"playback_sources,omitempty"`
+	Liked           bool                         `json:"liked"`
+	Favorited       bool                         `json:"favorited"`
 }
 
 type historyMetadataResponse struct {

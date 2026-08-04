@@ -123,6 +123,8 @@ export interface StoredPublicProfile {
 export interface Video {
   id: number;
   author_id: number;
+  author_nickname?: string;
+  author_avatar_url?: string;
   title: string;
   description: string;
   media_url: string;
@@ -140,6 +142,8 @@ export interface Video {
   media_status?: MediaStatus;
   media_error_code?: string;
   playback_sources?: PlaybackSource[];
+  liked?: boolean;
+  favorited?: boolean;
 }
 
 export type MediaStatus = "legacy_ready" | "pending" | "processing" | "ready" | "failed";
@@ -158,7 +162,7 @@ export interface PlaybackSource {
 
 export type VideoVisibility = "public" | "private";
 export type CreatorWorkTab = "published" | "private" | "collections";
-export type ProfilePrimaryTab = "works" | "recommend" | "likes" | "favorites" | "history" | "watchLater";
+export type ProfilePrimaryTab = "works" | "likes" | "favorites" | "history" | "watchLater";
 export type PublicProfileTab = "works" | "likes" | "collections";
 export type BatchVideoAction = "make_public" | "make_private" | "delete";
 export type AsyncState = "idle" | "loading" | "loadingMore" | "ready" | "error" | "mutating";

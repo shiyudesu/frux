@@ -358,10 +358,12 @@ func TestCreatorManagementAPIFlow(t *testing.T) {
 }
 
 type librarySource struct {
-	items  []domainlibrary.VideoCandidate
-	cards  map[int64]*domainlibrary.VideoCard
-	public bool
-	watch  map[int64]*domainlibrary.WatchLater
+	items         []domainlibrary.VideoCandidate
+	cards         map[int64]*domainlibrary.VideoCard
+	authors       map[int64]*domainlibrary.AuthorDisplay
+	viewerActions map[int64]*domainlibrary.ViewerActionState
+	public        bool
+	watch         map[int64]*domainlibrary.WatchLater
 }
 
 func (s *librarySource) ListActionVideos(context.Context, int64, string, *domainlibrary.Cursor, int) ([]domainlibrary.VideoCandidate, error) {
@@ -391,6 +393,24 @@ func (s *librarySource) BatchGetReadable(_ context.Context, _ int64, ids []int64
 	return result, nil
 }
 func (s *librarySource) LikedVideosPublic(context.Context, int64) (bool, error) { return s.public, nil }
+func (s *librarySource) BatchGetAuthorDisplays(_ context.Context, authorIDs []int64) (map[int64]*domainlibrary.AuthorDisplay, error) {
+	result := map[int64]*domainlibrary.AuthorDisplay{}
+	for _, authorID := range authorIDs {
+		if display := s.authors[authorID]; display != nil {
+			result[authorID] = display
+		}
+	}
+	return result, nil
+}
+func (s *librarySource) BatchGetViewerActionStates(_ context.Context, _ int64, videoIDs []int64) (map[int64]*domainlibrary.ViewerActionState, error) {
+	result := map[int64]*domainlibrary.ViewerActionState{}
+	for _, videoID := range videoIDs {
+		if state := s.viewerActions[videoID]; state != nil {
+			result[videoID] = state
+		}
+	}
+	return result, nil
+}
 
 func TestLibraryAPIAuthenticationAndPrivacy(t *testing.T) {
 	router := server.New()
@@ -398,10 +418,18 @@ func TestLibraryAPIAuthenticationAndPrivacy(t *testing.T) {
 	auth := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 	source := &librarySource{
 		items: []domainlibrary.VideoCandidate{{VideoID: 1, UpdatedAt: time.Now().UTC()}},
-		cards: map[int64]*domainlibrary.VideoCard{1: {ID: 1, Visibility: domainvideo.VisibilityPublic}},
+		cards: map[int64]*domainlibrary.VideoCard{
+			1: {ID: 1, AuthorID: 42, Visibility: domainvideo.VisibilityPublic},
+		},
+		authors: map[int64]*domainlibrary.AuthorDisplay{
+			42: {AuthorID: 42, Nickname: "library author", AvatarURL: "library avatar"},
+		},
+		viewerActions: map[int64]*domainlibrary.ViewerActionState{
+			1: {VideoID: 1, Liked: true, Favorited: true},
+		},
 		watch: map[int64]*domainlibrary.WatchLater{},
 	}
-	handler := interfaceshttplibrary.New(applicationlibrary.New(source, source, source, source, source))
+	handler := interfaceshttplibrary.New(applicationlibrary.New(source, source, source, source, source, source, source))
 	users := router.Group("/api/users")
 	users.GET("/me/liked-videos", auth, handler.ListLiked)
 	users.GET("/:userId/liked-videos", handler.ListPublicLiked)
@@ -416,6 +444,24 @@ func TestLibraryAPIAuthenticationAndPrivacy(t *testing.T) {
 	public := performJSONRequest(router, http.MethodGet, "/api/users/42/liked-videos", "", "")
 	requireStatus(t, public, http.StatusOK)
 	token := signTestToken(t, jwtManager, 42)
+	personal := performJSONRequest(router, http.MethodGet, "/api/users/me/liked-videos", "", token)
+	requireStatus(t, personal, http.StatusOK)
+	var personalPage struct {
+		Items []struct {
+			Video struct {
+				AuthorNickname  string `json:"author_nickname"`
+				AuthorAvatarURL string `json:"author_avatar_url"`
+				Liked           bool   `json:"liked"`
+				Favorited       bool   `json:"favorited"`
+			} `json:"video"`
+		} `json:"items"`
+	}
+	decodeJSON(t, personal, &personalPage)
+	if len(personalPage.Items) != 1 || personalPage.Items[0].Video.AuthorNickname != "library author" ||
+		personalPage.Items[0].Video.AuthorAvatarURL != "library avatar" ||
+		!personalPage.Items[0].Video.Liked || !personalPage.Items[0].Video.Favorited {
+		t.Fatalf("unexpected queue-ready library response: %s", personal.Body.String())
+	}
 	watch := performJSONRequest(router, http.MethodPut, "/api/videos/1/watch-later", "", token)
 	requireStatus(t, watch, http.StatusOK)
 }

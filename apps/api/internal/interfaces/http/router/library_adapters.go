@@ -94,3 +94,45 @@ func (a privacyReaderAdapter) LikedVideosPublic(ctx context.Context, userID int6
 	}
 	return setting.LikedVisibility == domainaccount.ProfileVisibilityPublic, nil
 }
+
+type authorDisplayReaderAdapter struct {
+	source domainaccount.AuthorDisplayReader
+}
+
+func (a authorDisplayReaderAdapter) BatchGetAuthorDisplays(ctx context.Context, authorIDs []int64) (map[int64]*domainlibrary.AuthorDisplay, error) {
+	displays, err := a.source.BatchGetAuthorDisplays(ctx, authorIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64]*domainlibrary.AuthorDisplay, len(displays))
+	for authorID, display := range displays {
+		if display == nil {
+			continue
+		}
+		result[authorID] = &domainlibrary.AuthorDisplay{
+			AuthorID: display.UserID, Nickname: display.Nickname, AvatarURL: display.AvatarURL,
+		}
+	}
+	return result, nil
+}
+
+type viewerActionReaderAdapter struct {
+	source domaininteraction.ViewerActionStateReader
+}
+
+func (a viewerActionReaderAdapter) BatchGetViewerActionStates(ctx context.Context, viewerID int64, videoIDs []int64) (map[int64]*domainlibrary.ViewerActionState, error) {
+	states, err := a.source.BatchGetViewerActionStates(ctx, viewerID, videoIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64]*domainlibrary.ViewerActionState, len(states))
+	for videoID, state := range states {
+		if state == nil {
+			continue
+		}
+		result[videoID] = &domainlibrary.ViewerActionState{
+			VideoID: state.VideoID, Liked: state.Liked, Favorited: state.Favorited,
+		}
+	}
+	return result, nil
+}

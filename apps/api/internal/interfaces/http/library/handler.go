@@ -156,11 +156,13 @@ func (h *Handler) writePage(c *app.RequestContext, page *applicationlibrary.Page
 
 func videoResponseFromDomain(video *domainlibrary.VideoCard) videoResponse {
 	return videoResponse{
-		ID: video.ID, AuthorID: video.AuthorID, Title: video.Title, Description: video.Description,
+		ID: video.ID, AuthorID: video.AuthorID, AuthorNickname: video.AuthorNickname,
+		AuthorAvatarURL: video.AuthorAvatarURL, Title: video.Title, Description: video.Description,
 		MediaURL: video.MediaURL, CoverURL: video.CoverURL, Status: video.Status, Visibility: video.Visibility,
 		LikeCount: video.LikeCount, CommentCount: video.CommentCount, FavoriteCount: video.FavoriteCount,
 		PublishedAt: video.PublishedAt, CreatedAt: video.CreatedAt, UpdatedAt: video.UpdatedAt,
 		MediaStatus: video.MediaStatus, PlaybackSources: video.PlaybackSources,
+		Liked: video.Liked, Favorited: video.Favorited,
 	}
 }
 

@@ -9,6 +9,10 @@ type ActionIndex interface {
 	ListActiveActionVideoIDs(ctx context.Context, userID int64, actionType string, cursor *ActionCursor, limit int) ([]ActionVideo, error)
 }
 
+type ViewerActionStateReader interface {
+	BatchGetViewerActionStates(ctx context.Context, viewerID int64, videoIDs []int64) (map[int64]*ViewerActionState, error)
+}
+
 type AcceptedActionEventRepository interface {
 	// PersistAcceptedActionEvent durably applies an interaction that was validated before enqueueing.
 	PersistAcceptedActionEvent(ctx context.Context, event *AcceptedActionEvent) error

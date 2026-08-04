@@ -120,6 +120,23 @@
 }
 
 @media (max-width: 900px) {
+  .collection-queue-layout.feed-layout {
+    padding: 0;
+  }
+
+  .collection-queue-close {
+    top: 12px;
+    left: 12px;
+  }
+
+  .collection-queue-nav {
+    top: auto;
+    right: 12px;
+    bottom: 72px;
+    left: auto;
+    grid-auto-flow: column;
+    transform: none;
+  }
   .side-nav {
     display: none;
   }

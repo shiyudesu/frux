@@ -230,6 +230,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		libraryRepo,
 		videoCatalogAdapter{source: videoRepo},
 		privacyReaderAdapter{source: accountRepo},
+		authorDisplayReaderAdapter{source: accountRepo},
+		viewerActionReaderAdapter{source: interactionRepo},
 	)
 	libraryHandler := interfaceshttplibrary.New(libraryService)
 	if feedCache != nil {

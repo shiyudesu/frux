@@ -40,6 +40,11 @@ type userProfileModel struct {
 	AvatarURL string
 }
 
+type viewerActionStateModel struct {
+	VideoID    int64
+	ActionType string
+}
+
 func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -95,6 +100,39 @@ func (r *Repository) GetActionState(ctx context.Context, userID int64, videoID i
 		snapshot.OccurredAt = *action.LatestEventOccurredAt
 	}
 	return snapshot, nil
+}
+
+func (r *Repository) BatchGetViewerActionStates(ctx context.Context, viewerID int64, videoIDs []int64) (map[int64]*domaininteraction.ViewerActionState, error) {
+	states := make(map[int64]*domaininteraction.ViewerActionState, len(videoIDs))
+	if viewerID <= 0 || len(videoIDs) == 0 {
+		return states, nil
+	}
+	for _, videoID := range videoIDs {
+		states[videoID] = &domaininteraction.ViewerActionState{VideoID: videoID}
+	}
+	var models []viewerActionStateModel
+	if err := r.db.WithContext(ctx).
+		Table("interaction_action").
+		Select("video_id, action_type").
+		Where("user_id = ? AND video_id IN ? AND status = ?", viewerID, videoIDs, domaininteraction.ActionStatusActive).
+		Where("action_type IN ?", []string{domaininteraction.ActionTypeLike, domaininteraction.ActionTypeFavorite}).
+		Scan(&models).Error; err != nil {
+		return nil, err
+	}
+	for _, model := range models {
+		state := states[model.VideoID]
+		if state == nil {
+			state = &domaininteraction.ViewerActionState{VideoID: model.VideoID}
+			states[model.VideoID] = state
+		}
+		switch model.ActionType {
+		case domaininteraction.ActionTypeLike:
+			state.Liked = true
+		case domaininteraction.ActionTypeFavorite:
+			state.Favorited = true
+		}
+	}
+	return states, nil
 }
 
 // GetVideoAuthorID 读取公开视频作者 ID，用于互动消息通知。

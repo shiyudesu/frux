@@ -1078,6 +1078,64 @@
   object-fit: contain;
 }
 
+.collection-queue-backdrop {
+  position: fixed;
+  z-index: 110;
+  inset: 0;
+  padding: 0;
+  background: #090a0f;
+}
+
+.collection-queue-dialog {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--gc-bg);
+}
+
+.collection-queue-layout.feed-layout {
+  height: 100%;
+  padding: 12px;
+}
+
+.collection-queue-close {
+  position: absolute;
+  z-index: 120;
+  top: 22px;
+  left: 22px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(12px);
+}
+
+.collection-queue-nav {
+  position: absolute;
+  z-index: 25;
+  top: 50%;
+  left: 18px;
+  display: grid;
+  gap: 10px;
+  transform: translateY(-50%);
+}
+
+.collection-queue-nav button {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(12px);
+}
+
+.collection-queue-nav button:disabled {
+  opacity: 0.3;
+}
+
 /* Profile dashboard */
 .profile-page {
   padding: 0;
