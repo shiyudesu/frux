@@ -79,4 +79,29 @@ describe("VideoStage", () => {
     expect(html).not.toContain('aria-label="收藏"');
     expect(html).not.toContain('aria-label="关注作者"');
   });
+
+  it("uses typed playback sources when the public media URL has no extension", () => {
+    const html = renderToStaticMarkup(
+      <VideoStage
+        {...callbacks}
+        item={{
+          ...baseItem,
+          media_url: "/media/assets/opaque-key",
+          playback_sources: [{ type: "mp4", url: "/media/assets/opaque-key", role: "baseline" }]
+        }}
+        active
+        liked={false}
+        favorited={false}
+        following={false}
+        followBusy={false}
+        ownVideo={false}
+        followError=""
+        playerPreferences={{ quality: "auto", playbackRate: 1, continuousPlay: false }}
+      />
+    );
+
+    expect(html).toContain('data-ui="player-controls"');
+    expect(html).not.toContain("portrait-media");
+  });
+
 });

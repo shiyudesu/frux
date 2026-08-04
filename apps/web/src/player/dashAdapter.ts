@@ -7,6 +7,7 @@ import type {
 import {
   bufferedAheadFromRanges,
   errorMessage,
+  isAutoplayRejection,
   isRecord,
   mapPlayRejection,
   mediaSnapshot
@@ -317,7 +318,17 @@ export class DashAdapter implements PlayerAdapter {
     this.machine.dispatch({ type: "quality", effectiveQualityId: activeId });
     this.setQuality(this.machine.getState().selectedQuality);
     this.publishMetrics();
-    if (this.machine.getState().intendedPlay) void this.play().catch(() => undefined);
+    if (this.machine.getState().intendedPlay) void this.playWithMutedFallback();
+  }
+
+  private async playWithMutedFallback(): Promise<void> {
+    try {
+      await this.play();
+    } catch (error) {
+      if (this.media.muted || !isAutoplayRejection(error)) return;
+      this.setMuted(true);
+      await this.play().catch(() => undefined);
+    }
   }
 
   private handleSeek(event: unknown, seeking: boolean): void {

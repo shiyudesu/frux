@@ -94,7 +94,7 @@ func TestHandlerHidesInfrastructureErrors(t *testing.T) {
 	router := server.New()
 	router.GET("/api/search/videos", handler.Videos)
 	response := ut.PerformRequest(router.Engine, http.MethodGet, "/api/search/videos?q=cat", nil)
-	if response.Code != http.StatusInternalServerError || response.Body.String() != `{"error":"internal server error"}` {
+	if response.Code != http.StatusInternalServerError || response.Body.String() != `{"error":"搜索服务暂时不可用，请稍后重试"}` {
 		t.Fatalf("unexpected infrastructure error response: status=%d body=%s", response.Code, response.Body.String())
 	}
 }

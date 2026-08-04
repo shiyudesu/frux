@@ -78,7 +78,9 @@ export function transitionPlayerState(
         error: null
       });
     case "play-requested":
-      return { ...state, intendedPlay: true, error: state.error?.category === "autoplay" ? null : state.error };
+      return state.error?.category === "autoplay"
+        ? withStatus(state, "loading", { intendedPlay: true, error: null })
+        : { ...state, intendedPlay: true };
     case "playing":
       return withStatus(state, "playing", { intendedPlay: true, error: null });
     case "pause-requested":

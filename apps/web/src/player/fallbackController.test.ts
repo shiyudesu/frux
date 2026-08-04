@@ -47,6 +47,8 @@ class FakeAdapter implements PlayerAdapter {
   state: NormalizedPlayerState = createInitialPlayerState();
   loadCalls: { source: PlaybackSource; options?: PlayerLoadOptions }[] = [];
   destroyCount = 0;
+  playCount = 0;
+  playErrors: unknown[] = [];
   loadError: unknown = null;
   loadPromise: Promise<void> | null = null;
   private readonly listeners = new Set<PlayerStateListener>();
@@ -82,7 +84,19 @@ class FakeAdapter implements PlayerAdapter {
   }
 
   async play(): Promise<void> {
-    this.state = { ...this.state, status: "playing", intendedPlay: true };
+    this.playCount += 1;
+    const error = this.playErrors.shift();
+    if (error) {
+      this.fail({
+        category: error instanceof DOMException && error.name === "NotAllowedError" ? "autoplay" : "unknown",
+        code: "play_rejected",
+        message: "play rejected",
+        recoverable: true,
+        sourceId: this.state.source?.id
+      });
+      throw error;
+    }
+    this.state = { ...this.state, status: "playing", intendedPlay: true, error: null };
     this.emit();
   }
 
@@ -183,7 +197,7 @@ describe("PlaybackFallbackController", () => {
           muted: false,
           volume: 0.6,
           playbackRate: 1.5,
-          autoPlay: true,
+          autoPlay: false,
           quality: mp4Source.id
         }
       }
@@ -229,7 +243,7 @@ describe("PlaybackFallbackController", () => {
       startTime: 6,
       muted: false,
       playbackRate: 1.25,
-      autoPlay: true
+      autoPlay: false
     });
   });
 
@@ -253,6 +267,92 @@ describe("PlaybackFallbackController", () => {
       status: "playing",
       intendedPlay: true
     });
+  });
+
+  it("retries autoplay muted after an immediate browser rejection", async () => {
+    const mp4 = new FakeAdapter("mp4");
+    mp4.playErrors.push(new DOMException("blocked", "NotAllowedError"));
+    const controller = new PlaybackFallbackController({
+      createDash: () => new FakeAdapter("dash"),
+      createMP4: () => mp4
+    });
+
+    await controller.loadPlan({ ...plan, primary: mp4Source, fallbacks: [] }, { muted: false });
+
+    await controller.play();
+
+    expect(mp4.playCount).toBe(2);
+    expect(controller.getState()).toMatchObject({
+      status: "playing",
+      muted: true,
+      error: null
+    });
+  });
+
+  it("retries DASH autoplay muted before considering source fallback", async () => {
+    const dash = new FakeAdapter("dash");
+    dash.playErrors.push(new DOMException("blocked", "NotAllowedError"));
+    const mp4 = new FakeAdapter("mp4");
+    const factory: PlaybackAdapterFactory = {
+      createDash: () => dash,
+      createMP4: vi.fn(() => mp4)
+    };
+    const controller = new PlaybackFallbackController(factory);
+    await controller.loadPlan(plan, { muted: false });
+
+    await controller.play();
+
+    expect(dash.playCount).toBe(2);
+    expect(dash.destroyCount).toBe(0);
+    expect(factory.createMP4).not.toHaveBeenCalled();
+    expect(controller.getState()).toMatchObject({ status: "playing", muted: true });
+  });
+
+  it("retries deferred autoplay muted after loading completes", async () => {
+    let resolveLoad = () => {};
+    const mp4 = new FakeAdapter("mp4");
+    mp4.loadPromise = new Promise<void>((resolve) => {
+      resolveLoad = resolve;
+    });
+    mp4.playErrors.push(new DOMException("blocked", "NotAllowedError"));
+    const controller = new PlaybackFallbackController({
+      createDash: () => new FakeAdapter("dash"),
+      createMP4: () => mp4
+    });
+
+    const loading = controller.loadPlan(
+      { ...plan, primary: mp4Source, fallbacks: [] },
+      { autoPlay: true, muted: false }
+    );
+    resolveLoad();
+    await loading;
+
+    expect(mp4.loadCalls[0]?.options?.autoPlay).toBe(false);
+    expect(mp4.playCount).toBe(2);
+    expect(controller.getState()).toMatchObject({ status: "playing", muted: true });
+  });
+
+  it("allows pause to cancel deferred autoplay before loading completes", async () => {
+    let resolveLoad = () => {};
+    const mp4 = new FakeAdapter("mp4");
+    mp4.loadPromise = new Promise<void>((resolve) => {
+      resolveLoad = resolve;
+    });
+    const controller = new PlaybackFallbackController({
+      createDash: () => new FakeAdapter("dash"),
+      createMP4: () => mp4
+    });
+
+    const loading = controller.loadPlan(
+      { ...plan, primary: mp4Source, fallbacks: [] },
+      { autoPlay: true }
+    );
+    controller.pause();
+    resolveLoad();
+    await loading;
+
+    expect(mp4.playCount).toBe(0);
+    expect(controller.getState().intendedPlay).toBe(false);
   });
 
   it("delegates controls and destroys the active adapter", async () => {

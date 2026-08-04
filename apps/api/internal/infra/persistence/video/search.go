@@ -12,11 +12,11 @@ import (
 
 const videoSearchRelevanceSQL = `
 	CASE
-		WHEN LOWER(v.title) = LOWER(?) THEN ?
-		WHEN v.title ILIKE ? ESCAPE '\' THEN ?
-		WHEN v.title ILIKE ? ESCAPE '\' THEN ?
-		WHEN v.description ILIKE ? ESCAPE '\' THEN ?
-		ELSE ?
+		WHEN LOWER(v.title) = LOWER(?) THEN 1
+		WHEN v.title ILIKE ? ESCAPE '\' THEN 2
+		WHEN v.title ILIKE ? ESCAPE '\' THEN 3
+		WHEN v.description ILIKE ? ESCAPE '\' THEN 4
+		ELSE 4
 	END
 `
 
@@ -81,11 +81,10 @@ func buildVideoSearchQuery(db *gorm.DB, query string, cursor *domainsearch.Video
 		Select(
 			videoWithStatSelect()+`,
 				`+videoSearchRelevanceSQL+` AS relevance`,
-			query, domainsearch.VideoRelevanceExactTitle,
-			prefixPattern, domainsearch.VideoRelevanceTitlePrefix,
-			containsPattern, domainsearch.VideoRelevanceTitleContains,
-			containsPattern, domainsearch.VideoRelevanceDescriptionOnly,
-			domainsearch.VideoRelevanceDescriptionOnly,
+			query,
+			prefixPattern,
+			containsPattern,
+			containsPattern,
 		).
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
 		Where(

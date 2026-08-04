@@ -17,6 +17,21 @@ The user frontend SHALL render a consistent dark GCFeed shell across Feed, messa
 - **WHEN** a user activates Feed, message, upload, profile, login, or public-profile navigation
 - **THEN** the application navigates through the existing typed route union and preserves the existing authentication rules
 
+### Requirement: Functional global search control
+The shared application shell SHALL render the existing top search field as a functional form that submits typed navigation to public video and user search. The control SHALL support keyboard submission, an accessible name, responsive layouts, browser history synchronization, and truthful empty input behavior.
+
+#### Scenario: Desktop user submits search
+- **WHEN** a desktop user enters a valid term and activates the visible Search action
+- **THEN** the application opens the typed search route with the encoded term
+
+#### Scenario: Keyboard user submits search
+- **WHEN** focus is in the top search input and the user presses Enter
+- **THEN** the same search navigation occurs without triggering Feed keyboard shortcuts
+
+#### Scenario: Mobile shell renders search
+- **WHEN** the search route is viewed on a mobile viewport
+- **THEN** the query, video/user tabs, results, and pagination controls remain reachable without horizontal overflow
+
 ### Requirement: Original GCFeed brand and icon system
 The redesigned frontend SHALL use an original GCFeed wordmark, compact brand mark, and locally owned typed SVG icon registry. It MUST NOT embed Douyin logos, trademarks, proprietary SVG paths, or source-site artwork.
 
@@ -101,7 +116,7 @@ The login/register route SHALL use a dimmed short-video backdrop and a centered 
 - **THEN** every displayed method is supported by the existing GCFeed API and no fake QR or phone login control is shown
 
 ### Requirement: Profile and work presentation
-Own and public profile routes SHALL use a full-width banner-style header, circular avatar, inline relation/work/received-like counts, compact actions, route-appropriate primary and secondary tabs, profile filters, and a dense portrait work grid. Own-profile tabs SHALL be backed by real profile-dashboard, personal-video-library, and creator-content-management APIs. Existing profile editing, relation lists, follow actions, public navigation, and work viewing SHALL remain functional.
+Own and public profile routes SHALL use a full-width banner-style header, circular avatar, inline relation/work/received-like counts, compact actions, route-appropriate primary and secondary tabs, profile filters, and a dense portrait work grid. Own-profile tabs SHALL be backed by real profile-dashboard, personal-video-library, and creator-content-management APIs and SHALL NOT include a personal Recommend tab. Selecting a readable personal-library card SHALL open the immersive collection queue, while creator work and collection behavior SHALL remain truthful for their visibility and ownership context. Existing profile editing, relation lists, follow actions, public navigation, and work viewing SHALL remain functional.
 
 #### Scenario: Public profile renders
 - **WHEN** a public user profile loads successfully
@@ -113,11 +128,15 @@ Own and public profile routes SHALL use a full-width banner-style header, circul
 
 #### Scenario: Own profile content tabs render
 - **WHEN** the authenticated user opens their profile
-- **THEN** Works, Recommend, Likes, Favorites, Watch History, and Watch Later tabs render with real data while Short Drama and Appointments are absent
+- **THEN** Works, Likes, Favorites, Watch History, and Watch Later tabs render with real data while Recommend, Short Drama, and Appointments are absent
 
-#### Scenario: Work viewer opens
-- **WHEN** a user selects a readable work card
-- **THEN** the work viewer opens with the correct media, title, counts, and close behavior
+#### Scenario: Personal library queue opens
+- **WHEN** a user selects a readable card from Likes, Favorites, Watch History, or Watch Later
+- **THEN** an immersive full-screen player opens at the selected item and can continue through that ordered collection
+
+#### Scenario: Creator work viewer remains truthful
+- **WHEN** a user selects a creator work whose context is not a personal-library queue
+- **THEN** the work opens through the supported viewer behavior with the correct media, title, visibility permissions, counts, and close behavior
 
 ### Requirement: Consistent messages, upload, and relation surfaces
 Messages, upload, relation lists, profile editing, and work-viewer overlays SHALL use the shared dark token system, typography, button hierarchy, icons, spacing, and state presentation while preserving their existing API behavior.
@@ -135,22 +154,25 @@ Messages, upload, relation lists, profile editing, and work-viewer overlays SHAL
 - **THEN** the redesigned overlay supports tab switching, pagination, retry, and available follow actions
 
 ### Requirement: Responsive user experience
-The redesigned frontend SHALL provide explicit wide-desktop, compact-desktop/tablet, mobile, and small-mobile layouts. It SHALL avoid horizontal page overflow, preserve touch targets of at least 44px for primary mobile controls, and convert desktop threaded comments to a scrollable bottom sheet on mobile without losing sort, draft, reply-expansion, or focused-thread state.
+The redesigned frontend SHALL target desktop browsers with explicit wide-desktop and compact-desktop layouts. Narrow windows SHALL retain the compact desktop navigation, 16:9 Feed stage, and side drawer behavior rather than switching to a separate mobile navigation, 9:16 stage, or bottom comment sheet.
 
 #### Scenario: Compact desktop collapses navigation
-- **WHEN** the viewport is between 901px and 1279px
+- **WHEN** the viewport is narrower than 1280px
 - **THEN** the navigation uses its compact icon presentation and the details panel changes to drawer behavior before the player becomes unusably narrow
 
-#### Scenario: Mobile Feed renders
+#### Scenario: Narrow desktop keeps the desktop shell
+
 - **WHEN** the viewport is 900px wide or narrower
-- **THEN** the desktop rail is replaced by bottom navigation, the Feed uses a 9:16 presentation, and the page has no horizontal overflow
+- **THEN** the compact desktop rail, top navigation, 16:9 Feed presentation, and desktop controls remain in use and no mobile bottom navigation is rendered
 
-#### Scenario: Mobile threaded comments render as a sheet
-- **WHEN** comments are opened on mobile
-- **THEN** sorting, root pagination, reply expansion, comment actions, and the composer remain vertically reachable in a bottom sheet with a visible close affordance
+#### Scenario: Narrow desktop comments use a drawer
 
-#### Scenario: Mobile sheet preserves discussion state
-- **WHEN** the user temporarily closes and reopens comments for the same active video
+- **WHEN** comments are opened in a narrow desktop window
+- **THEN** the details panel enters from the right as a dismissible drawer and never remains visible below the player while closed
+
+#### Scenario: Compact drawer preserves discussion state
+
+- **WHEN** the user temporarily closes and reopens the compact drawer for the same active video
 - **THEN** the per-video draft, selected sort, loaded roots, and expanded reply threads remain available for the current session
 
 ### Requirement: Typed video discussion destination

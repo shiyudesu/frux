@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { MobileNav, SideNav } from "./AppNavigation";
+import { SideNav } from "./AppNavigation";
 import { TopNav } from "./TopNav";
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -8,7 +8,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <SideNav />
       <TopNav />
       <div className="app-body">{children}</div>
-      <MobileNav />
     </div>
   );
 }

@@ -33,7 +33,7 @@ describe("threaded comment components", () => {
     vi.unstubAllGlobals();
   });
 
-  it("mounts distinct desktop panel and mobile sheet markers", () => {
+  it("mounts distinct desktop panel and compact drawer markers", () => {
     render(
       <FeedDetailsPanel
         item={video()}
@@ -66,9 +66,28 @@ describe("threaded comment components", () => {
       />
     );
     const mobile = required<HTMLElement>('[data-ui="details-panel"]');
-    expect(mobile.dataset.presentation).toBe("sheet");
+    expect(mobile.dataset.presentation).toBe("drawer");
     expect(mobile.getAttribute("role")).toBe("dialog");
     expect(mobile.getAttribute("aria-modal")).toBe("true");
+  });
+
+  it("fully hides the closed comments sheet on compact viewports", () => {
+    stubMatchMedia(true);
+    render(
+      <FeedDetailsPanel
+        item={video()}
+        open={false}
+        onClose={() => {}}
+        user={emptyProfile}
+        count={0}
+        comments={controller()}
+        authenticated
+        onOpenUser={() => {}}
+      />
+    );
+    const panel = required<HTMLElement>('[data-ui="details-panel"]');
+    expect(panel.hidden).toBe(true);
+    expect(panel.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("renders a safe tombstone and unavailable discussion in a mounted tree", () => {

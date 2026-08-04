@@ -111,7 +111,7 @@
 8. 用户在操作栏“更多”中选择“不感兴趣”时，已登录且当前推荐请求有 request ID 才展示可提交项；
    提交中防重复，成功立即从当前有序列表移除，失败保留视频并显示错误。若成功响应晚于推荐刷新，只要仍在推荐频道，
    视频/作者抑制仍应用到新一代列表；仅在离开推荐频道或会话重置时清除。该操作不伪造已完成反馈。
-9. 评论关闭时视频获得最大空间；打开评论后宽屏右侧出现 346px 面板并缩小舞台，窄屏使用抽屉，移动端使用底部面板。
+9. 评论关闭时视频获得最大空间；打开评论后宽屏右侧出现 346px 面板并缩小舞台，窄屏继续使用电脑版右侧抽屉，不提供移动端底部面板。
 
 ### 3.2 发布到审核
 
@@ -221,7 +221,7 @@
 - 底部控制栏显示真实播放/暂停、时间、进度、自动/手动画质、0.5x-2x 速度、连续播放、静音和全屏状态，不显示静态伪进度。
 - loading、buffering、DASH fallback、可恢复重试和终止错误使用 `role=status` 文案，不只依赖动画或颜色。
 - 桌面滚轮一次切一条视频，动画时长 360ms。
-- 901-1279px 使用 72px 图标导航和覆盖式详情抽屉；900px 以下切换为底部导航、9:16 舞台和评论底部面板。
+- 1280px 以下统一使用 72px 图标导航和覆盖式详情抽屉；更窄窗口仍保持电脑版 16:9 舞台，不切换移动导航或评论底部面板。
 
 ## 5. 组件规范
 
@@ -232,16 +232,15 @@
 | AppShell | user / admin | 用户端与后台外壳 |
 | TopNav | feed / admin | 顶部导航 |
 | SideNav | desktop / compact | 160px 或 72px 左侧导航 |
-| MobileNav | bottom | 移动端底部导航 |
 | BrandMark | desktop / compact | GCFeed 原创字标与紧凑标识 |
 | Icon | outline / filled | 本地 TypeScript SVG 图标系统 |
 | ChannelTabs | follow / recommend | 关注/推荐频道 |
-| FeedStage | desktop16x9 / mobile9x16 | 视频舞台 |
+| FeedStage | desktop16x9 | 视频舞台 |
 | VideoBackdrop | blur / gradient | 16:9 舞台背景 |
 | VideoPlayer | contain / preview | 播放器 |
 | FeedActionRail | vertical | 点赞、评论、收藏、分享 |
-| FeedPlayerControls | desktop / mobile | 播放、时间、进度、画质、速度、连播、重试、静音、全屏 |
-| FeedDetailsPanel | side / drawer / sheet | 宽屏右侧、紧凑抽屉、移动底部评论 |
+| FeedPlayerControls | desktop | 播放、时间、进度、画质、速度、连播、重试、静音、全屏 |
+| FeedDetailsPanel | side / drawer | 宽屏右侧、紧凑桌面抽屉 |
 | ThreadedComments | feed / video-detail | 热门/最新、根/回复分页、评论动作和 Composer |
 | CommentThread | root / expanded / tombstone | 根、最多 3 条预览、展开回复和作者自删墓碑 |
 | CommentComposer | root / reply / login | 多行草稿、回复目标、Unicode 计数、发送/错误/登录入口 |
@@ -330,9 +329,6 @@ h-full w-[346px] border-l border-white/10 bg-[#1C1E29] text-white
 compact-drawer:
 absolute inset-y-0 right-0 w-[min(346px,42vw)] shadow-panel
 
-mobile-sheet:
-fixed inset-x-0 bottom-[64px] h-[min(72dvh,620px)] rounded-t-[20px]
-
 comment-input:
 min-h-11 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-white
 ```
@@ -360,7 +356,7 @@ min-h-11 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-whi
 - 必备能力：关注/推荐频道、搜索入口、播放/暂停、滚轮切换、键盘切换、点赞、收藏、完整两级评论、分享、关注作者、曝光上报、观看上报、完播上报。
 - 宽屏布局：160px 左侧栏 + 舞台；评论打开后增加 346px 推挤式面板。
 - 紧凑桌面布局：72px 图标栏 + 舞台 + 按需覆盖式详情抽屉。
-- 移动布局：单列 9:16、底部导航、评论底部面板。
+- 窄屏布局：保持紧凑电脑版侧栏、16:9 舞台和右侧评论抽屉，不提供独立手机布局。
 - 评论状态：加载/空/错误、根加载更多、回复加载更多、创建/点赞/删除独立 busy/error、作者墓碑、讨论不可用和 focused 高亮。
 - 状态：首屏骨架、视频加载、准备就绪、预加载失败后可见播放器重试、播放错误、Feed 空状态、接口错误、操作成功、操作回滚。
 - 播放控件：质量与速度使用原生可聚焦 select；连播按钮公开 pressed 状态；buffering/error 状态不抢焦点。
@@ -387,7 +383,7 @@ min-h-11 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-whi
 - 能力：一次原子保存头像/昵称/简介/性别和喜欢列表隐私；收藏固定显示“仅自己可见”，不提供公开控制；打开关注/粉丝弹窗；关键词与日期筛选；游标加载；批量公开、私密、删除；合集 CRUD，合集编辑器独立搜索/分页候选作品；历史单项删除/清空；稍后再看移除。
 - 推荐内容只在推荐 Feed 展示，不进入个人主页 Tab。
 - 卡片：六列可容纳的 3:4 封面、点赞数叠层、单行标题；管理视图可显示生命周期/可见性标签，历史卡显示秒数或已看完。
-- 响应式：≥1280px 配合 160px 侧栏并允许六列网格；901–1279px 保留 72px 紧凑侧栏、工具栏换行且页面不横向溢出；≤900px 延续现有移动单列/窄屏布局。
+- 响应式：≥1280px 配合 160px 侧栏并允许六列网格；更窄窗口统一保留 72px 紧凑桌面侧栏和桌面内容结构，不切换手机单列布局。
 - 状态：每个 Tab 独立维护 loading、error、empty、ready、loadingMore；关注/粉丝弹窗按打开代次和活动 Tab 接收分页，切换或关闭后旧页不得追加；清空历史先失效在途历史页且清空期间不启动新页；公开主页按 `userId` 重置全部用户态并忽略旧请求；并发乐观移除失败时只恢复对应项目；批量和编辑操作有 mutating/busy 状态。
 
 ### 6.6 消息中心
@@ -504,7 +500,7 @@ min-h-11 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-whi
 - 焦点样式使用 GCFeed 青色外环。
 - Feed 舞台文字有遮罩，评论区和表格满足清晰对比。
 - 点击热区：Feed 图标按钮 52px，后台行操作 32px 以上。
-- 移动评论动作、删除菜单和发送按钮至少 44px；底部 sheet 内排序、回复展开、分页和 Composer 均可纵向到达。
+- 紧凑桌面评论抽屉内排序、回复展开、分页和 Composer 均可纵向到达。
 - 个人主页交互控件保持至少 40px 触摸目标，并尊重 `prefers-reduced-motion`。
 
 ## 9. 前端实现验收清单
@@ -512,9 +508,8 @@ min-h-11 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-whi
 - [ ] 页面覆盖本文件第 2.3 节全部路由。
 - [ ] 用户 Web Feed 使用 16:9 桌面视频舞台。
 - [ ] 竖屏短视频在 16:9 舞台中居中播放，背景层用封面模糊补齐。
-- [ ] 宽屏评论打开后使用 346px 推挤式面板，紧凑桌面使用抽屉，移动端使用底部面板。
+- [ ] 宽屏评论打开后使用 346px 推挤式面板，所有窄屏桌面窗口使用右侧抽屉。
 - [ ] 评论面板支持热门/最新、根/回复分页、最多 3 条预览、展开/收起、根/回复点赞、回复 Composer、权限删除和墓碑。
-- [ ] 移动底部 sheet 保留每视频草稿、排序、已加载根、展开回复和 focused target，主要触摸控件至少 44px。
 - [ ] 播放控制真实同步视频播放、时间、进度、静音和全屏状态。
 - [ ] Feed 支持滚轮、方向键、J/K、L、F、C、Space。
 - [ ] 用户端具备登录、发布、Feed、详情、作品、消息、资料、关系、搜索。

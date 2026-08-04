@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiErrorMessage } from "../api/client";
+import { ApiError, apiErrorMessage } from "../api/client";
 import { searchUsers, searchVideos } from "../api/search";
 import type { AsyncState, SearchUser, Video } from "../types";
 import type { SearchTab } from "../router";
@@ -99,7 +99,7 @@ export function useSearch(query: string) {
       }
     } catch (error) {
       if (requests.current[tab] !== requestID || queryRef.current !== activeQuery) return;
-      const message = apiErrorMessage(error, "搜索失败，请重试");
+      const message = searchErrorMessage(error);
       if (tab === "videos") {
         setVideos((state) => ({ ...state, state: "error", error: message }));
       } else {
@@ -116,4 +116,13 @@ export function useSearch(query: string) {
     users: matchesRenderedQuery ? users : createState<SearchUser>(),
     load
   };
+}
+
+export function searchErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status >= 500) return "搜索服务暂时不可用，请稍后重试";
+    return error.message || "搜索参数有误，请修改后重试";
+  }
+  if (error instanceof TypeError) return "网络连接失败，请检查网络后重试";
+  return apiErrorMessage(error, "搜索失败，请稍后重试");
 }

@@ -480,6 +480,10 @@ video.stage-media {
     visibility var(--gc-motion) ease;
 }
 
+.details-panel[hidden] {
+  display: none;
+}
+
 .details-panel.open {
   opacity: 1;
   visibility: visible;

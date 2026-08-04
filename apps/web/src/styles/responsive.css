@@ -119,7 +119,8 @@
   }
 }
 
-@media (max-width: 900px) {
+/* GCFeed is desktop-only; legacy mobile reflow styles remain disabled. */
+@media (max-width: 1px) {
   .search-page {
     padding: 20px 14px 96px;
   }
@@ -477,7 +478,7 @@
   }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 1px) {
   .top-actions {
     gap: 2px;
   }
@@ -695,7 +696,7 @@
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1px) {
   .profile-page {
     padding: 0;
   }
@@ -845,7 +846,7 @@
   }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 1px) {
   .profile-summary,
   .public-profile-summary {
     grid-template-columns: 70px minmax(0, 1fr);

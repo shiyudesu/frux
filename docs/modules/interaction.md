@@ -492,5 +492,5 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | 评论 Composer | 多行输入、每视频草稿、回复目标/取消、Unicode 计数、提交/错误独立状态 |
 | 视频讨论页 | typed `/videos/{videoId}?comment={rootId}&highlight={targetId}`，复用视频和评论组件 |
 | 消息深链 | 直接加载 thread context、展开根、滚动并短暂高亮目标；不可用时显示安全状态 |
-| 响应式 | ≥1280px 为 346px 推挤面板，901–1279px 为抽屉，≤900px 为可滚动底部 sheet |
+| 桌面窗口适配 | ≥1280px 为 346px 推挤面板，所有更窄桌面窗口统一使用右侧抽屉；不提供移动端底部 sheet |
 | 未登录用户 | 可读取公开讨论；回复、点赞和发表操作提供登录入口 |

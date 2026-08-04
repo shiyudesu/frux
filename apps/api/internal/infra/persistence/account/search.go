@@ -11,12 +11,12 @@ import (
 
 const userSearchRelevanceSQL = `
 	CASE
-		WHEN LOWER(a.account) = LOWER(?) THEN ?
-		WHEN a.account ILIKE ? ESCAPE '\' THEN ?
-		WHEN a.nickname ILIKE ? ESCAPE '\' THEN ?
-		WHEN a.account ILIKE ? ESCAPE '\' THEN ?
-		WHEN a.nickname ILIKE ? ESCAPE '\' THEN ?
-		ELSE ?
+		WHEN LOWER(a.account) = LOWER(?) THEN 1
+		WHEN a.account ILIKE ? ESCAPE '\' THEN 2
+		WHEN a.nickname ILIKE ? ESCAPE '\' THEN 3
+		WHEN a.account ILIKE ? ESCAPE '\' THEN 4
+		WHEN a.nickname ILIKE ? ESCAPE '\' THEN 5
+		ELSE 5
 	END
 `
 
@@ -55,12 +55,11 @@ func buildUserSearchQuery(db *gorm.DB, query string, cursor *domainsearch.UserCu
 		Select(
 			`a.id, a.account, a.nickname, a.avatar_url, a.bio, a.updated_at, `+
 				userSearchRelevanceSQL+` AS relevance`,
-			query, domainsearch.UserRelevanceExactAccount,
-			prefixPattern, domainsearch.UserRelevanceAccountPrefix,
-			prefixPattern, domainsearch.UserRelevanceNicknamePrefix,
-			containsPattern, domainsearch.UserRelevanceAccountContains,
-			containsPattern, domainsearch.UserRelevanceNicknameContains,
-			domainsearch.UserRelevanceNicknameContains,
+			query,
+			prefixPattern,
+			prefixPattern,
+			containsPattern,
+			containsPattern,
 		).
 		Where("a.status = ?", domainaccount.StatusNormal).
 		Where(

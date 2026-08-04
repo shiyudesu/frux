@@ -79,6 +79,8 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 
 - 顶部搜索框是受控 `role=search` 表单，Enter 和“搜索”按钮进入 typed `/search`。
 - URL 的 `q` 与 `tab=videos|users` 是页面状态真相，浏览器前进/后退会同步输入框。
+- 页面明确说明视频匹配标题/简介、用户匹配账号/昵称，避免把视频和用户 Tab 的范围混淆。
 - 视频和用户 Tab 保留独立 items、cursor、has-more、loading 和 error 状态。
 - 视频结果进入现有 `/videos/{videoId}`，用户结果进入 `/users/{userId}`。
 - 空 query 不发起宽泛请求；页面展示输入提示。
+- 参数错误返回可操作中文提示；数据库或搜索基础设施异常统一显示“搜索服务暂时不可用，请稍后重试”，网络失败提示检查连接，不向用户暴露内部错误文案。

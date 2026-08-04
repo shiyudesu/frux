@@ -1,4 +1,5 @@
 import { createInitialPlayerState } from "./types";
+import { isAutoplayRejection } from "./adapterUtils";
 import type {
   NormalizedPlayerState,
   PlaybackFallbackState,
@@ -24,6 +25,7 @@ export class PlaybackFallbackController {
   private fallback: PlaybackFallbackState | null = null;
   private fallbackPromise: Promise<void> | null = null;
   private pendingPlay = false;
+  private intendedPlay = false;
   private loadingPlan = false;
   private destroyed = false;
 
@@ -38,38 +40,40 @@ export class PlaybackFallbackController {
       adaptiveBounds: options.adaptiveBounds ?? plan.adaptiveBounds
     };
     this.fallback = null;
-    const pendingPlay = this.pendingPlay;
+    this.intendedPlay = Boolean(this.loadOptions.autoPlay || this.pendingPlay);
     this.pendingPlay = false;
     this.loadingPlan = true;
     this.replaceAdapter(plan.primary.type === "dash" ? this.factory.createDash() : this.factory.createMP4());
     try {
       await this.adapter?.load(plan.primary, {
         ...this.loadOptions,
-        autoPlay: Boolean(this.loadOptions.autoPlay || pendingPlay)
+        autoPlay: false
       });
     } catch (error: unknown) {
       if (plan.primary.type !== "dash" || !plan.fallbacks.some((source) => source.type === "mp4")) throw error;
       await this.fallbackToMP4();
     } finally {
       this.loadingPlan = false;
-      if (this.pendingPlay) {
+      if (this.intendedPlay || this.pendingPlay) {
         this.pendingPlay = false;
-        await this.adapter?.play();
+        await this.playActiveAdapter();
       }
     }
   }
 
   async play(): Promise<void> {
     this.assertUsable();
+    this.intendedPlay = true;
     if (!this.adapter || this.loadingPlan) {
       this.pendingPlay = true;
       return;
     }
-    await this.adapter?.play();
+    await this.playActiveAdapter();
   }
 
   pause(): void {
     this.pendingPlay = false;
+    this.intendedPlay = false;
     this.adapter?.pause();
   }
 
@@ -133,13 +137,18 @@ export class PlaybackFallbackController {
       if (
         state.status === "error" &&
         state.source?.type === "dash" &&
+        state.error?.category !== "autoplay" &&
         state.error?.recoverable &&
         this.plan?.fallbacks.some((source) => source.type === "mp4")
       ) {
         this.fallback = { from: "dash", to: "mp4", reason: state.error };
         this.state = { ...state, status: "loading", fallback: this.fallback };
         this.publish();
-        void this.fallbackToMP4();
+        if (!this.loadingPlan) {
+          void this.fallbackToMP4().then(() => {
+            if (this.intendedPlay) return this.playActiveAdapter();
+          });
+        }
         return;
       }
       this.state = {
@@ -169,7 +178,7 @@ export class PlaybackFallbackController {
       muted: this.state.muted,
       volume: this.state.volume,
       playbackRate: this.state.playbackRate,
-      autoPlay: this.state.intendedPlay,
+      autoPlay: false,
       quality: fallbackSource.id
     } satisfies PlayerLoadOptions;
     this.fallback = { from: "dash", to: "mp4", reason };
@@ -177,6 +186,18 @@ export class PlaybackFallbackController {
     await this.adapter?.load(fallbackSource, preserved);
     this.state = { ...this.state, fallback: this.fallback };
     this.publish();
+  }
+
+  private async playActiveAdapter(): Promise<void> {
+    const adapter = this.adapter;
+    if (!adapter) return;
+    try {
+      await adapter.play();
+    } catch (error) {
+      if (this.state.muted || !isAutoplayRejection(error)) throw error;
+      adapter.setMuted(true);
+      await adapter.play();
+    }
   }
 
   private publish(): void {

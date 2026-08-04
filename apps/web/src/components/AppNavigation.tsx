@@ -88,30 +88,3 @@ export function SideNav() {
     </aside>
   );
 }
-
-export function MobileNav() {
-  const route = useRoute();
-  const navigate = useNavigate();
-  const items = useNavigationItems();
-  const primaryItems = items.filter((item) => item.label !== "投稿");
-
-  return (
-    <nav className="mobile-nav" data-ui="mobile-nav" aria-label="移动端导航">
-      {primaryItems.map((item) => (
-        <button
-          className={isActiveRoute(route, item) ? "active" : ""}
-          data-active={isActiveRoute(route, item) ? "true" : "false"}
-          key={`${item.label}-${item.route}`}
-          type="button"
-          onClick={() => navigate(item.route)}
-        >
-          <span className="mobile-nav-icon">
-            <Icon name={item.icon} filled={isActiveRoute(route, item)} />
-            {Boolean(item.badge) && <span className="nav-badge floating">{formatBadgeCount(item.badge || 0)}</span>}
-          </span>
-          <span>{item.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}

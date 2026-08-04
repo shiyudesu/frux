@@ -1742,6 +1742,12 @@
   line-height: 1.2;
 }
 
+.search-page-header p {
+  margin: 9px 0 0;
+  color: var(--gc-muted);
+  font-size: 13px;
+}
+
 .search-tabs {
   display: flex;
   gap: 30px;

@@ -92,21 +92,21 @@ The TypeScript migration smoke task SHALL be marked complete only after all requ
 
 ### Requirement: Redesigned shell browser coverage
 
-The browser smoke workflow SHALL verify the redesigned application shell at wide desktop and mobile widths using stable `data-ui` markers and element geometry.
+The browser smoke workflow SHALL verify the redesigned application shell at wide and narrow desktop widths using stable `data-ui` markers and element geometry.
 
 #### Scenario: Wide desktop shell geometry
 
 - **WHEN** the smoke workflow opens a user route at 1440px viewport width
 - **THEN** the side navigation, top header, main content, and active route marker are visible, the side navigation is 160px wide, the header is 56px high, and the document has no horizontal overflow
 
-#### Scenario: Mobile shell geometry
+#### Scenario: Narrow desktop shell geometry
 
-- **WHEN** the smoke workflow opens a user route at a viewport width of 390px
-- **THEN** the desktop side navigation is hidden, the mobile navigation is visible, primary touch controls meet the required target size, and the document has no horizontal overflow
+- **WHEN** the smoke workflow opens a user route below 901px viewport width
+- **THEN** the compact desktop side navigation and top header remain visible and no mobile bottom navigation is rendered
 
 ### Requirement: Redesigned Feed panel coverage
 
-The browser smoke workflow SHALL verify the Feed stage and threaded comment surface before and after opening comments at desktop and mobile widths.
+The browser smoke workflow SHALL verify the Feed stage and threaded comment surface before and after opening comments at wide and narrow desktop widths.
 
 #### Scenario: Desktop comments reduce player width
 
@@ -118,10 +118,10 @@ The browser smoke workflow SHALL verify the Feed stage and threaded comment surf
 - **WHEN** the workflow expands replies, selects a reply target, and toggles a comment like on desktop
 - **THEN** the thread controls, selected target, composer, and updated like state remain visible without clipping or horizontal overflow
 
-#### Scenario: Mobile comments use bottom sheet
+#### Scenario: Narrow desktop comments use side drawer
 
-- **WHEN** the smoke workflow opens comments at 390px viewport width
-- **THEN** the details panel is presented as a bottom sheet and sorting, expansion, reply composition, and closing remain operable without changing the active Feed item
+- **WHEN** the smoke workflow opens comments below 901px viewport width
+- **THEN** the details panel is presented as a right-side drawer and sorting, expansion, reply composition, and closing remain operable without changing the active Feed item
 
 #### Scenario: Player controls update media state
 
@@ -153,14 +153,14 @@ The browser smoke workflow SHALL capture and verify the primary ready state plus
 
 #### Scenario: Overlays remain dismissible
 
-- **WHEN** the smoke workflow opens profile editing, relations, work viewing, or mobile comments
+- **WHEN** the smoke workflow opens profile editing, relations, work viewing, or compact comments
 - **THEN** each overlay has an accessible close action, traps no unreachable content, and returns focus to a meaningful control when closed
 
 ### Requirement: Redesign visual evidence
 
-The browser verification run SHALL capture desktop and mobile screenshots for the shell, Feed with comments closed, Feed with comments open, authentication, profile, messages, and upload. Remaining visual differences SHALL be documented rather than silently accepted.
+The browser verification run SHALL capture wide- and narrow-desktop screenshots for the shell, Feed with comments closed, Feed with comments open, authentication, profile, messages, and upload. Remaining visual differences SHALL be documented rather than silently accepted.
 
 #### Scenario: Screenshot set is complete
 
 - **WHEN** redesign verification finishes
-- **THEN** the required desktop and mobile screenshots exist for all specified routes and states and are reviewed for layout, clipping, overflow, and inconsistent tokens
+- **THEN** the required wide- and narrow-desktop screenshots exist for all specified routes and states and are reviewed for layout, clipping, overflow, and inconsistent tokens

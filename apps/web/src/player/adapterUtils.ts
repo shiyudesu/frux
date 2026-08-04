@@ -77,6 +77,10 @@ export function mapPlayRejection(error: unknown, source?: PlaybackSource): Playb
   };
 }
 
+export function isAutoplayRejection(error: unknown): boolean {
+  return errorName(error) === "NotAllowedError";
+}
+
 export function errorMessage(value: unknown, fallback: string): string {
   if (value instanceof Error && value.message.trim()) return value.message.trim();
   if (typeof value === "string" && value.trim()) return value.trim();

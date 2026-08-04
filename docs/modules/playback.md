@@ -126,3 +126,4 @@
 - `apps/web/src/player/` 保存状态机、选源、能力检测、偏好、MP4/DASH adapter、fallback controller 和三槽池。
 - `dashjs@5.2.0` 固定版本，只通过动态 import 进入独立 DASH chunk；MP4 首屏主 chunk 不包含 DASH runtime。
 - 当前构建主 JS 约 330 KiB（gzip 100 KiB），DASH 独立 chunk 约 854 KiB（gzip 257 KiB），只在选中 DASH manifest 时请求。
+- 活动视频首次有声自动播放被浏览器策略拒绝时，播放器自动切为静音并重试；用户仍可通过播放器控制恢复声音。

@@ -67,7 +67,7 @@ Each root-comment page SHALL hydrate at most three active reply previews per roo
 - **THEN** the root remains visible with its bounded preview and the current root-list position is preserved
 
 ### Requirement: Comment likes
-Authenticated users SHALL be able to set or clear a like on any active visible root comment or reply. The operation SHALL be retry-safe, SHALL update the comment's like count exactly once per state transition, and SHALL return the viewer's effective state.
+Authenticated users SHALL be able to set or clear a like on any active visible root comment or reply. The operation SHALL be retry-safe, SHALL update the comment's like count exactly once per state transition, and SHALL return the viewer's effective state. The Web SHALL apply pending, confirmed, and rolled-back like state locally to the affected comment without resetting or repainting unrelated visible threads.
 
 #### Scenario: User likes a comment
 - **WHEN** an authenticated user sets an unliked active comment to liked
@@ -80,6 +80,14 @@ Authenticated users SHALL be able to set or clear a like on any active visible r
 #### Scenario: Anonymous viewer lists comments
 - **WHEN** comments are listed without valid viewer authentication
 - **THEN** public comments remain readable and every viewer-specific `liked` and delete-permission field is false
+
+#### Scenario: Web updates one visible comment like
+- **WHEN** a user likes or unlikes one visible root comment or reply
+- **THEN** the target comment reflects the optimistic and effective state while unrelated comment cards, loaded pages, expanded replies, draft, focus, and scroll position remain stable
+
+#### Scenario: Web rolls back a failed comment like
+- **WHEN** a comment-like request fails after the optimistic update
+- **THEN** only the target comment returns to its exact prior liked state and count, an actionable error is shown for that comment, and unrelated threads remain unchanged
 
 ### Requirement: Comment counters and hot score remain consistent
 The video comment count SHALL equal the number of visible active root comments and active replies, excluding deletion tombstones. Root reply counts and materialized hot scores SHALL change transactionally with accepted reply, reply deletion, root-like, and moderation transitions.

@@ -110,7 +110,8 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
 ) {
   const cover = item.cover_url || image.stage;
   const media = item.media_url || cover;
-  const showVideo = isVideoSource(media);
+  const showVideo = isVideoSource(media)
+    || Boolean(item.playback_sources?.some((source) => source.type === "mp4" || source.type === "dash"));
   const stageRef = useRef<HTMLElement | null>(null);
   const mediaHostRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<FeedPreloadMediaResource | null>(null);
@@ -255,6 +256,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     safelyRecordTelemetry(telemetry, (session) => session.playAttempted());
     video
       .play()
+      .then(() => setPlaybackError(""))
       .catch(() => {
         setPlaybackError("浏览器暂时无法播放该视频");
       });

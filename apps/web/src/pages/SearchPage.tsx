@@ -44,6 +44,7 @@ export function SearchPage({ query, tab }: SearchRoute) {
         <div>
           <span>全局搜索</span>
           <h1>{query ? `“${query}” 的搜索结果` : "搜索视频和用户"}</h1>
+          <p>视频按标题和简介匹配，用户按账号和昵称匹配。</p>
         </div>
       </header>
       <div className="search-tabs" role="tablist" aria-label="搜索类型">
