@@ -221,7 +221,7 @@
   font-size: 14px;
   font-weight: 750;
   transform: translateY(-50%);
-  pointer-events: none;
+  background: transparent;
 }
 
 .top-actions {

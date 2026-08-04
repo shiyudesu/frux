@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { logoutSession } from "../api/account";
 import { image } from "../constants";
-import { useNavigate } from "../router";
+import { useNavigate, useSearchRoute } from "../router";
 import { useSession, useUnreadCount } from "../session";
 import { formatBadgeCount } from "../utils";
 import { Icon } from "./Icon";
@@ -10,8 +10,14 @@ export function TopNav() {
   const { token, user, clearAuth } = useSession();
   const { unreadCount } = useUnreadCount();
   const navigate = useNavigate();
+  const searchRoute = useSearchRoute();
   const [logoutBusy, setLogoutBusy] = useState(false);
+  const [searchQuery, setSearchQuery] = useState(searchRoute?.query || "");
   const authenticated = Boolean(token && user);
+
+  useEffect(() => {
+    if (searchRoute) setSearchQuery(searchRoute.query);
+  }, [searchRoute]);
 
   async function handleLogout() {
     if (logoutBusy) return;
@@ -31,11 +37,23 @@ export function TopNav() {
   return (
     <header className="top-nav" data-ui="top-nav">
       <div className="top-center">
-        <label className="search-box">
+        <form
+          className="search-box"
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            navigate({ route: "/search", query: searchQuery });
+          }}
+        >
           <Icon name="search" size={20} />
-          <input aria-label="搜索" placeholder="搜索你感兴趣的内容" />
-          <span className="search-action">搜索</span>
-        </label>
+          <input
+            aria-label="搜索"
+            placeholder="搜索视频或用户"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+          <button className="search-action" type="submit">搜索</button>
+        </form>
       </div>
       <div className="top-actions">
         <button className="top-action-button upload-button" onClick={() => navigate(authenticated ? "/upload" : "/auth")}>

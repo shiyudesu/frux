@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   normalizeRoute,
   RouterProvider,
+  searchFromLocation,
+  searchPath,
   useNavigate,
   useRoute,
+  useSearchRoute,
   useVideoDiscussionRoute,
   videoDiscussionFromLocation,
   videoDiscussionPath
@@ -77,9 +80,25 @@ describe("typed video discussion routing", () => {
       highlightID: 9,
       invalidFocus: false
     });
+
     expect(videoDiscussionFromLocation("/videos/42", "?comment=-2")).toMatchObject({
       invalidFocus: true
     });
+  });
+
+  it("authors and normalizes typed search destinations", () => {
+    renderRouter();
+    click(required<HTMLButtonElement>('[data-testid="typed-search"]'));
+    expect(window.location.pathname).toBe("/search");
+    expect(window.location.search).toBe("?q=%E7%8C%AB&tab=users");
+    expect(required<HTMLElement>('[data-testid="search"]').textContent).toBe("猫:users");
+
+    expect(searchPath({ route: "/search", query: "  视频  " })).toBe("/search?q=%E8%A7%86%E9%A2%91");
+    expect(searchFromLocation("/search", "?q=test&tab=invalid")).toEqual({
+      query: "test",
+      tab: "videos"
+    });
+    expect(normalizeRoute("/search")).toBe("/search");
   });
 
   function renderRouter() {
@@ -100,6 +119,7 @@ describe("typed video discussion routing", () => {
 function RouterProbe() {
   const route = useRoute();
   const discussion = useVideoDiscussionRoute();
+  const search = useSearchRoute();
   const navigate = useNavigate();
   return (
     <>
@@ -109,12 +129,20 @@ function RouterProbe() {
           ? `${discussion.videoID}:${discussion.commentID}:${discussion.highlightID}:${discussion.invalidFocus}`
           : "none"}
       </output>
+      <output data-testid="search">{search ? `${search.query}:${search.tab}` : "none"}</output>
       <button
         data-testid="typed-video"
         type="button"
         onClick={() => navigate({ route: "/videos/42", comment: 7, highlight: 9 })}
       >
         Open
+      </button>
+      <button
+        data-testid="typed-search"
+        type="button"
+        onClick={() => navigate({ route: "/search", query: "猫", tab: "users" })}
+      >
+        Search
       </button>
     </>
   );

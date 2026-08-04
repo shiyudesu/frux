@@ -13,6 +13,7 @@ export type Route =
   | "/following"
   | "/hotfeed"
   | "/profile"
+  | "/search"
   | "/upload"
   | "/messages"
   | `/users/${number}`
@@ -24,7 +25,20 @@ export interface VideoDiscussionNavigation {
   highlight?: number;
 }
 
-export type NavigationTarget = Route | VideoDiscussionNavigation;
+export type SearchTab = "videos" | "users";
+
+export interface SearchNavigation {
+  route: "/search";
+  query: string;
+  tab?: SearchTab;
+}
+
+export interface SearchRoute {
+  query: string;
+  tab: SearchTab;
+}
+
+export type NavigationTarget = Route | VideoDiscussionNavigation | SearchNavigation;
 
 export interface VideoDiscussionRoute {
   videoID: number;
@@ -53,6 +67,8 @@ export function normalizeRoute(pathname: string): Route {
       return "/hotfeed";
     case "/profile":
       return "/profile";
+    case "/search":
+      return "/search";
     case "/upload":
       return "/upload";
     case "/messages":
@@ -97,6 +113,24 @@ export function videoDiscussionPath(target: VideoDiscussionNavigation): string {
   return search ? `${target.route}?${search}` : target.route;
 }
 
+export function searchFromLocation(route: Route, search: string): SearchRoute | null {
+  if (route !== "/search") return null;
+  const params = new URLSearchParams(search);
+  return {
+    query: (params.get("q") || "").trim(),
+    tab: params.get("tab") === "users" ? "users" : "videos"
+  };
+}
+
+export function searchPath(target: SearchNavigation): string {
+  const params = new URLSearchParams();
+  const query = target.query.trim();
+  if (query) params.set("q", query);
+  if (target.tab === "users") params.set("tab", "users");
+  const search = params.toString();
+  return search ? `/search?${search}` : "/search";
+}
+
 interface RouterValue {
   route: Route;
   search: string;
@@ -119,7 +153,11 @@ export function RouterProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const navigate = useCallback((target: NavigationTarget) => {
-    const authoredPath = typeof target === "string" ? target : videoDiscussionPath(target);
+    const authoredPath = typeof target === "string"
+      ? target
+      : target.route === "/search"
+        ? searchPath(target)
+        : videoDiscussionPath(target);
     const url = new URL(authoredPath, window.location.origin);
     const nextPath = normalizeRoute(url.pathname);
     window.history.pushState({}, "", `${nextPath}${url.search}`);
@@ -150,6 +188,11 @@ export function useNavigate(): (path: NavigationTarget) => void {
 export function useVideoDiscussionRoute(): VideoDiscussionRoute | null {
   const { route, search } = useRouterValue();
   return useMemo(() => videoDiscussionFromLocation(route, search), [route, search]);
+}
+
+export function useSearchRoute(): SearchRoute | null {
+  const { route, search } = useRouterValue();
+  return useMemo(() => searchFromLocation(route, search), [route, search]);
 }
 
 function positiveInteger(value: string): number {

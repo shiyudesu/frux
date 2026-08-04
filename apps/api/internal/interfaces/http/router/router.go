@@ -11,6 +11,7 @@ import (
 	applicationplayback "GCFeed/internal/application/playback"
 	applicationrecommendation "GCFeed/internal/application/recommendation"
 	applicationrelation "GCFeed/internal/application/relation"
+	applicationsearch "GCFeed/internal/application/search"
 	applicationvideo "GCFeed/internal/application/video"
 	domainfeed "GCFeed/internal/domain/feed"
 	infracache "GCFeed/internal/infra/cache"
@@ -41,6 +42,7 @@ import (
 	interfaceshttpplayback "GCFeed/internal/interfaces/http/playback"
 	interfaceshttprecommendation "GCFeed/internal/interfaces/http/recommendation"
 	interfaceshttprelation "GCFeed/internal/interfaces/http/relation"
+	interfaceshttpsearch "GCFeed/internal/interfaces/http/search"
 	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
 	interfaceshttpvideo "GCFeed/internal/interfaces/http/video"
 	"context"
@@ -218,6 +220,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videoOptions = append(videoOptions, applicationvideo.WithMediaCleanup(mediaCleanupService))
 	videoService := applicationvideo.New(videoRepo, videoOptions...)
 	videoHandler := interfaceshttpvideo.New(videoService, videoManagementService)
+	searchService := applicationsearch.New(videoRepo, accountRepo)
+	searchHandler := interfaceshttpsearch.New(searchService)
 	interactionService := applicationinteraction.New(interactionRepo, interactionOptions...)
 	interactionHandler := interfaceshttpinteraction.New(interactionService)
 	exposureRepo := infraexposure.New(gormDB)
@@ -313,6 +317,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videos.POST("/:videoId/comments", authMiddleware, interactionHandler.CreateComment)
 	videos.POST("/:videoId/comments/:commentId/replies", authMiddleware, interactionHandler.CreateReply)
 	videos.GET("/:videoId/comments", optionalAuthMiddleware, interactionHandler.ListComments)
+
+	search := api.Group("/search")
+	search.GET("/videos", searchHandler.Videos)
+	search.GET("/users", searchHandler.Users)
 
 	uploads := api.Group("/uploads", authMiddleware)
 	uploads.POST("", uploadHandler.Create)

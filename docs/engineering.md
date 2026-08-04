@@ -52,6 +52,8 @@ apps/api/
 
 跨模块聚合仍遵守领域所有权。以个人内容库为例，`application/library.Service` 只依赖 `ActionIndex`、`HistoryIndex`、`WatchLaterRepository`、`VideoCatalog`、`PrivacyReader` 等窄接口；`interfaces/http/router/library_adapters.go` 把 interaction、exposure、video、account 的接口适配为 library 需要的形状。不要让聚合 Handler 直接查询多个 GORM Repository，也不要让一个 Domain 包导入另一个模块的 Infrastructure。
 
+全局搜索使用相同模式：`application/search.Service` 只依赖视频与账户搜索索引，游标、query 绑定和输入限制由 search Domain/Application 拥有；PostgreSQL `ILIKE`、公开视频/正常账户过滤和 DTO 映射留在 Infrastructure/Interfaces。搜索 Handler 不得直接拼 SQL 或跨仓储聚合。
+
 评论通知同样遵守所有权：`interaction` 拥有根/回复/评论点赞事实、计数和 `interaction_comment_notification_outbox`；Worker 通过 Application 层的窄 `CommentNotificationMessageWriter` 调用 `message.Service`。message 只持久化消息和结构化目标，不反查互动表；interaction Domain/Application 不导入 message Infrastructure。
 
 ## 3. 新增后端模块文件组

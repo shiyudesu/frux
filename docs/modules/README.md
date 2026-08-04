@@ -11,6 +11,7 @@
 | 内容 | 视频 | [video.md](video.md) | 已实现 |
 | 内容 | 互动 | [interaction.md](interaction.md) | 已实现 |
 | 内容 | 个人内容库 | [library.md](library.md) | 已实现 |
+| 发现 | 全局搜索 | [search.md](search.md) | 已实现 |
 | 分发 | Feed | [feed.md](feed.md) | 已实现 |
 | 分发 | 曝光与观看历史 | [exposure.md](exposure.md) | 已实现 |
 | 分发 | 推荐 | [recommendation.md](recommendation.md) | 已实现 |

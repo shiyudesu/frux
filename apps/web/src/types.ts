@@ -242,6 +242,18 @@ export interface LibraryVideoItem {
 
 export type LibraryVideoPage = CursorPage<LibraryVideoItem>;
 
+export type SearchVideoPage = CursorPage<Video>;
+
+export interface SearchUser {
+  id: number;
+  account: string;
+  nickname: string;
+  avatar_url: string;
+  bio: string;
+}
+
+export type SearchUserPage = CursorPage<SearchUser>;
+
 export interface WatchLaterStateResponse {
   video_id: number;
   active: boolean;

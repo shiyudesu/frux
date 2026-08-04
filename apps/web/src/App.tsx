@@ -8,12 +8,14 @@ import { ProfilePage } from "./pages/ProfilePage";
 import { PublicProfilePage } from "./pages/PublicProfilePage";
 import { UploadPage } from "./pages/UploadPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
+import { SearchPage } from "./pages/SearchPage";
 import {
   RouterProvider,
   feedSceneFromRoute,
   publicUserIDFromRoute,
   useNavigate,
   useRoute,
+  useSearchRoute,
   useVideoDiscussionRoute
 } from "./router";
 import { SessionProvider, useSession } from "./session";
@@ -31,6 +33,7 @@ export default function App() {
 function AppRoutes() {
   const route = useRoute();
   const videoDiscussion = useVideoDiscussionRoute();
+  const searchRoute = useSearchRoute();
   const navigate = useNavigate();
   const { token, user } = useSession();
 
@@ -56,6 +59,14 @@ function AppRoutes() {
     return (
       <AppShell>
         <ProfilePage />
+      </AppShell>
+    );
+  }
+
+  if (searchRoute) {
+    return (
+      <AppShell>
+        <SearchPage {...searchRoute} />
       </AppShell>
     );
   }

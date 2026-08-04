@@ -120,6 +120,20 @@
 }
 
 @media (max-width: 900px) {
+  .search-page {
+    padding: 20px 14px 96px;
+  }
+
+  .search-user-card {
+    grid-template-columns: 48px minmax(0, 1fr) 20px;
+    padding: 10px 12px;
+  }
+
+  .search-user-card img {
+    width: 48px;
+    height: 48px;
+  }
+
   .collection-queue-layout.feed-layout {
     padding: 0;
   }
