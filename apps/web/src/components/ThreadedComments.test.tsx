@@ -237,6 +237,106 @@ describe("threaded comment components", () => {
     expect(mergeVisibleReplyIDs([2], [2, 3], [9], entities)).toEqual([2, 9, 3]);
   });
 
+  it("commits comment like and unlike updates without rendering unrelated cards", () => {
+    const reads: Record<number, number> = {};
+    const first = trackedComment(1, reads);
+    const second = trackedComment(2, reads);
+    const base = controller();
+    const renderState = (
+      target: Comment,
+      likeState: CommentsController["likeStates"][number] | undefined
+    ) => {
+      act(() => root.render(
+        <ThreadedComments
+          controller={{
+            ...base,
+            roots: [target, second],
+            entities: { 1: target, 2: second },
+            likeStates: likeState ? { 1: likeState } : {}
+          }}
+          authenticated
+          canModerateThreads={false}
+          user={emptyProfile}
+          onOpenUser={() => {}}
+        />
+      ));
+    };
+
+    renderState(first, undefined);
+    const commentList = required<HTMLElement>('[data-ui="comment-list"]');
+    commentList.scrollTop = 72;
+    const unrelatedReads = reads[2];
+
+    const optimisticLike = { ...first, liked: true, like_count: 3 };
+    renderState(optimisticLike, { busy: true, error: "" });
+    expect(reads[2]).toBe(unrelatedReads);
+    expect(commentList.scrollTop).toBe(72);
+
+    const confirmedLike = { ...optimisticLike };
+    renderState(confirmedLike, { busy: false, error: "" });
+    expect(reads[2]).toBe(unrelatedReads);
+
+    const optimisticUnlike = { ...confirmedLike, liked: false, like_count: 2 };
+    renderState(optimisticUnlike, { busy: true, error: "" });
+    expect(reads[2]).toBe(unrelatedReads);
+    expect(required<HTMLButtonElement>('[data-comment-id="1"] button[aria-label="点赞评论"]').getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("rolls back one failed like without resetting discussion state", () => {
+    const reads: Record<number, number> = {};
+    const reply = comment(3, { root_comment_id: 1, content: "展开回复" });
+    const first = trackedComment(1, reads, { reply_count: 2, reply_previews: [reply] });
+    const second = trackedComment(2, reads);
+    const base = controller({
+      rootList: { ids: [1, 2], nextCursor: "next", hasMore: true, state: "ready", error: "" },
+      replies: {
+        1: { ids: [3], nextCursor: "reply-next", hasMore: true, state: "ready", error: "" }
+      },
+      expandedRootIDs: [1],
+      draft: "保留草稿",
+      draftLength: 4,
+      focusedRootID: 2,
+      focusedTargetID: 2,
+      focusRevision: 1
+    });
+    const renderState = (
+      target: Comment,
+      likeState: CommentsController["likeStates"][number] | undefined
+    ) => {
+      act(() => root.render(
+        <ThreadedComments
+          controller={{
+            ...base,
+            roots: [target, second],
+            entities: { 1: target, 2: second, 3: reply },
+            likeStates: likeState ? { 1: likeState } : {}
+          }}
+          authenticated
+          canModerateThreads={false}
+          user={emptyProfile}
+          onOpenUser={() => {}}
+        />
+      ));
+    };
+
+    renderState(first, undefined);
+    const commentList = required<HTMLElement>('[data-ui="comment-list"]');
+    commentList.scrollTop = 96;
+    const unrelatedReads = reads[2];
+
+    renderState({ ...first, liked: true, like_count: 3 }, { busy: true, error: "" });
+    renderState(first, { busy: false, error: "点赞失败" });
+
+    expect(reads[2]).toBe(unrelatedReads);
+    expect(commentList.scrollTop).toBe(96);
+    expect(required<HTMLTextAreaElement>("textarea").value).toBe("保留草稿");
+    expect(container.textContent).toContain("展开回复");
+    expect(container.textContent).toContain("收起回复");
+    expect(container.textContent).toContain("点赞失败");
+    expect(required<HTMLElement>('[data-comment-id="2"]').classList.contains("focused")).toBe(true);
+    expect(required<HTMLButtonElement>('[data-comment-id="1"] button[aria-label="点赞评论"]').getAttribute("aria-pressed")).toBe("false");
+  });
+
   function render(node: ReactNode) {
     act(() => root.render(node));
   }
@@ -402,6 +502,24 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     created_at: "2026-08-03T00:00:00Z",
     ...patch
   };
+}
+
+function trackedComment(
+  id: number,
+  reads: Record<number, number>,
+  patch: Partial<Comment> = {}
+): Comment {
+  const value = comment(id, patch);
+  const content = value.content;
+  Object.defineProperty(value, "content", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      reads[id] = (reads[id] || 0) + 1;
+      return content;
+    }
+  });
+  return value;
 }
 
 function video(): FeedVideo {

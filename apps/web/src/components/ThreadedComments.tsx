@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { image } from "../constants";
 import { COMMENT_CONTENT_LIMIT, type CommentsController } from "../hooks/useComments";
 import type { Comment, SessionUser } from "../types";
@@ -24,6 +24,16 @@ export function ThreadedComments({
 }: ThreadedCommentsProps) {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const focusTimerRef = useRef<number>();
+  const onOpenUserRef = useRef(onOpenUser);
+  onOpenUserRef.current = onOpenUser;
+
+  const openUser = useCallback((profile: PublicProfileInput) => {
+    onOpenUserRef.current(profile);
+  }, []);
+  const selectReply = useCallback((commentID: number) => {
+    controller.selectReplyTarget(commentID);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  }, [controller.selectReplyTarget]);
 
   useEffect(() => {
     const targetID = controller.focusedTargetID;
@@ -94,20 +104,43 @@ export function ThreadedComments({
         {controller.rootList.state === "ready" && controller.roots.length === 0 && !controller.focusUnavailable && (
           <CommentMessage icon="comment" title="暂无评论" />
         )}
-        {controller.roots.map((root) => (
-          <CommentThread
-            key={root.id}
-            root={root}
-            controller={controller}
-            authenticated={authenticated}
-            canModerateThreads={canModerateThreads}
-            onOpenUser={onOpenUser}
-            onReply={(commentID) => {
-              controller.selectReplyTarget(commentID);
-              window.requestAnimationFrame(() => composerRef.current?.focus());
-            }}
-          />
-        ))}
+        {controller.roots.map((root) => {
+          const expanded = controller.expandedRootIDs.includes(root.id);
+          const replyList = controller.replies[root.id];
+          const previewIDs = (root.reply_previews || []).map((reply) => reply.id);
+          const replyIDs = expanded
+            ? mergeVisibleReplyIDs(
+                previewIDs,
+                replyList?.ids || [],
+                [
+                  ...(controller.contextReplyIDs[root.id] || []),
+                  ...(controller.pendingReplyIDs[root.id] || [])
+                ],
+                controller.entities
+              )
+            : previewIDs;
+          return (
+            <CommentThread
+              key={root.id}
+              root={commentCardState(root, controller)}
+              replies={replyIDs
+                .map((id) => controller.entities[id])
+                .filter(Boolean)
+                .map((reply) => commentCardState(reply, controller))}
+              replyList={replyList}
+              expanded={expanded}
+              authenticated={authenticated}
+              canModerateThreads={canModerateThreads}
+              onOpenUser={openUser}
+              onReply={selectReply}
+              onRequireLogin={controller.requireLogin}
+              onToggleLike={controller.toggleCommentLike}
+              onRemove={controller.removeComment}
+              onToggleReplies={controller.toggleReplies}
+              onLoadReplies={controller.loadReplies}
+            />
+          );
+        })}
         {controller.rootList.error && controller.roots.length > 0 && (
           <p className="comment-operation-error" role="alert">{controller.rootList.error}</p>
         )}
@@ -181,60 +214,64 @@ export function ThreadedComments({
 }
 
 interface CommentThreadProps {
-  root: Comment;
-  controller: CommentsController;
+  root: CommentCardState;
+  replies: CommentCardState[];
+  replyList?: CommentsController["replies"][number];
+  expanded: boolean;
   authenticated: boolean;
   canModerateThreads: boolean;
   onOpenUser: (profile: PublicProfileInput) => void;
   onReply: (commentID: number) => void;
+  onRequireLogin: () => boolean;
+  onToggleLike: (commentID: number) => Promise<void>;
+  onRemove: (commentID: number) => Promise<void>;
+  onToggleReplies: (rootCommentID: number) => void;
+  onLoadReplies: (rootCommentID: number) => Promise<void>;
 }
 
-function CommentThread({
+const CommentThread = memo(function CommentThread({
   root,
-  controller,
+  replies,
+  replyList,
+  expanded,
   authenticated,
   canModerateThreads,
   onOpenUser,
-  onReply
+  onReply,
+  onRequireLogin,
+  onToggleLike,
+  onRemove,
+  onToggleReplies,
+  onLoadReplies
 }: CommentThreadProps) {
-  const expanded = controller.expandedRootIDs.includes(root.id);
-  const replyList = controller.replies[root.id];
-  const previewIDs = (root.reply_previews || []).map((reply) => reply.id);
-  const replyIDs = expanded
-    ? mergeVisibleReplyIDs(
-        previewIDs,
-        replyList?.ids || [],
-        [
-          ...(controller.contextReplyIDs[root.id] || []),
-          ...(controller.pendingReplyIDs[root.id] || [])
-        ],
-        controller.entities
-      )
-    : previewIDs;
-  const replies = replyIDs.map((id) => controller.entities[id]).filter(Boolean);
-  const canExpand = root.reply_count > previewIDs.length || expanded;
+  const previewCount = root.comment.reply_previews?.length || 0;
+  const canExpand = root.comment.reply_count > previewCount || expanded;
 
   return (
     <article className="comment-thread">
       <CommentCard
-        comment={root}
-        controller={controller}
+        {...root}
         authenticated={authenticated}
         canModerateThreads={canModerateThreads}
         onOpenUser={onOpenUser}
         onReply={onReply}
+        onRequireLogin={onRequireLogin}
+        onToggleLike={onToggleLike}
+        onRemove={onRemove}
       />
       {replies.length > 0 && (
-        <div className="comment-replies" aria-label={`评论 ${root.id} 的回复`}>
+        <div className="comment-replies" aria-label={`评论 ${root.comment.id} 的回复`}>
           {replies.map((reply) => (
             <CommentCard
-              key={reply.id}
-              comment={reply}
-              controller={controller}
+              key={reply.comment.id}
+              {...reply}
               authenticated={authenticated}
               canModerateThreads={canModerateThreads}
               onOpenUser={onOpenUser}
               onReply={onReply}
+              onRequireLogin={onRequireLogin}
+              onToggleLike={onToggleLike}
+              onRemove={onRemove}
               reply
             />
           ))}
@@ -242,15 +279,15 @@ function CommentThread({
       )}
       {canExpand && (
         <div className="comment-thread-controls">
-          <button type="button" onClick={() => controller.toggleReplies(root.id)}>
+          <button type="button" onClick={() => onToggleReplies(root.comment.id)}>
             <Icon name={expanded ? "chevron-up" : "chevron-down"} size={15} />
-            {expanded ? "收起回复" : `展开 ${formatMetric(root.reply_count)} 条回复`}
+            {expanded ? "收起回复" : `展开 ${formatMetric(root.comment.reply_count)} 条回复`}
           </button>
           {expanded && replyList?.hasMore && (
             <button
               type="button"
               disabled={replyList.state === "loadingMore"}
-              onClick={() => controller.loadReplies(root.id)}
+              onClick={() => onLoadReplies(root.comment.id)}
             >
               {replyList.state === "loadingMore" ? "加载中" : "加载更多回复"}
             </button>
@@ -262,31 +299,38 @@ function CommentThread({
       )}
     </article>
   );
-}
+}, sameCommentThreadProps);
 
 interface CommentCardProps {
   comment: Comment;
-  controller: CommentsController;
+  likeState?: CommentsController["likeStates"][number];
+  deleteState?: CommentsController["deleteStates"][number];
+  focused: boolean;
   authenticated: boolean;
   canModerateThreads: boolean;
   onOpenUser: (profile: PublicProfileInput) => void;
   onReply: (commentID: number) => void;
+  onRequireLogin: () => boolean;
+  onToggleLike: (commentID: number) => Promise<void>;
+  onRemove: (commentID: number) => Promise<void>;
   reply?: boolean;
 }
 
-function CommentCard({
+const CommentCard = memo(function CommentCard({
   comment,
-  controller,
+  likeState,
+  deleteState,
+  focused,
   authenticated,
   canModerateThreads,
   onOpenUser,
   onReply,
+  onRequireLogin,
+  onToggleLike,
+  onRemove,
   reply = false
 }: CommentCardProps) {
   const tombstone = comment.deleted && comment.root_comment_id === 0;
-  const likeState = controller.likeStates[comment.id];
-  const deleteState = controller.deleteStates[comment.id];
-  const focused = controller.focusedTargetID === comment.id;
 
   const confirmDelete = () => {
     const moderatingRoot = requiresModeratorConfirmation(comment, canModerateThreads);
@@ -296,7 +340,7 @@ function CommentCard({
     ) {
       return;
     }
-    void controller.removeComment(comment.id);
+    void onRemove(comment.id);
   };
 
   return (
@@ -347,7 +391,7 @@ function CommentCard({
             className={comment.liked ? "active" : ""}
             type="button"
             disabled={tombstone || likeState?.busy}
-            onClick={() => controller.toggleCommentLike(comment.id)}
+            onClick={() => onToggleLike(comment.id)}
           >
             <Icon name="heart" size={15} filled={comment.liked} />
             {formatMetric(comment.like_count)}
@@ -356,7 +400,7 @@ function CommentCard({
             <button
               data-reply-comment-id={comment.id}
               type="button"
-              onClick={() => authenticated ? onReply(comment.id) : controller.requireLogin()}
+              onClick={() => authenticated ? onReply(comment.id) : onRequireLogin()}
             >
               回复
             </button>
@@ -381,6 +425,46 @@ function CommentCard({
       </div>
     </article>
   );
+});
+
+interface CommentCardState {
+  comment: Comment;
+  likeState?: CommentsController["likeStates"][number];
+  deleteState?: CommentsController["deleteStates"][number];
+  focused: boolean;
+}
+
+function commentCardState(comment: Comment, controller: CommentsController): CommentCardState {
+  return {
+    comment,
+    likeState: controller.likeStates[comment.id],
+    deleteState: controller.deleteStates[comment.id],
+    focused: controller.focusedTargetID === comment.id
+  };
+}
+
+function sameCommentCardState(left: CommentCardState, right: CommentCardState): boolean {
+  return left.comment === right.comment
+    && left.likeState === right.likeState
+    && left.deleteState === right.deleteState
+    && left.focused === right.focused;
+}
+
+function sameCommentThreadProps(left: CommentThreadProps, right: CommentThreadProps): boolean {
+  return sameCommentCardState(left.root, right.root)
+    && left.replyList === right.replyList
+    && left.expanded === right.expanded
+    && left.authenticated === right.authenticated
+    && left.canModerateThreads === right.canModerateThreads
+    && left.onOpenUser === right.onOpenUser
+    && left.onReply === right.onReply
+    && left.onRequireLogin === right.onRequireLogin
+    && left.onToggleLike === right.onToggleLike
+    && left.onRemove === right.onRemove
+    && left.onToggleReplies === right.onToggleReplies
+    && left.onLoadReplies === right.onLoadReplies
+    && left.replies.length === right.replies.length
+    && left.replies.every((reply, index) => sameCommentCardState(reply, right.replies[index]));
 }
 
 export function mergeVisibleReplyIDs(
