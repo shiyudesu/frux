@@ -82,6 +82,7 @@ flowchart LR
   Router["Router<br/>路由注册"]
   Auth["JWT Middleware<br/>身份上下文"]
   AdminAuth["Admin Permission Middleware<br/>当前账号状态与角色"]
+  Audit["Admin Audit<br/>不可变操作事实"]
   Handlers["HTTP Handlers<br/>account / video / feed / interaction / exposure / library"]
   Services["Application Services<br/>账户资料 / 创作者管理 / 个人内容库"]
   Domains["Domain Models<br/>account / video / interaction / exposure / library"]
@@ -99,11 +100,14 @@ flowchart LR
   Auth -->|"解析和签名 Token"| JWT
   Auth -->|"/api/admin 当前身份"| AdminAuth
   AdminAuth -->|"读取当前主体"| Repo
+  AdminAuth -->|"最佳努力记录拒绝"| Audit
   AdminAuth -->|"权限通过"| Handlers
   Router -->|"分发普通业务请求"| Handlers
   Handlers -->|"调用用例服务"| Services
   Services -->|"执行领域规则"| Domains
   Services -->|"读写仓储"| Repo
+  Services -->|"构建成功审计事实"| Audit
+  Audit -->|"与受保护变更同事务追加"| Repo
   Repo -->|"复用连接池"| SQL
   SQL -->|"持久化数据"| PostgreSQL
   Handlers -->|"保存上传文件"| Uploads
@@ -111,7 +115,7 @@ flowchart LR
 
   class Entry entry;
   class Router,Auth,AdminAuth,Handlers http;
-  class Services service;
+  class Services,Audit service;
   class Domains domain;
   class Config,JWT,Repo,SQL infra;
   class PostgreSQL,Uploads store;

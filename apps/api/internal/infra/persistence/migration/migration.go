@@ -5,6 +5,7 @@ import (
 	"time"
 
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
+	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
@@ -54,6 +55,7 @@ func AutoMigrate(db *gorm.DB) error {
 		if err := tx.AutoMigrate(
 			&infraaccount.UserModel{},
 			&infraaccount.ProfileSettingModel{},
+			&infraadminaudit.EventModel{},
 			&infraembedding.VideoEmbeddingModel{},
 			&infravideo.VideoModel{},
 			&inframedia.AssetModel{},

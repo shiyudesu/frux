@@ -32,6 +32,9 @@ const (
 
 	CodeAdminPermissionDenied         = "ADMIN_PERMISSION_DENIED"
 	CodeAdminAuthorizationUnavailable = "ADMIN_AUTHORIZATION_UNAVAILABLE"
+	CodeAdminAuditQueryInvalid        = "ADMIN_AUDIT_QUERY_INVALID"
+	CodeAdminAuditCursorInvalid       = "ADMIN_AUDIT_CURSOR_INVALID"
+	CodeAdminAuditUnavailable         = "ADMIN_AUDIT_UNAVAILABLE"
 
 	CodeFeedValidationFailed             = "FEED_VALIDATION_FAILED"
 	CodeFeedRecommendationContextInvalid = "FEED_RECOMMENDATION_CONTEXT_INVALID"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
+	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
@@ -16,6 +17,7 @@ import (
 	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
@@ -24,6 +26,7 @@ import (
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	inframq "github.com/shiyudesu/frux/internal/infra/mq"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
+	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
@@ -90,7 +93,13 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	accountRepo := infraaccount.New(gormDB)
 	accountService := applicationaccount.New(accountRepo, jwtManager, applicationaccount.WithProfileSettingRepository(accountRepo))
 	accountHandler := interfaceshttpaccount.New(accountService)
-	adminHandler := interfaceshttpadmin.New()
+	adminAuditMetrics := adminAuditMetricsAdapter{}
+	adminAuditRepo := infraadminaudit.New(gormDB, infraadminaudit.WithWriteObserver(adminAuditMetrics))
+	adminAuditService := applicationadminaudit.New(
+		adminAuditRepo,
+		applicationadminaudit.WithAttemptObserver(adminAuditMetrics),
+	)
+	adminHandler := interfaceshttpadmin.New(interfaceshttpadmin.WithAuditQueryService(adminAuditService))
 	mediaRepo := infrapersistencemedia.New(gormDB)
 	mediaStore, err := inframediastore.NewObjectStore(context.Background(), cfg.Media)
 	if err != nil {
@@ -311,6 +320,20 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		"/me",
 		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewRead),
 		adminHandler.Me,
+	)
+	admin.GET(
+		"/audit-events",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionAuditRead,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionAuditQuery,
+				domainadminaudit.TargetAuditTrail,
+				"events",
+			),
+		),
+		adminHandler.ListAuditEvents,
 	)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。

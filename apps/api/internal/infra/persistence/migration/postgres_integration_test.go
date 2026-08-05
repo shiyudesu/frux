@@ -27,6 +27,7 @@ import (
 	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
+	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
@@ -199,6 +200,7 @@ func TestPostgreSQLMigration(t *testing.T) {
 	requiredTables := []string{
 		"account",
 		"account_profile_setting",
+		"admin_audit_event",
 		"video_embedding",
 		"video",
 		"media_asset",
@@ -255,6 +257,9 @@ func TestPostgreSQLMigration(t *testing.T) {
 		name  string
 	}{
 		{&infraaccount.UserModel{}, "uk_account_account"},
+		{&infraadminaudit.EventModel{}, "idx_admin_audit_event_created_id"},
+		{&infraadminaudit.EventModel{}, "idx_admin_audit_event_actor_created"},
+		{&infraadminaudit.EventModel{}, "idx_admin_audit_event_target_created"},
 		{&infravideo.VideoModel{}, "idx_video_timeline"},
 		{&infravideo.VideoModel{}, "idx_video_public_timeline"},
 		{&inframedia.AssetModel{}, "uk_media_asset_backend_key"},

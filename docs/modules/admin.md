@@ -9,6 +9,7 @@
 | 状态 | 方法 | 接口路径 | 作用 | 所需权限 |
 | --- | --- | --- | --- | --- |
 | 已实现 | GET | `/api/admin/me` | 返回当前持久化后台角色和权限集合 | `review.read` |
+| 已实现 | GET | `/api/admin/audit-events` | 查询不可变后台操作事实 | `audit.read` |
 | 规划中 | GET | `/api/admin/videos` | 按条件查询和运营视频 | `content.enforce` |
 | 规划中 | GET | `/api/admin/review/tasks` | 查询审核任务 | `review.read` |
 | 规划中 | PUT | `/api/admin/review/tasks/{taskId}/assignee` | 分配审核员 | `review.decide` |
@@ -46,6 +47,7 @@ Resolved Admin Principal → Handler
 - 停用账号、普通用户、缺失账号和未知角色统一返回 `403 ADMIN_PERMISSION_DENIED`，不暴露满足条件所需的更高角色。
 - 当前账号读取失败返回 `503 ADMIN_AUTHORIZATION_UNAVAILABLE`；缺少或无效 access token 继续返回既有 `401 AUTH_INVALID_ACCESS_TOKEN`。
 - 中间件把已解析主体写入请求上下文，Handler 使用共享 helper 做归因，不重复比较角色字符串。
+- 配置了审计元数据的后台路由会最佳努力记录拒绝尝试；审计写入失败不能把原始 403 伪装为成功或其他错误。
 
 ## 5. 数据所有权
 
@@ -53,7 +55,7 @@ Resolved Admin Principal → Handler
 
 - 审核案件和决定由审核模块拥有。
 - 视频处罚和恢复由视频模块拥有。
-- 不可变操作事实由审计模块拥有，并与生产变更同事务提交。
+- 不可变操作事实由 [admin-audit.md](admin-audit.md) 描述的审计模块拥有，并与生产变更同事务提交。
 - 运行时配置由治理模块使用版本化 Revision 管理。
 
 ## 6. 测试要求

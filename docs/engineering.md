@@ -185,6 +185,7 @@ GORM Repository 规则：
 - 跨表聚合计数写入和事实变化放在同一事务；提供基于事实表的 reconciliation 函数作为迁移和修复入口。
 - 在线实例可能并发写聚合时，reconciliation 不得绝对覆盖统计行；应基于同一语句快照计算“事实值 - 快照聚合值”差量，再叠加到获得行锁后的当前值。
 - 由业务模块拥有的 Transactional Outbox 与业务事实同事务提交。通用 Worker 模式为：有界批次、`FOR UPDATE SKIP LOCKED`、稳定 lease owner、租约超时、指数退避、terminal 分类、稳定 event ID 下游去重和受监督 shutdown；不得让 message 或 RabbitMQ 成为互动 HTTP 事务的提交前依赖。
+- 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。
 
 ## 8. Interfaces 规则
 
@@ -205,6 +206,8 @@ Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
 公开读取需要 viewer 状态时使用 optional-auth middleware：无 Token 或无效 Token 继续匿名读取，有效 access JWT 只把 user/role 写入 `RequestContext.Keys`。根评论、回复和 thread context 使用该模式返回匿名公共数据，并仅在有效 viewer 下补充 `liked`、`can_delete`；创建、点赞和删除仍使用强制鉴权。optional-auth 不得放宽父视频 `published + public + media-ready` 校验。
 
 所有 `/api/admin` 路由必须先使用强制 JWT 鉴权建立用户 ID，再通过参数化 Admin Permission Middleware 读取当前 `account.status/role` 并检查路由声明的单项权限。JWT role claim 不能作为后台授权事实；停用、降权、普通和未知角色默认拒绝。权限中间件把 `AdminPrincipal` 写入 `RequestContext.Keys`，后台 Handler 只能通过共享 helper 读取主体用于归因，不得自行比较角色字符串。当前封闭权限集合和角色映射位于 `domain/account`，后续审核、审计、视频运营和治理模块复用该边界，但继续拥有各自数据与事务。
+
+后台审计查询必须要求 `audit.read`，强制提交不超过 31 天的时间范围，并使用绑定全部过滤条件的 `(created_at, id)` 编码游标。HTTP 响应只返回 Domain 已验证的 action-specific detail；Handler 不接受任意详情结构，也不提供审计更新或删除入口。
 
 本地 `/uploads` 中的视频和封面必须记录不可变认证上传者。发布保护 URL 时验证上传者与作者一致；读取时同时验证不可变所有权、同所有者视频引用、生命周期、可见性与当前身份，再交给标准库文件服务并保留 Range/HEAD 语义。不得仅因“任意公开视频引用该 URL”就授权。浏览器媒体标签通过仅限 `/uploads` 的 HttpOnly 资产 Cookie 携带身份；Cookie 身份还必须同时具备 Web 会话维护的 SameSite=Strict、非 HttpOnly 活跃标记。退出时 Web 先同步删除活跃标记和本地登录态，再尽力请求无 Cookie 副作用的无状态登出接口，因此离线退出立即关闭私有资产访问，旧登出响应也不能清除更新登录的资产 Token；普通鉴权响应不得刷新资产 Cookie。不得把访问 Token 放入媒体 URL。头像和普通文件维持公开兼容。
 

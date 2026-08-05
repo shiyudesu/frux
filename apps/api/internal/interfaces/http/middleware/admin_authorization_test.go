@@ -6,8 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
+	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 
@@ -19,6 +22,21 @@ import (
 type fakeAdminPrincipalReader struct {
 	principals map[int64]*domainaccount.AdminPrincipal
 	errors     map[int64]error
+}
+
+type blockingDeniedAttemptRecorder struct {
+	entered chan struct{}
+	release chan struct{}
+	dropped int
+}
+
+func (r *blockingDeniedAttemptRecorder) RecordDeniedAttempt(_ context.Context, _ applicationadminaudit.BuildInput) {
+	close(r.entered)
+	<-r.release
+}
+
+func (r *blockingDeniedAttemptRecorder) RecordDeniedAttemptDropped() {
+	r.dropped++
 }
 
 func (r *fakeAdminPrincipalReader) FindAdminPrincipalByID(_ context.Context, userID int64) (*domainaccount.AdminPrincipal, error) {
@@ -118,6 +136,7 @@ func TestRequireAdminPermissionPreservesAuthenticationAndReaderErrors(t *testing
 	if err != nil {
 		t.Fatalf("new jwt manager: %v", err)
 	}
+
 	reader := &fakeAdminPrincipalReader{
 		principals: map[int64]*domainaccount.AdminPrincipal{},
 		errors:     map[int64]error{7: errors.New("database unavailable")},
@@ -164,5 +183,102 @@ func TestRequireAdminPermissionPreservesAuthenticationAndReaderErrors(t *testing
 	}
 	if unavailableBody.Code != interfaceshttpapierror.CodeAdminAuthorizationUnavailable {
 		t.Fatalf("unavailable code = %q", unavailableBody.Code)
+	}
+}
+
+func TestRequireAdminPermissionDoesNotBlockForbiddenResponseOnDeniedAudit(t *testing.T) {
+	jwtManager, err := infrajwt.NewManager("test-secret", "15m")
+	if err != nil {
+		t.Fatalf("new jwt manager: %v", err)
+	}
+	token, err := jwtManager.SignAccessToken(8, domainaccount.RoleAdmin)
+	if err != nil {
+		t.Fatalf("sign access token: %v", err)
+	}
+	reader := &fakeAdminPrincipalReader{
+		principals: map[int64]*domainaccount.AdminPrincipal{
+			8: domainaccount.RestoreAdminPrincipal(8, domainaccount.StatusNormal, domainaccount.RoleUser),
+		},
+		errors: map[int64]error{},
+	}
+	recorder := &blockingDeniedAttemptRecorder{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	h := server.New(server.WithDisablePrintRoute(true))
+	h.GET(
+		"/admin",
+		NewJWTAuth(jwtManager),
+		NewRequireAdminPermission(
+			reader,
+			domainaccount.PermissionAuditRead,
+			WithDeniedAttemptAudit(
+				recorder,
+				domainadminaudit.ActionAuditQuery,
+				domainadminaudit.TargetAuditTrail,
+				"events",
+			),
+		),
+		func(_ context.Context, c *app.RequestContext) {
+			c.Status(http.StatusNoContent)
+		},
+	)
+
+	responseReady := make(chan *ut.ResponseRecorder, 1)
+	go func() {
+		responseReady <- ut.PerformRequest(
+			h.Engine,
+			http.MethodGet,
+			"/admin",
+			nil,
+			ut.Header{Key: "Authorization", Value: "Bearer " + token},
+		)
+	}()
+
+	select {
+	case response := <-responseReady:
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("forbidden response was blocked by denied-attempt audit")
+	}
+	select {
+	case <-recorder.entered:
+	case <-time.After(time.Second):
+		t.Fatal("denied-attempt recorder was not invoked")
+	}
+	close(recorder.release)
+}
+
+func TestDeniedAttemptLimiterBoundsPerActorWrites(t *testing.T) {
+	limiter := &deniedAttemptLimiter{entries: make(map[int64]deniedAttemptEntry)}
+	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+	for index := 0; index < deniedAuditMaxPerActorPerWindow; index++ {
+		if !limiter.allow(42, now) {
+			t.Fatalf("attempt %d was unexpectedly rejected", index+1)
+		}
+	}
+	if limiter.allow(42, now) {
+		t.Fatal("per-actor audit limit did not reject overflow")
+	}
+	if !limiter.allow(42, now.Add(deniedAuditLimiterWindow)) {
+		t.Fatal("per-actor audit limit did not reset after the window")
+	}
+}
+
+func TestDeniedGlobalLimiterBoundsAggregateWrites(t *testing.T) {
+	limiter := &deniedGlobalLimiter{}
+	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+	for index := 0; index < deniedAuditMaxGlobalPerWindow; index++ {
+		if !limiter.allow(now) {
+			t.Fatalf("global attempt %d was unexpectedly rejected", index+1)
+		}
+	}
+	if limiter.allow(now) {
+		t.Fatal("global audit limit did not reject overflow")
+	}
+	if !limiter.allow(now.Add(deniedAuditLimiterWindow)) {
+		t.Fatal("global audit limit did not reset after the window")
 	}
 }
