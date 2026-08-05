@@ -16,6 +16,7 @@ import (
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttprecommendation "github.com/shiyudesu/frux/internal/interfaces/http/recommendation"
@@ -347,7 +348,7 @@ func TestRecommendationExposureDecisionsAPI(t *testing.T) {
 		`{"user_id":42,"scene":"recommend","video_ids":[0]}`,
 		recommendationInternalToken,
 	)
-	requireStatus(t, badResponse, http.StatusBadRequest)
+	assertAPIError(t, badResponse, http.StatusBadRequest, interfaceshttpapierror.CodeRecommendationValidationFailed, domainrecommendation.ErrInvalidVideoID.Error())
 }
 
 func TestRecommendationCandidatesAPI(t *testing.T) {
@@ -449,7 +450,7 @@ func TestRecommendationExposuresAPI(t *testing.T) {
 		`{"user_id":42,"scene":"recommend","video_ids":[404]}`,
 		recommendationInternalToken,
 	)
-	requireStatus(t, missingResponse, http.StatusNotFound)
+	assertAPIError(t, missingResponse, http.StatusNotFound, interfaceshttpapierror.CodeRecommendationVideoNotFound, "video not found")
 }
 
 func TestRecommendationFeedbackAPIIdempotency(t *testing.T) {
@@ -498,7 +499,7 @@ func TestRecommendationFeedbackAPIIdempotency(t *testing.T) {
 		ut.Header{Key: "Authorization", Value: "Bearer " + token},
 		ut.Header{Key: "Idempotency-Key", Value: "feedback-key"},
 	)
-	requireStatus(t, conflict, http.StatusConflict)
+	assertAPIError(t, conflict, http.StatusConflict, interfaceshttpapierror.CodeRecommendationFeedbackConflict, domainrecommendation.ErrFeedbackIdempotencyConflict.Error())
 }
 
 func TestRecommendationFeedbackRequiresAuthentication(t *testing.T) {
@@ -510,7 +511,7 @@ func TestRecommendationFeedbackRequiresAuthentication(t *testing.T) {
 		`{"video_id":3,"request_id":"req-feedback","feedback_type":"not_interested"}`,
 		ut.Header{Key: "Idempotency-Key", Value: "feedback-key"},
 	)
-	requireStatus(t, response, http.StatusUnauthorized)
+	assertAPIError(t, response, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 }
 
 func TestRecommendationFeedbackRejectsMissingVideoBeforePersistence(t *testing.T) {
@@ -525,7 +526,7 @@ func TestRecommendationFeedbackRejectsMissingVideoBeforePersistence(t *testing.T
 		ut.Header{Key: "Authorization", Value: "Bearer " + token},
 		ut.Header{Key: "Idempotency-Key", Value: "missing-feedback-key"},
 	)
-	requireStatus(t, response, http.StatusNotFound)
+	assertAPIError(t, response, http.StatusNotFound, interfaceshttpapierror.CodeRecommendationVideoNotFound, "video not found")
 	if len(repo.feedback) != 0 {
 		t.Fatalf("missing feedback persisted a row: %#v", repo.feedback)
 	}
@@ -543,7 +544,7 @@ func TestRecommendationFeedbackRejectsFabricatedRequestVideoBeforePersistence(t 
 		ut.Header{Key: "Authorization", Value: "Bearer " + token},
 		ut.Header{Key: "Idempotency-Key", Value: "fabricated-feedback-key"},
 	)
-	requireStatus(t, response, http.StatusBadRequest)
+	assertAPIError(t, response, http.StatusBadRequest, interfaceshttpapierror.CodeRecommendationValidationFailed, domainrecommendation.ErrFeedbackRequestMismatch.Error())
 	if len(repo.feedback) != 0 {
 		t.Fatalf("fabricated feedback persisted a row: %#v", repo.feedback)
 	}

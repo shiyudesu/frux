@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createVideo } from "../api/account";
-import { apiErrorMessage } from "../api/client";
+import { UserFacingError, apiErrorMessage } from "../api/client";
 import { uploadMediaFile } from "../api/upload";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
@@ -47,10 +47,10 @@ export function UploadPage() {
     setCoverProgress(0);
     try {
       if (!videoFile) {
-        throw new Error("请选择视频文件");
+        throw new UserFacingError("请选择视频文件");
       }
       if (!coverFile) {
-        throw new Error("请选择封面文件");
+        throw new UserFacingError("请选择封面文件");
       }
       if (!uploadAttemptRef.current) {
         uploadAttemptRef.current = crypto.randomUUID();
@@ -68,7 +68,7 @@ export function UploadPage() {
             ? { media_url: videoUpload.url, cover_url: coverUpload.url }
             : null;
       if (!uploadReferences) {
-        throw new Error("视频和封面上传模式不一致，请重试");
+        throw new UserFacingError("视频和封面上传模式不一致，请重试");
       }
       const videoReference = videoUpload.mode === "direct" ? String(videoUpload.assetID) : videoUpload.url;
       const coverReference = coverUpload.mode === "direct" ? String(coverUpload.assetID) : coverUpload.url;

@@ -13,6 +13,7 @@ import (
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	inframedia "github.com/shiyudesu/frux/internal/infra/media"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 
@@ -106,16 +107,16 @@ func TestMediaUploadSessionRejectsExpiryOwnerAndChecksumMismatch(t *testing.T) {
 		ChecksumSHA256: strings.Repeat("c", 64),
 	}
 	mismatch := performUploadSessionJSON(ownerRouter, http.MethodPost, "/api/upload-sessions/"+payload.ID+"/complete", "")
-	requireStatus(t, mismatch, http.StatusConflict)
+	assertAPIError(t, mismatch, http.StatusConflict, interfaceshttpapierror.CodeUploadSessionConflict, applicationmedia.ErrUploadObjectMismatch.Error())
 
 	store.metadata.ChecksumSHA256 = checksum
 	otherOwner := newUploadSessionRouter(service, 7)
 	forbidden := performUploadSessionJSON(otherOwner, http.MethodPost, "/api/upload-sessions/"+payload.ID+"/complete", "")
-	requireStatus(t, forbidden, http.StatusConflict)
+	assertAPIError(t, forbidden, http.StatusConflict, interfaceshttpapierror.CodeUploadSessionConflict, domainmedia.ErrUploadSessionConflict.Error())
 
 	now = base.Add(2 * time.Minute)
 	expired := performUploadSessionJSON(ownerRouter, http.MethodPost, "/api/upload-sessions/"+payload.ID+"/complete", "")
-	requireStatus(t, expired, http.StatusConflict)
+	assertAPIError(t, expired, http.StatusConflict, interfaceshttpapierror.CodeUploadSessionConflict, domainmedia.ErrUploadSessionExpired.Error())
 }
 
 func TestProtectedMediaAssetAccessIsOwnerBoundAndExpires(t *testing.T) {
@@ -147,14 +148,14 @@ func TestProtectedMediaAssetAccessIsOwnerBoundAndExpires(t *testing.T) {
 	}
 
 	other := newUploadSessionRouter(service, 77)
-	requireStatus(t, performUploadSessionJSON(other, http.MethodGet, "/api/media-assets/501/access", ""), http.StatusForbidden)
+	assertAPIError(t, performUploadSessionJSON(other, http.MethodGet, "/api/media-assets/501/access", ""), http.StatusForbidden, interfaceshttpapierror.CodeUploadAssetPermissionDenied, domainmedia.ErrMediaAssetPermissionDenied.Error())
 
 	deniedService := applicationmedia.New(
 		repo, store, domainmedia.StorageBackendS3, time.Minute, "v1", 5,
 		applicationmedia.WithURLResolver(resolver, 5*time.Minute),
 		applicationmedia.WithMediaAssetAuthorizer(mediaAssetAuthorizerStub{referenced: true, allowed: false}),
 	)
-	requireStatus(t, performUploadSessionJSON(newUploadSessionRouter(deniedService, 42), http.MethodGet, "/api/media-assets/501/access", ""), http.StatusForbidden)
+	assertAPIError(t, performUploadSessionJSON(newUploadSessionRouter(deniedService, 42), http.MethodGet, "/api/media-assets/501/access", ""), http.StatusForbidden, interfaceshttpapierror.CodeUploadAssetPermissionDenied, domainmedia.ErrMediaAssetPermissionDenied.Error())
 }
 
 type mediaAssetAuthorizerStub struct {

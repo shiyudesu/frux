@@ -1,19 +1,19 @@
 package interfaceshttpaccount
 
 import (
-	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
-	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
-	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -31,7 +31,7 @@ func New(service *applicationaccount.Service) *Handler {
 func (h *Handler) Register(ctx context.Context, c *app.RequestContext) {
 	var req RegisterRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -39,14 +39,14 @@ func (h *Handler) Register(ctx context.Context, c *app.RequestContext) {
 	profile, err := h.service.Register(ctx, req.Account, req.Password, req.Nickname)
 	if err != nil {
 		if isBadRequestError(err) {
-			c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+			interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, err.Error())
 			return
 		}
 		if errors.Is(err, domainaccount.ErrAccountAlreadyExists) {
-			c.JSON(http.StatusConflict, utils.H{"error": "account already exists"})
+			interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeAccountAlreadyExists, "account already exists")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+		interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *Handler) Register(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 	var req LoginByPasswordRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -65,14 +65,14 @@ func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 	token, err := h.service.Login(ctx, req.Account, req.Password)
 	if err != nil {
 		if isBadRequestError(err) {
-			c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+			interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, err.Error())
 			return
 		}
 		if errors.Is(err, domainaccount.ErrInvalidCredentials) {
-			c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid credentials"})
+			interfaceshttpapierror.Write(c, http.StatusUnauthorized, interfaceshttpapierror.CodeAuthInvalidCredentials, "invalid credentials")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+		interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 		return
 	}
 
@@ -93,7 +93,7 @@ func (h *Handler) Logout(_ context.Context, c *app.RequestContext) {
 func (h *Handler) Me(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -127,13 +127,13 @@ func (h *Handler) Get(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) UpdateMe(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
 	var req UpdateProfileRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (h *Handler) UpdateMe(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) GetProfileSettings(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	setting, err := h.service.GetProfileSetting(ctx, userID)
@@ -176,12 +176,12 @@ func (h *Handler) GetProfileSettings(ctx context.Context, c *app.RequestContext)
 func (h *Handler) UpdateProfileSettings(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	var req UpdateProfileSettingRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	setting, err := h.service.UpdateProfileSetting(ctx, userID, req.LikedVisibility, req.FavoriteVisibility)
@@ -261,14 +261,14 @@ func parsePositiveUserID(raw string) (int64, error) {
 // writeProfileError 统一账号资料相关接口的错误响应。
 func writeProfileError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, err.Error())
 		return
 	}
 	if errors.Is(err, domainaccount.ErrUserNotFound) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "user not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeAccountNotFound, "user not found")
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 // isBadRequestError 判断哪些领域错误属于客户端请求参数问题。

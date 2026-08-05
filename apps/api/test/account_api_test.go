@@ -15,6 +15,7 @@ import (
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -265,7 +266,7 @@ func TestAccountAPIFlow(t *testing.T) {
 		`{"account":"ALICE","password":"CaseSensitivePassword","nickname":"duplicate"}`,
 		"",
 	)
-	requireStatus(t, duplicateResponse, http.StatusConflict)
+	assertAPIError(t, duplicateResponse, http.StatusConflict, interfaceshttpapierror.CodeAccountAlreadyExists, "account already exists")
 
 	loginResponse := performJSONRequest(
 		router,
@@ -396,7 +397,7 @@ func TestAccountAPIValidation(t *testing.T) {
 		`{"account":"test","password":"","nickname":"tester"}`,
 		"",
 	)
-	requireStatus(t, registerResponse, http.StatusBadRequest)
+	assertAPIError(t, registerResponse, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, domainaccount.ErrEmptyPassword.Error())
 
 	loginResponse := performJSONRequest(
 		router,
@@ -405,15 +406,17 @@ func TestAccountAPIValidation(t *testing.T) {
 		`{"account":"","password":"12345678"}`,
 		"",
 	)
-	requireStatus(t, loginResponse, http.StatusBadRequest)
+	assertAPIError(t, loginResponse, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, domainaccount.ErrEmptyAccount.Error())
 
 	unauthorizedMeResponse := performJSONRequest(router, http.MethodGet, "/api/users/me", "", "")
-	requireStatus(t, unauthorizedMeResponse, http.StatusUnauthorized)
+	assertAPIError(t, unauthorizedMeResponse, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
+	invalidTokenResponse := performJSONRequest(router, http.MethodGet, "/api/users/me", "", "not-a-token")
+	assertAPIError(t, invalidTokenResponse, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
 	token := registerAndLogin(t, router)
 
 	emptyPatchResponse := performJSONRequest(router, http.MethodPatch, "/api/users/me", `{}`, token)
-	requireStatus(t, emptyPatchResponse, http.StatusBadRequest)
+	assertAPIError(t, emptyPatchResponse, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, domainaccount.ErrEmptyProfileUpdate.Error())
 
 	emptyNicknameResponse := performJSONRequest(
 		router,
@@ -422,7 +425,41 @@ func TestAccountAPIValidation(t *testing.T) {
 		`{"nickname":"   "}`,
 		token,
 	)
-	requireStatus(t, emptyNicknameResponse, http.StatusBadRequest)
+	assertAPIError(t, emptyNicknameResponse, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, domainaccount.ErrEmptyNickname.Error())
+}
+
+func TestAccountLoginInvalidCredentialsAreIndistinguishable(t *testing.T) {
+	router := newAccountRouter(t)
+
+	registerResponse := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/users",
+		`{"account":"login-user","password":"12345678","nickname":"login tester"}`,
+		"",
+	)
+	requireStatus(t, registerResponse, http.StatusCreated)
+
+	unknownAccount := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/sessions",
+		`{"account":"missing-user","password":"12345678"}`,
+		"",
+	)
+	wrongPassword := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/sessions",
+		`{"account":"login-user","password":"wrong-password"}`,
+		"",
+	)
+
+	assertAPIError(t, unknownAccount, http.StatusUnauthorized, interfaceshttpapierror.CodeAuthInvalidCredentials, "invalid credentials")
+	assertAPIError(t, wrongPassword, http.StatusUnauthorized, interfaceshttpapierror.CodeAuthInvalidCredentials, "invalid credentials")
+	if unknownAccount.Body.String() != wrongPassword.Body.String() {
+		t.Fatalf("credential failures should be indistinguishable: unknown=%s wrong=%s", unknownAccount.Body.String(), wrongPassword.Body.String())
+	}
 }
 
 // TestPublicAccountProfile 覆盖公开用户主页资料中的关注数、粉丝数和作品数。
@@ -533,7 +570,7 @@ func TestAtomicProfileUpdateRollsBackOnFailure(t *testing.T) {
 		`{"nickname":"must not persist","profile_settings":{"liked_visibility":"public"}}`,
 		token,
 	)
-	requireStatus(t, response, http.StatusInternalServerError)
+	assertAPIError(t, response, http.StatusInternalServerError, interfaceshttpapierror.CodeInternal, "internal server error")
 
 	repo.failAtomicUpdate = false
 	profileResponse := performJSONRequest(router, http.MethodGet, "/api/users/me", "", token)

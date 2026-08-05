@@ -133,7 +133,24 @@ export function FeedPlayerControls({
 function playerStatusText(state: Readonly<NormalizedPlayerState>): string {
   if (state.status === "loading") return "正在加载视频";
   if (state.status === "buffering") return "缓冲中";
-  if (state.status === "error") return state.error?.message || "播放失败";
+  if (state.status === "error") {
+    switch (state.error?.category) {
+      case "autoplay":
+        return "浏览器已阻止自动播放，请手动播放";
+      case "network":
+        return "视频加载中断，请检查网络后重试";
+      case "manifest":
+        return "视频清单加载失败，请稍后重试";
+      case "unsupported_codec":
+        return "当前浏览器不支持该视频格式";
+      case "decode":
+        return "视频解码失败，请更换浏览器或稍后重试";
+      case "source_unavailable":
+        return "视频源暂时不可用，请稍后重试";
+      default:
+        return "视频播放失败，请稍后重试";
+    }
+  }
   if (state.fallback) return "自适应播放不可用，已切换兼容画质";
   return "";
 }

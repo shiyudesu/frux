@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiErrorMessage } from "../api/client";
 import { image } from "../constants";
 import type { RecommendationFeedbackType } from "../types";
 import type { FeedVideo } from "../types";
@@ -62,7 +63,7 @@ export function FeedActionRail({
       setMoreOpen(false);
     } catch (error) {
       setFeedbackState("error");
-      setFeedbackError(error instanceof Error ? error.message : "操作未完成，请重试");
+      setFeedbackError(apiErrorMessage(error, "操作未完成，请重试"));
     }
   };
   const showRecommendationFeedback = item.feed_scene === "recommend" && Boolean(onRecommendationFeedback);
@@ -77,7 +78,7 @@ export function FeedActionRail({
       if (watchLaterAction === "remove") setMoreOpen(false);
     } catch (error) {
       setWatchLaterState("error");
-      setWatchLaterError(error instanceof Error ? error.message : "操作未完成，请重试");
+      setWatchLaterError(apiErrorMessage(error, "操作未完成，请重试"));
     }
   };
   return (

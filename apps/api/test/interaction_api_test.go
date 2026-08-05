@@ -16,6 +16,7 @@ import (
 	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpinteraction "github.com/shiyudesu/frux/internal/interfaces/http/interaction"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
@@ -843,7 +844,7 @@ func TestInteractionCommentFlow(t *testing.T) {
 	replayResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos/1001/comments", `{"content":"first comment"}`, commenterToken, "comment-1")
 	requireStatus(t, replayResponse, http.StatusCreated)
 	conflictResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos/1001/comments", `{"content":"changed"}`, commenterToken, "comment-1")
-	requireStatus(t, conflictResponse, http.StatusConflict)
+	assertAPIError(t, conflictResponse, http.StatusConflict, interfaceshttpapierror.CodeInteractionIdempotencyConflict, "idempotency key conflicts with another payload")
 
 	listResponse := performJSONRequest(router, http.MethodGet, "/api/videos/1001/comments?limit=10", "", "")
 	requireStatus(t, listResponse, http.StatusOK)
@@ -854,7 +855,7 @@ func TestInteractionCommentFlow(t *testing.T) {
 	}
 
 	forbiddenDelete := performJSONRequest(router, http.MethodDelete, "/api/comments/1", "", otherToken)
-	requireStatus(t, forbiddenDelete, http.StatusForbidden)
+	assertAPIError(t, forbiddenDelete, http.StatusForbidden, interfaceshttpapierror.CodeInteractionCommentPermissionDenied, "comment permission denied")
 
 	authorDelete := performJSONRequest(router, http.MethodDelete, "/api/comments/1", "", authorToken)
 	requireStatus(t, authorDelete, http.StatusOK)
@@ -879,19 +880,19 @@ func TestInteractionValidation(t *testing.T) {
 	token := signTestToken(t, jwtManager, 42)
 
 	unauthorizedLike := performJSONRequest(router, http.MethodPut, "/api/videos/1001/like", "", "")
-	requireStatus(t, unauthorizedLike, http.StatusUnauthorized)
+	assertAPIError(t, unauthorizedLike, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
 	badLike := performJSONRequest(router, http.MethodPut, "/api/videos/0/like", "", token)
-	requireStatus(t, badLike, http.StatusBadRequest)
+	assertAPIError(t, badLike, http.StatusBadRequest, interfaceshttpapierror.CodeInteractionValidationFailed, domaininteraction.ErrInvalidVideoID.Error())
 
 	missingVideo := performJSONRequest(router, http.MethodPut, "/api/videos/404/like", "", token)
-	requireStatus(t, missingVideo, http.StatusNotFound)
+	assertAPIError(t, missingVideo, http.StatusNotFound, interfaceshttpapierror.CodeInteractionResourceNotFound, "resource not found")
 
 	emptyComment := performJSONRequest(router, http.MethodPost, "/api/videos/1001/comments", `{"content":"   "}`, token)
-	requireStatus(t, emptyComment, http.StatusBadRequest)
+	assertAPIError(t, emptyComment, http.StatusBadRequest, interfaceshttpapierror.CodeInteractionValidationFailed, domaininteraction.ErrEmptyCommentContent.Error())
 
 	badList := performJSONRequest(router, http.MethodGet, "/api/videos/1001/comments?limit=0", "", "")
-	requireStatus(t, badList, http.StatusBadRequest)
+	assertAPIError(t, badList, http.StatusBadRequest, interfaceshttpapierror.CodeInteractionValidationFailed, domaininteraction.ErrInvalidLimit.Error())
 }
 
 // TestInteractionHotScoreRecorder 覆盖真实互动变化写入热榜增量。

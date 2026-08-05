@@ -6,7 +6,7 @@ import {
 } from "../api/feed";
 import { setWatchLater } from "../api/library";
 import { favoriteVideo, fetchFollowState, followUser, likeVideo } from "../api/social";
-import { ApiError, apiErrorMessage, isUnauthorized } from "../api/client";
+import { ApiError, UserFacingError, apiErrorMessage, isUnauthorized } from "../api/client";
 import { DEFAULT_PLAYBACK_CONFIG, emptyProfile } from "../constants";
 import { getFeedTrackStyle, useSwipe } from "../hooks/useSwipe";
 import { useComments } from "../hooks/useComments";
@@ -329,7 +329,7 @@ export function CollectionQueueViewer({
   }, [current, following, handleUnauthorized, session, swipe]);
 
   const changeWatchLater = useCallback(async () => {
-    if (!current || !session.token) throw new Error("请先登录");
+    if (!current || !session.token) throw new UserFacingError("请先登录");
     if (source !== "watchLater") {
       try {
         const result = await setWatchLater(session.token, current.video_id, true);
@@ -349,7 +349,7 @@ export function CollectionQueueViewer({
       const removed = await onRemoveWatchLater(current.video_id);
       if (!removed) {
         setActiveVideoID(current.video_id);
-        throw new Error("移除稍后再看失败");
+        throw new UserFacingError("移除稍后再看失败");
       }
       if (nextVideoID <= 0 && !sourceState.hasMore) onClose();
     } finally {

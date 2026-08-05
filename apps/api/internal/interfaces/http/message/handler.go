@@ -1,18 +1,18 @@
 package interfaceshttpmessage
 
 import (
-	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
-	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
-	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -28,7 +28,7 @@ func New(service *applicationmessage.Service) *Handler {
 func (h *Handler) List(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -50,7 +50,7 @@ func (h *Handler) List(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) CountUnread(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -66,13 +66,13 @@ func (h *Handler) CountUnread(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) MarkRead(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
 	var req markReadRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *Handler) MarkRead(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	var req createMessageRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -174,10 +174,10 @@ func responseFromDomain(message *domainmessage.Message) messageResponse {
 
 func writeMessageError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, err.Error())
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 func isBadRequestError(err error) bool {

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { fetchMyProfile, login, registerUser } from "../api/account";
-import { apiErrorMessage } from "../api/client";
+import { ApiError, apiErrorMessage } from "../api/client";
 import { image } from "../constants";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
@@ -46,7 +46,15 @@ export function LoginPage() {
       session.setAuth(accessToken, profile);
       navigate("/recommend");
     } catch (error) {
-      setMessage(apiErrorMessage(error, "登录失败，请检查账号与密码"));
+      const fallback = error instanceof ApiError && error.status >= 500
+        ? "账号服务暂时不可用，请稍后重试"
+        : mode === "register"
+          ? "注册失败，请检查填写内容"
+          : "登录失败，请检查账号与密码";
+      setMessage(apiErrorMessage(
+        error,
+        fallback
+      ));
     } finally {
       setSubmitting(false);
     }

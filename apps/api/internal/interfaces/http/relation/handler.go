@@ -1,17 +1,17 @@
 package interfaceshttprelation
 
 import (
-	applicationrelation "github.com/shiyudesu/frux/internal/application/relation"
-	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationrelation "github.com/shiyudesu/frux/internal/application/relation"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -37,7 +37,7 @@ func (h *Handler) Unfollow(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) GetFollowState(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	targetUserID, err := parsePositiveInt64(c.Param("targetUserId"), domainrelation.ErrInvalidTargetUserID)
@@ -61,7 +61,7 @@ func (h *Handler) GetFollowState(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) ListFollowing(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *Handler) ListFollowing(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) ListFollowers(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -104,7 +104,7 @@ func (h *Handler) ListFollowers(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) setFollow(ctx context.Context, c *app.RequestContext, active bool) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -205,18 +205,18 @@ func relationListResponseFromResult(result *applicationrelation.ListResult) rela
 
 func writeRelationError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeRelationValidationFailed, err.Error())
 		return
 	}
 	if errors.Is(err, domainrelation.ErrTargetUserNotFound) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "target user not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeRelationTargetUserNotFound, "target user not found")
 		return
 	}
 	if errors.Is(err, domainrelation.ErrFollowIdempotencyConflict) {
-		c.JSON(http.StatusConflict, utils.H{"error": "idempotency key conflict"})
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeRelationIdempotencyConflict, "idempotency key conflict")
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 func isBadRequestError(err error) bool {

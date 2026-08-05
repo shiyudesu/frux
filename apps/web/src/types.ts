@@ -12,6 +12,7 @@ export interface CursorPage<T> {
 }
 
 export interface ApiErrorBody {
+  code?: string;
   error?: string;
   message?: string;
 }

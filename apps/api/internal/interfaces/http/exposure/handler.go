@@ -1,17 +1,17 @@
 package interfaceshttpexposure
 
 import (
-	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
-	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
-	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -27,13 +27,13 @@ func New(service *applicationexposure.Service) *Handler {
 func (h *Handler) CreateViewEvent(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
 	var req createViewEventRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -96,18 +96,18 @@ func userIDFromContext(c *app.RequestContext) (int64, bool) {
 
 func writeExposureError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeExposureValidationFailed, err.Error())
 		return
 	}
 	if errors.Is(err, domainexposure.ErrVideoNotFound) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeExposureVideoNotFound, "video not found")
 		return
 	}
 	if errors.Is(err, domainexposure.ErrEventIDConflict) {
-		c.JSON(http.StatusConflict, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeExposureEventConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 func isBadRequestError(err error) bool {

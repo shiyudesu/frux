@@ -12,6 +12,7 @@ import (
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttpvideo "github.com/shiyudesu/frux/internal/interfaces/http/video"
 
@@ -319,7 +320,7 @@ func TestVideoAPIValidation(t *testing.T) {
 		`{"title":"first video","description":"hello timeline","media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
 		"",
 	)
-	requireStatus(t, unauthorizedCreateResponse, http.StatusUnauthorized)
+	assertAPIError(t, unauthorizedCreateResponse, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
 	emptyTitleResponse := performJSONRequest(
 		router,
@@ -328,13 +329,13 @@ func TestVideoAPIValidation(t *testing.T) {
 		`{"title":"   ","media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
 		token,
 	)
-	requireStatus(t, emptyTitleResponse, http.StatusBadRequest)
+	assertAPIError(t, emptyTitleResponse, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, domainvideo.ErrEmptyTitle.Error())
 
 	badIDResponse := performJSONRequest(router, http.MethodGet, "/api/videos/abc", "", "")
-	requireStatus(t, badIDResponse, http.StatusBadRequest)
+	assertAPIError(t, badIDResponse, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, "invalid video id")
 
 	missingResponse := performJSONRequest(router, http.MethodGet, "/api/videos/404", "", "")
-	requireStatus(t, missingResponse, http.StatusNotFound)
+	assertAPIError(t, missingResponse, http.StatusNotFound, interfaceshttpapierror.CodeVideoNotFound, "video not found")
 
 	createResponse := performJSONRequest(
 		router,
@@ -350,13 +351,13 @@ func TestVideoAPIValidation(t *testing.T) {
 
 	otherToken := signTestToken(t, jwtManager, 77)
 	forbiddenDeleteResponse := performJSONRequest(router, http.MethodDelete, fmt.Sprintf("/api/videos/%d", created.ID), "", otherToken)
-	requireStatus(t, forbiddenDeleteResponse, http.StatusForbidden)
+	assertAPIError(t, forbiddenDeleteResponse, http.StatusForbidden, interfaceshttpapierror.CodeVideoPermissionDenied, "video permission denied")
 
 	badUserListResponse := performJSONRequest(router, http.MethodGet, "/api/users/abc/videos", "", "")
-	requireStatus(t, badUserListResponse, http.StatusBadRequest)
+	assertAPIError(t, badUserListResponse, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, "invalid user id")
 
 	badPaginationResponse := performJSONRequest(router, http.MethodGet, "/api/users/42/videos?limit=0", "", "")
-	requireStatus(t, badPaginationResponse, http.StatusBadRequest)
+	assertAPIError(t, badPaginationResponse, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, domainvideo.ErrInvalidLimit.Error())
 }
 
 func TestVideoCreateEnforcesLocalUploadOwnership(t *testing.T) {
@@ -376,7 +377,7 @@ func TestVideoCreateEnforcesLocalUploadOwnership(t *testing.T) {
 	requireStatus(t, ownerResponse, http.StatusCreated)
 
 	attackerResponse := performVideoJSONRequest(router, http.MethodPost, "/api/videos", body, attackerToken, "attacker-local")
-	requireStatus(t, attackerResponse, http.StatusForbidden)
+	assertAPIError(t, attackerResponse, http.StatusForbidden, interfaceshttpapierror.CodeLocalAssetPermissionDenied, "local asset permission denied")
 
 	rejections := []struct {
 		name   string

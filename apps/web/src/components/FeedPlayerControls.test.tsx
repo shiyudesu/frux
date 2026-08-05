@@ -66,13 +66,14 @@ describe("FeedPlayerControls", () => {
           error: {
             category: "network",
             code: "network",
-            message: "网络错误",
+            message: "A network error interrupted media loading.",
             recoverable: true
           }
         }}
       />
     );
-    expect(failed).toContain("网络错误");
+    expect(failed).toContain("视频加载中断，请检查网络后重试");
+    expect(failed).not.toContain("A network error interrupted media loading.");
     expect(failed).toContain("重试");
   });
 });

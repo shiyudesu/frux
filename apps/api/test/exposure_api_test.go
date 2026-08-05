@@ -11,6 +11,7 @@ import (
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
@@ -300,7 +301,7 @@ func TestExposureLifecycleReplayConflictAndOrdering(t *testing.T) {
 		base.Add(2*time.Second).Format(time.RFC3339Nano),
 	)
 	conflict := performJSONRequest(router, http.MethodPost, "/api/video-view-events", conflictBody, token)
-	requireStatus(t, conflict, http.StatusConflict)
+	assertAPIError(t, conflict, http.StatusConflict, interfaceshttpapierror.CodeExposureEventConflict, domainexposure.ErrEventIDConflict.Error())
 	current = base
 
 	completeBody := fmt.Sprintf(
@@ -326,7 +327,7 @@ func TestExposureLifecycleReplayConflictAndOrdering(t *testing.T) {
 		fmt.Sprintf(`{"video_id":404,"scene":"recommend","event_type":"play","event_id":"missing-video","playback_session_id":"session-2","sequence":1,"occurred_at":%q}`, base.Format(time.RFC3339Nano)),
 		token,
 	)
-	requireStatus(t, missingVideoResponse, http.StatusNotFound)
+	assertAPIError(t, missingVideoResponse, http.StatusNotFound, interfaceshttpapierror.CodeExposureVideoNotFound, "video not found")
 }
 
 func TestExposureReplayReturnsOriginalSnapshot(t *testing.T) {
@@ -374,7 +375,7 @@ func TestExposureAPIValidation(t *testing.T) {
 		`{"video_id":1001,"scene":"timeline","event_type":"exposed"}`,
 		"",
 	)
-	requireStatus(t, unauthorizedResponse, http.StatusUnauthorized)
+	assertAPIError(t, unauthorizedResponse, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
 	emptySceneResponse := performJSONRequest(
 		router,
@@ -383,7 +384,7 @@ func TestExposureAPIValidation(t *testing.T) {
 		`{"video_id":1001,"scene":" ","event_type":"exposed"}`,
 		token,
 	)
-	requireStatus(t, emptySceneResponse, http.StatusBadRequest)
+	assertAPIError(t, emptySceneResponse, http.StatusBadRequest, interfaceshttpapierror.CodeExposureValidationFailed, domainexposure.ErrEmptyScene.Error())
 
 	badEventResponse := performJSONRequest(
 		router,
@@ -434,7 +435,7 @@ func TestExposureAPIValidation(t *testing.T) {
 		`{"video_id":404,"scene":"timeline","event_type":"exposed"}`,
 		token,
 	)
-	requireStatus(t, missingVideoResponse, http.StatusNotFound)
+	assertAPIError(t, missingVideoResponse, http.StatusNotFound, interfaceshttpapierror.CodeExposureVideoNotFound, "video not found")
 }
 
 func newExposureRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager, *memoryExposureRepo) {

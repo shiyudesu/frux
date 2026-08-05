@@ -326,11 +326,16 @@ Application 可以包装跨资源错误，但保留可判断性：
 return nil, fmt.Errorf("%w: %d", domainvideo.ErrVideoNotFound, videoID)
 ```
 
-HTTP 层使用 `errors.Is` 映射状态码。响应保持简洁：
+HTTP 层使用 `errors.Is` 映射状态码。所有一方 JSON API 错误响应使用统一信封：
 
 ```json
-{"error":"invalid request"}
+{"code":"INVALID_REQUEST","error":"invalid request"}
 ```
+
+- `code` 是稳定、与展示语言无关的机器契约，使用大写 snake case；公共协议错误由 Interfaces 层共享定义，模块业务错误由对应 Handler 映射。
+- `error` 保留原有简洁文本用于兼容旧客户端和诊断，不是用户界面文案。
+- 未预期的仓储、缓存、队列、对象存储或内部服务错误统一映射为安全的 unavailable/internal code，不得返回堆栈、SQL、凭据、对象键或包装后的基础设施错误。
+- HTTP 状态码继续表达错误类别；Domain 和 Application 不依赖 HTTP error code。
 
 ## 13. 前端规范
 
@@ -361,7 +366,9 @@ apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 - 手写路由的 search 参数也必须类型化和验证。视频讨论使用 `NavigationTarget` 构造 `/videos/${number}`，只接受正整数 `comment`/`highlight`，且 `highlight` 不能脱离根 `comment`；不得让页面直接拼接未校验 query。
 - localStorage 读出的 JSON 必须过 `types.ts` 的 type guard 窄化。
 - 禁止 `@ts-nocheck`/`@ts-expect-error`/显式 `any`；构建门禁为 `tsc --noEmit && vite build`。
-- 服务端错误显示为用户可理解文案。
+- `ApiError` 仅保存 HTTP status、稳定 code 和诊断文本；组件不得直接展示服务端 `error`/`message`、`ApiError.message`、浏览器错误或任意 `Error.message`。
+- 用户可见错误统一经过 `apiErrorMessage`：显式 `UserFacingError` 可展示，网络失败使用固定连接提示，已知 code 查中文目录，未知 4xx 使用调用方 fallback，未知 5xx 使用带“请稍后重试”的安全 fallback。
+- 登录凭据错误与登录态失效使用不同 code；前者展示统一的账号或密码错误，后者继续触发清理会话并跳转登录。
 - 页面状态保持清楚：loading、error、empty、success。
 - 多 Tab 页面为每个 Tab 独立保存 items、cursor、hasMore、loading 和 error；切换 Tab 不得用另一列表覆盖已加载页。
 - 多排序/嵌套列表按资源和排序分区保存状态。评论 controller 按 video+sort 保存根页、按 root 保存回复页，并对 preview/context/page 实体按 ID 去重；草稿、展开、focused target 和各操作 busy/error 不能互相覆盖。

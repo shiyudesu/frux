@@ -1,17 +1,17 @@
 package interfaceshttplibrary
 
 import (
-	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
-	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -196,7 +196,7 @@ func userIDFromContext(c *app.RequestContext) (int64, bool) {
 }
 
 func unauthorized(c *app.RequestContext) {
-	c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+	interfaceshttpapierror.WriteInvalidAccessToken(c)
 }
 
 func writeError(c *app.RequestContext, err error) {
@@ -205,12 +205,12 @@ func writeError(c *app.RequestContext, err error) {
 		errors.Is(err, domainlibrary.ErrInvalidVideoID),
 		errors.Is(err, domainlibrary.ErrInvalidCursor),
 		errors.Is(err, domainlibrary.ErrInvalidLimit):
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeLibraryValidationFailed, err.Error())
 	case errors.Is(err, domainlibrary.ErrVideoNotFound):
-		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeLibraryVideoNotFound, "video not found")
 	case errors.Is(err, domainlibrary.ErrLikedVideosPrivate):
-		c.JSON(http.StatusForbidden, utils.H{"error": "liked videos are private"})
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeLibraryLikedVideosPrivate, "liked videos are private")
 	default:
-		c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+		interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 	}
 }

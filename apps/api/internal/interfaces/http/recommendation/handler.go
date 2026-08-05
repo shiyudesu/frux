@@ -1,16 +1,16 @@
 package interfaceshttprecommendation
 
 import (
-	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
-	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 const maxFeedbackBodyBytes = 4 * 1024
@@ -26,7 +26,7 @@ func New(service *applicationrecommendation.Service) *Handler {
 func (h *Handler) ListCandidates(ctx context.Context, c *app.RequestContext) {
 	var req candidateRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -52,7 +52,7 @@ func (h *Handler) ListCandidates(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) SaveExposures(ctx context.Context, c *app.RequestContext) {
 	var req exposuresRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -77,7 +77,7 @@ func (h *Handler) SaveExposures(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) DecideExposures(ctx context.Context, c *app.RequestContext) {
 	var req exposureDecisionsRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -98,13 +98,13 @@ func (h *Handler) DecideExposures(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) CreateFeedback(ctx context.Context, c *app.RequestContext) {
 	userID, ok := recommendationUserIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
 	var req feedbackRequest
 	if err := interfaceshttpbinding.BindStrictJSON(c, &req, maxFeedbackBodyBytes); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	result, err := h.service.SubmitFeedback(ctx, applicationrecommendation.FeedbackInput{
@@ -192,18 +192,18 @@ func exposureDecisionsResponseFromResult(result *applicationrecommendation.Expos
 
 func writeRecommendationError(c *app.RequestContext, err error) {
 	if errors.Is(err, domainrecommendation.ErrFeedbackIdempotencyConflict) {
-		c.JSON(http.StatusConflict, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeRecommendationFeedbackConflict, err.Error())
 		return
 	}
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeRecommendationValidationFailed, err.Error())
 		return
 	}
 	if errors.Is(err, domainrecommendation.ErrVideoNotFound) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeRecommendationVideoNotFound, "video not found")
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 func isBadRequestError(err error) bool {

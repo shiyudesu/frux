@@ -460,14 +460,15 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 
 ## 8. 错误码
 
-| HTTP 状态 | 场景 | 响应概念 |
+| HTTP 状态 | 场景 | code |
 | --- | --- | --- |
-| 400 | ID、limit、sort、sort/cursor 组合、Unicode 内容或幂等键长度校验失败 | 具体领域错误文本 |
-| 401 | 写操作登录态缺失或 Token 失效 | `invalid access token` |
-| 403 | 删除权限校验失败 | `comment permission denied` |
-| 404 | 视频不可读、评论/回复目标缺失、已自删或已治理 | `resource not found` |
-| 409 | 视频行为、评论创建或评论点赞幂等键复用于另一 payload | `idempotency key conflicts with another payload` |
-| 500 | 仓储、缓存或内部服务失败 | `internal server error` |
+| 400 | JSON 请求格式无效 | `INVALID_REQUEST` |
+| 400 | ID、limit、sort、sort/cursor 组合、Unicode 内容或幂等键长度校验失败 | `INTERACTION_VALIDATION_FAILED` |
+| 401 | 写操作登录态缺失或 Token 失效 | `AUTH_INVALID_ACCESS_TOKEN` |
+| 403 | 删除权限校验失败 | `INTERACTION_COMMENT_PERMISSION_DENIED` |
+| 404 | 视频不可读、评论/回复目标缺失、已自删或已治理 | `INTERACTION_RESOURCE_NOT_FOUND` |
+| 409 | 视频行为、评论创建或评论点赞幂等键复用于另一 payload | `INTERACTION_IDEMPOTENCY_CONFLICT` |
+| 500 | 仓储、缓存或内部服务失败 | `INTERNAL_ERROR` |
 
 ## 9. 测试矩阵
 

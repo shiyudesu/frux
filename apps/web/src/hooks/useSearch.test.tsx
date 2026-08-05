@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SearchUserPage, SearchVideoPage } from "../types";
-import { ApiError } from "../api/client";
+import { ApiError, NetworkError } from "../api/client";
 import { searchErrorMessage, useSearch } from "./useSearch";
 
 const searchAPI = vi.hoisted(() => ({
@@ -81,11 +81,11 @@ describe("global search state", () => {
   });
 
   it("turns infrastructure and network failures into understandable messages", () => {
-    expect(searchErrorMessage(new ApiError("internal server error", 500)))
+    expect(searchErrorMessage(new ApiError("search failed", 500, "SEARCH_SERVICE_UNAVAILABLE")))
       .toBe("搜索服务暂时不可用，请稍后重试");
-    expect(searchErrorMessage(new TypeError("Failed to fetch")))
+    expect(searchErrorMessage(new NetworkError()))
       .toBe("网络连接失败，请检查网络后重试");
-    expect(searchErrorMessage(new ApiError("请输入搜索关键词", 400)))
+    expect(searchErrorMessage(new ApiError("search query is required", 400, "SEARCH_QUERY_REQUIRED")))
       .toBe("请输入搜索关键词");
   });
 

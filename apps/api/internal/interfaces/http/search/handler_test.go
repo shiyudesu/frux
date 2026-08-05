@@ -1,12 +1,14 @@
 package interfaceshttpsearch
 
 import (
-	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
-	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"context"
 	"encoding/json"
 	"errors"
+	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +85,16 @@ func TestHandlersReturnTypedPagesAndMapErrors(t *testing.T) {
 	if badLimit.Code != http.StatusBadRequest {
 		t.Fatalf("bad limit status=%d body=%s", badLimit.Code, badLimit.Body.String())
 	}
+	var badLimitBody struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(badLimit.Body.Bytes(), &badLimitBody); err != nil {
+		t.Fatalf("decode bad limit response: %v", err)
+	}
+	if badLimitBody.Code != interfaceshttpapierror.CodeSearchParametersInvalid || badLimitBody.Error != "搜索参数已失效，请重新搜索" {
+		t.Fatalf("unexpected bad limit body: %+v", badLimitBody)
+	}
 }
 
 func TestHandlerHidesInfrastructureErrors(t *testing.T) {
@@ -94,7 +106,20 @@ func TestHandlerHidesInfrastructureErrors(t *testing.T) {
 	router := server.New()
 	router.GET("/api/search/videos", handler.Videos)
 	response := ut.PerformRequest(router.Engine, http.MethodGet, "/api/search/videos?q=cat", nil)
-	if response.Code != http.StatusInternalServerError || response.Body.String() != `{"error":"搜索服务暂时不可用，请稍后重试"}` {
-		t.Fatalf("unexpected infrastructure error response: status=%d body=%s", response.Code, response.Body.String())
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("unexpected infrastructure error status: %d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode infrastructure error: %v", err)
+	}
+	if body.Code != interfaceshttpapierror.CodeSearchServiceUnavailable || body.Error != "搜索服务暂时不可用，请稍后重试" {
+		t.Fatalf("unexpected infrastructure error response: %+v raw=%s", body, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "database details") {
+		t.Fatalf("response leaked infrastructure detail: %s", response.Body.String())
 	}
 }

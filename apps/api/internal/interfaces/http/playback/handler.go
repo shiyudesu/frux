@@ -1,19 +1,19 @@
 package interfaceshttpplayback
 
 import (
-	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
-	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
-	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -83,7 +83,7 @@ func (h *Handler) ListPreloadVideos(ctx context.Context, c *app.RequestContext) 
 func (h *Handler) CreateQoSReport(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	h.createQoSReport(ctx, c, userID)
@@ -93,7 +93,7 @@ func (h *Handler) CreateQoSReport(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) CreateInternalQoSReport(ctx context.Context, c *app.RequestContext) {
 	var req createQoSReportRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	h.createQoSReportWithRequest(ctx, c, req.UserID, req)
@@ -102,19 +102,19 @@ func (h *Handler) CreateInternalQoSReport(ctx context.Context, c *app.RequestCon
 func (h *Handler) CreateTelemetryBatch(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	if h.telemetryLimiter != nil && !h.telemetryLimiter.Allow(userID) {
 		h.recordRejectedTelemetry(0)
-		c.JSON(http.StatusTooManyRequests, utils.H{"error": "telemetry rate limit exceeded"})
+		interfaceshttpapierror.Write(c, http.StatusTooManyRequests, interfaceshttpapierror.CodePlaybackTelemetryRateLimited, "telemetry rate limit exceeded")
 		return
 	}
 
 	var req createTelemetryBatchRequest
 	if err := interfaceshttpbinding.BindStrictJSON(c, &req, domainplayback.MaxTelemetryPayloadBytes); err != nil {
 		h.recordRejectedTelemetry(0)
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	result, err := h.service.CreateTelemetryBatch(ctx, telemetryBatchInputFromRequest(userID, req))
@@ -139,7 +139,7 @@ func (h *Handler) recordRejectedTelemetry(eventCount int) {
 func (h *Handler) createQoSReport(ctx context.Context, c *app.RequestContext, userID int64) {
 	var req createQoSReportRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	h.createQoSReportWithRequest(ctx, c, userID, req)
@@ -304,15 +304,15 @@ func telemetryBatchResponseFromResult(result *applicationplayback.TelemetryBatch
 
 func writePlaybackError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, err.Error())
 		return
 	}
 	if errors.Is(err, domainplayback.ErrTelemetryBatchConflict) ||
 		errors.Is(err, domainplayback.ErrTelemetryEventConflict) {
-		c.JSON(http.StatusConflict, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodePlaybackTelemetryConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 func isBadRequestError(err error) bool {

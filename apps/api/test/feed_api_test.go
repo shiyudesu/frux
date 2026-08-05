@@ -1,12 +1,11 @@
 package test
 
 import (
-	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"context"
 	"errors"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +15,7 @@ import (
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
@@ -580,7 +580,7 @@ func TestFeedSceneQuery(t *testing.T) {
 	}
 
 	followingResponse := performJSONRequest(router, http.MethodGet, "/api/feed-items?scene=following&limit=1", "", "")
-	requireStatus(t, followingResponse, http.StatusUnauthorized)
+	assertAPIError(t, followingResponse, http.StatusUnauthorized, interfaceshttpapierror.CodeAuthenticationRequired, domainfeed.ErrViewerRequired.Error())
 }
 
 func TestRecommendationFeedAcceptsBoundedContext(t *testing.T) {
@@ -929,10 +929,10 @@ func TestFeedAPIValidation(t *testing.T) {
 	router := newFeedRouter(seedFeedItems())
 
 	badLimitResponse := performJSONRequest(router, http.MethodGet, "/api/feed-items?limit=0", "", "")
-	requireStatus(t, badLimitResponse, http.StatusBadRequest)
+	assertAPIError(t, badLimitResponse, http.StatusBadRequest, interfaceshttpapierror.CodeFeedValidationFailed, domainfeed.ErrInvalidLimit.Error())
 
 	badCursorResponse := performJSONRequest(router, http.MethodGet, "/api/feed-items?cursor=bad-cursor", "", "")
-	requireStatus(t, badCursorResponse, http.StatusBadRequest)
+	assertAPIError(t, badCursorResponse, http.StatusBadRequest, interfaceshttpapierror.CodeFeedValidationFailed, domainfeed.ErrInvalidCursor.Error())
 }
 
 func TestRecommendFeedMapsSnapshotCursorFailureToBadRequest(t *testing.T) {
@@ -948,10 +948,7 @@ func TestRecommendFeedMapsSnapshotCursorFailureToBadRequest(t *testing.T) {
 		`{"scene":"recommend","cursor":"expired-or-tampered","context":{"request_id":"request-1"}}`,
 		token,
 	)
-	requireStatus(t, response, http.StatusBadRequest)
-	if body := response.Body.String(); !strings.Contains(body, `"error":"invalid request"`) || strings.Contains(body, "cursor") {
-		t.Fatalf("cursor failure leaked detail: %s", body)
-	}
+	assertAPIErrorNoLeak(t, response, http.StatusBadRequest, interfaceshttpapierror.CodeFeedCursorInvalid, "invalid request", "cursor", "expired-or-tampered")
 }
 
 // newFeedRouter 只装配 Feed 路由，测试时无需数据库。

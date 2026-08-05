@@ -11,6 +11,7 @@ import (
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpmessage "github.com/shiyudesu/frux/internal/interfaces/http/message"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
@@ -329,17 +330,17 @@ func TestMessageAPIValidation(t *testing.T) {
 	router, jwtManager := newMessageRouter(t)
 	token := signTestToken(t, jwtManager, 42)
 
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/messages", "", ""), http.StatusUnauthorized)
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/message-stats/unread", "", ""), http.StatusUnauthorized)
-	requireStatus(t, performJSONRequest(router, http.MethodPatch, "/api/messages", `{}`, ""), http.StatusUnauthorized)
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/messages", "", ""), http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/message-stats/unread", "", ""), http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
+	assertAPIError(t, performJSONRequest(router, http.MethodPatch, "/api/messages", `{}`, ""), http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/messages?limit=0", "", token), http.StatusBadRequest)
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/messages?cursor=bad", "", token), http.StatusBadRequest)
-	requireStatus(t, performJSONRequest(router, http.MethodPatch, "/api/messages", `{"message_ids":[0]}`, token), http.StatusBadRequest)
-	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"bad","title":"x","content":"x"}`, testInternalToken, ""), http.StatusBadRequest)
-	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":0,"type":"system","title":"x","content":"x"}`, testInternalToken, ""), http.StatusBadRequest)
-	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"","content":"x"}`, testInternalToken, ""), http.StatusBadRequest)
-	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"comment","title":"x","content":"x","event_id":"comment-without-target"}`, testInternalToken, ""), http.StatusBadRequest)
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/messages?limit=0", "", token), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidLimit.Error())
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/messages?cursor=bad", "", token), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidCursor.Error())
+	assertAPIError(t, performJSONRequest(router, http.MethodPatch, "/api/messages", `{"message_ids":[0]}`, token), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidMessageID.Error())
+	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"bad","title":"x","content":"x"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidMessageType.Error())
+	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":0,"type":"system","title":"x","content":"x"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidUserID.Error())
+	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"","content":"x"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrEmptyTitle.Error())
+	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"comment","title":"x","content":"x","event_id":"comment-without-target"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidMessageTarget.Error())
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"x","content":"x"}`, "", ""), http.StatusUnauthorized)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"x","content":"x"}`, "wrong-token", ""), http.StatusUnauthorized)
 }

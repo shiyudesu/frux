@@ -13,6 +13,7 @@ import (
 	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
 	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttpplayback "github.com/shiyudesu/frux/internal/interfaces/http/playback"
 
@@ -352,38 +353,38 @@ func TestPlaybackAPIValidation(t *testing.T) {
 	router, jwtManager := newPlaybackRouter(t)
 	token := signTestToken(t, jwtManager, 42)
 
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/playback-config", "", ""), http.StatusUnauthorized)
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/preload-videos", "", ""), http.StatusUnauthorized)
-	requireStatus(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103}`, "", ""), http.StatusUnauthorized)
-	requireStatus(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-telemetry-batches", telemetryBatchBody(t, 1, "batch", []string{"event"}), "", ""), http.StatusUnauthorized)
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/playback-config", "", ""), http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/preload-videos", "", ""), http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
+	assertAPIError(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103}`, "", ""), http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
+	assertAPIError(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-telemetry-batches", telemetryBatchBody(t, 1, "batch", []string{"event"}), "", ""), http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/playback-config?platform="+strings.Repeat("x", 17), "", token), http.StatusBadRequest)
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/preload-videos?limit=0", "", token), http.StatusBadRequest)
-	requireStatus(t, performJSONRequest(router, http.MethodGet, "/api/preload-videos?current_video_id=bad", "", token), http.StatusBadRequest)
-	requireStatus(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":0}`, token, ""), http.StatusBadRequest)
-	requireStatus(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103,"first_frame_ms":-1}`, token, ""), http.StatusBadRequest)
-	requireStatus(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103,"stutter_count":-1}`, token, ""), http.StatusBadRequest)
-	requireStatus(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103,"watch_ms":-1}`, token, ""), http.StatusBadRequest)
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/playback-config?platform="+strings.Repeat("x", 17), "", token), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidPlatform.Error())
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/preload-videos?limit=0", "", token), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidLimit.Error())
+	assertAPIError(t, performJSONRequest(router, http.MethodGet, "/api/preload-videos?current_video_id=bad", "", token), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidVideoID.Error())
+	assertAPIError(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":0}`, token, ""), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidVideoID.Error())
+	assertAPIError(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103,"first_frame_ms":-1}`, token, ""), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidFirstFrameMs.Error())
+	assertAPIError(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103,"stutter_count":-1}`, token, ""), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidStutterCount.Error())
+	assertAPIError(t, performPlaybackJSONRequest(router, http.MethodPost, "/api/playback-qos-reports", `{"video_id":103,"watch_ms":-1}`, token, ""), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidWatchMs.Error())
 	requireStatus(t, performInternalPlaybackRequest(router, http.MethodPost, "/internal/playback-qos-reports", `{"user_id":77,"video_id":101}`, "", ""), http.StatusUnauthorized)
 	requireStatus(t, performInternalPlaybackRequest(router, http.MethodPost, "/internal/playback-qos-reports", `{"user_id":77,"video_id":101}`, "wrong-token", ""), http.StatusUnauthorized)
 	requireStatus(t, performInternalPlaybackRequest(router, http.MethodPost, "/internal/playback-qos-reports", `{"user_id":-1,"video_id":101}`, testInternalToken, ""), http.StatusBadRequest)
 
-	requireStatus(t, performPlaybackJSONRequest(
+	assertAPIError(t, performPlaybackJSONRequest(
 		router, http.MethodPost, "/api/playback-telemetry-batches",
 		telemetryBatchBody(t, 2, "unsupported-version", []string{"event-version"}), token, "",
-	), http.StatusBadRequest)
-	requireStatus(t, performPlaybackJSONRequest(
+	), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrUnsupportedTelemetryVersion.Error())
+	assertAPIError(t, performPlaybackJSONRequest(
 		router, http.MethodPost, "/api/playback-telemetry-batches",
 		strings.Replace(telemetryBatchBody(t, 1, "prohibited-field", []string{"event-prohibited"}), `"schema_version":1`, `"schema_version":1,"token":"secret"`, 1), token, "",
-	), http.StatusBadRequest)
-	requireStatus(t, performPlaybackJSONRequest(
+	), http.StatusBadRequest, interfaceshttpapierror.CodeInvalidRequest, "invalid request")
+	assertAPIError(t, performPlaybackJSONRequest(
 		router, http.MethodPost, "/api/playback-telemetry-batches",
 		strings.Replace(telemetryBatchBody(t, 1, "signed-url", []string{"event-signed-url"}), `"cdn_host":"cdn.example.com"`, `"cdn_host":"https://cdn.example.com/video.mp4?token=secret"`, 1), token, "",
-	), http.StatusBadRequest)
-	requireStatus(t, performPlaybackJSONRequest(
+	), http.StatusBadRequest, interfaceshttpapierror.CodePlaybackValidationFailed, domainplayback.ErrInvalidTelemetryDimension.Error()+": cdn_host")
+	assertAPIError(t, performPlaybackJSONRequest(
 		router, http.MethodPost, "/api/playback-telemetry-batches",
 		`{"schema_version":1,"padding":"`+strings.Repeat("x", domainplayback.MaxTelemetryPayloadBytes)+`"}`, token, "",
-	), http.StatusBadRequest)
+	), http.StatusBadRequest, interfaceshttpapierror.CodeInvalidRequest, "invalid request")
 }
 
 func newPlaybackRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {

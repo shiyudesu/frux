@@ -13,6 +13,7 @@ import (
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttprelation "github.com/shiyudesu/frux/internal/interfaces/http/relation"
 
@@ -426,22 +427,22 @@ func TestRelationValidation(t *testing.T) {
 	token := signTestToken(t, jwtManager, 42)
 
 	unauthorizedResponse := performJSONRequest(router, http.MethodPut, "/api/users/me/following/77", "", "")
-	requireStatus(t, unauthorizedResponse, http.StatusUnauthorized)
+	assertAPIError(t, unauthorizedResponse, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
 	badTargetResponse := performJSONRequest(router, http.MethodPut, "/api/users/me/following/0", "", token)
-	requireStatus(t, badTargetResponse, http.StatusBadRequest)
+	assertAPIError(t, badTargetResponse, http.StatusBadRequest, interfaceshttpapierror.CodeRelationValidationFailed, domainrelation.ErrInvalidTargetUserID.Error())
 
 	selfFollowResponse := performJSONRequest(router, http.MethodPut, "/api/users/me/following/42", "", token)
-	requireStatus(t, selfFollowResponse, http.StatusBadRequest)
+	assertAPIError(t, selfFollowResponse, http.StatusBadRequest, interfaceshttpapierror.CodeRelationValidationFailed, domainrelation.ErrFollowSelfForbidden.Error())
 
 	missingTargetResponse := performJSONRequest(router, http.MethodPut, "/api/users/me/following/404", "", token)
-	requireStatus(t, missingTargetResponse, http.StatusNotFound)
+	assertAPIError(t, missingTargetResponse, http.StatusNotFound, interfaceshttpapierror.CodeRelationTargetUserNotFound, "target user not found")
 
 	badLimitResponse := performJSONRequest(router, http.MethodGet, "/api/users/me/following?limit=0", "", token)
-	requireStatus(t, badLimitResponse, http.StatusBadRequest)
+	assertAPIError(t, badLimitResponse, http.StatusBadRequest, interfaceshttpapierror.CodeRelationValidationFailed, domainrelation.ErrInvalidLimit.Error())
 
 	badCursorResponse := performJSONRequest(router, http.MethodGet, "/api/users/me/followers?cursor=bad", "", token)
-	requireStatus(t, badCursorResponse, http.StatusBadRequest)
+	assertAPIError(t, badCursorResponse, http.StatusBadRequest, interfaceshttpapierror.CodeRelationValidationFailed, domainrelation.ErrInvalidCursor.Error())
 }
 
 func newRelationRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {

@@ -1,16 +1,16 @@
 package interfaceshttpsearch
 
 import (
-	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
-	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"context"
 	"errors"
+	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -80,15 +80,15 @@ func parseLimit(c *app.RequestContext) int {
 func writeSearchError(c *app.RequestContext, err error) {
 	switch {
 	case errors.Is(err, domainsearch.ErrEmptyQuery):
-		c.JSON(http.StatusBadRequest, utils.H{"error": "请输入搜索关键词"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeSearchQueryRequired, "请输入搜索关键词")
 	case errors.Is(err, domainsearch.ErrInvalidQuery):
-		c.JSON(http.StatusBadRequest, utils.H{"error": "搜索关键词格式无效"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeSearchQueryInvalid, "搜索关键词格式无效")
 	case errors.Is(err, domainsearch.ErrQueryTooLong):
-		c.JSON(http.StatusBadRequest, utils.H{"error": "搜索关键词不能超过 64 个字符"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeSearchQueryTooLong, "搜索关键词不能超过 64 个字符")
 	case errors.Is(err, domainsearch.ErrInvalidLimit),
 		errors.Is(err, domainsearch.ErrInvalidCursor):
-		c.JSON(http.StatusBadRequest, utils.H{"error": "搜索参数已失效，请重新搜索"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeSearchParametersInvalid, "搜索参数已失效，请重新搜索")
 	default:
-		c.JSON(http.StatusInternalServerError, utils.H{"error": "搜索服务暂时不可用，请稍后重试"})
+		interfaceshttpapierror.Write(c, http.StatusInternalServerError, interfaceshttpapierror.CodeSearchServiceUnavailable, "搜索服务暂时不可用，请稍后重试")
 	}
 }

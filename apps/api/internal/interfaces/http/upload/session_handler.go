@@ -1,18 +1,18 @@
 package interfaceshttpupload
 
 import (
-	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
-	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
 	"context"
 	"errors"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type CreateUploadSessionRequest struct {
@@ -75,12 +75,12 @@ func NewSessionHandler(service *applicationmedia.Service) *SessionHandler {
 func (h *SessionHandler) Create(ctx context.Context, c *app.RequestContext) {
 	userID, ok := uploadUserID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	var request CreateUploadSessionRequest
 	if err := interfaceshttpbinding.BindJSON(c, &request); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	result, err := h.service.CreateUploadSession(ctx, applicationmedia.CreateUploadSessionInput{
@@ -119,7 +119,7 @@ func (h *SessionHandler) Create(ctx context.Context, c *app.RequestContext) {
 func (h *SessionHandler) Complete(ctx context.Context, c *app.RequestContext) {
 	userID, ok := uploadUserID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	result, err := h.service.CompleteUploadSession(ctx, userID, c.Param("sessionId"))
@@ -140,7 +140,7 @@ func (h *SessionHandler) Complete(ctx context.Context, c *app.RequestContext) {
 func (h *SessionHandler) Access(ctx context.Context, c *app.RequestContext) {
 	userID, ok := uploadUserID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	assetID, err := strconv.ParseInt(strings.TrimSpace(c.Param("assetId")), 10, 64)
@@ -166,22 +166,23 @@ func writeUploadSessionError(c *app.RequestContext, err error) {
 		errors.Is(err, domainmedia.ErrInvalidSize),
 		errors.Is(err, domainmedia.ErrInvalidChecksum),
 		errors.Is(err, domainmedia.ErrInvalidUploadSession):
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadSessionValidationFailed, err.Error())
 	case errors.Is(err, domainmedia.ErrUploadSessionNotFound):
-		c.JSON(http.StatusNotFound, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeUploadSessionNotFound, err.Error())
 	case errors.Is(err, domainmedia.ErrMediaAssetNotFound):
-		c.JSON(http.StatusNotFound, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeUploadAssetNotFound, err.Error())
 	case errors.Is(err, domainmedia.ErrMediaAssetPermissionDenied):
-		c.JSON(http.StatusForbidden, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeUploadAssetPermissionDenied, err.Error())
 	case errors.Is(err, domainmedia.ErrUploadSessionExpired),
 		errors.Is(err, domainmedia.ErrUploadSessionConflict),
 		errors.Is(err, domainmedia.ErrUploadSessionCompleted),
 		errors.Is(err, applicationmedia.ErrUploadObjectMismatch):
-		c.JSON(http.StatusConflict, utils.H{"error": err.Error()})
-	case errors.Is(err, applicationmedia.ErrDirectUploadUnavailable),
-		errors.Is(err, applicationmedia.ErrDispatchProcessingFailed):
-		c.JSON(http.StatusServiceUnavailable, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeUploadSessionConflict, err.Error())
+	case errors.Is(err, applicationmedia.ErrDirectUploadUnavailable):
+		interfaceshttpapierror.WriteServiceUnavailableCode(c, interfaceshttpapierror.CodeUploadStorageUnavailable, err.Error(), err)
+	case errors.Is(err, applicationmedia.ErrDispatchProcessingFailed):
+		interfaceshttpapierror.WriteServiceUnavailableCode(c, interfaceshttpapierror.CodeUploadProcessingUnavailable, err.Error(), err)
 	default:
-		c.JSON(http.StatusInternalServerError, utils.H{"error": "media upload failed"})
+		interfaceshttpapierror.WriteInternal(c, "media upload failed", err)
 	}
 }

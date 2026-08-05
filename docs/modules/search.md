@@ -84,3 +84,4 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 - 视频结果进入现有 `/videos/{videoId}`，用户结果进入 `/users/{userId}`。
 - 空 query 不发起宽泛请求；页面展示输入提示。
 - 参数错误返回可操作中文提示；数据库或搜索基础设施异常统一显示“搜索服务暂时不可用，请稍后重试”，网络失败提示检查连接，不向用户暴露内部错误文案。
+- 搜索错误使用稳定 code：`SEARCH_QUERY_REQUIRED`、`SEARCH_QUERY_INVALID`、`SEARCH_QUERY_TOO_LONG`、`SEARCH_PARAMETERS_INVALID` 和 `SEARCH_SERVICE_UNAVAILABLE`；兼容 `error` 文本不得绕过 Web 统一消息解析器。

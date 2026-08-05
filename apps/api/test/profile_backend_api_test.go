@@ -1,17 +1,18 @@
 package test
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttplibrary "github.com/shiyudesu/frux/internal/interfaces/http/library"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttpvideo "github.com/shiyudesu/frux/internal/interfaces/http/video"
-	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 	"sync"
@@ -437,9 +438,9 @@ func TestLibraryAPIAuthenticationAndPrivacy(t *testing.T) {
 	videos.PUT("/:videoId/watch-later", auth, handler.AddWatchLater)
 
 	unauthorized := performJSONRequest(router, http.MethodGet, "/api/users/me/liked-videos", "", "")
-	requireStatus(t, unauthorized, http.StatusUnauthorized)
+	assertAPIError(t, unauthorized, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 	private := performJSONRequest(router, http.MethodGet, "/api/users/42/liked-videos", "", "")
-	requireStatus(t, private, http.StatusForbidden)
+	assertAPIError(t, private, http.StatusForbidden, interfaceshttpapierror.CodeLibraryLikedVideosPrivate, "liked videos are private")
 	source.public = true
 	public := performJSONRequest(router, http.MethodGet, "/api/users/42/liked-videos", "", "")
 	requireStatus(t, public, http.StatusOK)

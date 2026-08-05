@@ -1,10 +1,11 @@
 import type {
+  ApiErrorBody,
   CompleteUploadSessionResponse,
   UploadResponse,
   UploadSessionRequest,
   UploadSessionResponse
 } from "../types";
-import { ApiError, apiRequest } from "./client";
+import { ApiError, NetworkError, UserFacingError, apiRequest } from "./client";
 
 export type UploadKind = "video" | "cover";
 
@@ -43,7 +44,7 @@ export async function uploadMediaFile(
     return { mode: "direct", assetID: session.completed_asset_id };
   }
   if (!session.id || !session.upload) {
-    throw new Error("上传会话响应不完整");
+    throw new UserFacingError("上传服务响应异常，请重试");
   }
   await uploadDirect(file, session.upload.url, session.upload.method, session.upload.headers, onProgress);
   const completed = await apiRequest<CompleteUploadSessionResponse>(
@@ -74,14 +75,14 @@ function uploadDirect(
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
     };
-    request.onerror = () => reject(new Error("对象存储上传失败"));
+    request.onerror = () => reject(new NetworkError());
     request.onload = () => {
       if (request.status >= 200 && request.status < 300) {
         onProgress?.(100);
         resolve();
         return;
       }
-      reject(new Error(`对象存储上传失败 (${request.status})`));
+      reject(new ApiError("object storage upload failed", request.status, "UPLOAD_OBJECT_FAILED"));
     };
     request.send(file);
   });
@@ -104,27 +105,55 @@ function uploadMultipart(
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
     };
-    request.onerror = () => reject(new Error("上传失败"));
+    request.onerror = () => reject(new NetworkError());
     request.onload = () => {
-      const payload = parseUploadPayload(request.responseText);
-      if (request.status >= 200 && request.status < 300 && payload && "url" in payload) {
-        onProgress?.(100);
-        resolve(payload);
-        return;
+      try {
+        const payload = parseUploadPayload(request.responseText);
+        if (request.status >= 200 && request.status < 300 && payload && "url" in payload) {
+          onProgress?.(100);
+          resolve(payload);
+          return;
+        }
+        const errorPayload = payload && !("url" in payload) ? payload : null;
+        const message = errorPayload?.message || errorPayload?.error || "上传失败";
+        reject(new ApiError(message, request.status, errorPayload?.code));
+      } catch {
+        reject(new ApiError("invalid upload response", request.status || 500));
       }
-      const message = payload && "error" in payload && typeof payload.error === "string" ? payload.error : "上传失败";
-      reject(new ApiError(message, request.status));
     };
     request.send(body);
   });
 }
 
-function parseUploadPayload(value: string): UploadResponse | { error?: string } | null {
+function parseUploadPayload(value: string): UploadResponse | ApiErrorBody | null {
   try {
-    return JSON.parse(value) as UploadResponse | { error?: string };
+    const payload: unknown = JSON.parse(value);
+    if (!isRecord(payload)) return null;
+    if (
+      typeof payload.url === "string" &&
+      typeof payload.kind === "string" &&
+      typeof payload.filename === "string" &&
+      typeof payload.size === "number"
+    ) {
+      return {
+        url: payload.url,
+        kind: payload.kind,
+        filename: payload.filename,
+        size: payload.size
+      };
+    }
+    return {
+      code: typeof payload.code === "string" ? payload.code : undefined,
+      error: typeof payload.error === "string" ? payload.error : undefined,
+      message: typeof payload.message === "string" ? payload.message : undefined
+    };
   } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function uploadIdempotencyKey(attemptID: string, kind: UploadKind): string {

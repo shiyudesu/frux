@@ -119,10 +119,8 @@ export function useSearch(query: string) {
 }
 
 export function searchErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status >= 500) return "搜索服务暂时不可用，请稍后重试";
-    return error.message || "搜索参数有误，请修改后重试";
+  if (error instanceof ApiError && error.status < 500) {
+    return apiErrorMessage(error, "搜索参数有误，请修改后重试");
   }
-  if (error instanceof TypeError) return "网络连接失败，请检查网络后重试";
-  return apiErrorMessage(error, "搜索失败，请稍后重试");
+  return apiErrorMessage(error, "搜索服务暂时不可用，请稍后重试");
 }

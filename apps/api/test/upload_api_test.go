@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 
@@ -108,16 +109,16 @@ func TestUploadValidationRejectsBadFiles(t *testing.T) {
 	router, _, processor, ownership := newUploadRouter(t)
 
 	badExt := performMultipartUpload(router, "/api/uploads", "video", "clip.exe", sampleMP4Bytes())
-	requireStatus(t, badExt, http.StatusBadRequest)
+	assertAPIError(t, badExt, http.StatusBadRequest, interfaceshttpapierror.CodeUploadValidationFailed, "unsupported upload extension")
 
 	badMime := performMultipartUpload(router, "/api/uploads", "cover", "cover.jpg", []byte("plain text"))
-	requireStatus(t, badMime, http.StatusBadRequest)
+	assertAPIError(t, badMime, http.StatusBadRequest, interfaceshttpapierror.CodeUploadValidationFailed, "unsupported upload content type")
 
 	badKind := performMultipartUpload(router, "/api/uploads", "archive", "file.bin", []byte("content"))
-	requireStatus(t, badKind, http.StatusBadRequest)
+	assertAPIError(t, badKind, http.StatusBadRequest, interfaceshttpapierror.CodeUploadKindInvalid, "invalid upload kind")
 
 	oversizedImage := performMultipartUpload(router, "/api/uploads", "cover", "cover.png", make([]byte, (20<<20)+1))
-	requireStatus(t, oversizedImage, http.StatusBadRequest)
+	assertAPIError(t, oversizedImage, http.StatusBadRequest, interfaceshttpapierror.CodeUploadValidationFailed, "upload file is too large")
 
 	cover := performMultipartUpload(router, "/api/uploads", "cover", "cover.png", samplePNGBytes())
 	requireStatus(t, cover, http.StatusCreated)
@@ -135,7 +136,7 @@ func TestUploadProcessingFailureRemovesTarget(t *testing.T) {
 	processor.validateErr = errors.New("invalid video metadata")
 
 	resp := performMultipartUpload(router, "/api/uploads", "video", "clip.mp4", sampleMP4Bytes())
-	requireStatus(t, resp, http.StatusBadRequest)
+	assertAPIError(t, resp, http.StatusBadRequest, interfaceshttpapierror.CodeUploadValidationFailed, "invalid video metadata")
 
 	entries, err := os.ReadDir(filepath.Join(root, "video"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -151,7 +152,7 @@ func TestUploadOwnershipFailureRemovesTarget(t *testing.T) {
 	ownership.err = errors.New("database unavailable")
 
 	resp := performMultipartUpload(router, "/api/uploads", "cover", "cover.png", samplePNGBytes())
-	requireStatus(t, resp, http.StatusInternalServerError)
+	assertAPIError(t, resp, http.StatusInternalServerError, interfaceshttpapierror.CodeUploadRecordFailed, "failed to record upload")
 	entries, err := os.ReadDir(filepath.Join(root, "cover"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("read cover directory: %v", err)

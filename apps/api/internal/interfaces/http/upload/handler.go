@@ -1,9 +1,6 @@
 package interfaceshttpupload
 
 import (
-	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
-	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -11,6 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -22,7 +23,6 @@ import (
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 const maxUploadBytes = 1024 << 20
@@ -150,7 +150,7 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 			writeUploadValidationError(c, err)
 			return
 		}
-		c.JSON(http.StatusBadRequest, utils.H{"error": "file is required"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadFileRequired, "file is required")
 		return
 	}
 	defer form.RemoveAll()
@@ -158,7 +158,7 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	normalizedKind, ok := normalizeKind(rawKind)
 	if !ok {
 		resultErr = errors.New("invalid upload kind")
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid upload kind"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadKindInvalid, "invalid upload kind")
 		return
 	}
 	kind = normalizedKind
@@ -175,14 +175,14 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	targetDir := filepath.Join(h.root, kind)
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		resultErr = err
-		c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to prepare upload directory"})
+		interfaceshttpapierror.WriteInternalCode(c, interfaceshttpapierror.CodeUploadStoragePreparationFailed, "failed to prepare upload directory", err)
 		return
 	}
 
 	targetPath := filepath.Join(targetDir, filename)
 	if err := c.SaveUploadedFile(file, targetPath); err != nil {
 		resultErr = err
-		c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to save upload"})
+		interfaceshttpapierror.WriteInternalCode(c, interfaceshttpapierror.CodeUploadStorageWriteFailed, "failed to save upload", err)
 		return
 	}
 
@@ -209,13 +209,13 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 		if !ok || h.ownership == nil {
 			resultErr = errors.New("upload ownership is unavailable")
 			_ = os.Remove(targetPath)
-			c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to record upload"})
+			interfaceshttpapierror.WriteInternalCode(c, interfaceshttpapierror.CodeUploadRecordFailed, "failed to record upload", resultErr)
 			return
 		}
 		if err := h.ownership.RecordLocalUpload(ctx, userID, assetURL, kind); err != nil {
 			resultErr = err
 			_ = os.Remove(targetPath)
-			c.JSON(http.StatusInternalServerError, utils.H{"error": "failed to record upload"})
+			interfaceshttpapierror.WriteInternalCode(c, interfaceshttpapierror.CodeUploadRecordFailed, "failed to record upload", err)
 			return
 		}
 	}
@@ -567,15 +567,19 @@ func createFaststartTempFile(path string) (*os.File, error) {
 }
 
 func writeUploadValidationError(c *app.RequestContext, err error) {
-	c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+	interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadValidationFailed, err.Error())
 }
 
 func writeUploadProcessingError(c *app.RequestContext, err error) {
-	if errors.Is(err, errVideoToolUnavailable) || errors.Is(err, errFaststartFailed) {
-		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+	if errors.Is(err, errVideoToolUnavailable) {
+		interfaceshttpapierror.WriteInternalCode(c, interfaceshttpapierror.CodeUploadProcessingUnavailable, errVideoToolUnavailable.Error(), err)
 		return
 	}
-	c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+	if errors.Is(err, errFaststartFailed) {
+		interfaceshttpapierror.WriteInternalCode(c, interfaceshttpapierror.CodeUploadProcessingFailed, errFaststartFailed.Error(), err)
+		return
+	}
+	interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadValidationFailed, err.Error())
 }
 
 // randomSuffix 生成文件名随机后缀，随机失败时用时间戳兜底。

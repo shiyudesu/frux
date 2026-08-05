@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NetworkError } from "../api/client";
 import type { LibraryVideoItem, LibraryVideoPage, WatchLaterStateResponse } from "../types";
 import {
   appendLibraryItems,
@@ -113,12 +114,12 @@ describe("profile library state", () => {
       expect(await secondResult!).toBe(true);
     });
     await act(async () => {
-      failed.reject(new Error("network"));
+      failed.reject(new NetworkError());
       expect(await firstResult!).toBe(false);
     });
 
     expect(current.tabs.watchLater.items.map((entry) => entry.video.id)).toEqual([1]);
-    expect(current.tabs.watchLater.error).toBe("network");
+    expect(current.tabs.watchLater.error).toBe("网络连接失败，请检查网络后重试");
   });
 
   it("continues Watch Later pagination when removing the last loaded item", async () => {

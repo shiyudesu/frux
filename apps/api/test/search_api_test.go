@@ -1,11 +1,12 @@
 package test
 
 import (
+	"context"
 	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpsearch "github.com/shiyudesu/frux/internal/interfaces/http/search"
-	"context"
 	"net/http"
 	"net/url"
 	"sort"
@@ -168,14 +169,18 @@ func TestSearchAPIFlow(t *testing.T) {
 		t.Fatalf("user result lacks public navigation fields: %+v", users.Items[0])
 	}
 
-	for _, path := range []string{
-		"/api/search/videos",
-		"/api/search/videos?q=cat&limit=0",
-		"/api/search/users?q=alice&limit=51",
-		"/api/search/users?q=" + url.QueryEscape(strings.Repeat("界", 65)),
+	for _, tc := range []struct {
+		path   string
+		code   string
+		legacy string
+	}{
+		{path: "/api/search/videos", code: interfaceshttpapierror.CodeSearchQueryRequired, legacy: "请输入搜索关键词"},
+		{path: "/api/search/videos?q=cat&limit=0", code: interfaceshttpapierror.CodeSearchParametersInvalid, legacy: "搜索参数已失效，请重新搜索"},
+		{path: "/api/search/users?q=alice&limit=51", code: interfaceshttpapierror.CodeSearchParametersInvalid, legacy: "搜索参数已失效，请重新搜索"},
+		{path: "/api/search/users?q=" + url.QueryEscape(strings.Repeat("界", 65)), code: interfaceshttpapierror.CodeSearchQueryTooLong, legacy: "搜索关键词不能超过 64 个字符"},
 	} {
-		response := performJSONRequest(router, http.MethodGet, path, "", "")
-		requireStatus(t, response, http.StatusBadRequest)
+		response := performJSONRequest(router, http.MethodGet, tc.path, "", "")
+		assertAPIError(t, response, http.StatusBadRequest, tc.code, tc.legacy)
 	}
 
 	wrongQuery := performJSONRequest(
@@ -185,7 +190,7 @@ func TestSearchAPIFlow(t *testing.T) {
 		"",
 		"",
 	)
-	requireStatus(t, wrongQuery, http.StatusBadRequest)
+	assertAPIError(t, wrongQuery, http.StatusBadRequest, interfaceshttpapierror.CodeSearchParametersInvalid, "搜索参数已失效，请重新搜索")
 	wrongCategory := performJSONRequest(
 		router,
 		http.MethodGet,
@@ -193,7 +198,7 @@ func TestSearchAPIFlow(t *testing.T) {
 		"",
 		"",
 	)
-	requireStatus(t, wrongCategory, http.StatusBadRequest)
+	assertAPIError(t, wrongCategory, http.StatusBadRequest, interfaceshttpapierror.CodeSearchParametersInvalid, "搜索参数已失效，请重新搜索")
 
 	allVideosResponse := performJSONRequest(router, http.MethodGet, "/api/search/videos?q=cat&limit=50", "", "")
 	requireStatus(t, allVideosResponse, http.StatusOK)

@@ -1,18 +1,18 @@
 package interfaceshttpinteraction
 
 import (
-	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
-	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 type Handler struct {
@@ -52,7 +52,7 @@ func (h *Handler) CreateComment(ctx context.Context, c *app.RequestContext) {
 	// JWT 中间件会把用户 ID 写入 RequestContext，业务 Handler 从上下文取登录用户。
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -65,7 +65,7 @@ func (h *Handler) CreateComment(ctx context.Context, c *app.RequestContext) {
 
 	var req createCommentRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -104,7 +104,7 @@ func (h *Handler) ListComments(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) CreateReply(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
@@ -119,7 +119,7 @@ func (h *Handler) CreateReply(ctx context.Context, c *app.RequestContext) {
 	}
 	var req createCommentRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	result, err := h.service.CreateReply(
@@ -188,7 +188,7 @@ func (h *Handler) UnlikeComment(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) DeleteComment(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	role := roleFromContext(c)
@@ -215,7 +215,7 @@ func (h *Handler) DeleteComment(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) setCommentLike(ctx context.Context, c *app.RequestContext, active bool) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	commentID, err := parsePositiveInt64(c.Param("commentId"), domaininteraction.ErrInvalidCommentID)
@@ -243,7 +243,7 @@ func (h *Handler) setLike(ctx context.Context, c *app.RequestContext, active boo
 	// 点赞和取消点赞共用参数解析逻辑，active 决定最终状态。
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -271,7 +271,7 @@ func (h *Handler) setFavorite(ctx context.Context, c *app.RequestContext, active
 	// 收藏和取消收藏共用参数解析逻辑，active 决定最终状态。
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -418,7 +418,7 @@ func commentResponseFromDomain(comment *domaininteraction.Comment) commentRespon
 func writeInteractionError(c *app.RequestContext, err error) {
 	// 统一错误映射让所有互动接口返回一致的 HTTP 状态码和 JSON 格式。
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeInteractionValidationFailed, err.Error())
 		return
 	}
 	if errors.Is(err, domaininteraction.ErrVideoNotFound) ||
@@ -426,20 +426,20 @@ func writeInteractionError(c *app.RequestContext, err error) {
 		errors.Is(err, domaininteraction.ErrCommentUnavailable) ||
 		errors.Is(err, domaininteraction.ErrCommentModerated) ||
 		errors.Is(err, domaininteraction.ErrReplyTargetUnavailable) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "resource not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeInteractionResourceNotFound, "resource not found")
 		return
 	}
 	if errors.Is(err, domaininteraction.ErrCommentPermissionDenied) {
-		c.JSON(http.StatusForbidden, utils.H{"error": "comment permission denied"})
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeInteractionCommentPermissionDenied, "comment permission denied")
 		return
 	}
 	if errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) ||
 		errors.Is(err, domaininteraction.ErrCommentIdempotencyConflict) ||
 		errors.Is(err, domaininteraction.ErrCommentLikeIdempotencyConflict) {
-		c.JSON(http.StatusConflict, utils.H{"error": "idempotency key conflicts with another payload"})
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeInteractionIdempotencyConflict, "idempotency key conflicts with another payload")
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 func isBadRequestError(err error) bool {

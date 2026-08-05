@@ -1,19 +1,19 @@
 package interfaceshttpfeed
 
 import (
+	"context"
+	"errors"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
-	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 const maxFeedQueryBodyBytes = 16 * 1024
@@ -54,7 +54,7 @@ func (h *Handler) ListFeedItems(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) Query(ctx context.Context, c *app.RequestContext) {
 	var req feedQueryRequest
 	if err := interfaceshttpbinding.BindStrictJSON(c, &req, maxFeedQueryBodyBytes); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -66,7 +66,7 @@ func (h *Handler) Query(ctx context.Context, c *app.RequestContext) {
 
 	recommendationContext, err := recommendationContextFromRequest(req.Context)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeFeedRecommendationContextInvalid, err.Error())
 		return
 	}
 
@@ -180,18 +180,18 @@ func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsRe
 // writeFeedError 统一 Feed 接口错误响应。
 func writeFeedError(c *app.RequestContext, err error) {
 	if errors.Is(err, domainfeed.ErrViewerRequired) {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusUnauthorized, interfaceshttpapierror.CodeAuthenticationRequired, err.Error())
 		return
 	}
 	if errors.Is(err, domainrecommendation.ErrInvalidCursor) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeFeedCursorInvalid, "invalid request")
 		return
 	}
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeFeedValidationFailed, err.Error())
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 // isBadRequestError 判断 Feed 参数错误。

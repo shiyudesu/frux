@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 )
 
 func TestValidateVideoMetadata(t *testing.T) {
@@ -114,5 +116,23 @@ func TestReadUploadFormRejectsBodyLimit(t *testing.T) {
 	)
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, resp.Code, resp.Body.String())
+	}
+}
+
+func TestWriteUploadProcessingErrorRedactsWrappedDetails(t *testing.T) {
+	h := server.New(server.WithDisablePrintRoute(true))
+	h.GET("/upload", func(_ context.Context, c *app.RequestContext) {
+		writeUploadProcessingError(c, fmt.Errorf("%w: ffmpeg stderr contains bucket=secret", errFaststartFailed))
+	})
+
+	resp := ut.PerformRequest(h.Engine, http.MethodGet, "/upload", nil)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusInternalServerError, resp.Code, resp.Body.String())
+	}
+	if got := resp.Body.String(); got != `{"code":"`+interfaceshttpapierror.CodeUploadProcessingFailed+`","error":"video faststart failed"}` {
+		t.Fatalf("unexpected upload processing body: %s", got)
+	}
+	if strings.Contains(resp.Body.String(), "bucket=secret") {
+		t.Fatalf("wrapped upload processing detail leaked: %s", resp.Body.String())
 	}
 }

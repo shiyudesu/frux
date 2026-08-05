@@ -1,20 +1,20 @@
 package interfaceshttpvideo
 
 import (
+	"context"
+	"errors"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
-	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
 const defaultListLimit = 20
@@ -36,12 +36,12 @@ func New(service *applicationvideo.Service, management ...*applicationvideo.Mana
 func (h *Handler) QueryMine(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	var req CreatorVideoQueryRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	createdFrom, err := parseOptionalDateTime(req.CreatedFrom, false)
@@ -72,12 +72,12 @@ func (h *Handler) QueryMine(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) BatchAction(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	var req BatchVideoActionRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	result, err := h.management.ApplyBatch(ctx, userID, req.Action, req.VideoIDs, string(c.GetHeader("Idempotency-Key")))
@@ -91,12 +91,12 @@ func (h *Handler) BatchAction(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) CreateCollection(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	var req CreateCollectionRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	collection, created, err := h.management.CreateCollection(ctx, userID, req.Title, req.Description, req.Visibility, string(c.GetHeader("Idempotency-Key")))
@@ -114,7 +114,7 @@ func (h *Handler) CreateCollection(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) ListMineCollections(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	h.listCollections(ctx, c, userID, false)
@@ -154,7 +154,7 @@ func (h *Handler) listCollections(ctx context.Context, c *app.RequestContext, ow
 func (h *Handler) UpdateCollection(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
@@ -164,7 +164,7 @@ func (h *Handler) UpdateCollection(ctx context.Context, c *app.RequestContext) {
 	}
 	var req UpdateCollectionRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 	collection, err := h.management.UpdateCollection(ctx, userID, collectionID, req.Title, req.Description, req.Visibility)
@@ -178,7 +178,7 @@ func (h *Handler) UpdateCollection(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) DeleteCollection(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
@@ -204,7 +204,7 @@ func (h *Handler) RemoveCollectionVideo(ctx context.Context, c *app.RequestConte
 func (h *Handler) setCollectionVideo(ctx context.Context, c *app.RequestContext, active bool) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
@@ -228,13 +228,13 @@ func (h *Handler) setCollectionVideo(ctx context.Context, c *app.RequestContext,
 func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
 	var req CreateVideoRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid request"})
+		interfaceshttpapierror.WriteInvalidRequest(c)
 		return
 	}
 
@@ -269,7 +269,7 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) Get(ctx context.Context, c *app.RequestContext) {
 	videoID, err := parsePositiveInt64(c.Param("videoId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid video id"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, "invalid video id")
 		return
 	}
 
@@ -286,13 +286,13 @@ func (h *Handler) Get(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) Delete(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
 	videoID, err := parsePositiveInt64(c.Param("videoId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid video id"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, "invalid video id")
 		return
 	}
 
@@ -308,7 +308,7 @@ func (h *Handler) Delete(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) ListByAuthor(ctx context.Context, c *app.RequestContext) {
 	authorID, err := parsePositiveInt64(c.Param("userId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid user id"})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, "invalid user id")
 		return
 	}
 
@@ -331,7 +331,7 @@ func (h *Handler) ListByAuthor(ctx context.Context, c *app.RequestContext) {
 func (h *Handler) ListMine(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, utils.H{"error": "invalid access token"})
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
 
@@ -471,38 +471,38 @@ func videoListResponseFromDomain(videos []*domainvideo.Video, limit, offset int)
 // writeVideoError 统一视频接口错误到 HTTP 状态码的映射。
 func writeVideoError(c *app.RequestContext, err error) {
 	if isBadRequestError(err) {
-		c.JSON(http.StatusBadRequest, utils.H{"error": err.Error()})
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeVideoValidationFailed, err.Error())
 		return
 	}
 	if errors.Is(err, domainvideo.ErrVideoNotFound) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "video not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeVideoNotFound, "video not found")
 		return
 	}
 	if errors.Is(err, domainmedia.ErrMediaAssetNotFound) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "media asset not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeMediaAssetNotFound, "media asset not found")
 		return
 	}
 	if errors.Is(err, domainvideo.ErrVideoPermissionDenied) {
-		c.JSON(http.StatusForbidden, utils.H{"error": "video permission denied"})
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeVideoPermissionDenied, "video permission denied")
 		return
 	}
 	if errors.Is(err, domainvideo.ErrLocalAssetPermissionDenied) {
-		c.JSON(http.StatusForbidden, utils.H{"error": "local asset permission denied"})
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeLocalAssetPermissionDenied, "local asset permission denied")
 		return
 	}
 	if errors.Is(err, domainvideo.ErrCollectionNotFound) {
-		c.JSON(http.StatusNotFound, utils.H{"error": "video collection not found"})
+		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeVideoCollectionNotFound, "video collection not found")
 		return
 	}
 	if errors.Is(err, domainvideo.ErrCollectionPermissionDenied) {
-		c.JSON(http.StatusForbidden, utils.H{"error": "video collection permission denied"})
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeVideoCollectionPermissionDenied, "video collection permission denied")
 		return
 	}
 	if errors.Is(err, domainvideo.ErrBatchIdempotencyConflict) {
-		c.JSON(http.StatusConflict, utils.H{"error": "idempotency key conflict"})
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeVideoIdempotencyConflict, "idempotency key conflict")
 		return
 	}
-	c.JSON(http.StatusInternalServerError, utils.H{"error": "internal server error"})
+	interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 }
 
 // isBadRequestError 判断哪些视频领域错误属于客户端请求问题。

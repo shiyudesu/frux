@@ -2,7 +2,7 @@
 // 并保留互动逻辑（点赞/收藏/关注）、关注映射、QoS 上报、键盘导航。
 // 搬运自 LegacyApp.jsx FeedPage，逻辑不变。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, apiErrorMessage, isUnauthorized } from "../api/client";
+import { ApiError, UserFacingError, apiErrorMessage, isUnauthorized } from "../api/client";
 import {
   createRecommendationFeedback,
   reportPlaybackTelemetryBatch as reportPlaybackTelemetryBatchRequest,
@@ -227,10 +227,10 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     const originToken = session.token;
     if (!originToken || originUserID <= 0) {
       navigate("/auth");
-      throw new Error("请先登录后再提交反馈");
+      throw new UserFacingError("请先登录后再提交反馈");
     }
     if (item.feed_scene !== "recommend" || !item.request_id) {
-      throw new Error("当前视频不支持推荐反馈");
+      throw new UserFacingError("当前视频不支持推荐反馈");
     }
     const idempotencyKey = `web-reco-feedback:${item.request_id}:${item.video_id}:${feedbackType}`.slice(0, 128);
     await createRecommendationFeedback(originToken, {

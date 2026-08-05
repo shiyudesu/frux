@@ -279,18 +279,15 @@ apps/api/internal/interfaces/http/relation/
 | 列表只返回有效关系 | 关注列表和粉丝列表查询 `status=1` 的记录 |
 | 列表使用游标分页 | 按 `updated_at DESC, user_id DESC` 或 `updated_at DESC, target_user_id DESC` 稳定翻页 |
 
-## 6. 错误码建议
+## 6. 错误码
 
-| HTTP 状态码 | 业务错误 | 场景 |
+| HTTP 状态码 | code | 场景 |
 | --- | --- | --- |
-| `400` | `INVALID_TARGET_USER_ID` | `target_user_id` 格式异常 |
-| `400` | `INVALID_CURSOR` | 游标解析失败 |
-| `400` | `INVALID_LIMIT` | `limit` 超出范围 |
-| `400` | `FOLLOW_SELF_FORBIDDEN` | 关注目标是当前用户 |
-| `401` | `UNAUTHORIZED` | 登录态缺失或 Token 异常 |
-| `404` | `TARGET_USER_NOT_FOUND` | 目标用户不存在或状态异常 |
-| `500` | `RELATION_SAVE_FAILED` | 保存关注关系失败 |
-| `500` | `RELATION_LOAD_FAILED` | 查询关注关系失败 |
+| `400` | `RELATION_VALIDATION_FAILED` | 目标 ID、游标、limit、关注自己或幂等键格式校验失败 |
+| `401` | `AUTH_INVALID_ACCESS_TOKEN` | 登录态缺失或 Token 异常 |
+| `404` | `RELATION_TARGET_USER_NOT_FOUND` | 目标用户不存在或状态异常 |
+| `409` | `RELATION_IDEMPOTENCY_CONFLICT` | 幂等键复用于另一关注状态 |
+| `500` | `INTERNAL_ERROR` | 关系保存、读取或关注 Feed 回填失败 |
 
 ## 7. 事件设计
 

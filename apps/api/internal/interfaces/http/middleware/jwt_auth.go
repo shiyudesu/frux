@@ -1,15 +1,15 @@
 package interfaceshttpmiddleware
 
 import (
-	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	"context"
 	"crypto/subtle"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/cloudwego/hertz/pkg/protocol"
 )
 
@@ -23,32 +23,24 @@ func NewJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 	return func(ctx context.Context, c *app.RequestContext) {
 		header := strings.TrimSpace(string(c.GetHeader("Authorization")))
 		if header == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
-				"message": "authorization header is required",
-			})
+			interfaceshttpapierror.AbortInvalidAccessTokenWithMessage(c, "authorization header is required")
 			return
 		}
 
 		parts := strings.SplitN(header, " ", 2)
 		if len(parts) != 2 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
-				"message": "authorization format must be Bearer token",
-			})
+			interfaceshttpapierror.AbortInvalidAccessTokenWithMessage(c, "authorization format must be ******")
 			return
 		}
 		if !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
-				"message": "authorization scheme must be Bearer",
-			})
+			interfaceshttpapierror.AbortInvalidAccessTokenWithMessage(c, "authorization scheme must be Bearer")
 			return
 		}
 
 		token := strings.TrimSpace(parts[1])
 		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
-				"message": "invalid access token",
-			})
+			interfaceshttpapierror.AbortInvalidAccessToken(c)
 			return
 		}
 
@@ -63,16 +55,12 @@ func NewInternalTokenAuth(token string) app.HandlerFunc {
 	token = strings.TrimSpace(token)
 	return func(ctx context.Context, c *app.RequestContext) {
 		if token == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
-				"message": "internal token is required",
-			})
+			interfaceshttpapierror.Abort(c, http.StatusUnauthorized, interfaceshttpapierror.CodeInternalTokenRequired, "internal token is required")
 			return
 		}
 		provided := strings.TrimSpace(string(c.GetHeader("X-Internal-Token")))
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, utils.H{
-				"message": "invalid internal token",
-			})
+			interfaceshttpapierror.Abort(c, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidInternalToken, "invalid internal token")
 			return
 		}
 		c.Next(ctx)
