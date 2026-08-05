@@ -26,6 +26,7 @@ Frux 是一个短视频 Feed 系统，目标是用最小可行架构承载完整
 | 分发 | 曝光 | 观看事件、曝光聚合、观看历史投影 |
 | 分发 | 推荐 | 召回、排序、打散、曝光去重 |
 | 治理 | 审核 | Agent 初审、人审判定、违规下架 |
+| 治理 | 后台权限 | 当前账号驱动的 Reviewer、Operator 和兼容 Admin 权限边界 |
 | 治理 | 后台运营 | 内容查询、审核分配、配置管理 |
 | 体验 | 消息 | 通知、未读数、已读状态、结构化讨论目标和消息深链 |
 | 体验 | 播放优化 | 播放参数、预加载、QoS 与版本化播放遥测 |
@@ -127,6 +128,7 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 已实现 | 消息 | GET | `/api/message-stats/unread` | 未读计数 |
 | 已实现 | 消息 | PATCH | `/api/messages` | 批量已读 |
 | 已实现 | 消息 | POST | `/internal/messages` | 消费事件生成消息 |
+| 已实现 | 后台权限 | GET | `/api/admin/me` | 返回当前持久化角色和封闭权限集合；路由要求 `review.read` |
 | 规划中 | 审核 | PUT | `/internal/review/tasks/{taskId}/agent-result` | Agent 初审回传 |
 | 规划中 | 后台运营 | GET | `/api/admin/videos` | 运营查视频 |
 | 规划中 | 后台运营 | GET | `/api/admin/review/tasks` | 运营查审核任务 |

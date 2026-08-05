@@ -2,70 +2,71 @@
 
 ## 1. 模块职责
 
-后台运营模块负责视频查询、审核任务查询、审核分配、运营配置和操作审计。
+后台运营是内部控制面的 HTTP 入口，不拥有审核、视频、审计或运行时治理的领域数据。当前已实现共享权限边界；后续后台接口继续调用各领域 Application Service，并在路由上显式声明所需权限。
 
 ## 2. 接口设计
 
-| 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
+| 状态 | 方法 | 接口路径 | 作用 | 所需权限 |
 | --- | --- | --- | --- | --- |
-| GET | `/api/admin/videos` | 按条件查询视频 | Bearer JWT(运营角色) | 无 |
-| GET | `/api/admin/review/tasks` | 查询审核任务 | Bearer JWT(运营角色) | 无 |
-| PUT | `/api/admin/review/tasks/{taskId}/assignee` | 分配审核员 | Bearer JWT(运营角色) | 支持 |
-| PATCH | `/api/admin/configs/{configKey}` | 更新配置项 | Bearer JWT(管理员) | 支持 |
+| 已实现 | GET | `/api/admin/me` | 返回当前持久化后台角色和权限集合 | `review.read` |
+| 规划中 | GET | `/api/admin/videos` | 按条件查询和运营视频 | `content.enforce` |
+| 规划中 | GET | `/api/admin/review/tasks` | 查询审核任务 | `review.read` |
+| 规划中 | PUT | `/api/admin/review/tasks/{taskId}/assignee` | 分配审核员 | `review.decide` |
+| 规划中 | PATCH | `/api/admin/configs/{configKey}` | 发布配置修订 | `config.publish` |
 
-## 3. 数据表设计
+## 3. 角色和权限
 
-### 3.1 `admin_config`
+权限注册表是代码内封闭集合，第一阶段不增加角色管理表或通用策略语言。
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| `id` | BIGINT | PK | 配置 ID |
-| `config_key` | VARCHAR(128) | UNIQUE, NOT NULL | 配置键 |
-| `config_value` | JSON | NOT NULL | 配置值 |
-| `updated_by` | BIGINT | NOT NULL | 更新人 |
-| `updated_at` | DATETIME | NOT NULL | 更新时间 |
-
-索引建议：`uk_config_key(config_key)`。
-
-### 3.2 `admin_action_log`
-
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| `id` | BIGINT | PK | 日志 ID |
-| `operator_id` | BIGINT | NOT NULL | 操作人 |
-| `action_type` | VARCHAR(64) | NOT NULL | 操作类型 |
-| `target_type` | VARCHAR(32) | NOT NULL | `VIDEO` / `REVIEW` / `CONFIG` |
-| `target_id` | VARCHAR(64) | NOT NULL | 目标 ID |
-| `detail` | JSON | NULLABLE | 操作详情 |
-| `created_at` | DATETIME | NOT NULL | 操作时间 |
-
-索引建议：`idx_operator_time(operator_id, created_at)`。
-
-## 4. 业务规则
-
-| 规则 | 说明 |
+| 角色 | 初始权限 |
 | --- | --- |
-| 后台接口需要运营权限 | 普通用户不能访问后台接口 |
-| 管理员才能改配置 | 配置更新需要管理员角色 |
-| 关键操作写审计日志 | 分配审核员、下架视频、更新配置都写 `admin_action_log` |
-| 查询接口支持筛选 | 视频和审核任务可按状态、作者、时间查询 |
-| 配置以 key 为唯一入口 | 相同 `config_key` 更新同一配置 |
+| `user` | 无 |
+| `reviewer` | `review.read`、`review.decide` |
+| `operator` | `review.read`、`content.enforce`、`config.publish`、`governance.execute`、`audit.read` |
+| `admin` | 全部已注册权限，作为兼容 bootstrap 角色 |
 
-## 5. 测试建议
+已注册权限为 `review.read`、`review.decide`、`content.enforce`、`config.publish`、`governance.execute` 和 `audit.read`。未知角色、未知权限和未配置映射均不授予权限。
+
+## 4. 授权链路
+
+```text
+Access JWT
+   ↓ 只验证身份并取得 user_id
+读取 account.status + account.role
+   ↓
+封闭角色权限映射
+   ↓
+路由声明的单项权限检查
+   ↓
+Resolved Admin Principal → Handler
+```
+
+- `/api/admin` 路由先执行强制 JWT 鉴权，再执行参数化权限中间件。
+- 后台权限始终读取当前账号；JWT 中的旧角色 claim 不保留权限，也不阻止数据库中的合法升权生效。
+- 停用账号、普通用户、缺失账号和未知角色统一返回 `403 ADMIN_PERMISSION_DENIED`，不暴露满足条件所需的更高角色。
+- 当前账号读取失败返回 `503 ADMIN_AUTHORIZATION_UNAVAILABLE`；缺少或无效 access token 继续返回既有 `401 AUTH_INVALID_ACCESS_TOKEN`。
+- 中间件把已解析主体写入请求上下文，Handler 使用共享 helper 做归因，不重复比较角色字符串。
+
+## 5. 数据所有权
+
+本权限基础不新增数据表，只读取 `account.id/status/role`。后续能力保持领域所有权：
+
+- 审核案件和决定由审核模块拥有。
+- 视频处罚和恢复由视频模块拥有。
+- 不可变操作事实由审计模块拥有，并与生产变更同事务提交。
+- 运行时配置由治理模块使用版本化 Revision 管理。
+
+## 6. 测试要求
 
 | 场景 | 期望 |
 | --- | --- |
-| 运营查询视频 | 返回分页结果 |
-| 普通用户访问后台 | 返回 403 |
-| 分配审核员 | 审核任务 assignee 更新并写审计 |
-| 管理员更新配置 | 配置值变更并写审计 |
-| 非管理员更新配置 | 返回 403 |
+| Reviewer 读取后台主体 | 返回其精确权限，不获得运营和治理权限 |
+| 普通用户或未知角色访问 | 返回 403，Handler 不执行 |
+| Admin Token 对应账号已降权 | 立即返回 403，不等待 Token 过期 |
+| Admin Token 对应账号已停用 | 立即返回 403 |
+| 兼容 `admin` 账号访问 | 获得全部初始注册权限 |
+| 缺少或无效 Token | 保持既有 401 响应 |
 
-## 6. 前端接入点
+## 7. 前端接入点
 
-| 页面 | 接入能力 |
-| --- | --- |
-| 后台视频列表 | 条件筛选、状态查看、下架入口 |
-| 审核任务列表 | 查询、分配、进入审核详情 |
-| 运营配置页 | 配置查看和更新 |
-| 操作日志页 | 审计记录查询 |
+后续 Admin Shell 可使用 `/api/admin/me` 获取服务端确认的权限集合控制导航展示，但展示控制不能代替每个后台接口的服务端权限检查。

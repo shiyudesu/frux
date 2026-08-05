@@ -33,3 +33,7 @@ type Repository interface {
 type AuthorDisplayReader interface {
 	BatchGetAuthorDisplays(ctx context.Context, userIDs []int64) (map[int64]*AuthorDisplay, error)
 }
+
+type AdminPrincipalReader interface {
+	FindAdminPrincipalByID(ctx context.Context, userID int64) (*AdminPrincipal, error)
+}

@@ -2,7 +2,7 @@
 
 ## 1. 模块职责
 
-账户模块负责注册、登录、登出、当前用户资料、公开资料、个人资料更新和主页隐私设置，为其他模块提供统一身份与资料展示能力。作品、获赞和合集计数由视频模块维护，账户查询负责聚合读取。
+账户模块负责注册、登录、登出、当前用户资料、公开资料、个人资料更新、主页隐私设置和后台主体读取，为其他模块提供统一身份与资料展示能力。作品、获赞和合集计数由视频模块维护，账户查询负责聚合读取；后台权限注册表仍属于账户领域，但具体审核、运营和治理数据由各自模块拥有。
 
 ## 2. 接口设计
 
@@ -58,7 +58,7 @@
 | `bio` | VARCHAR(255) | NULLABLE | 简介 |
 | `gender` | SMALLINT | NOT NULL, DEFAULT 0 | 0 未设置 / 1 男 / 2 女 / 3 其他 |
 | `status` | SMALLINT | NOT NULL, DEFAULT 1 | 1 正常 / 2 冻结 / 3 注销 |
-| `role` | VARCHAR(32) | NOT NULL | `user` / `admin` |
+| `role` | VARCHAR(32) | NOT NULL | `user` / `reviewer` / `operator` / `admin` |
 | `created_at` | TIMESTAMPTZ | NOT NULL | 创建时间 |
 | `updated_at` | TIMESTAMPTZ | NOT NULL | 更新时间 |
 
@@ -84,6 +84,9 @@
 | 账号唯一 | 大小写变体共享同一规范化 `account` |
 | 密码只保存哈希 | 接口和数据库都不保存明文密码 |
 | 登录只允许正常账号 | 冻结和注销用户不能登录 |
+| JWT 只建立身份 | 后台权限不以 JWT 中的角色 claim 作为最终事实；每次 `/api/admin` 请求都按用户 ID 读取当前账号状态和角色 |
+| 后台角色封闭映射 | `reviewer`、`operator` 和兼容 `admin` 映射到代码注册的固定权限；普通用户、未知角色和未知权限默认拒绝 |
+| 账号变更立即生效 | 后台账号被停用或降为普通用户后，即使原 access token 尚未过期，下一次后台请求也会返回 403 |
 | 登录失败不可枚举账号 | 未注册账号和密码错误均返回 `401`、`AUTH_INVALID_CREDENTIALS` 与相同兼容文本；Web 统一展示“账号或密码错误，请重新输入” |
 | 当前用户资料走鉴权 | `/api/users/me` 只返回当前登录用户 |
 | 登出不依赖有效 Token | `/api/sessions/current` 即使缺少或携带过期 access token 也返回 204，且不发送可能影响更新登录的 `Set-Cookie` |
@@ -132,8 +135,10 @@
 | 400 | `ACCOUNT_VALIDATION_FAILED` | 账号、密码、昵称、资料或隐私设置校验失败 |
 | 401 | `AUTH_INVALID_CREDENTIALS` | 登录账号不存在或密码错误，两种情况不可区分 |
 | 401 | `AUTH_INVALID_ACCESS_TOKEN` | 当前登录态缺失、无效或已过期 |
+| 403 | `ADMIN_PERMISSION_DENIED` | 当前账号停用、角色未知或缺少后台接口声明的权限 |
 | 404 | `ACCOUNT_NOT_FOUND` | 公开或当前账号不存在 |
 | 409 | `ACCOUNT_ALREADY_EXISTS` | 规范化账号已注册 |
+| 503 | `ADMIN_AUTHORIZATION_UNAVAILABLE` | 当前后台主体读取暂时不可用 |
 | 500 | `INTERNAL_ERROR` | 账号仓储、设置读取或 Token 签发等内部失败 |
 
 响应同时保留原有 `error` 字段；Web 只根据 `code` 和安全 fallback 生成用户文案，不直接展示兼容文本。

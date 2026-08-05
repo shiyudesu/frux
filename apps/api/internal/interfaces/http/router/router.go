@@ -1,6 +1,8 @@
 package interfaceshttprouter
 
 import (
+	"context"
+	"database/sql"
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
@@ -13,6 +15,7 @@ import (
 	applicationrelation "github.com/shiyudesu/frux/internal/application/relation"
 	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
@@ -33,6 +36,7 @@ import (
 	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
+	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpinteraction "github.com/shiyudesu/frux/internal/interfaces/http/interaction"
@@ -45,8 +49,6 @@ import (
 	interfaceshttpsearch "github.com/shiyudesu/frux/internal/interfaces/http/search"
 	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 	interfaceshttpvideo "github.com/shiyudesu/frux/internal/interfaces/http/video"
-	"context"
-	"database/sql"
 	"log"
 	"net/http"
 	"time"
@@ -88,6 +90,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	accountRepo := infraaccount.New(gormDB)
 	accountService := applicationaccount.New(accountRepo, jwtManager, applicationaccount.WithProfileSettingRepository(accountRepo))
 	accountHandler := interfaceshttpaccount.New(accountService)
+	adminHandler := interfaceshttpadmin.New()
 	mediaRepo := infrapersistencemedia.New(gormDB)
 	mediaStore, err := inframediastore.NewObjectStore(context.Background(), cfg.Media)
 	if err != nil {
@@ -302,6 +305,13 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	users.GET("/:userId/videos", videoHandler.ListByAuthor)
 	users.GET("/:userId/video-collections", videoHandler.ListPublicCollections)
 	users.GET("/:userId/liked-videos", libraryHandler.ListPublicLiked)
+
+	admin := api.Group("/admin", authMiddleware)
+	admin.GET(
+		"/me",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewRead),
+		adminHandler.Me,
+	)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。
 	videos := api.Group("/videos")

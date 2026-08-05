@@ -80,7 +80,8 @@ flowchart LR
 
   Entry["cmd/feed/main.go<br/>启动装配"]
   Router["Router<br/>路由注册"]
-  Auth["JWT Middleware<br/>鉴权上下文"]
+  Auth["JWT Middleware<br/>身份上下文"]
+  AdminAuth["Admin Permission Middleware<br/>当前账号状态与角色"]
   Handlers["HTTP Handlers<br/>account / video / feed / interaction / exposure / library"]
   Services["Application Services<br/>账户资料 / 创作者管理 / 个人内容库"]
   Domains["Domain Models<br/>account / video / interaction / exposure / library"]
@@ -96,7 +97,10 @@ flowchart LR
   Entry -->|"注册 HTTP 路由"| Router
   Router -->|"校验受保护接口"| Auth
   Auth -->|"解析和签名 Token"| JWT
-  Router -->|"分发业务请求"| Handlers
+  Auth -->|"/api/admin 当前身份"| AdminAuth
+  AdminAuth -->|"读取当前主体"| Repo
+  AdminAuth -->|"权限通过"| Handlers
+  Router -->|"分发普通业务请求"| Handlers
   Handlers -->|"调用用例服务"| Services
   Services -->|"执行领域规则"| Domains
   Services -->|"读写仓储"| Repo
@@ -106,7 +110,7 @@ flowchart LR
   Router -->|"授权后交给 Range 文件服务"| Uploads
 
   class Entry entry;
-  class Router,Auth,Handlers http;
+  class Router,Auth,AdminAuth,Handlers http;
   class Services service;
   class Domains domain;
   class Config,JWT,Repo,SQL infra;

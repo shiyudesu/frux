@@ -30,6 +30,9 @@ const (
 	CodeAuthInvalidCredentials  = "AUTH_INVALID_CREDENTIALS"
 	CodeAccountNotFound         = "ACCOUNT_NOT_FOUND"
 
+	CodeAdminPermissionDenied         = "ADMIN_PERMISSION_DENIED"
+	CodeAdminAuthorizationUnavailable = "ADMIN_AUTHORIZATION_UNAVAILABLE"
+
 	CodeFeedValidationFailed             = "FEED_VALIDATION_FAILED"
 	CodeFeedRecommendationContextInvalid = "FEED_RECOMMENDATION_CONTEXT_INVALID"
 	CodeFeedCursorInvalid                = "FEED_CURSOR_INVALID"
