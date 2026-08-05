@@ -194,6 +194,7 @@ Prometheus 抓取目标：
 | [docs/engineering.md](docs/engineering.md) | 工程规范、目录规则、API 风格、测试约定 |
 | [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
 | [docs/recommendation-roadmap.md](docs/recommendation-roadmap.md) | 推荐训练数据、语义向量、pgvector 与 ANN 的实施顺序 |
+| [docs/internal-control-plane-roadmap.md](docs/internal-control-plane-roadmap.md) | 后台权限、审核运营、降级限流和死信恢复的实施路线 |
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
 | [docs/security.md](docs/security.md) | 媒体所有权、签名访问和缓存安全 |
 | [docs/deployment.md](docs/deployment.md) | MinIO/S3 配置、灰度和回滚 |
