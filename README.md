@@ -193,6 +193,7 @@ Prometheus 抓取目标：
 | [docs/architecture.md](docs/architecture.md) | 系统架构、分层、核心链路、数据模型 |
 | [docs/engineering.md](docs/engineering.md) | 工程规范、目录规则、API 风格、测试约定 |
 | [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
+| [docs/recommendation-roadmap.md](docs/recommendation-roadmap.md) | 推荐训练数据、语义向量、pgvector 与 ANN 的实施顺序 |
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
 | [docs/security.md](docs/security.md) | 媒体所有权、签名访问和缓存安全 |
 | [docs/deployment.md](docs/deployment.md) | MinIO/S3 配置、灰度和回滚 |

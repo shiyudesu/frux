@@ -1,0 +1,189 @@
+## ADDED Requirements
+
+### Requirement: Fixed Semantic Video Model Integration
+Frux SHALL integrate only the semantic embedding contract defined by the active `add-semantic-embedding-service` change: model `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`, dimension 384, `float32`, CPU, and L2-normalized output. Persisted vectors SHALL use the fixed model key `semantic-minilm-l12-v2@e8f8c211226b894f`, and a different model or revision MUST use a different future model key.
+
+#### Scenario: Planned service contract is available
+- **WHEN** semantic integration validates the internal model metadata endpoint
+- **THEN** the exact model, revision, dimension, dtype, device, normalization mode, and bounded service limits match the `add-semantic-embedding-service` contract before semantic requests are accepted
+
+#### Scenario: Service advertises another contract
+- **WHEN** metadata differs in model, revision, dimension, dtype, device, normalization, or required limits
+- **THEN** semantic generation remains unavailable and no response from that service is persisted
+
+### Requirement: Bounded Authenticated Go Client
+The Go semantic client SHALL use the configured strong Frux internal token only through `X-Internal-Token`, SHALL impose fixed connection, concurrency, request, and response-size bounds, and SHALL NOT automatically retry requests. Configuration SHALL reject an invalid base URL, disabled or weak internal authentication, metadata timeouts outside 500 milliseconds–5 seconds, embedding timeouts outside 1–20 seconds, or coverage intervals outside 1 minute–1 hour.
+
+#### Scenario: Valid request succeeds
+- **WHEN** an enabled client sends a bounded batch to a healthy conforming service
+- **THEN** it uses at most two connections and two in-flight requests, completes within the configured deadline, and returns only validated vectors
+
+#### Scenario: Service does not finish in time
+- **WHEN** metadata or embedding processing exceeds the configured deadline
+- **THEN** the client cancels the request, closes or reuses resources safely, and returns the bounded `timeout` result without a vector
+
+#### Scenario: Response body is excessive
+- **WHEN** metadata exceeds 16 KiB or an embedding response exceeds 1 MiB
+- **THEN** the client rejects the response as a contract failure without reading or logging an unbounded body
+
+#### Scenario: Authentication fails
+- **WHEN** the service rejects the internal token
+- **THEN** the client returns the bounded `auth` result and neither logs nor exposes the token
+
+### Requirement: Strict Semantic Response Validation
+The client SHALL verify every embedding response's model, revision, dimension, item count, IDs, zero-based indexes, request order, component count, finiteness, and unit norm within `1e-4`. It SHALL reject partial, reordered, duplicated, unknown, non-finite, wrongly dimensioned, wrongly versioned, or non-normalized output, and SHALL L2-normalize a valid vector before bounded JSON persistence.
+
+#### Scenario: Ordered batch is returned
+- **WHEN** a response contains one exact output for every requested `video:<id>` in request order
+- **THEN** all 384 finite components pass validation and the normalized vectors may be persisted
+
+#### Scenario: Output order or identity changes
+- **WHEN** an item ID, index, count, or order differs from the request
+- **THEN** the complete response is rejected and no item from that response is persisted
+
+#### Scenario: Vector is invalid
+- **WHEN** any component is non-finite, the dimension is not 384, or the norm is outside tolerance
+- **THEN** the complete response is rejected with a safe `contract` result and no partial vector is stored
+
+### Requirement: Independent Hash Fallback Configuration
+The worker SHALL always compose and run `hash-ngram-v1` generation. Semantic generation SHALL be independently enabled by validated configuration and SHALL remain optional for non-Compose deployments. A local semantic configuration error MAY fail worker startup, but remote unavailability, authentication rejection, readiness failure, or metadata mismatch MUST NOT prevent hash generation or unrelated workers from starting.
+
+#### Scenario: Semantic integration is disabled
+- **WHEN** the worker receives a video-published event with semantic generation disabled
+- **THEN** it generates or skips the current hash vector and acknowledges the event without calling the semantic service
+
+#### Scenario: Enabled service is unavailable at startup
+- **WHEN** the startup metadata probe fails within its bounded deadline
+- **THEN** the worker starts with the semantic gate closed, continues hash processing, and retries metadata validation in the background
+
+#### Scenario: Local semantic configuration is invalid
+- **WHEN** enabled configuration has an invalid URL, token dependency, or timeout bound
+- **THEN** worker startup fails before opening semantic consumers
+
+### Requirement: Hash-First Idempotent Published-Event Processing
+For every valid video-published event, Frux SHALL canonicalize title and description according to the dependent service contract, persist or skip `hash-ngram-v1` first, and attempt the fixed semantic model only after hash persistence succeeds. Identical `(video_id, model, text_hash)` work SHALL not create another fact or update an unchanged row; changed canonical text MAY replace the row for that model.
+
+#### Scenario: New publication is processed
+- **WHEN** neither model exists for a published video
+- **THEN** the worker persists hash coverage first and then attempts semantic generation
+
+#### Scenario: Duplicate event is delivered
+- **WHEN** both model rows already carry the same canonical text hash
+- **THEN** the worker skips both writes and acknowledges without creating duplicate facts
+
+#### Scenario: Hash persistence fails
+- **WHEN** the hash vector cannot be durably saved
+- **THEN** the worker does not call the semantic service and retains the event for retry
+
+#### Scenario: Published text changes
+- **WHEN** a later event for the same video has a different canonical text hash
+- **THEN** each enabled model may update its single `(video_id, model)` row to the new bounded vector
+
+### Requirement: Durable Delayed Semantic Retry and Exact Acknowledgement
+The embedding consumer SHALL use a dedicated supervised RabbitMQ connection/channel with prefetch one. Retryable hash or semantic failures SHALL use durable fixed-delay retry queues with delays of 5 seconds, 30 seconds, 2 minutes, 10 minutes, and a repeating 30-minute cap. The original delivery SHALL be acknowledged only after successful processing or publisher-confirmed retry publication.
+
+#### Scenario: Semantic service is temporarily unavailable
+- **WHEN** hash persistence succeeds but semantic generation returns timeout, overload, authentication, unavailable, or contract failure
+- **THEN** the original event is publisher-confirmed into the delay selected by its attempt count and only then acknowledged
+
+#### Scenario: Retry publication fails
+- **WHEN** the worker cannot obtain publisher confirmation for the durable retry copy
+- **THEN** it negatively acknowledges with requeue, closes only the embedding channel, and reconnects with bounded 1, 2, 4, 8, 16, then 30-second delays
+
+#### Scenario: Process crashes across acknowledgement
+- **WHEN** a crash occurs after a retry copy or model row is committed but before the original delivery is acknowledged
+- **THEN** redelivery remains safe because model writes and same-text skips are idempotent
+
+#### Scenario: Event JSON is malformed
+- **WHEN** the delivery cannot be decoded as the bounded published-event envelope
+- **THEN** it is negatively acknowledged without requeue and no model work occurs
+
+#### Scenario: Worker shuts down during processing
+- **WHEN** cancellation interrupts an in-flight semantic delivery
+- **THEN** the channel closes without acknowledging that delivery so RabbitMQ can redeliver it
+
+### Requirement: Side-by-Side Normalized Persistence
+Frux SHALL store semantic vectors in the existing `video_embedding` table beside hash vectors using unique `(video_id, model)` semantics. Semantic rows SHALL contain dimension 384, the fixed revision-bearing model key, canonical text hash, finite L2-normalized bounded JSON, and timestamps. This capability SHALL require no pgvector column, ANN index, or new vector table.
+
+#### Scenario: Both models exist
+- **WHEN** hash and semantic generation succeed for one video
+- **THEN** PostgreSQL contains exactly one `hash-ngram-v1` row and one fixed semantic-model row for that video
+
+#### Scenario: Same semantic fact is written concurrently
+- **WHEN** duplicate workers save the same video, model, and text hash
+- **THEN** the composite identity retains one fact and an identical conflict does not churn its update timestamp
+
+#### Scenario: Existing schema is assessed
+- **WHEN** migration validation runs
+- **THEN** the fixed model key fits the current column and a 384-component normalized JSON vector round-trips without schema DDL
+
+### Requirement: Semantic Embedding Observability
+Frux SHALL expose bounded-cardinality metrics for metadata and embedding request count/latency/result, hash and semantic live-event vector outcomes, retries, readable-video semantic coverage, and ready/retry/in-flight embedding backlog. Metrics MUST NOT label video IDs, text, URLs, raw errors, retry numbers, tokens, vectors, or arbitrary model strings.
+
+#### Scenario: Semantic request completes
+- **WHEN** metadata or embedding HTTP work finishes
+- **THEN** request count and latency are observed with only the fixed operation and bounded result labels
+
+#### Scenario: Vector work changes state
+- **WHEN** a live published event generates, skips, retries, or fails a fixed model
+- **THEN** the bounded vector outcome counter is incremented
+
+#### Scenario: Coverage sampling runs
+- **WHEN** the configured 1-minute–1-hour sampling interval elapses
+- **THEN** gauges report readable published videos with and without the fixed semantic model
+
+#### Scenario: Backlog sampling runs
+- **WHEN** RabbitMQ queue inspection succeeds
+- **THEN** gauges report primary ready, summed retry ready, and local in-flight work without per-attempt labels
+
+### Requirement: Compose and Failure Isolation
+Compose SHALL configure the worker to call the internal `semantic-embedding` service with the shared strong token and SHALL declare a `service_started` dependency rather than a health-gated dependency. The semantic service SHALL remain internal-only. A semantic outage MUST NOT prevent worker startup, hash generation, or progress by fanout, action, view-event, media, or other consumers.
+
+#### Scenario: Compose configuration is rendered
+- **WHEN** Compose is rendered with a strong `FRUX_INTERNAL_TOKEN`
+- **THEN** the worker has the internal service URL, semantic enablement, token, bounded configuration, and a `service_started` dependency
+
+#### Scenario: Semantic container is unhealthy
+- **WHEN** the semantic container fails readiness or becomes unavailable
+- **THEN** the worker continues hash and unrelated consumer work while semantic messages move through delayed retries
+
+#### Scenario: Semantic service recovers
+- **WHEN** metadata validation later succeeds and retry deliveries return
+- **THEN** missing semantic rows are generated without duplicating existing hash or semantic facts
+
+### Requirement: Verification and Documentation
+The implementation SHALL include unit, HTTP contract, worker acknowledgement, RabbitMQ topology, PostgreSQL integration, live semantic-service contract, Compose, outage-recovery, and migration-assessment tests. Documentation SHALL cover configuration, fixed model identity, live-event retry and acknowledgement behavior, metrics, failure modes, rollout, rollback, the dependency on `add-semantic-embedding-service`, and the future backfill boundary.
+
+#### Scenario: Client contract suite runs
+- **WHEN** tests exercise timeouts, overload, auth rejection, oversized/truncated responses, metadata mismatch, wrong identity/order/dimension, non-finite values, and non-unit vectors
+- **THEN** each response is classified safely and no invalid vector is persisted
+
+#### Scenario: Outage integration test runs
+- **WHEN** the semantic service is unavailable for a published event and later recovers
+- **THEN** hash coverage exists during the outage and semantic coverage appears after delayed retry without duplicate facts
+
+#### Scenario: Strict validation runs
+- **WHEN** the proposal artifacts are complete
+- **THEN** `openspec validate --all --strict` succeeds without modifying main specifications
+
+### Requirement: Future Historical Backfill Boundary
+This capability SHALL process semantic embeddings only from live video-published deliveries. It SHALL NOT add a historical scan, backfill command or job, cursor, checkpoint, dry-run, re-embedding mode, or backfill-specific retry loop. Existing historical videos without the fixed semantic model SHALL remain unchanged unless they later produce a normal video-published event. A future separate change named `backfill-semantic-video-embeddings` SHALL own historical selection and resumable operator behavior and MAY consume the fixed model identity, canonicalization, bounded validated client, conditional persistence, and coverage interfaces established here.
+
+#### Scenario: Integration is deployed over an existing catalog
+- **WHEN** historical published videos have no fixed semantic-model row and emit no new video-published event
+- **THEN** this change does not scan, enqueue, or generate semantic vectors for them
+
+#### Scenario: Future backfill is planned
+- **WHEN** `backfill-semantic-video-embeddings` is proposed
+- **THEN** it depends on this integration and the semantic service while defining its own scans, resumability, operator controls, and backfill-specific retry behavior
+
+### Requirement: No Recommendation Consumption
+This capability SHALL only generate and store semantic video embeddings. It SHALL NOT add a recommendation recall provider, ranking feature, profile input, policy field, pgvector/ANN query, online request-path inference, or training behavior, and it SHALL NOT remove the hash fallback. A later `add-pgvector-recommendation-recall` change MAY consume these stored facts.
+
+#### Scenario: Semantic vectors are present
+- **WHEN** one or more videos have the fixed semantic model row
+- **THEN** current recommendation recall, ranking, policies, APIs, and fallbacks behave exactly as before
+
+#### Scenario: Semantic vectors are absent
+- **WHEN** the service is disabled or coverage is incomplete
+- **THEN** current recommendation behavior continues to use its existing hash or non-vector fallback without failing the Feed
