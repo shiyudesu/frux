@@ -1,7 +1,7 @@
 package applicationvideo
 
 import (
-	domainvideo "GCFeed/internal/domain/video"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"

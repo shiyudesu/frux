@@ -1,10 +1,10 @@
 package interfaceshttpinteraction
 
 import (
-	applicationinteraction "GCFeed/internal/application/interaction"
-	domaininteraction "GCFeed/internal/domain/interaction"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

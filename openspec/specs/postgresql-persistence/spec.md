@@ -1,7 +1,7 @@
 # postgresql-persistence Specification
 
 ## Purpose
-Define PostgreSQL connectivity, schema initialization, persistence semantics, runtime provisioning, and verification requirements for GCFeed.
+Define PostgreSQL connectivity, schema initialization, persistence semantics, runtime provisioning, and verification requirements for Frux.
 
 ## Requirements
 
@@ -36,7 +36,7 @@ Schema initialization SHALL be safe when multiple API or worker processes start 
 - **THEN** every video has a `video_stat` row and the stable Timeline query index exists before the process begins serving work
 
 ### Requirement: PostgreSQL-Compatible Persistence Semantics
-Repository operations SHALL preserve GCFeed transaction, idempotency, conflict, row-locking, and upsert behavior using PostgreSQL-compatible SQL and GORM clauses.
+Repository operations SHALL preserve Frux transaction, idempotency, conflict, row-locking, and upsert behavior using PostgreSQL-compatible SQL and GORM clauses.
 
 #### Scenario: Unique account or idempotency constraint is violated
 - **WHEN** PostgreSQL reports a unique-constraint violation for an account, event identifier, or idempotency key
@@ -74,10 +74,10 @@ The project SHALL provision PostgreSQL in local Compose and Kubernetes deploymen
 
 #### Scenario: Complete Compose stack starts
 - **WHEN** a developer recreates volumes and runs the documented Compose startup command
-- **THEN** PostgreSQL becomes healthy before the API and worker start and the complete GCFeed stack reaches its healthy state
+- **THEN** PostgreSQL becomes healthy before the API and worker start and the complete Frux stack reaches its healthy state
 
 #### Scenario: Kubernetes manifests are applied
-- **WHEN** the deployment manifests are applied to the `gcfeed` namespace
+- **WHEN** the deployment manifests are applied to the `frux` namespace
 - **THEN** PostgreSQL is exposed to the API and worker on port 5432 with persistent storage and readiness/liveness checks
 
 ### Requirement: Real PostgreSQL Verification

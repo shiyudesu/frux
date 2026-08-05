@@ -121,7 +121,7 @@ func TestPlaybackCollectorsExcludeIdentifierLabels(t *testing.T) {
 		"error_category": {}, "outcome": {}, "quality": {}, "source": {}, "kind": {},
 	}
 	for _, family := range families {
-		if !strings.HasPrefix(family.GetName(), "gcfeed_playback_") {
+		if !strings.HasPrefix(family.GetName(), "frux_playback_") {
 			continue
 		}
 		for _, metric := range family.Metric {

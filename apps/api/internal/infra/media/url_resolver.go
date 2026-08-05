@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 type URLResolver struct {

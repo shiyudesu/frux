@@ -1,9 +1,9 @@
 package applicationinteraction
 
 import (
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"errors"
 	"fmt"

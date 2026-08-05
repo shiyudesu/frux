@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
-	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
+	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"

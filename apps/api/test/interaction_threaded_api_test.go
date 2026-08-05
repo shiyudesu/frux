@@ -1,7 +1,7 @@
 package test
 
 import (
-	domaininteraction "GCFeed/internal/domain/interaction"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"net/http"
 	"testing"
 

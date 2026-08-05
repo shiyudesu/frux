@@ -1,7 +1,7 @@
 package applicationaccount
 
 import (
-	domainaccount "GCFeed/internal/domain/account"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	"context"
 	"errors"
 	"time"

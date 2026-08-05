@@ -1,4 +1,4 @@
-# GCFeed 性能与稳定性优化
+# Frux 性能与稳定性优化
 
 本文沉淀 Feed 核心链路的性能问题、优化策略和验收指标。架构总览见 [architecture.md](architecture.md)，代码规范见 [engineering.md](engineering.md)。
 

@@ -1,7 +1,7 @@
 package inframedia
 
 import (
-	applicationmedia "GCFeed/internal/application/media"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 const defaultMediaCommandTimeout = 15 * time.Minute
@@ -49,7 +49,7 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 	if p == nil || p.store == nil || asset == nil || job == nil {
 		return nil, &applicationmedia.ProcessError{Code: "invalid_input", Terminal: true, Err: errors.New("invalid media processing input")}
 	}
-	workDir, err := os.MkdirTemp(p.tempRoot, "gcfeed-media-*")
+	workDir, err := os.MkdirTemp(p.tempRoot, "frux-media-*")
 	if err != nil {
 		return nil, &applicationmedia.ProcessError{Code: "temp_dir", Err: err}
 	}

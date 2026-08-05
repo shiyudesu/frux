@@ -7,7 +7,7 @@ Defines creator-owned video visibility, querying, batch management, collections,
 ## Requirements
 
 ### Requirement: Independent Video Visibility
-GCFeed SHALL model video visibility independently from lifecycle status, with public visibility as the migration default for existing videos.
+Frux SHALL model video visibility independently from lifecycle status, with public visibility as the migration default for existing videos.
 
 #### Scenario: Author makes published video private
 - **WHEN** the video owner changes a published public video to private
@@ -18,7 +18,7 @@ GCFeed SHALL model video visibility independently from lifecycle status, with pu
 - **THEN** it becomes publicly readable again without changing its original publication time
 
 ### Requirement: Creator Video Query
-GCFeed SHALL provide an authenticated cursor-paginated creator query supporting visibility, keyword, creation-date range, cursor, and limit filters, ordered by `created_at DESC, id DESC`.
+Frux SHALL provide an authenticated cursor-paginated creator query supporting visibility, keyword, creation-date range, cursor, and limit filters, ordered by `created_at DESC, id DESC`.
 
 #### Scenario: User filters private works
 - **WHEN** an authenticated user queries their videos with private visibility
@@ -29,7 +29,7 @@ GCFeed SHALL provide an authenticated cursor-paginated creator query supporting 
 - **THEN** matching owned videos within the inclusive validated range are returned using parameterized search
 
 ### Requirement: Atomic Batch Video Actions
-GCFeed SHALL support idempotent batch actions for making owned videos public, making them private, or deleting them. Each request SHALL contain no more than 100 unique video IDs and SHALL be atomic.
+Frux SHALL support idempotent batch actions for making owned videos public, making them private, or deleting them. Each request SHALL contain no more than 100 unique video IDs and SHALL be atomic.
 
 #### Scenario: Valid batch privacy change
 - **WHEN** the owner submits a valid batch action with an unused idempotency key
@@ -48,7 +48,7 @@ GCFeed SHALL support idempotent batch actions for making owned videos public, ma
 - **THEN** the API returns 409
 
 ### Requirement: Creator Video Collections
-GCFeed SHALL allow an authenticated creator to create, list, update, soft-delete, and manage membership of collections containing their own non-deleted videos.
+Frux SHALL allow an authenticated creator to create, list, update, soft-delete, and manage membership of collections containing their own non-deleted videos.
 
 #### Scenario: Creator creates collection
 - **WHEN** an authenticated user submits a valid collection with an idempotency key
@@ -94,7 +94,7 @@ Collections SHALL have public or private visibility. Public collection responses
 - **THEN** membership and the collection `updated_at` remain unchanged
 
 ### Requirement: Content Statistics
-GCFeed SHALL maintain per-user public-work, private-work, received-like, and collection counts as persistent aggregate statistics and SHALL expose non-negative values through profile responses.
+Frux SHALL maintain per-user public-work, private-work, received-like, and collection counts as persistent aggregate statistics and SHALL expose non-negative values through profile responses.
 
 #### Scenario: Visibility change updates counts
 - **WHEN** a video changes between public and private visibility

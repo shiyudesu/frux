@@ -1,11 +1,11 @@
 package interfaceshttprouter
 
 import (
-	domainaccount "GCFeed/internal/domain/account"
-	domainexposure "GCFeed/internal/domain/exposure"
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainlibrary "GCFeed/internal/domain/library"
-	domainvideo "GCFeed/internal/domain/video"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"context"
 )
 

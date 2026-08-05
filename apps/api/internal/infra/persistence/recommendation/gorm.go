@@ -1,14 +1,14 @@
 package infrarecommendation
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	applicationrecommendation "GCFeed/internal/application/recommendation"
-	domainembedding "GCFeed/internal/domain/embedding"
-	domainexposure "GCFeed/internal/domain/exposure"
-	domainmedia "GCFeed/internal/domain/media"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	domainvideo "GCFeed/internal/domain/video"
-	infraexposure "GCFeed/internal/infra/persistence/exposure"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	"context"
 	"encoding/json"
 	"errors"

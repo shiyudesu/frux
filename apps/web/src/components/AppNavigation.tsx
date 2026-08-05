@@ -82,7 +82,7 @@ export function SideNav() {
         ))}
       </nav>
       <div className="side-nav-footer">
-        <span>GCFeed Web</span>
+        <span>Frux Web</span>
         <small>沉浸短视频体验</small>
       </div>
     </aside>

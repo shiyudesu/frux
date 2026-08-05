@@ -1,8 +1,8 @@
 package infrarecommendation
 
 import (
-	domainexposure "GCFeed/internal/domain/exposure"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"reflect"
 	"strings"
 	"testing"

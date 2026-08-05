@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	infrahttphertz "GCFeed/internal/infra/httphertz"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"

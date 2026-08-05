@@ -1,9 +1,9 @@
 package applicationrelation
 
 import (
-	domainfeed "GCFeed/internal/domain/feed"
-	domainmessage "GCFeed/internal/domain/message"
-	domainrelation "GCFeed/internal/domain/relation"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	"context"
 	"encoding/base64"
 	"encoding/json"

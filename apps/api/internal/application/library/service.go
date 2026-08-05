@@ -1,8 +1,8 @@
 package applicationlibrary
 
 import (
-	domainlibrary "GCFeed/internal/domain/library"
-	domainmedia "GCFeed/internal/domain/media"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	"context"
 	"encoding/base64"
 	"encoding/json"

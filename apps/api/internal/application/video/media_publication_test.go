@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 )
 
 func TestMediaPublicationProjectsCompatibilityURLsAndPublishes(t *testing.T) {

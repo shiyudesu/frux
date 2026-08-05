@@ -1,7 +1,7 @@
 package applicationlibrary
 
 import (
-	domainlibrary "GCFeed/internal/domain/library"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
 	"context"
 	"errors"
 	"sort"

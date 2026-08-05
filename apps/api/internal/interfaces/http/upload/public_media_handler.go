@@ -1,9 +1,9 @@
 package interfaceshttpupload
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	infrahttphertz "GCFeed/internal/infra/httphertz"
-	inframedia "GCFeed/internal/infra/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
+	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 	"context"
 	"net/http"
 	"strings"

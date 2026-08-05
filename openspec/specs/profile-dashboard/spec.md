@@ -7,7 +7,7 @@ Defines aggregated profile data, atomic profile and privacy editing, logout asse
 ## Requirements
 
 ### Requirement: Aggregated Profile Summary
-GCFeed SHALL return an authenticated profile summary containing the user's display profile, account identifier, gender, following count, follower count, public work count, received-like count, and profile privacy settings. Public profile responses SHALL contain only fields allowed for public display.
+Frux SHALL return an authenticated profile summary containing the user's display profile, account identifier, gender, following count, follower count, public work count, received-like count, and profile privacy settings. Public profile responses SHALL contain only fields allowed for public display.
 
 #### Scenario: Current user opens profile
 - **WHEN** an authenticated user requests their profile
@@ -18,7 +18,7 @@ GCFeed SHALL return an authenticated profile summary containing the user's displ
 - **THEN** the response omits private account data and returns only public profile statistics and settings-derived capabilities
 
 ### Requirement: Profile Editing
-GCFeed SHALL allow an authenticated user to update nickname, avatar URL, bio, gender, and optional profile privacy through the existing profile update boundary while preserving validation and authentication behavior. Profile and privacy changes in one request SHALL commit atomically, update only supplied columns, and return the complete current profile.
+Frux SHALL allow an authenticated user to update nickname, avatar URL, bio, gender, and optional profile privacy through the existing profile update boundary while preserving validation and authentication behavior. Profile and privacy changes in one request SHALL commit atomically, update only supplied columns, and return the complete current profile.
 
 #### Scenario: User saves valid profile changes
 - **WHEN** the authenticated user submits valid nickname, avatar, bio, or gender changes
@@ -37,7 +37,7 @@ GCFeed SHALL allow an authenticated user to update nickname, avatar URL, bio, ge
 - **THEN** every supplied field is committed without overwriting unrelated fields changed by the other request
 
 ### Requirement: Profile Privacy Settings
-GCFeed SHALL provide authenticated read and partial-update operations for compatibility, with privacy-preserving defaults. Only liked videos MAY be publicly exposed; favorites SHALL remain owner-only regardless of the compatibility field.
+Frux SHALL provide authenticated read and partial-update operations for compatibility, with privacy-preserving defaults. Only liked videos MAY be publicly exposed; favorites SHALL remain owner-only regardless of the compatibility field.
 
 #### Scenario: New user has default settings
 - **WHEN** a user has no explicit profile settings row
@@ -52,7 +52,7 @@ GCFeed SHALL provide authenticated read and partial-update operations for compat
 - **THEN** favorites are described as owner-only and no public favorite control or claim is rendered
 
 ### Requirement: Logout Asset Cookie Ordering
-GCFeed SHALL make Web local authentication and upload-active marker removal authoritative on logout. Cookie-based upload identity SHALL require both the HttpOnly asset token and the active marker. The Web client SHALL clear local authentication and the marker before attempting logout. Because JWT logout is stateless, the logout response SHALL NOT mutate either asset Cookie, so a stale logout response cannot clear a newer login. Ordinary authenticated responses SHALL NOT refresh the asset token.
+Frux SHALL make Web local authentication and upload-active marker removal authoritative on logout. Cookie-based upload identity SHALL require both the HttpOnly asset token and the active marker. The Web client SHALL clear local authentication and the marker before attempting logout. Because JWT logout is stateless, the logout response SHALL NOT mutate either asset Cookie, so a stale logout response cannot clear a newer login. Ordinary authenticated responses SHALL NOT refresh the asset token.
 
 #### Scenario: Expired session logs out
 - **WHEN** the client deletes the current session with no valid access token
@@ -71,7 +71,7 @@ GCFeed SHALL make Web local authentication and upload-active marker removal auth
 - **THEN** it sets no asset credential cookie and cannot reactivate cookie-based private asset access
 
 ### Requirement: Douyin-Style Desktop Profile Dashboard
-The Web profile route SHALL render a full-width banner header, circular avatar, inline statistics, profile actions, primary content tabs, context-specific secondary controls, and dense portrait content grids within the existing GCFeed shell.
+The Web profile route SHALL render a full-width banner header, circular avatar, inline statistics, profile actions, primary content tabs, context-specific secondary controls, and dense portrait content grids within the existing Frux shell.
 
 #### Scenario: Wide desktop profile renders
 - **WHEN** the authenticated profile opens at a viewport width of at least 1280px

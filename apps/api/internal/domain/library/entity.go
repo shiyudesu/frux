@@ -1,7 +1,7 @@
 package domainlibrary
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	"context"
 	"errors"
 	"strings"

@@ -1,9 +1,9 @@
 package applicationrecommendation
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	inframetrics "GCFeed/internal/infra/metrics"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"strings"
 	"time"

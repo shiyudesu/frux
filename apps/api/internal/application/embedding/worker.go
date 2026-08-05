@@ -1,8 +1,8 @@
 package applicationembedding
 
 import (
-	applicationvideo "GCFeed/internal/application/video"
-	inframetrics "GCFeed/internal/infra/metrics"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"time"
 )

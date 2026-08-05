@@ -1,7 +1,7 @@
 package interfaceshttpmiddleware
 
 import (
-	infrajwt "GCFeed/internal/infra/jwt"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	"context"
 	"crypto/subtle"
 	"net/http"
@@ -15,8 +15,8 @@ import (
 
 const ContextUserIDKey = "auth_user_id"
 const ContextRoleKey = "auth_role"
-const AssetTokenCookieName = "gcfeed_asset_token"
-const AssetActiveCookieName = "gcfeed_asset_active"
+const AssetTokenCookieName = "frux_asset_token"
+const AssetActiveCookieName = "frux_asset_active"
 
 // NewJWTAuth validates access tokens and stores identity in the request context.
 func NewJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {

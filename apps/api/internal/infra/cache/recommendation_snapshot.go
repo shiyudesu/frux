@@ -1,8 +1,8 @@
 package infracache
 
 import (
-	applicationrecommendation "GCFeed/internal/application/recommendation"
-	inframetrics "GCFeed/internal/infra/metrics"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"encoding/json"
 	"errors"

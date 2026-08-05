@@ -1,10 +1,10 @@
-# 如何快速读懂 GCFeed
+# 如何快速读懂 Frux
 
-这份文档给第一次接触 GCFeed 的读者使用。目标是帮助你建立项目理解框架，并知道代码应该按什么顺序读。
+这份文档给第一次接触 Frux 的读者使用。目标是帮助你建立项目理解框架，并知道代码应该按什么顺序读。
 
 ## 1. 先建立项目模型
 
-GCFeed 是一个短视频 Feed 系统。你可以把它理解成五条主线：
+Frux 是一个短视频 Feed 系统。你可以把它理解成五条主线：
 
 | 主线 | 负责什么 | 当前代码里的模块 |
 | --- | --- | --- |
@@ -211,8 +211,8 @@ video:stat:v1:{video_id}
 RabbitMQ 配置：
 
 ```text
-exchange: gcfeed.interaction
-queue: gcfeed.interaction.action_changed
+exchange: frux.interaction
+queue: frux.interaction.action_changed
 routing key: interaction.action_changed
 ```
 

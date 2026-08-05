@@ -120,7 +120,7 @@ function renderIcon(name: IconName, filled: boolean) {
       return (
         <>
           <rect fill={fill} height="13" rx="2" stroke="currentColor" strokeWidth="1.7" width="16" x="4" y="5.5" />
-          <path d="m10 9 5 3-5 3V9Z" fill={filled ? "var(--gc-bg)" : "currentColor"} />
+          <path d="m10 9 5 3-5 3V9Z" fill={filled ? "var(--frux-bg)" : "currentColor"} />
         </>
       );
     case "flame":
@@ -234,8 +234,8 @@ function renderIcon(name: IconName, filled: boolean) {
       return (
         <>
           <path d="M4 7h16M4 17h16" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
-          <circle cx="9" cy="7" r="2" fill="var(--gc-surface)" stroke="currentColor" strokeWidth="1.7" />
-          <circle cx="15" cy="17" r="2" fill="var(--gc-surface)" stroke="currentColor" strokeWidth="1.7" />
+          <circle cx="9" cy="7" r="2" fill="var(--frux-surface)" stroke="currentColor" strokeWidth="1.7" />
+          <circle cx="15" cy="17" r="2" fill="var(--frux-surface)" stroke="currentColor" strokeWidth="1.7" />
         </>
       );
     case "user":

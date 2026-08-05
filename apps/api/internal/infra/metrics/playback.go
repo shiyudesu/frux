@@ -10,7 +10,7 @@ import (
 var (
 	playbackStartupDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_startup_duration_seconds",
 			Help:      "Playback startup duration in seconds.",
 			Buckets:   []float64{0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 13, 20, 30, 60},
@@ -20,7 +20,7 @@ var (
 
 	playbackFirstFrameDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_first_frame_duration_seconds",
 			Help:      "Time from source load start to the first rendered frame in seconds.",
 			Buckets:   []float64{0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 13, 20, 30, 60},
@@ -30,7 +30,7 @@ var (
 
 	playbackRebufferCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_rebuffer_count_total",
 			Help:      "Total ordinary rebuffer intervals, excluding intentional seeks and pauses.",
 		},
@@ -39,7 +39,7 @@ var (
 
 	playbackRebufferDuration = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_rebuffer_duration_seconds_total",
 			Help:      "Total ordinary rebuffer duration in seconds.",
 		},
@@ -48,7 +48,7 @@ var (
 
 	playbackObservedDuration = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_observed_duration_seconds_total",
 			Help:      "Total playback duration used as the rebuffer-ratio denominator.",
 		},
@@ -57,7 +57,7 @@ var (
 
 	playbackRebufferRatio = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_rebuffer_ratio",
 			Help:      "Per-playback ratio of rebuffer duration to observed playback duration.",
 			Buckets:   []float64{0.001, 0.0025, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.4, 0.75, 1},
@@ -67,7 +67,7 @@ var (
 
 	playbackAttemptsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_attempts_total",
 			Help:      "Playback attempts by success or failure result.",
 		},
@@ -76,7 +76,7 @@ var (
 
 	playbackFailuresTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_failures_total",
 			Help:      "Playback failures by bounded error category.",
 		},
@@ -85,7 +85,7 @@ var (
 
 	playbackRecoveriesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_recoveries_total",
 			Help:      "Playback or rebuffer recovery outcomes.",
 		},
@@ -94,7 +94,7 @@ var (
 
 	playbackQualitySelectionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_quality_selections_total",
 			Help:      "Selected playback quality buckets.",
 		},
@@ -103,7 +103,7 @@ var (
 
 	playbackSourceSelectionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_source_selections_total",
 			Help:      "Selected playback source types.",
 		},
@@ -112,7 +112,7 @@ var (
 
 	playbackTelemetryBatchesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_telemetry_batches_total",
 			Help:      "Playback telemetry batches by ingestion result.",
 		},
@@ -121,7 +121,7 @@ var (
 
 	playbackTelemetryEventsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_telemetry_events_total",
 			Help:      "Playback telemetry events by accepted, rejected, or duplicate result.",
 		},
@@ -130,7 +130,7 @@ var (
 
 	playbackTelemetryDeliveryDelay = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_telemetry_delivery_delay_seconds",
 			Help:      "Delay from the client batch timestamp to server ingestion in seconds.",
 			Buckets:   []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800},
@@ -139,7 +139,7 @@ var (
 
 	playbackTelemetryCleanupRunsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_telemetry_cleanup_runs_total",
 			Help:      "Playback telemetry retention cleanup runs by result.",
 		},
@@ -148,7 +148,7 @@ var (
 
 	playbackTelemetryCleanupDeletedTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "playback_telemetry_cleanup_deleted_total",
 			Help:      "Playback telemetry rows deleted by retention cleanup.",
 		},

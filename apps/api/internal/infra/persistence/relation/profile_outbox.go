@@ -1,7 +1,7 @@
 package infrarelation
 
 import (
-	domainrelation "GCFeed/internal/domain/relation"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	"context"
 	"time"
 

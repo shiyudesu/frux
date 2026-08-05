@@ -83,7 +83,7 @@
 
 ## 7. 播放观测
 
-Grafana 的 `GCFeed Playback Observability` 看板提供：
+Grafana 的 `Frux Playback Observability` 看板提供：
 
 - 启动耗时 p50/p95/p99，以及首帧耗时按 scene、network、player 的 p95 拆分。
 - 聚合卡顿时长占比、播放失败率、清晰度和媒体源分布。
@@ -135,12 +135,12 @@ inframetrics.PlaybackMetrics.ObserveTelemetryCleanup(inframetrics.TelemetryClean
 
 ## 9. Recommendation observability and rollout gates
 
-推荐指标为 `gcfeed_recommendation_recall_candidates_total{provider}`、
-`gcfeed_recommendation_degraded_requests_total{provider,reason}`、
-`gcfeed_recommendation_snapshot_operations_total{result}`、
-`gcfeed_recommendation_request_log_failures_total{stage}`、
-`gcfeed_recommendation_active_policy_version{scene}`、
-`gcfeed_recommendation_outcomes_total{outcome}`，以及 profile Worker lag/events。标签只允许
+推荐指标为 `frux_recommendation_recall_candidates_total{provider}`、
+`frux_recommendation_degraded_requests_total{provider,reason}`、
+`frux_recommendation_snapshot_operations_total{result}`、
+`frux_recommendation_request_log_failures_total{stage}`、
+`frux_recommendation_active_policy_version{scene}`、
+`frux_recommendation_outcomes_total{outcome}`，以及 profile Worker lag/events。标签只允许
 固定 provider、reason、scene、result 和 outcome；不得使用 user、video、request、session 或
 policy cohort 标识。snapshot `result=maintenance_failure` 表示 Lua 已提交权威 snapshot 后的
 请求索引 TTL 或用户索引维护失败；该错误不应把本次 Feed 响应降级为本地重排。

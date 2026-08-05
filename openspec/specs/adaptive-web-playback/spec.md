@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines adaptive, resilient, and accessible media playback behavior for the GCFeed web Feed.
+Defines adaptive, resilient, and accessible media playback behavior for the Frux web Feed.
 
 ## Requirements
 

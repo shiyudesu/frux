@@ -1,9 +1,9 @@
 package applicationrecommendation
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	applicationinteraction "GCFeed/internal/application/interaction"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"math"
 	"strconv"

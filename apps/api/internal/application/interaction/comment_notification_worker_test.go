@@ -1,8 +1,8 @@
 package applicationinteraction
 
 import (
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainmessage "GCFeed/internal/domain/message"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"context"
 	"errors"
 	"testing"

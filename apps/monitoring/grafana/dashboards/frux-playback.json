@@ -28,9 +28,9 @@
       "id": 1,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "histogram_quantile(0.50, sum(rate(gcfeed_playback_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
-        {"expr": "histogram_quantile(0.95, sum(rate(gcfeed_playback_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
-        {"expr": "histogram_quantile(0.99, sum(rate(gcfeed_playback_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+        {"expr": "histogram_quantile(0.50, sum(rate(frux_playback_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(frux_playback_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum(rate(frux_playback_startup_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
       ],
       "title": "Startup p50, p95, p99",
       "type": "timeseries"
@@ -43,7 +43,7 @@
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "expr": "sum(rate(gcfeed_playback_rebuffer_duration_seconds_total[5m])) by (scene, network, player) / clamp_min(sum(rate(gcfeed_playback_observed_duration_seconds_total[5m])) by (scene, network, player), 0.001)",
+          "expr": "sum(rate(frux_playback_rebuffer_duration_seconds_total[5m])) by (scene, network, player) / clamp_min(sum(rate(frux_playback_observed_duration_seconds_total[5m])) by (scene, network, player), 0.001)",
           "legendFormat": "{{scene}} / {{network}} / {{player}}",
           "refId": "A"
         }
@@ -59,7 +59,7 @@
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "expr": "sum(rate(gcfeed_playback_attempts_total{result=\"failure\"}[5m])) by (scene, network, player) / clamp_min(sum(rate(gcfeed_playback_attempts_total[5m])) by (scene, network, player), 0.001)",
+          "expr": "sum(rate(frux_playback_attempts_total{result=\"failure\"}[5m])) by (scene, network, player) / clamp_min(sum(rate(frux_playback_attempts_total[5m])) by (scene, network, player), 0.001)",
           "legendFormat": "{{scene}} / {{network}} / {{player}}",
           "refId": "A"
         }
@@ -74,7 +74,7 @@
       "id": 4,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "sum(rate(gcfeed_playback_quality_selections_total[5m])) by (quality)", "legendFormat": "{{quality}}", "refId": "A"}
+        {"expr": "sum(rate(frux_playback_quality_selections_total[5m])) by (quality)", "legendFormat": "{{quality}}", "refId": "A"}
       ],
       "title": "Quality Selection Distribution",
       "type": "timeseries"
@@ -86,7 +86,7 @@
       "id": 5,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "sum(rate(gcfeed_playback_source_selections_total[5m])) by (source)", "legendFormat": "{{source}}", "refId": "A"}
+        {"expr": "sum(rate(frux_playback_source_selections_total[5m])) by (source)", "legendFormat": "{{source}}", "refId": "A"}
       ],
       "title": "Source Selection Distribution",
       "type": "timeseries"
@@ -99,7 +99,7 @@
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(gcfeed_playback_first_frame_duration_seconds_bucket[5m])) by (le, scene, network, player))",
+          "expr": "histogram_quantile(0.95, sum(rate(frux_playback_first_frame_duration_seconds_bucket[5m])) by (le, scene, network, player))",
           "legendFormat": "{{scene}} / {{network}} / {{player}}",
           "refId": "A"
         }
@@ -114,8 +114,8 @@
       "id": 7,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "sum(rate(gcfeed_playback_telemetry_events_total[5m])) by (result)", "legendFormat": "{{result}} events", "refId": "A"},
-        {"expr": "sum(rate(gcfeed_playback_telemetry_batches_total[5m])) by (result)", "legendFormat": "{{result}} batches", "refId": "B"}
+        {"expr": "sum(rate(frux_playback_telemetry_events_total[5m])) by (result)", "legendFormat": "{{result}} events", "refId": "A"},
+        {"expr": "sum(rate(frux_playback_telemetry_batches_total[5m])) by (result)", "legendFormat": "{{result}} batches", "refId": "B"}
       ],
       "title": "Telemetry Ingestion Volume",
       "type": "timeseries"
@@ -128,12 +128,12 @@
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "expr": "sum(rate(gcfeed_playback_telemetry_events_total{result=\"rejected\"}[5m])) / clamp_min(sum(rate(gcfeed_playback_telemetry_events_total[5m])), 0.001)",
+          "expr": "sum(rate(frux_playback_telemetry_events_total{result=\"rejected\"}[5m])) / clamp_min(sum(rate(frux_playback_telemetry_events_total[5m])), 0.001)",
           "legendFormat": "rejected",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(gcfeed_playback_telemetry_events_total{result=\"duplicate\"}[5m])) / clamp_min(sum(rate(gcfeed_playback_telemetry_events_total[5m])), 0.001)",
+          "expr": "sum(rate(frux_playback_telemetry_events_total{result=\"duplicate\"}[5m])) / clamp_min(sum(rate(frux_playback_telemetry_events_total[5m])), 0.001)",
           "legendFormat": "duplicate",
           "refId": "B"
         }
@@ -148,9 +148,9 @@
       "id": 9,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "histogram_quantile(0.50, sum(rate(gcfeed_playback_telemetry_delivery_delay_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
-        {"expr": "histogram_quantile(0.95, sum(rate(gcfeed_playback_telemetry_delivery_delay_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
-        {"expr": "histogram_quantile(0.99, sum(rate(gcfeed_playback_telemetry_delivery_delay_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+        {"expr": "histogram_quantile(0.50, sum(rate(frux_playback_telemetry_delivery_delay_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(frux_playback_telemetry_delivery_delay_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum(rate(frux_playback_telemetry_delivery_delay_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
       ],
       "title": "Client Delivery Delay p50, p95, p99",
       "type": "timeseries"
@@ -158,13 +158,13 @@
   ],
   "refresh": "10s",
   "schemaVersion": 40,
-  "tags": ["gcfeed", "playback", "prometheus"],
+  "tags": ["frux", "playback", "prometheus"],
   "templating": {"list": []},
   "time": {"from": "now-3h", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
-  "title": "GCFeed Playback Observability",
-  "uid": "gcfeed-playback",
+  "title": "Frux Playback Observability",
+  "uid": "frux-playback",
   "version": 1,
   "weekStart": ""
 }

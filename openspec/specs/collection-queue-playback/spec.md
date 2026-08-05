@@ -33,7 +33,7 @@ Collection playback SHALL support adjacent swipe, wheel, keyboard, and continuou
 - **THEN** the player advances to that item instead of looping the completed video
 
 ### Requirement: Feed-equivalent playback surface
-The collection queue SHALL reuse GCFeed's typed player adapters, truthful media controls, player preferences, author metadata, interaction controls, comments, and bounded adjacent-resource lifecycle. It MUST NOT use a separate raw-video implementation that omits the active player state.
+The collection queue SHALL reuse Frux's typed player adapters, truthful media controls, player preferences, author metadata, interaction controls, comments, and bounded adjacent-resource lifecycle. It MUST NOT use a separate raw-video implementation that omits the active player state.
 
 #### Scenario: Queue item has adaptive sources
 - **WHEN** a collection item exposes ready playback sources

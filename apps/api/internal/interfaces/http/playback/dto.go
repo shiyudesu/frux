@@ -1,7 +1,7 @@
 package interfaceshttpplayback
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	"time"
 )
 

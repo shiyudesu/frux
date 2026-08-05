@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	applicationexposure "GCFeed/internal/application/exposure"
-	domainexposure "GCFeed/internal/domain/exposure"
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttpexposure "GCFeed/internal/interfaces/http/exposure"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 )

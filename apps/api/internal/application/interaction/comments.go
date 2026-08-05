@@ -1,7 +1,7 @@
 package applicationinteraction
 
 import (
-	domaininteraction "GCFeed/internal/domain/interaction"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"context"
 	"encoding/base64"
 	"encoding/json"

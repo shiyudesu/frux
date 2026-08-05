@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	inframedia "GCFeed/internal/infra/media"
-	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
+	inframedia "github.com/shiyudesu/frux/internal/infra/media"
+	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/network/standard"

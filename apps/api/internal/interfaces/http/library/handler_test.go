@@ -1,8 +1,8 @@
 package interfaceshttplibrary
 
 import (
-	applicationlibrary "GCFeed/internal/application/library"
-	domainlibrary "GCFeed/internal/domain/library"
+	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
 	"context"
 	"encoding/json"
 	"net/http"

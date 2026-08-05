@@ -1,6 +1,6 @@
-# GCFeed Copilot Instructions
+# Frux Copilot Instructions
 
-GCFeed is a short-video feed system with a Go API/worker backend and a React/Vite frontend. Read `docs/engineering.md` before changing architecture or adding a module; use the relevant `docs/modules/*.md` file for business rules.
+Frux is a short-video feed system with a Go API/worker backend and a React/Vite frontend. Read `docs/engineering.md` before changing architecture or adding a module; use the relevant `docs/modules/*.md` file for business rules.
 
 ## Commands
 

@@ -1,7 +1,7 @@
 package infraexposure
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	"context"
 	"strings"
 	"time"

@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	applicationmedia "GCFeed/internal/application/media"
-	domainmedia "GCFeed/internal/domain/media"
-	inframedia "GCFeed/internal/infra/media"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
-	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	inframedia "github.com/shiyudesu/frux/internal/infra/media"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
+	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"

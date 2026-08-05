@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	applicationembedding "GCFeed/internal/application/embedding"
-	applicationvideo "GCFeed/internal/application/video"
-	domainembedding "GCFeed/internal/domain/embedding"
+	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 )
 
 type memoryVideoEmbeddingRepo struct {

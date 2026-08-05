@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: gcfeed
+  name: frux
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: gcfeed-secret
-  namespace: gcfeed
+  name: frux-secret
+  namespace: frux
 type: Opaque
 stringData:
   postgres-password: sealos123
@@ -20,9 +20,9 @@ stringData:
     database:
       host: "postgres"
       port: 5432
-      user: "gcfeed"
+      user: "frux"
       password: "sealos123"
-      name: "gcfeed"
+      name: "frux"
       ssl_mode: "disable"
       time_zone: "UTC"
 
@@ -33,22 +33,22 @@ stringData:
 
     rabbitmq:
       url: "amqp://guest:guest@rabbitmq:5672/"
-      interaction_exchange: "gcfeed.interaction"
-      action_changed_queue: "gcfeed.interaction.action_changed"
+      interaction_exchange: "frux.interaction"
+      action_changed_queue: "frux.interaction.action_changed"
       action_changed_routing: "interaction.action_changed"
-      video_exchange: "gcfeed.video"
-      video_published_queue: "gcfeed.video.published"
-      video_embedding_queue: "gcfeed.video.embedding"
+      video_exchange: "frux.video"
+      video_published_queue: "frux.video.published"
+      video_embedding_queue: "frux.video.embedding"
       video_published_routing: "video.published"
-      exposure_exchange: "gcfeed.exposure"
-      view_event_recorded_queue: "gcfeed.exposure.view_event_recorded"
+      exposure_exchange: "frux.exposure"
+      view_event_recorded_queue: "frux.exposure.view_event_recorded"
       view_event_recorded_routing: "exposure.view_event_recorded"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-data
-  namespace: gcfeed
+  namespace: frux
 spec:
   accessModes:
     - ReadWriteOnce
@@ -60,7 +60,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: redis-data
-  namespace: gcfeed
+  namespace: frux
 spec:
   accessModes:
     - ReadWriteOnce
@@ -72,7 +72,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: rabbitmq-data
-  namespace: gcfeed
+  namespace: frux
 spec:
   accessModes:
     - ReadWriteOnce
@@ -84,7 +84,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: api-uploads
-  namespace: gcfeed
+  namespace: frux
 spec:
   accessModes:
     - ReadWriteOnce
@@ -96,7 +96,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
-  namespace: gcfeed
+  namespace: frux
 spec:
   replicas: 1
   selector:
@@ -115,13 +115,13 @@ spec:
             - containerPort: 5432
           env:
             - name: POSTGRES_DB
-              value: gcfeed
+              value: frux
             - name: POSTGRES_USER
-              value: gcfeed
+              value: frux
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: gcfeed-secret
+                  name: frux-secret
                   key: postgres-password
           volumeMounts:
             - name: postgres-data
@@ -131,9 +131,9 @@ spec:
               command:
                 - pg_isready
                 - -U
-                - gcfeed
+                - frux
                 - -d
-                - gcfeed
+                - frux
             initialDelaySeconds: 20
             periodSeconds: 5
             timeoutSeconds: 3
@@ -143,9 +143,9 @@ spec:
               command:
                 - pg_isready
                 - -U
-                - gcfeed
+                - frux
                 - -d
-                - gcfeed
+                - frux
             initialDelaySeconds: 60
             periodSeconds: 10
             timeoutSeconds: 3
@@ -159,7 +159,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: gcfeed
+  namespace: frux
 spec:
   selector:
     app: postgres
@@ -172,7 +172,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
-  namespace: gcfeed
+  namespace: frux
 spec:
   replicas: 1
   selector:
@@ -219,7 +219,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: gcfeed
+  namespace: frux
 spec:
   selector:
     app: redis
@@ -232,7 +232,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rabbitmq
-  namespace: gcfeed
+  namespace: frux
 spec:
   replicas: 1
   selector:
@@ -284,7 +284,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: rabbitmq
-  namespace: gcfeed
+  namespace: frux
 spec:
   selector:
     app: rabbitmq
@@ -300,7 +300,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api
-  namespace: gcfeed
+  namespace: frux
 spec:
   replicas: 1
   selector:
@@ -313,7 +313,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: gcfeed-api:latest
+          image: frux-api:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -343,7 +343,7 @@ spec:
       volumes:
         - name: api-config
           secret:
-            secretName: gcfeed-secret
+            secretName: frux-secret
             items:
               - key: api-config.yaml
                 path: api-config.yaml
@@ -355,7 +355,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: api
-  namespace: gcfeed
+  namespace: frux
 spec:
   selector:
     app: api
@@ -368,7 +368,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: worker
-  namespace: gcfeed
+  namespace: frux
 spec:
   replicas: 1
   selector:
@@ -381,10 +381,10 @@ spec:
     spec:
       containers:
         - name: worker
-          image: gcfeed-api:latest
+          image: frux-api:latest
           imagePullPolicy: IfNotPresent
           command:
-            - ./gcfeed-worker
+            - ./frux-worker
           volumeMounts:
             - name: api-config
               mountPath: /app/configs/config.yaml
@@ -393,7 +393,7 @@ spec:
       volumes:
         - name: api-config
           secret:
-            secretName: gcfeed-secret
+            secretName: frux-secret
             items:
               - key: api-config.yaml
                 path: api-config.yaml
@@ -402,7 +402,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
-  namespace: gcfeed
+  namespace: frux
 spec:
   replicas: 1
   selector:
@@ -415,7 +415,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: gcfeed-web:latest
+          image: frux-web:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
@@ -440,7 +440,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: web
-  namespace: gcfeed
+  namespace: frux
 spec:
   type: NodePort
   selector:

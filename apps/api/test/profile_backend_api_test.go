@@ -1,14 +1,14 @@
 package test
 
 import (
-	applicationlibrary "GCFeed/internal/application/library"
-	applicationvideo "GCFeed/internal/application/video"
-	domainlibrary "GCFeed/internal/domain/library"
-	domainvideo "GCFeed/internal/domain/video"
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttplibrary "GCFeed/internal/interfaces/http/library"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
-	interfaceshttpvideo "GCFeed/internal/interfaces/http/video"
+	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttplibrary "github.com/shiyudesu/frux/internal/interfaces/http/library"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
+	interfaceshttpvideo "github.com/shiyudesu/frux/internal/interfaces/http/video"
 	"context"
 	"encoding/json"
 	"fmt"

@@ -1,9 +1,9 @@
 package interfaceshttpupload
 
 import (
-	infrahttphertz "GCFeed/internal/infra/httphertz"
-	inframetrics "GCFeed/internal/infra/metrics"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"bytes"
 	"context"
 	"crypto/rand"

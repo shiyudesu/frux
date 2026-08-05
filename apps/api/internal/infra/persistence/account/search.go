@@ -1,8 +1,8 @@
 package infraaccount
 
 import (
-	domainaccount "GCFeed/internal/domain/account"
-	domainsearch "GCFeed/internal/domain/search"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"context"
 	"time"
 

@@ -8,30 +8,30 @@ import (
 	"syscall"
 	"time"
 
-	applicationembedding "GCFeed/internal/application/embedding"
-	applicationexposure "GCFeed/internal/application/exposure"
-	applicationinteraction "GCFeed/internal/application/interaction"
-	applicationmedia "GCFeed/internal/application/media"
-	applicationmessage "GCFeed/internal/application/message"
-	applicationrecommendation "GCFeed/internal/application/recommendation"
-	applicationvideo "GCFeed/internal/application/video"
-	domainmedia "GCFeed/internal/domain/media"
-	infracache "GCFeed/internal/infra/cache"
-	infraconfig "GCFeed/internal/infra/config"
-	infradatabase "GCFeed/internal/infra/database"
-	inframedia "GCFeed/internal/infra/media"
-	inframetrics "GCFeed/internal/infra/metrics"
-	inframq "GCFeed/internal/infra/mq"
-	infraembedding "GCFeed/internal/infra/persistence/embedding"
-	infraexposure "GCFeed/internal/infra/persistence/exposure"
-	infrafeed "GCFeed/internal/infra/persistence/feed"
-	infrainteraction "GCFeed/internal/infra/persistence/interaction"
-	infrapersistencemedia "GCFeed/internal/infra/persistence/media"
-	inframessage "GCFeed/internal/infra/persistence/message"
-	migration "GCFeed/internal/infra/persistence/migration"
-	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
-	infrarelation "GCFeed/internal/infra/persistence/relation"
-	infravideo "GCFeed/internal/infra/persistence/video"
+	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
+	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	infracache "github.com/shiyudesu/frux/internal/infra/cache"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
+	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
+	inframedia "github.com/shiyudesu/frux/internal/infra/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	inframq "github.com/shiyudesu/frux/internal/infra/mq"
+	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
+	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
+	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
+	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
+	infrapersistencemedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
+	inframessage "github.com/shiyudesu/frux/internal/infra/persistence/message"
+	migration "github.com/shiyudesu/frux/internal/infra/persistence/migration"
+	infrarecommendation "github.com/shiyudesu/frux/internal/infra/persistence/recommendation"
+	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -82,9 +82,9 @@ func main() {
 	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ); err != nil {
 		log.Fatalf("start workers failed: %v", err)
 	}
-	log.Println("gcfeed worker is running")
+	log.Println("frux worker is running")
 	<-ctx.Done()
-	log.Println("gcfeed worker stopped")
+	log.Println("frux worker stopped")
 }
 
 func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB, rabbitMQ *inframq.RabbitMQ) error {
@@ -164,7 +164,7 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	mediaRepo := infrapersistencemedia.New(gormDB)
 	if err := mediaRepo.UpsertProcessingProfile(ctx, &domainmedia.ProcessingProfile{
 		Version:    cfg.Media.Processing.ProfileVersion,
-		Name:       "GCFeed baseline H.264/AAC and DASH profile",
+		Name:       "Frux baseline H.264/AAC and DASH profile",
 		ConfigJSON: `{"baseline_max_height":720,"renditions":[480,720,1080],"dash_segment_seconds":4}`,
 		Active:     true,
 	}); err != nil {

@@ -1,9 +1,9 @@
 package applicationrecommendation
 
 import (
-	domainembedding "GCFeed/internal/domain/embedding"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"encoding/base64"
 	"encoding/json"

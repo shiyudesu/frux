@@ -1,8 +1,8 @@
 package applicationrecommendation
 
 import (
-	domainembedding "GCFeed/internal/domain/embedding"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"errors"
 	"math"

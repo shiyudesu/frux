@@ -1,6 +1,6 @@
 @media (max-width: 1279px) {
   .side-nav {
-    width: var(--gc-sidebar-compact);
+    width: var(--frux-sidebar-compact);
     padding-right: 8px;
     padding-left: 8px;
   }
@@ -39,12 +39,12 @@
   }
 
   .top-nav {
-    left: var(--gc-sidebar-compact);
+    left: var(--frux-sidebar-compact);
   }
 
   .app-body {
-    width: calc(100% - var(--gc-sidebar-compact));
-    margin-left: var(--gc-sidebar-compact);
+    width: calc(100% - var(--frux-sidebar-compact));
+    margin-left: var(--frux-sidebar-compact);
   }
 
   .feed-layout,
@@ -66,8 +66,8 @@
     opacity: 0;
     visibility: hidden;
     transition:
-      opacity var(--gc-motion) ease,
-      visibility var(--gc-motion) ease;
+      opacity var(--frux-motion) ease,
+      visibility var(--frux-motion) ease;
   }
 
   .details-scrim.open {
@@ -81,9 +81,9 @@
     top: 0;
     right: 0;
     bottom: 0;
-    width: min(var(--gc-detail-width), 42vw);
+    width: min(var(--frux-detail-width), 42vw);
     min-width: 320px;
-    border-radius: 0 var(--gc-radius-stage) var(--gc-radius-stage) 0;
+    border-radius: 0 var(--frux-radius-stage) var(--frux-radius-stage) 0;
     opacity: 1;
     visibility: visible;
     transform: translateX(105%);
@@ -119,7 +119,7 @@
   }
 }
 
-/* GCFeed is desktop-only; legacy mobile reflow styles remain disabled. */
+/* Frux is desktop-only; legacy mobile reflow styles remain disabled. */
 @media (max-width: 1px) {
   .search-page {
     padding: 20px 14px 96px;
@@ -193,8 +193,8 @@
     width: 100%;
     height: 100%;
     margin-left: 0;
-    padding-top: var(--gc-header-height);
-    padding-bottom: var(--gc-mobile-nav-height);
+    padding-top: var(--frux-header-height);
+    padding-bottom: var(--frux-mobile-nav-height);
   }
 
   .mobile-nav {
@@ -205,9 +205,9 @@
     left: 0;
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    height: var(--gc-mobile-nav-height);
+    height: var(--frux-mobile-nav-height);
     padding: 5px max(8px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-    border-top: 1px solid var(--gc-line);
+    border-top: 1px solid var(--frux-line);
     background: rgba(22, 24, 35, 0.97);
     backdrop-filter: blur(18px);
   }
@@ -220,7 +220,7 @@
     justify-items: center;
     gap: 2px;
     padding: 0 2px;
-    color: var(--gc-muted);
+    color: var(--frux-muted);
     border-radius: 8px;
     background: transparent;
     font-size: 10px;
@@ -302,12 +302,12 @@
     height: 22px;
     border: 2px solid rgba(22, 24, 35, 0.8);
     border-radius: 50%;
-    background: var(--gc-rose);
+    background: var(--frux-rose);
     content: "";
   }
 
   .rail-follow.active::before {
-    background: var(--gc-surface-soft);
+    background: var(--frux-surface-soft);
   }
 
   .rail-follow.active {
@@ -331,7 +331,7 @@
 
   .details-scrim {
     position: fixed;
-    inset: var(--gc-header-height) 0 var(--gc-mobile-nav-height);
+    inset: var(--frux-header-height) 0 var(--frux-mobile-nav-height);
     border-radius: 0;
   }
 
@@ -340,12 +340,12 @@
     z-index: 80;
     top: auto;
     right: 0;
-    bottom: var(--gc-mobile-nav-height);
+    bottom: var(--frux-mobile-nav-height);
     left: 0;
     width: 100%;
     min-width: 0;
     height: min(72dvh, 620px);
-    border: 1px solid var(--gc-line);
+    border: 1px solid var(--frux-line);
     border-bottom: 0;
     border-radius: 20px 20px 0 0;
     transform: translateY(105%);

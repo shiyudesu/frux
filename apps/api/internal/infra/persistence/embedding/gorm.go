@@ -1,7 +1,7 @@
 package infraembedding
 
 import (
-	domainembedding "GCFeed/internal/domain/embedding"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	"context"
 	"errors"
 

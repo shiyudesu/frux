@@ -1,10 +1,10 @@
 package infravideo
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
-	inframediastore "GCFeed/internal/infra/media"
-	infrapersistence "GCFeed/internal/infra/persistence"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"errors"
 	"time"

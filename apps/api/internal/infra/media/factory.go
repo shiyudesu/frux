@@ -3,8 +3,8 @@ package inframedia
 import (
 	"context"
 
-	domainmedia "GCFeed/internal/domain/media"
-	infraconfig "GCFeed/internal/infra/config"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 )
 
 func NewObjectStore(ctx context.Context, cfg infraconfig.MediaConfig) (domainmedia.MediaObjectStore, error) {

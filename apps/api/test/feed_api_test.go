@@ -1,7 +1,7 @@
 package test
 
 import (
-	applicationrecommendation "GCFeed/internal/application/recommendation"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"context"
 	"errors"
 	"net/http"
@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	applicationfeed "GCFeed/internal/application/feed"
-	domainfeed "GCFeed/internal/domain/feed"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	infrajwt "GCFeed/internal/infra/jwt"
-	inframetrics "GCFeed/internal/infra/metrics"
-	interfaceshttpfeed "GCFeed/internal/interfaces/http/feed"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/prometheus/client_golang/prometheus/testutil"

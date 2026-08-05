@@ -32,7 +32,7 @@ The recommendation service SHALL merge bounded candidates from configurable fres
 - **THEN** it is removed from the response
 
 ### Requirement: Time-Decayed User Interest Profile
-GCFeed SHALL maintain a versioned recommendation profile from idempotent positive, negative, relational, and session behavior signals with time decay.
+Frux SHALL maintain a versioned recommendation profile from idempotent positive, negative, relational, and session behavior signals with time decay.
 
 #### Scenario: User completes related videos
 - **WHEN** reliable completion and sustained-progress events are consumed
@@ -84,7 +84,7 @@ The normal recommendation path SHALL preserve one ordered candidate snapshot for
 - **THEN** the service uses the documented deterministic degraded cursor path and reports degraded operation
 
 ### Requirement: Recommendation Evaluation Records
-GCFeed SHALL record sampled privacy-bounded request, policy, candidate-reason, and outcome linkage data using recommendation request IDs.
+Frux SHALL record sampled privacy-bounded request, policy, candidate-reason, and outcome linkage data using recommendation request IDs.
 
 #### Scenario: Sampled request is served
 - **WHEN** a request is selected by the configured evaluation sampling policy

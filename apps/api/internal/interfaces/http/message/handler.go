@@ -1,10 +1,10 @@
 package interfaceshttpmessage
 
 import (
-	applicationmessage "GCFeed/internal/application/message"
-	domainmessage "GCFeed/internal/domain/message"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

@@ -3,10 +3,10 @@ package main
 import (
 	"log"
 
-	infraconfig "GCFeed/internal/infra/config"
-	infradatabase "GCFeed/internal/infra/database"
-	infrahttphertz "GCFeed/internal/infra/httphertz"
-	interfaceshttprouter "GCFeed/internal/interfaces/http/router"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
+	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
+	interfaceshttprouter "github.com/shiyudesu/frux/internal/interfaces/http/router"
 )
 
 const configPath = "./configs/config.yaml"

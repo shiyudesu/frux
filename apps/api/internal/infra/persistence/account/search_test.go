@@ -1,7 +1,7 @@
 package infraaccount
 
 import (
-	domainsearch "GCFeed/internal/domain/search"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"fmt"
 	"strings"
 	"testing"
@@ -47,7 +47,7 @@ func TestBuildUserSearchQueryIsParameterizedActiveAndStable(t *testing.T) {
 func newUserSearchDryRunDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
-		DSN: "host=localhost user=gcfeed password=gcfeed dbname=gcfeed sslmode=disable",
+		DSN: "host=localhost user=frux password=frux dbname=frux sslmode=disable",
 	}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
 	if err != nil {
 		t.Fatalf("open dry-run PostgreSQL GORM: %v", err)

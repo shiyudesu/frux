@@ -5,14 +5,14 @@ jwt:
 
 internal:
   enabled: true
-  token: "${GCFEED_INTERNAL_TOKEN}"
+  token: "${FRUX_INTERNAL_TOKEN}"
 
 database:
   host: "postgres"
   port: 5432
-  user: "gcfeed"
+  user: "frux"
   password: "sealos123"
-  name: "gcfeed"
+  name: "frux"
   ssl_mode: "disable"
   time_zone: "UTC"
 
@@ -23,24 +23,24 @@ redis:
 
 rabbitmq:
   url: "amqp://guest:guest@rabbitmq:5672/"
-  interaction_exchange: "gcfeed.interaction"
-  action_changed_queue: "gcfeed.interaction.action_changed"
+  interaction_exchange: "frux.interaction"
+  action_changed_queue: "frux.interaction.action_changed"
   action_changed_routing: "interaction.action_changed"
-  video_exchange: "gcfeed.video"
-  video_published_queue: "gcfeed.video.published"
-  video_embedding_queue: "gcfeed.video.embedding"
+  video_exchange: "frux.video"
+  video_published_queue: "frux.video.published"
+  video_embedding_queue: "frux.video.embedding"
   video_published_routing: "video.published"
-  exposure_exchange: "gcfeed.exposure"
-  view_event_recorded_queue: "gcfeed.exposure.view_event_recorded"
+  exposure_exchange: "frux.exposure"
+  view_event_recorded_queue: "frux.exposure.view_event_recorded"
   view_event_recorded_routing: "exposure.view_event_recorded"
-  media_exchange: "gcfeed.media"
-  media_processing_queue: "gcfeed.media.processing"
+  media_exchange: "frux.media"
+  media_processing_queue: "frux.media.processing"
   media_processing_routing: "media.processing.requested"
 
 media:
   backend: "s3"
   local_root: "./uploads"
-  public_base_url: "http://127.0.0.1:9000/gcfeed-media"
+  public_base_url: "http://127.0.0.1:9000/frux-media"
   signed_url_ttl: "15m"
   upload_session_ttl: "15m"
   processing:
@@ -53,9 +53,9 @@ media:
     endpoint: "http://minio:9000"
     presign_endpoint: "http://127.0.0.1:9000"
     region: "us-east-1"
-    bucket: "gcfeed-media"
-    access_key: "gcfeed"
-    secret_key: "gcfeed-secret"
+    bucket: "frux-media"
+    access_key: "frux"
+    secret_key: "frux-secret"
     use_path_style: true
     auto_create_bucket: true
 

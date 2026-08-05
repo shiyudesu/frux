@@ -1,7 +1,7 @@
 package applicationsearch
 
 import (
-	domainsearch "GCFeed/internal/domain/search"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"encoding/base64"
 	"encoding/json"
 	"strings"

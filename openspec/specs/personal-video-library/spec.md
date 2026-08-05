@@ -7,7 +7,7 @@ Defines authenticated liked, favorite, watch-history, and Watch Later libraries,
 ## Requirements
 
 ### Requirement: Liked Video Library
-GCFeed SHALL provide an authenticated, cursor-paginated list of the current user's active LIKE actions, ordered by action update time descending and video ID descending.
+Frux SHALL provide an authenticated, cursor-paginated list of the current user's active LIKE actions, ordered by action update time descending and video ID descending.
 
 #### Scenario: User lists liked videos
 - **WHEN** an authenticated user requests liked videos with a valid cursor and limit
@@ -18,7 +18,7 @@ GCFeed SHALL provide an authenticated, cursor-paginated list of the current user
 - **THEN** it is omitted from the returned library without exposing its media or metadata
 
 ### Requirement: Favorite Video Library
-GCFeed SHALL provide an authenticated, cursor-paginated list of the current user's active FAVORITE actions, ordered by action update time descending and video ID descending.
+Frux SHALL provide an authenticated, cursor-paginated list of the current user's active FAVORITE actions, ordered by action update time descending and video ID descending.
 
 #### Scenario: User lists favorite videos
 - **WHEN** an authenticated user requests favorite videos
@@ -29,7 +29,7 @@ GCFeed SHALL provide an authenticated, cursor-paginated list of the current user
 - **THEN** that video is not returned by the favorite library
 
 ### Requirement: Public Liked Videos
-GCFeed SHALL expose a public liked-video list only when the target user's profile setting explicitly permits it. Favorite videos SHALL remain owner-only.
+Frux SHALL expose a public liked-video list only when the target user's profile setting explicitly permits it. Favorite videos SHALL remain owner-only.
 
 #### Scenario: Public liked list is permitted
 - **WHEN** a visitor requests liked videos for a user whose liked visibility is public
@@ -40,7 +40,7 @@ GCFeed SHALL expose a public liked-video list only when the target user's profil
 - **THEN** the API returns the configured privacy response without any liked-video items
 
 ### Requirement: Durable Watch History Projection
-GCFeed SHALL maintain one latest watch-history record per user and video from play, progress, complete, and skip events, including the most recent scene, event type, media position, effective watch duration, completion state, and watch time. Exposure-only events SHALL NOT create watch-history entries.
+Frux SHALL maintain one latest watch-history record per user and video from play, progress, complete, and skip events, including the most recent scene, event type, media position, effective watch duration, completion state, and watch time. Exposure-only events SHALL NOT create watch-history entries.
 
 #### Scenario: Play event updates history
 - **WHEN** an authenticated user's play event is stored
@@ -63,7 +63,7 @@ GCFeed SHALL maintain one latest watch-history record per user and video from pl
 - **THEN** the completed state and newer position remain unchanged
 
 ### Requirement: Watch History Listing and Deletion
-GCFeed SHALL allow an authenticated user to list watch history by `last_watched_at DESC, video_id DESC`, delete one history item, or clear the history projection without deleting raw view events.
+Frux SHALL allow an authenticated user to list watch history by `last_watched_at DESC, video_id DESC`, delete one history item, or clear the history projection without deleting raw view events.
 
 #### Scenario: User lists watch history
 - **WHEN** an authenticated user requests watch history
@@ -97,7 +97,7 @@ The Web SHALL expose each authenticated personal-library tab as an ordered queue
 - **THEN** the response updates only its owning source and does not replace the active tab's items
 
 ### Requirement: Watch Later State
-GCFeed SHALL allow an authenticated user to idempotently add or remove a readable video from Watch Later and list active Watch Later entries using stable cursor pagination. The Web SHALL expose a functional Watch Later add action from supported playback surfaces and a remove action from the Watch Later library and queue.
+Frux SHALL allow an authenticated user to idempotently add or remove a readable video from Watch Later and list active Watch Later entries using stable cursor pagination. The Web SHALL expose a functional Watch Later add action from supported playback surfaces and a remove action from the Watch Later library and queue.
 
 #### Scenario: User adds video to Watch Later
 - **WHEN** the user sends PUT for a readable video not currently active in Watch Later

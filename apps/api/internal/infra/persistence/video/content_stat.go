@@ -1,8 +1,8 @@
 package infravideo
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

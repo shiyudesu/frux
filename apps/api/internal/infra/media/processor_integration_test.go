@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 func TestFFmpegProcessorGeneratesBaselineAndDASH(t *testing.T) {

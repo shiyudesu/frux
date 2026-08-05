@@ -1,7 +1,7 @@
 package applicationrecommendation
 
 import (
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"

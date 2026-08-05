@@ -1,7 +1,7 @@
 package inframq
 
 import (
-	applicationinteraction "GCFeed/internal/application/interaction"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	"context"
 	"errors"
 	"sync/atomic"

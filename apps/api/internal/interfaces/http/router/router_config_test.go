@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	infraconfig "GCFeed/internal/infra/config"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 )
 
 func TestValidateAPIConfigProtectsEnabledInternalRoutes(t *testing.T) {

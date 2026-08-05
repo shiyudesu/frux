@@ -1,12 +1,12 @@
 package inframq
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	applicationinteraction "GCFeed/internal/application/interaction"
-	applicationmedia "GCFeed/internal/application/media"
-	applicationvideo "GCFeed/internal/application/video"
-	infraconfig "GCFeed/internal/infra/config"
-	inframetrics "GCFeed/internal/infra/metrics"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,19 +17,19 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const defaultInteractionExchange = "gcfeed.interaction"
-const defaultActionChangedQueue = "gcfeed.interaction.action_changed"
-const profileActionChangedQueue = "gcfeed.recommendation.action_changed"
+const defaultInteractionExchange = "frux.interaction"
+const defaultActionChangedQueue = "frux.interaction.action_changed"
+const profileActionChangedQueue = "frux.recommendation.action_changed"
 const defaultActionChangedRouting = "interaction.action_changed"
-const defaultVideoExchange = "gcfeed.video"
-const defaultVideoPublishedQueue = "gcfeed.video.published"
-const defaultVideoEmbeddingQueue = "gcfeed.video.embedding"
+const defaultVideoExchange = "frux.video"
+const defaultVideoPublishedQueue = "frux.video.published"
+const defaultVideoEmbeddingQueue = "frux.video.embedding"
 const defaultVideoPublishedRouting = "video.published"
-const defaultExposureExchange = "gcfeed.exposure"
-const defaultViewEventRecordedQueue = "gcfeed.exposure.view_event_recorded"
+const defaultExposureExchange = "frux.exposure"
+const defaultViewEventRecordedQueue = "frux.exposure.view_event_recorded"
 const defaultViewEventRecordedRouting = "exposure.view_event_recorded"
-const defaultMediaExchange = "gcfeed.media"
-const defaultMediaProcessingQueue = "gcfeed.media.processing"
+const defaultMediaExchange = "frux.media"
+const defaultMediaProcessingQueue = "frux.media.processing"
 const defaultMediaProcessingRouting = "media.processing.requested"
 const viewEventConsumerRetryDelay = time.Second
 
@@ -360,9 +360,9 @@ func (r *RabbitMQ) PublishViewEventRecorded(ctx context.Context, event *applicat
 			Timestamp:    time.Now(),
 			Body:         content,
 			Headers: amqp.Table{
-				"x-gcfeed-event-id":      event.EventID,
-				"x-gcfeed-view-event-id": event.ViewEventID,
-				"x-gcfeed-user-id":       event.UserID,
+				"x-frux-event-id":      event.EventID,
+				"x-frux-view-event-id": event.ViewEventID,
+				"x-frux-user-id":       event.UserID,
 			},
 		},
 	)

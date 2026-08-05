@@ -170,8 +170,8 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | 用户行为状态 | `interaction:action:v1:{user_id}:{video_id}:{action}` |
 | 实时计数 Hash | `video:stat:counter:v1:{video_id}` |
 | Feed 计数 JSON | `video:stat:v1:{video_id}` |
-| Exchange | `gcfeed.interaction` |
-| Queue | `gcfeed.interaction.action_changed` |
+| Exchange | `frux.interaction` |
+| Queue | `frux.interaction.action_changed` |
 | Routing key | `interaction.action_changed` |
 
 ### 3.4 两级评论模型和通用响应

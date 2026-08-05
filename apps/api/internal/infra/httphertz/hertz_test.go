@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	infraconfig "GCFeed/internal/infra/config"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 
 	"github.com/cloudwego/hertz/pkg/common/ut"
 )

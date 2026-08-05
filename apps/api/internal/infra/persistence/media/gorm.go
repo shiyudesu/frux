@@ -1,8 +1,8 @@
 package inframedia
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	infrapersistence "GCFeed/internal/infra/persistence"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"errors"
 	"strings"

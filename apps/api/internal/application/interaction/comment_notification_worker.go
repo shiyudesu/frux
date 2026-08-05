@@ -1,9 +1,9 @@
 package applicationinteraction
 
 import (
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainmessage "GCFeed/internal/domain/message"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"errors"
 	"fmt"

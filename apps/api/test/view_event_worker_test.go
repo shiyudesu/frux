@@ -1,8 +1,8 @@
 package test
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	applicationrecommendation "GCFeed/internal/application/recommendation"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"context"
 	"errors"
 	"sync"

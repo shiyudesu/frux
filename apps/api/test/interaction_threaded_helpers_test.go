@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	domainaccount "GCFeed/internal/domain/account"
-	domaininteraction "GCFeed/internal/domain/interaction"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 )
 
 func (r *memoryInteractionRepo) CreateThreadedComment(_ context.Context, input *domaininteraction.Comment) (*domaininteraction.CommentMutationResult, error) {

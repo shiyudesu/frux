@@ -1,8 +1,8 @@
 package applicationembedding
 
 import (
-	applicationvideo "GCFeed/internal/application/video"
-	domainembedding "GCFeed/internal/domain/embedding"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	"context"
 	"encoding/json"
 	"errors"

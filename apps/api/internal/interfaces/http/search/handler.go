@@ -1,8 +1,8 @@
 package interfaceshttpsearch
 
 import (
-	applicationsearch "GCFeed/internal/application/search"
-	domainsearch "GCFeed/internal/domain/search"
+	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"context"
 	"errors"
 	"net/http"

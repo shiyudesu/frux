@@ -7,7 +7,7 @@ Defines validated public video and user search, deterministic relevance and curs
 ## Requirements
 
 ### Requirement: Validated public search queries
-GCFeed SHALL provide independently paginated public video and user search APIs. Search queries SHALL be trimmed, SHALL contain 1-64 Unicode code points, SHALL escape wildcard metacharacters, and SHALL use limits from 1-50.
+Frux SHALL provide independently paginated public video and user search APIs. Search queries SHALL be trimmed, SHALL contain 1-64 Unicode code points, SHALL escape wildcard metacharacters, and SHALL use limits from 1-50.
 
 #### Scenario: Caller submits a valid query
 - **WHEN** a caller searches videos or users with a valid query and limit

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 func TestLocalStoreLifecycleAndChecksum(t *testing.T) {
@@ -19,7 +19,7 @@ func TestLocalStoreLifecycleAndChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new local store: %v", err)
 	}
-	content := []byte("gcfeed media")
+	content := []byte("frux media")
 	sum := sha256.Sum256(content)
 	checksum := hex.EncodeToString(sum[:])
 	key := "uploads/9/session/video/source.mp4"

@@ -1,6 +1,6 @@
-# GCFeed
+# Frux
 
-GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单体、React Web 客户端、PostgreSQL、Redis 和 RabbitMQ 承载内容供给、分发、消费、互动和治理链路。
+Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单体、React Web 客户端、PostgreSQL、Redis 和 RabbitMQ 承载内容供给、分发、消费、互动和治理链路。
 
 ## 当前状态
 
@@ -37,7 +37,7 @@ GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API �
 可用默认值提交到仓库；启动或校验 Compose 前生成并导出它：
 
 ```bash
-export GCFEED_INTERNAL_TOKEN="$(openssl rand -base64 48 | tr -d '\n')"
+export FRUX_INTERNAL_TOKEN="$(openssl rand -base64 48 | tr -d '\n')"
 ```
 
 启动：
@@ -95,7 +95,7 @@ docker compose down -v
 | MinIO S3 API | `http://127.0.0.1:9000` |
 | MinIO Console | `http://127.0.0.1:9001` |
 | Prometheus | `http://127.0.0.1:9090` |
-| Grafana 面板 | `http://127.0.0.1:3000/d/gcfeed-overview/gcfeed-overview` |
+| Grafana 面板 | `http://127.0.0.1:3000/d/frux-overview/frux-overview` |
 
 ### 本地开发
 
@@ -127,7 +127,7 @@ go test ./...
 cd apps
 docker compose up -d postgres
 cd api
-GCFEED_POSTGRES_TEST_DSN='postgres://gcfeed:sealos123@127.0.0.1:5432/gcfeed?sslmode=disable' \
+FRUX_POSTGRES_TEST_DSN='postgres://frux:sealos123@127.0.0.1:5432/frux?sslmode=disable' \
   go test ./internal/infra/persistence/migration -run '^TestPostgreSQL'
 ```
 
@@ -171,18 +171,18 @@ Grafana 默认账号密码：
 admin / admin
 ```
 
-内置面板：`GCFeed / GCFeed Overview`
+内置面板：`Frux / Frux Overview`
 
 ```text
-http://127.0.0.1:3000/d/gcfeed-overview/gcfeed-overview
+http://127.0.0.1:3000/d/frux-overview/frux-overview
 ```
 
 面板覆盖 API QPS、5xx 错误率、API P95、Feed P95、Feed 缓存命中率、上传处理耗时和 Worker 成功率。
 
 Prometheus 抓取目标：
 
-- `gcfeed-api`：`api:8080/metrics`
-- `gcfeed-worker`：`worker:9091/metrics`
+- `frux-api`：`api:8080/metrics`
+- `frux-worker`：`worker:9091/metrics`
 
 ## 文档地图
 

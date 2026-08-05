@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
-	infraconfig "GCFeed/internal/infra/config"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -101,7 +101,7 @@ func seekableUploadBody(body io.Reader, sizeBytes int64) (io.ReadSeeker, func(),
 		}
 		return seeker, func() {}, nil
 	}
-	temp, err := os.CreateTemp("", "gcfeed-s3-upload-*")
+	temp, err := os.CreateTemp("", "frux-s3-upload-*")
 	if err != nil {
 		return nil, func() {}, err
 	}

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	applicationvideo "GCFeed/internal/application/video"
-	domainvideo "GCFeed/internal/domain/video"
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
-	interfaceshttpvideo "GCFeed/internal/interfaces/http/video"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
+	interfaceshttpvideo "github.com/shiyudesu/frux/internal/interfaces/http/video"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"

@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Defines the CloudWeGo Hertz HTTP runtime and the compatibility, security, observability, static-file, upload, and test guarantees required at the GCFeed API boundary.
+Defines the CloudWeGo Hertz HTTP runtime and the compatibility, security, observability, static-file, upload, and test guarantees required at the Frux API boundary.
 
 ## Requirements
 
 ### Requirement: Hertz API Process
 
-The GCFeed API process SHALL use CloudWeGo Hertz as its production HTTP server and SHALL NOT retain Gin as a runtime dependency.
+The Frux API process SHALL use CloudWeGo Hertz as its production HTTP server and SHALL NOT retain Gin as a runtime dependency.
 
 #### Scenario: API process starts
 

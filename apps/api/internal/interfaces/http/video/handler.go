@@ -1,11 +1,11 @@
 package interfaceshttpvideo
 
 import (
-	applicationvideo "GCFeed/internal/application/video"
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

@@ -13,8 +13,8 @@ body,
 
 body {
   overflow: hidden;
-  color: var(--gc-text);
-  background: var(--gc-bg);
+  color: var(--frux-text);
+  background: var(--frux-bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -57,7 +57,7 @@ a {
 }
 
 ::-webkit-scrollbar-thumb {
-  border-radius: var(--gc-radius-pill);
+  border-radius: var(--frux-radius-pill);
   background: rgba(255, 255, 255, 0.2);
 }
 
@@ -66,7 +66,7 @@ a {
 }
 
 :focus-visible {
-  outline: 2px solid var(--gc-cyan);
+  outline: 2px solid var(--frux-cyan);
   outline-offset: 3px;
 }
 
@@ -98,26 +98,26 @@ a {
   justify-content: center;
   gap: 8px;
   padding: 0 18px;
-  border-radius: var(--gc-radius-control);
+  border-radius: var(--frux-radius-control);
   font-size: 14px;
   font-weight: 700;
   transition:
-    color var(--gc-motion-fast) ease,
-    background var(--gc-motion-fast) ease,
-    border-color var(--gc-motion-fast) ease,
-    transform var(--gc-motion-fast) ease,
-    opacity var(--gc-motion-fast) ease;
+    color var(--frux-motion-fast) ease,
+    background var(--frux-motion-fast) ease,
+    border-color var(--frux-motion-fast) ease,
+    transform var(--frux-motion-fast) ease,
+    opacity var(--frux-motion-fast) ease;
 }
 
 .primary-button,
 .upload-button {
   color: #fff;
-  background: var(--gc-rose);
+  background: var(--frux-rose);
 }
 
 .primary-button:hover,
 .upload-button:hover {
-  background: var(--gc-rose-hover);
+  background: var(--frux-rose-hover);
 }
 
 .primary-button:disabled {
@@ -125,13 +125,13 @@ a {
 }
 
 .ghost-button {
-  color: var(--gc-text);
-  border: 1px solid var(--gc-line-strong);
-  background: var(--gc-control);
+  color: var(--frux-text);
+  border: 1px solid var(--frux-line-strong);
+  background: var(--frux-control);
 }
 
 .ghost-button:hover {
-  background: var(--gc-control-hover);
+  background: var(--frux-control-hover);
 }
 
 .primary-button.compact,
@@ -162,19 +162,19 @@ a {
   align-items: center;
   justify-content: center;
   padding: 0;
-  color: var(--gc-muted-strong);
-  border-radius: var(--gc-radius-control);
+  color: var(--frux-muted-strong);
+  border-radius: var(--frux-radius-control);
   background: transparent;
   transition:
-    color var(--gc-motion-fast) ease,
-    background var(--gc-motion-fast) ease,
-    transform var(--gc-motion-fast) ease;
+    color var(--frux-motion-fast) ease,
+    background var(--frux-motion-fast) ease,
+    transform var(--frux-motion-fast) ease;
 }
 
 .icon-button:hover,
 .avatar-button:hover {
-  color: var(--gc-text-strong);
-  background: var(--gc-control);
+  color: var(--frux-text-strong);
+  background: var(--frux-control);
 }
 
 .icon-button.small {
@@ -194,8 +194,8 @@ a {
   justify-content: center;
   padding: 0 6px;
   color: #fff;
-  border-radius: var(--gc-radius-pill);
-  background: var(--gc-rose);
+  border-radius: var(--frux-radius-pill);
+  background: var(--frux-rose);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -208,14 +208,14 @@ a {
   min-width: 17px;
   height: 17px;
   padding: 0 4px;
-  border: 2px solid var(--gc-bg);
+  border: 2px solid var(--frux-bg);
   font-size: 9px;
 }
 
 label {
   display: grid;
   gap: 8px;
-  color: var(--gc-muted-strong);
+  color: var(--frux-muted-strong);
   font-size: 13px;
   font-weight: 650;
 }
@@ -223,27 +223,27 @@ label {
 input,
 textarea {
   width: 100%;
-  color: var(--gc-text);
-  border: 1px solid var(--gc-line);
+  color: var(--frux-text);
+  border: 1px solid var(--frux-line);
   outline: 0;
-  background: var(--gc-control);
+  background: var(--frux-control);
   transition:
-    border-color var(--gc-motion-fast) ease,
-    background var(--gc-motion-fast) ease,
-    box-shadow var(--gc-motion-fast) ease;
+    border-color var(--frux-motion-fast) ease,
+    background var(--frux-motion-fast) ease,
+    box-shadow var(--frux-motion-fast) ease;
 }
 
 input {
   height: 44px;
   padding: 0 14px;
-  border-radius: var(--gc-radius-control);
+  border-radius: var(--frux-radius-control);
 }
 
 textarea {
   min-height: 112px;
   resize: vertical;
   padding: 12px 14px;
-  border-radius: var(--gc-radius-control);
+  border-radius: var(--frux-radius-control);
 }
 
 input::placeholder,
@@ -266,12 +266,12 @@ textarea:focus {
 }
 
 .form-message.success {
-  color: var(--gc-success);
+  color: var(--frux-success);
 }
 
 .eyebrow {
   margin: 0 0 7px;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.06em;
@@ -283,10 +283,10 @@ textarea:focus {
   height: 52px;
   align-items: center;
   justify-content: center;
-  color: var(--gc-cyan);
-  border: 1px solid var(--gc-line);
+  color: var(--frux-cyan);
+  border: 1px solid var(--frux-line);
   border-radius: 50%;
-  background: var(--gc-control);
+  background: var(--frux-control);
 }
 
 .feed-message,
@@ -297,14 +297,14 @@ textarea:focus {
   justify-items: center;
   gap: 12px;
   margin: 0;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   text-align: center;
 }
 
 .feed-message strong,
 .page-message strong,
 .comment-empty strong {
-  color: var(--gc-text);
+  color: var(--frux-text);
   font-size: 17px;
 }
 
@@ -314,8 +314,8 @@ textarea:focus {
   min-height: 34px;
   padding: 0 14px;
   color: #fff;
-  border-radius: var(--gc-radius-control);
-  background: var(--gc-rose);
+  border-radius: var(--frux-radius-control);
+  background: var(--frux-rose);
   font-weight: 700;
 }
 

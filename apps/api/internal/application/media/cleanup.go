@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 type CleanupRepository interface {
@@ -170,7 +170,7 @@ type CleanupWorker struct {
 
 func NewCleanupWorker(service *CleanupService, owner string) *CleanupWorker {
 	if owner == "" {
-		owner = "gcfeed-cleanup"
+		owner = "frux-cleanup"
 	}
 	return &CleanupWorker{
 		service: service, owner: owner, pollInterval: 30 * time.Second,

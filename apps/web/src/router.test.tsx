@@ -72,7 +72,7 @@ describe("typed video discussion routing", () => {
   it("keeps pure route parsing compatible with valid and malformed URLs", () => {
     const path = videoDiscussionPath({ route: "/videos/42", comment: 7, highlight: 9 });
     expect(path).toBe("/videos/42?comment=7&highlight=9");
-    const url = new URL(path, "https://gcfeed.test");
+    const url = new URL(path, "https://frux.test");
     const route = normalizeRoute(url.pathname);
     expect(videoDiscussionFromLocation(route, url.search)).toEqual({
       videoID: 42,

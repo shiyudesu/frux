@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 )
 
 func TestFeedbackSuppressionHonorsScopeAndFallbackPool(t *testing.T) {

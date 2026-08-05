@@ -1,10 +1,10 @@
 services:
   postgres:
     image: postgres:17.5-alpine
-    container_name: gcfeed-postgres
+    container_name: frux-postgres
     environment:
-      POSTGRES_DB: gcfeed
-      POSTGRES_USER: gcfeed
+      POSTGRES_DB: frux
+      POSTGRES_USER: frux
       POSTGRES_PASSWORD: sealos123
     ports:
       - "5432:5432"
@@ -19,7 +19,7 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    container_name: gcfeed-redis
+    container_name: frux-redis
     volumes:
       - redis_data:/data
     healthcheck:
@@ -30,7 +30,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
-    container_name: gcfeed-rabbitmq
+    container_name: frux-rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -44,11 +44,11 @@ services:
 
   minio:
     image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: gcfeed-minio
+    container_name: frux-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: gcfeed
-      MINIO_ROOT_PASSWORD: gcfeed-secret
+      MINIO_ROOT_USER: frux
+      MINIO_ROOT_PASSWORD: frux-secret
       MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:5173,http://localhost:5173"
     ports:
       - "9000:9000"
@@ -64,7 +64,7 @@ services:
 
   minio-init:
     image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
-    container_name: gcfeed-minio-init
+    container_name: frux-minio-init
     depends_on:
       minio:
         condition: service_healthy
@@ -72,9 +72,9 @@ services:
       - /bin/sh
       - -c
       - >-
-        mc alias set local http://minio:9000 gcfeed gcfeed-secret &&
-        mc mb --ignore-existing local/gcfeed-media &&
-        mc anonymous set download local/gcfeed-media/media
+        mc alias set local http://minio:9000 frux frux-secret &&
+        mc mb --ignore-existing local/frux-media &&
+        mc anonymous set download local/frux-media/media
 
   api:
     build:
@@ -82,9 +82,9 @@ services:
       dockerfile: Dockerfile
       args:
         GOPROXY: https://goproxy.cn,direct
-    container_name: gcfeed-api
+    container_name: frux-api
     environment:
-      GCFEED_INTERNAL_TOKEN: ${GCFEED_INTERNAL_TOKEN:?set GCFEED_INTERNAL_TOKEN to a strong random value}
+      FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN to a strong random value}
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,10 +112,10 @@ services:
       dockerfile: Dockerfile
       args:
         GOPROXY: https://goproxy.cn,direct
-    container_name: gcfeed-worker
+    container_name: frux-worker
     environment:
-      GCFEED_INTERNAL_TOKEN: ${GCFEED_INTERNAL_TOKEN:?set GCFEED_INTERNAL_TOKEN to a strong random value}
-    command: ["./gcfeed-worker"]
+      FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN to a strong random value}
+    command: ["./frux-worker"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,7 +132,7 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
-    container_name: gcfeed-web
+    container_name: frux-web
     depends_on:
       api:
         condition: service_healthy
@@ -141,7 +141,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.1.0
-    container_name: gcfeed-prometheus
+    container_name: frux-prometheus
     depends_on:
       api:
         condition: service_healthy
@@ -157,7 +157,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.4.0
-    container_name: gcfeed-grafana
+    container_name: frux-grafana
     depends_on:
       - prometheus
     ports:

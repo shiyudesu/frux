@@ -8,8 +8,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/gcfeed-api ./cmd/feed
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/gcfeed-worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/frux-api ./cmd/feed
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/frux-worker ./cmd/worker
 
 FROM alpine:3.22
 
@@ -17,12 +17,12 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates ffmpeg tzdata
 
-COPY --from=builder /out/gcfeed-api ./gcfeed-api
-COPY --from=builder /out/gcfeed-worker ./gcfeed-worker
+COPY --from=builder /out/frux-api ./frux-api
+COPY --from=builder /out/frux-worker ./frux-worker
 COPY configs ./configs
 
 RUN mkdir -p uploads
 
 EXPOSE 8080
 
-CMD ["./gcfeed-api"]
+CMD ["./frux-api"]

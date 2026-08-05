@@ -1,10 +1,10 @@
 package interfaceshttpexposure
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	domainexposure "GCFeed/internal/domain/exposure"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

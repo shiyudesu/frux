@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 func TestCleanupServiceSchedulesAndDeletesMediaObjects(t *testing.T) {

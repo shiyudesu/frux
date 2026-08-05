@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 type ReconciliationRepository interface {

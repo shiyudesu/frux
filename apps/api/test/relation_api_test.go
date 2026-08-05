@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	applicationrelation "GCFeed/internal/application/relation"
-	domainfeed "GCFeed/internal/domain/feed"
-	domainrelation "GCFeed/internal/domain/relation"
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
-	interfaceshttprelation "GCFeed/internal/interfaces/http/relation"
+	applicationrelation "github.com/shiyudesu/frux/internal/application/relation"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
+	interfaceshttprelation "github.com/shiyudesu/frux/internal/interfaces/http/relation"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"

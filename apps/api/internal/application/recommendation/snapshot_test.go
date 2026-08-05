@@ -1,8 +1,8 @@
 package applicationrecommendation
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"bytes"
 	"context"
 	"errors"

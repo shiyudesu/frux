@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	infrajwt "GCFeed/internal/infra/jwt"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"

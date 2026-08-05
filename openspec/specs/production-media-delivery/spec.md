@@ -7,7 +7,7 @@ Defines production-ready media storage, processing, availability, playback deliv
 ## Requirements
 
 ### Requirement: Pluggable Media Storage
-GCFeed SHALL store media through a common storage contract with a local development implementation and a production object-storage implementation.
+Frux SHALL store media through a common storage contract with a local development implementation and a production object-storage implementation.
 
 #### Scenario: Local development upload completes
 - **WHEN** local storage mode accepts a valid authenticated upload
@@ -15,14 +15,14 @@ GCFeed SHALL store media through a common storage contract with a local developm
 
 #### Scenario: Production direct upload completes
 - **WHEN** an authenticated user completes a valid unexpired production upload session with the expected object key, size, and checksum
-- **THEN** GCFeed records an immutable owned media asset and enqueues processing
+- **THEN** Frux records an immutable owned media asset and enqueues processing
 
 #### Scenario: Upload session payload does not match
 - **WHEN** the completed object does not match the session owner, kind, size, checksum, or key
 - **THEN** completion is rejected and the object is not attached to a video
 
 ### Requirement: Versioned Media Processing
-GCFeed SHALL process each source asset with an idempotent versioned media profile and SHALL persist the state and metadata of every generated output.
+Frux SHALL process each source asset with an idempotent versioned media profile and SHALL persist the state and metadata of every generated output.
 
 #### Scenario: Source requires normalization
 - **WHEN** a valid uploaded source uses an accepted codec or layout that is not the required browser baseline
@@ -86,10 +86,10 @@ Originals, private outputs, and incomplete assets SHALL remain owner-protected a
 
 #### Scenario: Owner requests a protected output
 - **WHEN** the immutable owner has current permission
-- **THEN** GCFeed provides an authorized response or short-lived signed URL without exposing reusable credentials
+- **THEN** Frux provides an authorized response or short-lived signed URL without exposing reusable credentials
 
 ### Requirement: Media Reconciliation and Cleanup
-GCFeed SHALL reconcile stuck processing, missing outputs, database/object mismatches, and deleted-media cleanup outside user request transactions.
+Frux SHALL reconcile stuck processing, missing outputs, database/object mismatches, and deleted-media cleanup outside user request transactions.
 
 #### Scenario: Processing lease expires
 - **WHEN** a processing job remains leased beyond its timeout

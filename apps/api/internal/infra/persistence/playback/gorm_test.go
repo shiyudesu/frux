@@ -1,7 +1,7 @@
 package infraplayback
 
 import (
-	domainplayback "GCFeed/internal/domain/playback"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
 	"testing"
 	"time"
 )

@@ -1,9 +1,9 @@
 apiVersion: 1
 
 providers:
-  - name: GCFeed
+  - name: Frux
     orgId: 1
-    folder: GCFeed
+    folder: Frux
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30

@@ -1,11 +1,11 @@
 package infraexposure
 
 import (
-	domainexposure "GCFeed/internal/domain/exposure"
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
-	infrapersistence "GCFeed/internal/infra/persistence"
-	infravideo "GCFeed/internal/infra/persistence/video"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"context"
 	"errors"
 	"fmt"

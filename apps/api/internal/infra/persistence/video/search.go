@@ -1,9 +1,9 @@
 package infravideo
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	domainsearch "GCFeed/internal/domain/search"
-	domainvideo "GCFeed/internal/domain/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"context"
 	"time"
 

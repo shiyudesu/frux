@@ -16,7 +16,7 @@ import (
 var (
 	HTTPRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "http_requests_total",
 			Help:      "Total HTTP requests handled by the API.",
 		},
@@ -25,7 +25,7 @@ var (
 
 	HTTPRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "http_request_duration_seconds",
 			Help:      "HTTP request duration in seconds.",
 			Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
@@ -35,7 +35,7 @@ var (
 
 	FeedRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "feed_requests_total",
 			Help:      "Total feed requests by scene and result.",
 		},
@@ -44,7 +44,7 @@ var (
 
 	FeedRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "feed_request_duration_seconds",
 			Help:      "Feed request duration in seconds by scene.",
 			Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
@@ -54,7 +54,7 @@ var (
 
 	FeedItemsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "feed_items_total",
 			Help:      "Total feed items returned by scene.",
 		},
@@ -63,7 +63,7 @@ var (
 
 	FeedCacheRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "feed_cache_requests_total",
 			Help:      "Feed cache reads by cache area and result.",
 		},
@@ -72,7 +72,7 @@ var (
 
 	FeedCacheWritesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "feed_cache_writes_total",
 			Help:      "Feed cache writes by cache area and result.",
 		},
@@ -81,7 +81,7 @@ var (
 
 	VideoUploadTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "video_upload_total",
 			Help:      "Upload requests by kind and result.",
 		},
@@ -90,7 +90,7 @@ var (
 
 	VideoUploadDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "video_upload_duration_seconds",
 			Help:      "Upload request processing duration in seconds.",
 			Buckets:   []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120},
@@ -100,7 +100,7 @@ var (
 
 	VideoProcessingDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "video_processing_duration_seconds",
 			Help:      "Video processing step duration in seconds.",
 			Buckets:   []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120},
@@ -110,7 +110,7 @@ var (
 
 	WorkerJobsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "worker_jobs_total",
 			Help:      "Worker jobs handled by job name and result.",
 		},
@@ -119,7 +119,7 @@ var (
 
 	WorkerJobDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "worker_job_duration_seconds",
 			Help:      "Worker job processing duration in seconds.",
 			Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
@@ -129,7 +129,7 @@ var (
 
 	ViewEventOutboxPending = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "view_event_outbox_pending",
 			Help:      "Pending view-event outbox rows.",
 		},
@@ -137,54 +137,54 @@ var (
 
 	ViewEventOutboxLagSeconds = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "view_event_outbox_lag_seconds",
 			Help:      "Age in seconds of the oldest pending view-event outbox row.",
 		},
 	)
 
 	ProfileWorkerLagSeconds = prometheus.NewGauge(
-		prometheus.GaugeOpts{Namespace: "gcfeed", Name: "recommendation_profile_worker_lag_seconds", Help: "Age of the latest processed recommendation profile signal."},
+		prometheus.GaugeOpts{Namespace: "frux", Name: "recommendation_profile_worker_lag_seconds", Help: "Age of the latest processed recommendation profile signal."},
 	)
 	ProfileWorkerEventsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_profile_worker_events_total", Help: "Recommendation profile projection events by result."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_profile_worker_events_total", Help: "Recommendation profile projection events by result."},
 		[]string{"result"},
 	)
 	RecommendationRecallCandidatesTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_recall_candidates_total", Help: "Candidates retained by bounded recall provider."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_recall_candidates_total", Help: "Candidates retained by bounded recall provider."},
 		[]string{"provider"},
 	)
 	RecommendationDegradedRequestsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_degraded_requests_total", Help: "Degraded recommendation requests by bounded provider reason."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_degraded_requests_total", Help: "Degraded recommendation requests by bounded provider reason."},
 		[]string{"provider", "reason"},
 	)
 	RecommendationSnapshotOperationsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_snapshot_operations_total", Help: "Recommendation snapshot operation outcomes."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_snapshot_operations_total", Help: "Recommendation snapshot operation outcomes."},
 		[]string{"result"},
 	)
 	RecommendationRequestLogFailuresTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_request_log_failures_total", Help: "Sampled recommendation request-log failures by bounded stage."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_request_log_failures_total", Help: "Sampled recommendation request-log failures by bounded stage."},
 		[]string{"stage"},
 	)
 	RecommendationDeliveryFailuresTotal = prometheus.NewCounter(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_delivery_failures_total", Help: "Recommendation delivery evidence writes that failed after Feed assembly."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_delivery_failures_total", Help: "Recommendation delivery evidence writes that failed after Feed assembly."},
 	)
 	RecommendationActivePolicyVersion = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{Namespace: "gcfeed", Name: "recommendation_active_policy_version", Help: "Active recommendation policy version by scene."},
+		prometheus.GaugeOpts{Namespace: "frux", Name: "recommendation_active_policy_version", Help: "Active recommendation policy version by scene."},
 		[]string{"scene"},
 	)
 	RecommendationOutcomesTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_outcomes_total", Help: "Recommendation outcomes by bounded type."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_outcomes_total", Help: "Recommendation outcomes by bounded type."},
 		[]string{"outcome"},
 	)
 	RecommendationInvalidAttributionsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: "gcfeed", Name: "recommendation_invalid_attributions_total", Help: "Rejected recommendation attributions by bounded outcome type."},
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_invalid_attributions_total", Help: "Rejected recommendation attributions by bounded outcome type."},
 		[]string{"outcome"},
 	)
 
 	ViewEventOutboxDispatchTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "view_event_outbox_dispatch_total",
 			Help:      "View-event outbox dispatch observations by result.",
 		},
@@ -193,7 +193,7 @@ var (
 
 	MediaObjectOperationsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "media_object_operations_total",
 			Help:      "Object-storage operations by operation, backend, and result.",
 		},
@@ -202,7 +202,7 @@ var (
 
 	MediaObjectOperationDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "media_object_operation_duration_seconds",
 			Help:      "Object-storage operation duration in seconds.",
 			Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
@@ -212,7 +212,7 @@ var (
 
 	MediaProcessingResultsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "media_processing_results_total",
 			Help:      "Media processing state transitions.",
 		},
@@ -221,7 +221,7 @@ var (
 
 	MediaRenditionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "media_renditions_total",
 			Help:      "Generated media renditions by result.",
 		},
@@ -230,7 +230,7 @@ var (
 
 	MediaReconciliationIssuesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "media_reconciliation_issues_total",
 			Help:      "Media reconciliation findings by issue type and result.",
 		},
@@ -239,7 +239,7 @@ var (
 
 	MediaCleanupBacklog = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Namespace: "gcfeed",
+			Namespace: "frux",
 			Name:      "media_cleanup_backlog",
 			Help:      "Observed media cleanup backlog.",
 		},

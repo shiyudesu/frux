@@ -1,8 +1,8 @@
 package applicationsearch
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	domainsearch "GCFeed/internal/domain/search"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"context"
 	"fmt"
 	"time"

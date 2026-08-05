@@ -3,8 +3,8 @@ package applicationvideo
 import (
 	"context"
 
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 )
 
 type MediaProjectionRepository interface {

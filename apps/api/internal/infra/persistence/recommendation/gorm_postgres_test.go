@@ -1,10 +1,10 @@
 package infrarecommendation
 
 import (
-	applicationexposure "GCFeed/internal/application/exposure"
-	domainembedding "GCFeed/internal/domain/embedding"
-	domainexposure "GCFeed/internal/domain/exposure"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"database/sql"
 	"errors"
@@ -24,15 +24,15 @@ import (
 )
 
 func TestPolicyProfileAndRequestLogRepositoryPostgreSQL(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("GCFEED_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("GCFEED_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	schema := fmt.Sprintf("gcfeed_recommendation_policy_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_recommendation_policy_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -442,15 +442,15 @@ func TestPolicyProfileAndRequestLogRepositoryPostgreSQL(t *testing.T) {
 }
 
 func TestServedCandidateEvidenceReusesExpiredRequestAndSerializesConcurrentWritesPostgreSQL(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("GCFEED_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("GCFEED_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	schema := fmt.Sprintf("gcfeed_recommendation_evidence_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_recommendation_evidence_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -582,15 +582,15 @@ func postgresPolicyConfig(rollout int) domainrecommendation.PolicyConfiguration 
 }
 
 func TestApplyBehaviorEventDeduplicatesLegacyQueuedMessageByViewEventID(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("GCFEED_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("GCFEED_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	schema := fmt.Sprintf("gcfeed_recommendation_behavior_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_recommendation_behavior_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -640,15 +640,15 @@ func TestApplyBehaviorEventDeduplicatesLegacyQueuedMessageByViewEventID(t *testi
 }
 
 func TestBehaviorProjectionAndAppliedEventsScopeSharedEventIDByUser(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("GCFEED_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("GCFEED_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	schema := fmt.Sprintf("gcfeed_recommendation_identity_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_recommendation_identity_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}

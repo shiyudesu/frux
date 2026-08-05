@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
-	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
+	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/network/standard"

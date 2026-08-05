@@ -14,30 +14,30 @@ import (
 	"testing"
 	"time"
 
-	applicationinteraction "GCFeed/internal/application/interaction"
-	domainaccount "GCFeed/internal/domain/account"
-	domainembedding "GCFeed/internal/domain/embedding"
-	domainexposure "GCFeed/internal/domain/exposure"
-	domainfeed "GCFeed/internal/domain/feed"
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainlibrary "GCFeed/internal/domain/library"
-	domainmedia "GCFeed/internal/domain/media"
-	domainmessage "GCFeed/internal/domain/message"
-	domainplayback "GCFeed/internal/domain/playback"
-	domainrelation "GCFeed/internal/domain/relation"
-	domainvideo "GCFeed/internal/domain/video"
-	infraaccount "GCFeed/internal/infra/persistence/account"
-	infraembedding "GCFeed/internal/infra/persistence/embedding"
-	infraexposure "GCFeed/internal/infra/persistence/exposure"
-	infrafeed "GCFeed/internal/infra/persistence/feed"
-	infrainteraction "GCFeed/internal/infra/persistence/interaction"
-	infralibrary "GCFeed/internal/infra/persistence/library"
-	inframedia "GCFeed/internal/infra/persistence/media"
-	inframessage "GCFeed/internal/infra/persistence/message"
-	infraplayback "GCFeed/internal/infra/persistence/playback"
-	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
-	infrarelation "GCFeed/internal/infra/persistence/relation"
-	infravideo "GCFeed/internal/infra/persistence/video"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
+	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
+	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
+	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
+	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
+	infralibrary "github.com/shiyudesu/frux/internal/infra/persistence/library"
+	inframedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
+	inframessage "github.com/shiyudesu/frux/internal/infra/persistence/message"
+	infraplayback "github.com/shiyudesu/frux/internal/infra/persistence/playback"
+	infrarecommendation "github.com/shiyudesu/frux/internal/infra/persistence/recommendation"
+	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -48,7 +48,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-const postgresTestDSNEnv = "GCFEED_POSTGRES_TEST_DSN"
+const postgresTestDSNEnv = "FRUX_POSTGRES_TEST_DSN"
 
 type postgresFixture struct {
 	admin  *sql.DB
@@ -83,7 +83,7 @@ func newPostgresFixture(t *testing.T) *postgresFixture {
 		t.Fatalf("ping PostgreSQL test database: %v", err)
 	}
 
-	schema := fmt.Sprintf("gcfeed_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		_ = admin.Close()
 		t.Fatalf("create PostgreSQL test schema: %v", err)

@@ -1,10 +1,10 @@
 package interfaceshttprecommendation
 
 import (
-	applicationrecommendation "GCFeed/internal/application/recommendation"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

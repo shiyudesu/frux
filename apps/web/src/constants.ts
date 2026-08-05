@@ -3,10 +3,10 @@
 import type { PlaybackConfig, SessionUser } from "./types";
 import type { IconName } from "./components/Icon";
 
-export const TOKEN_KEY = "gcfeed.accessToken";
-export const USER_KEY = "gcfeed.user";
-export const PUBLIC_PROFILE_KEY = "gcfeed.publicProfiles";
-export const ASSET_ACTIVE_COOKIE_NAME = "gcfeed_asset_active";
+export const TOKEN_KEY = "frux.accessToken";
+export const USER_KEY = "frux.user";
+export const PUBLIC_PROFILE_KEY = "frux.publicProfiles";
+export const ASSET_ACTIVE_COOKIE_NAME = "frux_asset_active";
 export const FEED_TRANSITION_MS = 320;
 
 export const DEFAULT_PLAYBACK_CONFIG: PlaybackConfig = {

@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	infraconfig "GCFeed/internal/infra/config"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"

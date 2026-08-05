@@ -1,8 +1,8 @@
 package inframessage
 
 import (
-	domainmessage "GCFeed/internal/domain/message"
-	infrapersistence "GCFeed/internal/infra/persistence"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"errors"
 	"strings"

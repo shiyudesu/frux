@@ -1,8 +1,8 @@
-# GCFeed Project Context
+# Frux Project Context
 
 ## Purpose
 
-GCFeed is a short-video Feed system. It provides a practical engineering baseline for account, video publishing, Feed delivery, recommendation, interaction, relation, governance, monitoring, and Web client workflows.
+Frux is a short-video Feed system. It provides a practical engineering baseline for account, video publishing, Feed delivery, recommendation, interaction, relation, governance, monitoring, and Web client workflows.
 
 ## Technology
 
@@ -61,4 +61,4 @@ kubectl apply --dry-run=client -f apps/deploy.yaml
 cd apps/web && pnpm run build
 ```
 
-Real PostgreSQL integration tests use `GCFEED_POSTGRES_TEST_DSN` and create isolated schemas. They skip with an explicit message when the variable is absent.
+Real PostgreSQL integration tests use `FRUX_POSTGRES_TEST_DSN` and create isolated schemas. They skip with an explicit message when the variable is absent.

@@ -1,13 +1,13 @@
 package infrafeed
 
 import (
-	domainfeed "GCFeed/internal/domain/feed"
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainmedia "GCFeed/internal/domain/media"
-	domainrelation "GCFeed/internal/domain/relation"
-	domainvideo "GCFeed/internal/domain/video"
-	inframediastore "GCFeed/internal/infra/media"
-	infravideo "GCFeed/internal/infra/persistence/video"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"context"
 	"fmt"
 

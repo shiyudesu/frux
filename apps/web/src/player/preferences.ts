@@ -1,7 +1,7 @@
 import { DEFAULT_PLAYER_PREFERENCES } from "./types";
 import type { PlayerPreferences, QualitySelection } from "./types";
 
-export const PLAYER_PREFERENCES_STORAGE_KEY = "gcfeed.player.preferences.v1";
+export const PLAYER_PREFERENCES_STORAGE_KEY = "frux.player.preferences.v1";
 export const SUPPORTED_PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
 export interface PlayerPreferenceStorage {

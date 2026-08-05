@@ -2,16 +2,16 @@
 
 ## Purpose
 
-Defines the redesigned GCFeed web experience, including the shared application shell, immersive Feed, responsive layouts, accessible interactions, and preservation of existing frontend contracts.
+Defines the redesigned Frux web experience, including the shared application shell, immersive Feed, responsive layouts, accessible interactions, and preservation of existing frontend contracts.
 
 ## Requirements
 
 ### Requirement: Unified user application shell
-The user frontend SHALL render a consistent dark GCFeed shell across Feed, messages, own profile, public profile, and upload routes. At wide desktop widths the shell SHALL use a 160px navigation rail and a 56px top header, and SHALL retain the existing typed route destinations and authentication redirects.
+The user frontend SHALL render a consistent dark Frux shell across Feed, messages, own profile, public profile, and upload routes. At wide desktop widths the shell SHALL use a 160px navigation rail and a 56px top header, and SHALL retain the existing typed route destinations and authentication redirects.
 
 #### Scenario: Desktop shell renders
 - **WHEN** a user opens any user route at a viewport width of at least 1280px
-- **THEN** the page renders the GCFeed brand, fixed 160px side navigation, 56px header, route-aware active navigation, and main content without horizontal overflow
+- **THEN** the page renders the Frux brand, fixed 160px side navigation, 56px header, route-aware active navigation, and main content without horizontal overflow
 
 #### Scenario: Existing destinations remain valid
 - **WHEN** a user activates Feed, message, upload, profile, login, or public-profile navigation
@@ -32,12 +32,12 @@ The shared application shell SHALL render the existing top search field as a fun
 - **WHEN** the search route is viewed on a mobile viewport
 - **THEN** the query, video/user tabs, results, and pagination controls remain reachable without horizontal overflow
 
-### Requirement: Original GCFeed brand and icon system
-The redesigned frontend SHALL use an original GCFeed wordmark, compact brand mark, and locally owned typed SVG icon registry. It MUST NOT embed Douyin logos, trademarks, proprietary SVG paths, or source-site artwork.
+### Requirement: Original Frux brand and icon system
+The redesigned frontend SHALL use an original FRUX wordmark, F compact brand mark, and locally owned typed SVG icon registry. It MUST NOT embed Douyin logos, trademarks, proprietary SVG paths, or source-site artwork.
 
-#### Scenario: Brand assets are GCFeed-owned
+#### Scenario: Brand assets are Frux-owned
 - **WHEN** a developer inspects the redesigned navigation and authentication surfaces
-- **THEN** all brand and interface icons come from GCFeed source files or existing user/video content rather than copied Douyin assets
+- **THEN** all brand and interface icons come from Frux source files or existing user/video content rather than copied Douyin assets
 
 #### Scenario: Icon names are type checked
 - **WHEN** a component requests an icon
@@ -105,7 +105,7 @@ On wide desktop, opening comments SHALL add a 346px details panel beside the act
 - **THEN** the Feed returns to a single player column without changing the active item and focus returns to the comment action
 
 ### Requirement: Douyin-style authentication presentation
-The login/register route SHALL use a dimmed short-video backdrop and a centered light authentication dialog while preserving GCFeed's account, password, nickname, login, and registration behavior. The interface MUST NOT present nonfunctional QR, phone, or third-party authentication methods.
+The login/register route SHALL use a dimmed short-video backdrop and a centered light authentication dialog while preserving Frux's account, password, nickname, login, and registration behavior. The interface MUST NOT present nonfunctional QR, phone, or third-party authentication methods.
 
 #### Scenario: User opens authentication
 - **WHEN** an unauthenticated user navigates to the authentication route
@@ -113,7 +113,7 @@ The login/register route SHALL use a dimmed short-video backdrop and a centered 
 
 #### Scenario: Authentication methods remain truthful
 - **WHEN** the authentication dialog is rendered
-- **THEN** every displayed method is supported by the existing GCFeed API and no fake QR or phone login control is shown
+- **THEN** every displayed method is supported by the existing Frux API and no fake QR or phone login control is shown
 
 ### Requirement: Profile and work presentation
 Own and public profile routes SHALL use a full-width banner-style header, circular avatar, inline relation/work/received-like counts, compact actions, route-appropriate primary and secondary tabs, profile filters, and a dense portrait work grid. Own-profile tabs SHALL be backed by real profile-dashboard, personal-video-library, and creator-content-management APIs and SHALL NOT include a personal Recommend tab. Selecting a readable personal-library card SHALL open the immersive collection queue, while creator work and collection behavior SHALL remain truthful for their visibility and ownership context. Existing profile editing, relation lists, follow actions, public navigation, and work viewing SHALL remain functional.

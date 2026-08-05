@@ -1,10 +1,10 @@
 package applicationfeed
 
 import (
-	applicationrecommendation "GCFeed/internal/application/recommendation"
-	domainfeed "GCFeed/internal/domain/feed"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	inframetrics "GCFeed/internal/infra/metrics"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"crypto/sha1"
 	"encoding/base64"

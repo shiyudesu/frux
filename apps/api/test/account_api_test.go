@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	applicationaccount "GCFeed/internal/application/account"
-	domainaccount "GCFeed/internal/domain/account"
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttpaccount "GCFeed/internal/interfaces/http/account"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"

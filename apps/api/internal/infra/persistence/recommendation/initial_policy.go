@@ -1,7 +1,7 @@
 package infrarecommendation
 
 import (
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"encoding/json"
 	"time"
 

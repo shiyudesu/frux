@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 func TestDeliveryCatalogPromotesOnlyResolvedPublicAssets(t *testing.T) {

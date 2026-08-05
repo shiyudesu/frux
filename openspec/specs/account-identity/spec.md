@@ -1,12 +1,12 @@
 # account-identity Specification
 
 ## Purpose
-Define canonical account identity behavior and the shared normalization boundary used throughout GCFeed.
+Define canonical account identity behavior and the shared normalization boundary used throughout Frux.
 
 ## Requirements
 
 ### Requirement: Canonical Account Identity
-GCFeed SHALL canonicalize account identifiers by trimming surrounding whitespace and converting letters to lowercase before registration, persistence, uniqueness checks, and login lookup.
+Frux SHALL canonicalize account identifiers by trimming surrounding whitespace and converting letters to lowercase before registration, persistence, uniqueness checks, and login lookup.
 
 #### Scenario: User registers with mixed-case account
 - **WHEN** a user registers with the account value `Alice`

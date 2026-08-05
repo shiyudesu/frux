@@ -1,9 +1,9 @@
 package interfaceshttpupload
 
 import (
-	applicationmedia "GCFeed/internal/application/media"
-	domainmedia "GCFeed/internal/domain/media"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
 	"context"
 	"errors"
 	"net/http"

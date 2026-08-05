@@ -1,11 +1,11 @@
 package infracache
 
 import (
-	applicationfeed "GCFeed/internal/application/feed"
-	applicationinteraction "GCFeed/internal/application/interaction"
-	domainfeed "GCFeed/internal/domain/feed"
-	domaininteraction "GCFeed/internal/domain/interaction"
-	inframetrics "GCFeed/internal/infra/metrics"
+	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"encoding/json"
 	"fmt"

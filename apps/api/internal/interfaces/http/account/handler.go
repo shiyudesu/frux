@@ -1,10 +1,10 @@
 package interfaceshttpaccount
 
 import (
-	applicationaccount "GCFeed/internal/application/account"
-	domainaccount "GCFeed/internal/domain/account"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

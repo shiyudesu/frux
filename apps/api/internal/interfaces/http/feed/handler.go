@@ -1,11 +1,11 @@
 package interfaceshttpfeed
 
 import (
-	applicationfeed "GCFeed/internal/application/feed"
-	domainfeed "GCFeed/internal/domain/feed"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

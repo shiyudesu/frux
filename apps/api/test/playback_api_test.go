@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	applicationplayback "GCFeed/internal/application/playback"
-	domainplayback "GCFeed/internal/domain/playback"
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
-	interfaceshttpplayback "GCFeed/internal/interfaces/http/playback"
+	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
+	interfaceshttpplayback "github.com/shiyudesu/frux/internal/interfaces/http/playback"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"

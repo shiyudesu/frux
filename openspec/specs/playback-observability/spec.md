@@ -7,7 +7,7 @@ Define privacy-safe, reliable playback telemetry and operational visibility with
 ## Requirements
 
 ### Requirement: Versioned Playback Telemetry Batches
-GCFeed SHALL accept bounded versioned playback telemetry batches with stable batch, playback-session, and event identifiers.
+Frux SHALL accept bounded versioned playback telemetry batches with stable batch, playback-session, and event identifiers.
 
 #### Scenario: Client submits a valid batch
 - **WHEN** a client submits no more than the configured event and payload limits with supported event types

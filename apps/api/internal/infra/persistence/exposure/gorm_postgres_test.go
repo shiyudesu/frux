@@ -1,9 +1,9 @@
 package infraexposure
 
 import (
-	domainexposure "GCFeed/internal/domain/exposure"
-	domainvideo "GCFeed/internal/domain/video"
-	infravideo "GCFeed/internal/infra/persistence/video"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"context"
 	"database/sql"
 	"errors"
@@ -21,15 +21,15 @@ import (
 )
 
 func TestSaveViewEventIdempotencyAndConflict(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("GCFEED_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("GCFEED_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	schema := fmt.Sprintf("gcfeed_exposure_idempotency_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_exposure_idempotency_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -166,15 +166,15 @@ func TestSaveViewEventIdempotencyAndConflict(t *testing.T) {
 }
 
 func TestViewHistoryUpsertRejectsOutOfOrderEvents(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("GCFEED_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("GCFEED_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	schema := fmt.Sprintf("gcfeed_exposure_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_exposure_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}

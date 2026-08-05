@@ -1,7 +1,7 @@
 package infrainteraction
 
 import (
-	domaininteraction "GCFeed/internal/domain/interaction"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"testing"
 	"time"
 )

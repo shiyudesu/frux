@@ -1,11 +1,11 @@
 package infravideo_test
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	domainsearch "GCFeed/internal/domain/search"
-	domainvideo "GCFeed/internal/domain/video"
-	infraaccount "GCFeed/internal/infra/persistence/account"
-	infravideo "GCFeed/internal/infra/persistence/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"context"
 	"database/sql"
 	"fmt"
@@ -99,15 +99,15 @@ func TestPostgresPublicSearchRankingVisibilityAndLiteralWildcards(t *testing.T) 
 
 func openSearchPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("GCFEED_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("GCFEED_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL search integration test")
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL search integration test")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
-	schema := fmt.Sprintf("gcfeed_search_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("frux_search_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}

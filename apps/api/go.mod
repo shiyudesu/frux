@@ -1,4 +1,4 @@
-module GCFeed
+module github.com/shiyudesu/frux
 
 go 1.26.1
 

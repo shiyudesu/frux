@@ -8,12 +8,12 @@
   gap: 0;
   padding: 0 12px 12px 0;
   overflow: hidden;
-  background: var(--gc-bg);
-  transition: grid-template-columns var(--gc-motion) var(--gc-ease);
+  background: var(--frux-bg);
+  transition: grid-template-columns var(--frux-motion) var(--frux-ease);
 }
 
 .feed-layout.details-open {
-  grid-template-columns: minmax(640px, 1fr) var(--gc-detail-width);
+  grid-template-columns: minmax(640px, 1fr) var(--frux-detail-width);
 }
 
 .feed-main {
@@ -72,9 +72,9 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: var(--gc-radius-stage);
+  border-radius: var(--frux-radius-stage);
   background: #000;
-  box-shadow: var(--gc-shadow-stage);
+  box-shadow: var(--frux-shadow-stage);
   isolation: isolate;
 }
 
@@ -205,7 +205,7 @@ video.stage-media {
   padding: 0;
   border: 2px solid rgba(255, 255, 255, 0.9);
   border-radius: 50%;
-  background: var(--gc-bg-deep);
+  background: var(--frux-bg-deep);
 }
 
 .rail-author img {
@@ -227,7 +227,7 @@ video.stage-media {
   color: #fff;
   border: 2px solid rgba(22, 24, 35, 0.8);
   border-radius: 50%;
-  background: var(--gc-rose);
+  background: var(--frux-rose);
   font-size: 14px;
   font-weight: 900;
   line-height: 1;
@@ -235,7 +235,7 @@ video.stage-media {
 }
 
 .rail-follow.active {
-  background: var(--gc-control-hover);
+  background: var(--frux-control-hover);
 }
 
 .rail-follow:disabled {
@@ -251,7 +251,7 @@ video.stage-media {
   color: #fff;
   background: transparent;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
-  transition: transform var(--gc-motion-fast) ease;
+  transition: transform var(--frux-motion-fast) ease;
 }
 
 .rail-icon {
@@ -263,8 +263,8 @@ video.stage-media {
   color: #fff;
   filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.62));
   transition:
-    color var(--gc-motion-fast) ease,
-    transform var(--gc-motion-fast) ease;
+    color var(--frux-motion-fast) ease,
+    transform var(--frux-motion-fast) ease;
 }
 
 .rail-button:hover .rail-icon {
@@ -272,7 +272,7 @@ video.stage-media {
 }
 
 .rail-button.active .rail-icon {
-  color: var(--gc-rose);
+  color: var(--frux-rose);
 }
 
 .rail-button strong {
@@ -331,7 +331,7 @@ video.stage-media {
   top: 5px;
   left: 0;
   height: 2px;
-  background: var(--gc-rose);
+  background: var(--frux-rose);
   pointer-events: none;
 }
 
@@ -384,12 +384,12 @@ video.stage-media {
 
 .player-select select:focus-visible,
 .player-controls-row button:focus-visible {
-  box-shadow: 0 0 0 2px var(--gc-cyan);
+  box-shadow: 0 0 0 2px var(--frux-cyan);
 }
 
 .player-select option {
   color: #fff;
-  background: var(--gc-bg);
+  background: var(--frux-bg);
 }
 
 .player-status {
@@ -441,7 +441,7 @@ video.stage-media {
   padding: 6px 12px;
   color: rgba(255, 255, 255, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: var(--gc-radius-pill);
+  border-radius: var(--frux-radius-pill);
   background: rgba(22, 24, 35, 0.72);
   backdrop-filter: blur(12px);
   font-size: 12px;
@@ -467,17 +467,17 @@ video.stage-media {
   height: 100%;
   flex-direction: column;
   overflow: hidden;
-  color: var(--gc-text);
-  border-left: 1px solid var(--gc-line);
-  border-radius: 0 var(--gc-radius-stage) var(--gc-radius-stage) 0;
-  background: var(--gc-surface);
+  color: var(--frux-text);
+  border-left: 1px solid var(--frux-line);
+  border-radius: 0 var(--frux-radius-stage) var(--frux-radius-stage) 0;
+  background: var(--frux-surface);
   opacity: 0;
   visibility: hidden;
   transform: translateX(12px);
   transition:
-    opacity var(--gc-motion) ease,
-    transform var(--gc-motion) var(--gc-ease),
-    visibility var(--gc-motion) ease;
+    opacity var(--frux-motion) ease,
+    transform var(--frux-motion) var(--frux-ease),
+    visibility var(--frux-motion) ease;
 }
 
 .details-panel[hidden] {
@@ -498,7 +498,7 @@ video.stage-media {
   justify-content: space-between;
   gap: 10px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--gc-line);
+  border-bottom: 1px solid var(--frux-line);
 }
 
 .details-tabs {
@@ -510,14 +510,14 @@ video.stage-media {
 .details-tabs button {
   position: relative;
   padding: 0;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   background: transparent;
   font-size: 14px;
   font-weight: 700;
 }
 
 .details-tabs button.active {
-  color: var(--gc-text-strong);
+  color: var(--frux-text-strong);
 }
 
 .details-tabs button.active::after {
@@ -527,12 +527,12 @@ video.stage-media {
   left: 0;
   height: 3px;
   border-radius: 3px 3px 0 0;
-  background: var(--gc-rose);
+  background: var(--frux-rose);
   content: "";
 }
 
 .details-tabs span {
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   font-size: 12px;
 }
 
@@ -549,7 +549,7 @@ video.stage-media {
   align-items: center;
   gap: 12px;
   padding: 0;
-  color: var(--gc-text);
+  color: var(--frux-text);
   background: transparent;
   text-align: left;
 }
@@ -558,7 +558,7 @@ video.stage-media {
   width: 48px;
   height: 48px;
   object-fit: cover;
-  border: 1px solid var(--gc-line-strong);
+  border: 1px solid var(--frux-line-strong);
   border-radius: 50%;
 }
 
@@ -572,7 +572,7 @@ video.stage-media {
 }
 
 .details-author small {
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   font-size: 12px;
 }
 
@@ -584,7 +584,7 @@ video.stage-media {
 
 .details-content > p {
   margin: 0;
-  color: var(--gc-muted-strong);
+  color: var(--frux-muted-strong);
   font-size: 14px;
   line-height: 1.65;
 }
@@ -592,7 +592,7 @@ video.stage-media {
 .details-metrics {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  border: 1px solid var(--gc-line);
+  border: 1px solid var(--frux-line);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.035);
 }
@@ -601,13 +601,13 @@ video.stage-media {
   display: grid;
   gap: 3px;
   padding: 12px 8px;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   font-size: 11px;
   text-align: center;
 }
 
 .details-metrics strong {
-  color: var(--gc-text);
+  color: var(--frux-text);
   font-size: 15px;
 }
 
@@ -634,7 +634,7 @@ video.stage-media {
   overflow: hidden;
   padding: 0;
   border-radius: 50%;
-  background: var(--gc-bg-deep);
+  background: var(--frux-bg-deep);
 }
 
 .comment-user-button img {
@@ -654,7 +654,7 @@ video.stage-media {
   min-width: 0;
   overflow: hidden;
   padding: 0;
-  color: var(--gc-muted-strong);
+  color: var(--frux-muted-strong);
   background: transparent;
   font-size: 13px;
   font-weight: 700;
@@ -663,18 +663,18 @@ video.stage-media {
 }
 
 .comment-meta button:hover {
-  color: var(--gc-text);
+  color: var(--frux-text);
 }
 
 .comment-meta span {
   flex: 0 0 auto;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   font-size: 11px;
 }
 
 .comment-item p {
   margin: 5px 0 0;
-  color: var(--gc-text);
+  color: var(--frux-text);
   font-size: 13px;
   line-height: 1.55;
   word-break: break-word;
@@ -687,8 +687,8 @@ video.stage-media {
   align-items: center;
   gap: 8px;
   padding: 12px;
-  border-top: 1px solid var(--gc-line);
-  background: var(--gc-surface);
+  border-top: 1px solid var(--frux-line);
+  background: var(--frux-surface);
 }
 
 .comment-form img {
@@ -700,7 +700,7 @@ video.stage-media {
 
 .comment-form input {
   height: 38px;
-  border-radius: var(--gc-radius-pill);
+  border-radius: var(--frux-radius-pill);
 }
 
 .comment-form button {
@@ -712,7 +712,7 @@ video.stage-media {
   padding: 0;
   color: #fff;
   border-radius: 50%;
-  background: var(--gc-rose);
+  background: var(--frux-rose);
 }
 
 .comment-form button:disabled,
@@ -735,7 +735,7 @@ video.stage-media {
   align-items: center;
   justify-content: flex-end;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--gc-line);
+  border-bottom: 1px solid var(--frux-line);
 }
 
 .comment-sort {
@@ -744,13 +744,13 @@ video.stage-media {
   gap: 3px;
   padding: 3px;
   border-radius: 9px;
-  background: var(--gc-surface-raised);
+  background: var(--frux-surface-raised);
 }
 
 .comment-sort button {
   min-height: 30px;
   padding: 0 12px;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   border-radius: 7px;
   background: transparent;
   font-size: 12px;
@@ -774,8 +774,8 @@ video.stage-media {
   border: 1px solid transparent;
   border-radius: 10px;
   transition:
-    border-color var(--gc-motion) ease,
-    background var(--gc-motion) ease;
+    border-color var(--frux-motion) ease,
+    background var(--frux-motion) ease;
 }
 
 .comment-item.focused {
@@ -797,7 +797,7 @@ video.stage-media {
 }
 
 .comment-meta strong {
-  color: var(--gc-muted-strong);
+  color: var(--frux-muted-strong);
   font-size: 13px;
 }
 
@@ -807,13 +807,13 @@ video.stage-media {
   gap: 11px;
   margin-left: 42px;
   padding-left: 10px;
-  border-left: 1px solid var(--gc-line);
+  border-left: 1px solid var(--frux-line);
 }
 
 .comment-reply-label {
   display: inline;
   padding: 0;
-  color: var(--gc-cyan);
+  color: var(--frux-cyan);
   border: 0;
   background: transparent;
   font: inherit;
@@ -840,7 +840,7 @@ video.stage-media {
   align-items: center;
   gap: 4px;
   padding: 0 7px;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   border-radius: 7px;
   background: transparent;
   font-size: 11px;
@@ -849,12 +849,12 @@ video.stage-media {
 
 .comment-actions button:hover,
 .comment-thread-controls button:hover {
-  color: var(--gc-text);
-  background: var(--gc-surface-raised);
+  color: var(--frux-text);
+  background: var(--frux-surface-raised);
 }
 
 .comment-actions button.active {
-  color: var(--gc-rose);
+  color: var(--frux-rose);
 }
 
 .comment-actions button.danger {
@@ -871,7 +871,7 @@ video.stage-media {
   min-height: 30px;
   align-items: center;
   justify-content: center;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   border-radius: 7px;
   cursor: pointer;
   list-style: none;
@@ -882,8 +882,8 @@ video.stage-media {
 }
 
 .comment-delete-menu[open] summary {
-  color: var(--gc-text);
-  background: var(--gc-surface-raised);
+  color: var(--frux-text);
+  background: var(--frux-surface-raised);
 }
 
 .comment-delete-menu > button {
@@ -892,9 +892,9 @@ video.stage-media {
   top: 32px;
   right: 0;
   min-width: 72px;
-  border: 1px solid var(--gc-line);
-  background: var(--gc-surface-raised);
-  box-shadow: var(--gc-shadow-stage);
+  border: 1px solid var(--frux-line);
+  background: var(--frux-surface-raised);
+  box-shadow: var(--frux-shadow-stage);
 }
 
 .comment-thread-controls {
@@ -911,20 +911,20 @@ video.stage-media {
   height: 36px;
   align-items: center;
   justify-content: center;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   border-radius: 50%;
-  background: var(--gc-surface-raised);
+  background: var(--frux-surface-raised);
 }
 
 .comment-item.tombstone {
-  color: var(--gc-muted);
+  color: var(--frux-muted);
 }
 
 .comment-load-more {
   min-height: 40px;
   width: 100%;
-  color: var(--gc-cyan);
-  border: 1px solid var(--gc-line);
+  color: var(--frux-cyan);
+  border: 1px solid var(--frux-line);
   border-radius: 10px;
   background: transparent;
   font-size: 12px;
@@ -960,7 +960,7 @@ video.stage-media {
 }
 
 .comment-reply-context {
-  color: var(--gc-cyan);
+  color: var(--frux-cyan);
   font-size: 11px;
 }
 
@@ -975,7 +975,7 @@ video.stage-media {
   height: 28px;
   flex: 0 0 auto;
   padding: 0 7px;
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   border-radius: 7px;
   background: transparent;
   font-size: 11px;
@@ -987,22 +987,22 @@ video.stage-media {
   max-height: 148px;
   resize: vertical;
   padding: 9px 11px;
-  color: var(--gc-text);
-  border: 1px solid var(--gc-line-strong);
+  color: var(--frux-text);
+  border: 1px solid var(--frux-line-strong);
   border-radius: 10px;
   outline: none;
-  background: var(--gc-surface-raised);
+  background: var(--frux-surface-raised);
   font: inherit;
   line-height: 1.45;
 }
 
 .comment-composer textarea:focus {
-  border-color: var(--gc-cyan);
+  border-color: var(--frux-cyan);
   box-shadow: 0 0 0 2px rgba(37, 244, 238, 0.12);
 }
 
 .comment-composer-footer > span {
-  color: var(--gc-muted);
+  color: var(--frux-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -1025,7 +1025,7 @@ video.stage-media {
   min-height: 44px;
   color: #fff;
   border-radius: 10px !important;
-  background: var(--gc-rose) !important;
+  background: var(--frux-rose) !important;
   font-weight: 700;
 }
 
@@ -1038,13 +1038,13 @@ video.stage-media {
   width: 176px;
   gap: 4px;
   padding: 8px;
-  color: var(--gc-text);
-  border: 1px solid var(--gc-line);
+  color: var(--frux-text);
+  border: 1px solid var(--frux-line);
   border-radius: 10px;
-  background: var(--gc-surface);
-  box-shadow: var(--gc-shadow-stage);
+  background: var(--frux-surface);
+  box-shadow: var(--frux-shadow-stage);
 }
-.recommendation-feedback-menu p { min-height: 16px; margin: 0 4px 4px; color: var(--gc-muted); font-size: 11px; }
-.recommendation-feedback-menu button { padding: 8px; color: var(--gc-text); border-radius: 7px; background: transparent; text-align: left; }
-.recommendation-feedback-menu button:hover:not(:disabled) { background: var(--gc-surface-raised); }
+.recommendation-feedback-menu p { min-height: 16px; margin: 0 4px 4px; color: var(--frux-muted); font-size: 11px; }
+.recommendation-feedback-menu button { padding: 8px; color: var(--frux-text); border-radius: 7px; background: transparent; text-align: left; }
+.recommendation-feedback-menu button:hover:not(:disabled) { background: var(--frux-surface-raised); }
 .recommendation-feedback-menu button:disabled { opacity: .55; }

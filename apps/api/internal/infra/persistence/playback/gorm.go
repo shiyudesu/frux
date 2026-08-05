@@ -1,11 +1,11 @@
 package infraplayback
 
 import (
-	domainmedia "GCFeed/internal/domain/media"
-	domainplayback "GCFeed/internal/domain/playback"
-	domainvideo "GCFeed/internal/domain/video"
-	inframediastore "GCFeed/internal/infra/media"
-	infrapersistence "GCFeed/internal/infra/persistence"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"

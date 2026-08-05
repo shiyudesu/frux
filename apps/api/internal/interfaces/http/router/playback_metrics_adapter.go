@@ -1,8 +1,8 @@
 package interfaceshttprouter
 
 import (
-	domainplayback "GCFeed/internal/domain/playback"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"time"
 )
 

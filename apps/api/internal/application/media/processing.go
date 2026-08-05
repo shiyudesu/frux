@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
-	inframetrics "GCFeed/internal/infra/metrics"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 const defaultProcessingPollInterval = 5 * time.Second
@@ -90,7 +90,7 @@ func WithMediaStateNotifier(notifier MediaStateNotifier) ProcessingWorkerOption 
 func NewMediaProcessingWorker(repo ProcessingRepository, processor Processor, consumer ProcessingConsumer, leaseTTL time.Duration, concurrency int, options ...ProcessingWorkerOption) *MediaProcessingWorker {
 	owner, _ := os.Hostname()
 	if owner == "" {
-		owner = "gcfeed-worker"
+		owner = "frux-worker"
 	}
 	if leaseTTL <= 0 {
 		leaseTTL = 10 * time.Minute

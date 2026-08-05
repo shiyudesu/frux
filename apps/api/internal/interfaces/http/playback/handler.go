@@ -1,10 +1,10 @@
 package interfaceshttpplayback
 
 import (
-	applicationplayback "GCFeed/internal/application/playback"
-	domainplayback "GCFeed/internal/domain/playback"
-	interfaceshttpbinding "GCFeed/internal/interfaces/http/binding"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
+	interfaceshttpbinding "github.com/shiyudesu/frux/internal/interfaces/http/binding"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

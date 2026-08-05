@@ -1,8 +1,8 @@
 package infrahttphertz
 
 import (
-	infraconfig "GCFeed/internal/infra/config"
-	inframetrics "GCFeed/internal/infra/metrics"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"net/http"
 	"os"

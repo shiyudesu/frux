@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	applicationmessage "GCFeed/internal/application/message"
-	domainmessage "GCFeed/internal/domain/message"
-	infrajwt "GCFeed/internal/infra/jwt"
-	interfaceshttpmessage "GCFeed/internal/interfaces/http/message"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	interfaceshttpmessage "github.com/shiyudesu/frux/internal/interfaces/http/message"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"

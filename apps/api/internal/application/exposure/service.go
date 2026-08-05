@@ -1,7 +1,7 @@
 package applicationexposure
 
 import (
-	domainexposure "GCFeed/internal/domain/exposure"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 	"context"
 	"errors"
 	"time"

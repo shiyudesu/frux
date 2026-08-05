@@ -4,7 +4,7 @@
 
 ## 1. 系统上下文
 
-这张图展示 GCFeed 与客户端、存储和演进型基础设施的边界。
+这张图展示 Frux 与客户端、存储和演进型基础设施的边界。
 
 ```mermaid
 ---
@@ -20,7 +20,7 @@ config:
     clusterBorder: "#CBD5E1"
 ---
 flowchart LR
-  %% GCFeed MVP system context
+  %% Frux MVP system context
   classDef client fill:#EFF6FF,stroke:#60A5FA,color:#0F172A,stroke-width:1px;
   classDef system fill:#DCFCE7,stroke:#22C55E,color:#0F172A,stroke-width:1px;
   classDef store fill:#F1F5F9,stroke:#64748B,color:#0F172A,stroke-width:1px;
@@ -29,7 +29,7 @@ flowchart LR
 
   Web["Web App<br/>React + Vite"]
   Client["移动端 / API 调用方"]
-  API["GCFeed API<br/>Go + Hertz"]
+  API["Frux API<br/>Go + Hertz"]
   PostgreSQL[("PostgreSQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]

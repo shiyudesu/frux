@@ -1,7 +1,7 @@
 package applicationvideo
 
 import (
-	domainvideo "GCFeed/internal/domain/video"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"

@@ -1,4 +1,4 @@
-# GCFeed - UI/UX 规格（完整功能版）
+# Frux - UI/UX 规格（完整功能版）
 
 > 版本：1.0  
 > 日期：2026-07-24
@@ -7,7 +7,7 @@
 
 ## 0. 快速摘要
 
-- 产品一句话：GCFeed 是面向电脑刷短视频用户的 Web Feed 产品，提供 16:9 桌面沉浸浏览、发布、互动、关系、消息、审核、运营、推荐治理、播放优化、监控告警和系统治理能力。
+- 产品一句话：Frux 是面向电脑刷短视频用户的 Web Feed 产品，提供 16:9 桌面沉浸浏览、发布、互动、关系、消息、审核、运营、推荐治理、播放优化、监控告警和系统治理能力。
 - 前端目标：实现设计文档中的完整功能页面与完整交互状态，覆盖 `docs/product.md` 和 `docs/modules/*.md` 的全部 P0/P1 能力。
 - 核心用户：在电脑浏览器里刷抖音/TikTok 式短视频的用户，以及负责审核、运营、监控和治理的后台人员。
 - 主设备：电脑 Web，默认 1440px 到 1920px 宽屏，核心舞台按 16:9 设计；手机网页提供窄屏自适应体验。
@@ -61,7 +61,7 @@
 ### 2.1 用户 Web 端导航
 
 - 顶部栏：56px 高，包含全局搜索、投稿、消息、登录/头像和退出入口。
-- 左侧栏：宽屏 160px、紧凑桌面 72px，包含四类 Feed、消息、投稿和个人资料；GCFeed 标识固定在栏顶。
+- 左侧栏：宽屏 160px、紧凑桌面 72px，包含四类 Feed、消息、投稿和个人资料；Frux 标识固定在栏顶。
 - Feed 主体：左侧导航 + 沉浸视频舞台；评论关闭时舞台占满内容区，打开后增加 346px 评论与详情区并缩小舞台。
 - 快捷操作：滚轮切换、方向键切换、J/K 切换、L 点赞、F 收藏、C 评论、Space 播放/暂停。
 
@@ -169,11 +169,11 @@
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--gc-rose` | `#FF2C55` | 主按钮、点赞、当前 Tab、未读状态 |
-| `--gc-cyan` | `#25F4EE` | GCFeed 品牌错位点缀、焦点和辅助高亮 |
-| `--gc-bg` | `#161823` | 用户 Web 主背景 |
-| `--gc-surface` | `#1C1E29` | 评论、页面面板和弹层 |
-| `--gc-surface-raised` | `#252733` | 输入框、悬浮和高层级控件 |
+| `--frux-rose` | `#FF2C55` | 主按钮、点赞、当前 Tab、未读状态 |
+| `--frux-cyan` | `#25F4EE` | Frux 品牌错位点缀、焦点和辅助高亮 |
+| `--frux-bg` | `#161823` | 用户 Web 主背景 |
+| `--frux-surface` | `#1C1E29` | 评论、页面面板和弹层 |
+| `--frux-surface-raised` | `#252733` | 输入框、悬浮和高层级控件 |
 | `--color-bg` | `#F5F5F7` | 运营后台页面背景 |
 | `--color-feed-bg` | `#000000` | 用户 Feed 黑场 |
 | `--color-surface` | `#FFFFFF` | 表格、卡片、弹窗、抽屉 |
@@ -201,15 +201,15 @@
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--gc-header-height` | `56px` | 用户 Web 顶部栏 |
-| `--gc-sidebar-width` | `160px` | 宽屏用户导航 |
-| `--gc-sidebar-compact` | `72px` | 紧凑桌面图标导航 |
+| `--frux-header-height` | `56px` | 用户 Web 顶部栏 |
+| `--frux-sidebar-width` | `160px` | 宽屏用户导航 |
+| `--frux-sidebar-compact` | `72px` | 紧凑桌面图标导航 |
 | `--admin-sidebar-width` | `240px` | 运营后台侧边栏 |
-| `--gc-detail-width` | `346px` | Feed 右侧评论/详情 |
-| `--gc-page-padding` | `24px` | 桌面页面内边距 |
-| `--gc-radius-stage` | `16px` | 视频舞台圆角 |
-| `--gc-radius-panel` | `18px` | 页面面板与弹层圆角 |
-| `--gc-radius-control` | `10px` | 按钮、输入框圆角 |
+| `--frux-detail-width` | `346px` | Feed 右侧评论/详情 |
+| `--frux-page-padding` | `24px` | 桌面页面内边距 |
+| `--frux-radius-stage` | `16px` | 视频舞台圆角 |
+| `--frux-radius-panel` | `18px` | 页面面板与弹层圆角 |
+| `--frux-radius-control` | `10px` | 按钮、输入框圆角 |
 
 ### 4.5 16:9 Feed 舞台规则
 
@@ -232,7 +232,7 @@
 | AppShell | user / admin | 用户端与后台外壳 |
 | TopNav | feed / admin | 顶部导航 |
 | SideNav | desktop / compact | 160px 或 72px 左侧导航 |
-| BrandMark | desktop / compact | GCFeed 原创字标与紧凑标识 |
+| BrandMark | desktop / compact | Frux 原创字标与紧凑标识 |
 | Icon | outline / filled | 本地 TypeScript SVG 图标系统 |
 | ChannelTabs | follow / recommend | 关注/推荐频道 |
 | FeedStage | desktop16x9 | 视频舞台 |
@@ -497,7 +497,7 @@ min-h-11 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-whi
 - Feed 快捷键：`J` 下一条、`K` 上一条、`L` 点赞、`F` 收藏、`C` 聚焦评论、`Space` 播放/暂停。
 - 评论 textarea 聚焦时抑制 Feed 切换/播放快捷键；取消回复后焦点返回原回复按钮，关闭评论后焦点返回评论操作。
 - 消息深链和 thread context 加载后滚动目标并短暂高亮；高亮结束不移动键盘焦点。
-- 焦点样式使用 GCFeed 青色外环。
+- 焦点样式使用 Frux 青色外环。
 - Feed 舞台文字有遮罩，评论区和表格满足清晰对比。
 - 点击热区：Feed 图标按钮 52px，后台行操作 32px 以上。
 - 紧凑桌面评论抽屉内排序、回复展开、分页和 Composer 均可纵向到达。

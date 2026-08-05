@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	infrahttphertz "GCFeed/internal/infra/httphertz"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/network/standard"

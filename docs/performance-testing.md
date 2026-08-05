@@ -1,6 +1,6 @@
 # 性能测试指南
 
-本文档说明如何用 k6、Prometheus 和 Grafana 测 GCFeed 的接口性能、QPS、P95 延迟、错误率和缓存效果。
+本文档说明如何用 k6、Prometheus 和 Grafana 测 Frux 的接口性能、QPS、P95 延迟、错误率和缓存效果。
 
 ## 前置准备
 
@@ -34,7 +34,7 @@ curl http://127.0.0.1:3000/api/health
 Grafana 面板：
 
 ```text
-http://127.0.0.1:3000/d/gcfeed-overview/gcfeed-overview
+http://127.0.0.1:3000/d/frux-overview/frux-overview
 ```
 
 默认账号密码：
@@ -259,7 +259,7 @@ feed_success_rate..............: 100.00%
 压测时打开：
 
 ```text
-http://127.0.0.1:3000/d/gcfeed-overview/gcfeed-overview
+http://127.0.0.1:3000/d/frux-overview/frux-overview
 ```
 
 重点观察：
@@ -275,10 +275,10 @@ http://127.0.0.1:3000/d/gcfeed-overview/gcfeed-overview
 Prometheus 也可以直接查询：
 
 ```promql
-sum(rate(gcfeed_http_requests_total[5m])) by (route)
-histogram_quantile(0.95, sum(rate(gcfeed_http_request_duration_seconds_bucket[5m])) by (le, route))
-histogram_quantile(0.95, sum(rate(gcfeed_feed_request_duration_seconds_bucket[5m])) by (le, scene))
-sum(rate(gcfeed_feed_cache_requests_total{result="hit"}[5m])) by (area)
+sum(rate(frux_http_requests_total[5m])) by (route)
+histogram_quantile(0.95, sum(rate(frux_http_request_duration_seconds_bucket[5m])) by (le, route))
+histogram_quantile(0.95, sum(rate(frux_feed_request_duration_seconds_bucket[5m])) by (le, scene))
+sum(rate(frux_feed_cache_requests_total{result="hit"}[5m])) by (area)
 ```
 
 ## 测试前的数据准备
@@ -323,7 +323,7 @@ Feed 预加载检查同时覆盖：
 4. 处理期间公共 Feed、详情、推荐和预加载不得出现视频；基线完成后兼容 `media_url` 和有序 `playback_sources` 同时可用。
 5. 删除视频后立即确认 API 不再发现播放源；缩短测试清理延迟后确认原始对象、封面、MP4、manifest 和 segment 被幂等删除。
 
-压测时同时观察 `gcfeed_media_object_operation_duration_seconds`、`gcfeed_media_processing_results_total`、`gcfeed_media_renditions_total`、`gcfeed_media_reconciliation_issues_total` 和 `gcfeed_media_cleanup_backlog`。
+压测时同时观察 `frux_media_object_operation_duration_seconds`、`frux_media_processing_results_total`、`frux_media_renditions_total`、`frux_media_reconciliation_issues_total` 和 `frux_media_cleanup_backlog`。
 
 ## 播放遥测验证
 
@@ -337,13 +337,13 @@ Feed 预加载检查同时覆盖：
 重点指标：
 
 ```text
-gcfeed_playback_first_frame_duration_seconds
-gcfeed_playback_rebuffer_duration_seconds_total
-gcfeed_playback_attempts_total
-gcfeed_playback_telemetry_batches_total
-gcfeed_playback_telemetry_events_total
-gcfeed_playback_telemetry_delivery_delay_seconds
-gcfeed_playback_telemetry_cleanup_runs_total
+frux_playback_first_frame_duration_seconds
+frux_playback_rebuffer_duration_seconds_total
+frux_playback_attempts_total
+frux_playback_telemetry_batches_total
+frux_playback_telemetry_events_total
+frux_playback_telemetry_delivery_delay_seconds
+frux_playback_telemetry_cleanup_runs_total
 ```
 
 ## 自适应播放器浏览器验证

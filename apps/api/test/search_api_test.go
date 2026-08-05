@@ -1,10 +1,10 @@
 package test
 
 import (
-	applicationsearch "GCFeed/internal/application/search"
-	domainmedia "GCFeed/internal/domain/media"
-	domainsearch "GCFeed/internal/domain/search"
-	interfaceshttpsearch "GCFeed/internal/interfaces/http/search"
+	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	interfaceshttpsearch "github.com/shiyudesu/frux/internal/interfaces/http/search"
 	"context"
 	"net/http"
 	"net/url"

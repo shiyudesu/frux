@@ -174,5 +174,5 @@ author 0.15、follow 0.10、negative -0.75、exposure -0.40，作者上限为 10
 曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用
 `PolicyService.Rollback(ctx, "recommend", 1)`；紧急 SQL 在事务中锁定 v1，关闭同 scene
 其他 `enabled` 行，并将 v1 的 `enabled=true`、`config_json.rollout_percentage=100` 提交。
-随后确认 `gcfeed_recommendation_active_policy_version{scene="recommend"}` 为 1；保留日志、
+随后确认 `frux_recommendation_active_policy_version{scene="recommend"}` 为 1；保留日志、
 Outbox 和事实以便调查。

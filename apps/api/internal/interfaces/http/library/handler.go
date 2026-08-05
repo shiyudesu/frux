@@ -1,9 +1,9 @@
 package interfaceshttplibrary
 
 import (
-	applicationlibrary "GCFeed/internal/application/library"
-	domainlibrary "GCFeed/internal/domain/library"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

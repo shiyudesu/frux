@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	inframetrics "GCFeed/internal/infra/metrics"
-	interfaceshttprouter "GCFeed/internal/interfaces/http/router"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	interfaceshttprouter "github.com/shiyudesu/frux/internal/interfaces/http/router"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/adaptor"
@@ -86,7 +86,7 @@ func TestHealthAndMetricsRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read metrics response: %v", err)
 	}
-	if !strings.Contains(string(metricsBody), "gcfeed_http_requests_total") {
-		t.Fatalf("expected GCFeed HTTP metrics in response")
+	if !strings.Contains(string(metricsBody), "frux_http_requests_total") {
+		t.Fatalf("expected Frux HTTP metrics in response")
 	}
 }

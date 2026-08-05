@@ -1,9 +1,9 @@
 package infrarelation
 
 import (
-	domainaccount "GCFeed/internal/domain/account"
-	domainrelation "GCFeed/internal/domain/relation"
-	infraaccount "GCFeed/internal/infra/persistence/account"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
+	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	"context"
 	"errors"
 	"fmt"

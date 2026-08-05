@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 type LocalStore struct {
@@ -45,7 +45,7 @@ func (s *LocalStore) Put(_ context.Context, key string, body io.Reader, sizeByte
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".gcfeed-upload-*")
+	temp, err := os.CreateTemp(filepath.Dir(path), ".frux-upload-*")
 	if err != nil {
 		return nil, err
 	}

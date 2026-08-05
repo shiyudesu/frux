@@ -1,6 +1,6 @@
-# GCFeed 工程规范
+# Frux 工程规范
 
-本文定义 GCFeed 的目录职责、代码风格、接口设计、数据模型和测试约定。新增功能时优先遵循本文，再查看对应模块文档。
+本文定义 Frux 的目录职责、代码风格、接口设计、数据模型和测试约定。新增功能时优先遵循本文，再查看对应模块文档。
 
 ## 1. 技术栈
 
@@ -90,8 +90,8 @@ package interfaceshttpvideo
 
 ```go
 import (
-    applicationvideo "GCFeed/internal/application/video"
-    domainvideo "GCFeed/internal/domain/video"
+    applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+    domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 )
 ```
 

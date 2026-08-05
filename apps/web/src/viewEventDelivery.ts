@@ -1,6 +1,6 @@
 import type { CreateViewEventRequest } from "./types";
 
-const PENDING_VIEW_EVENTS_KEY = "gcfeed.pending-view-events.v1";
+const PENDING_VIEW_EVENTS_KEY = "frux.pending-view-events.v1";
 const MAX_PENDING_VIEW_EVENTS = 50;
 
 export interface ViewEventStorage {

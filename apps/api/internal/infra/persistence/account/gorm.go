@@ -1,8 +1,8 @@
 package infraaccount
 
 import (
-	domainaccount "GCFeed/internal/domain/account"
-	infrapersistence "GCFeed/internal/infra/persistence"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"errors"
 

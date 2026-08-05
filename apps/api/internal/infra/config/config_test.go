@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	domainmedia "GCFeed/internal/domain/media"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 func TestNormalizeAndValidateMediaConfigDefaultsToLocal(t *testing.T) {
@@ -27,10 +27,10 @@ func TestNormalizeAndValidateMediaConfigRejectsIncompleteS3(t *testing.T) {
 
 func TestNormalizeAndValidateMediaConfigAcceptsS3CompatibleEndpoint(t *testing.T) {
 	cfg := MediaConfig{
-		Backend: domainmedia.StorageBackendS3, PublicBaseURL: "http://127.0.0.1:9000/gcfeed-media/",
+		Backend: domainmedia.StorageBackendS3, PublicBaseURL: "http://127.0.0.1:9000/frux-media/",
 		S3: S3Config{
 			Endpoint: "http://minio:9000/", PresignEndpoint: "http://127.0.0.1:9000/",
-			Region: "us-east-1", Bucket: "gcfeed-media", AccessKey: "minio", SecretKey: "secret", UsePathStyle: true,
+			Region: "us-east-1", Bucket: "frux-media", AccessKey: "minio", SecretKey: "secret", UsePathStyle: true,
 		},
 	}
 
@@ -90,7 +90,7 @@ func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
 
 func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	token := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
-	t.Setenv("GCFEED_INTERNAL_TOKEN", token)
+	t.Setenv("FRUX_INTERNAL_TOKEN", token)
 
 	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.yaml"))
 	if err != nil {
@@ -98,5 +98,15 @@ func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	}
 	if cfg.Internal.Token != token || !cfg.Internal.Enabled {
 		t.Fatalf("internal config = %+v, want enabled environment token", cfg.Internal)
+	}
+}
+
+func TestLoadConfigDoesNotAcceptLegacyInternalTokenEnvironment(t *testing.T) {
+	t.Setenv("FRUX_INTERNAL_TOKEN", "")
+	t.Setenv("GC"+"FEED_INTERNAL_TOKEN", "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y")
+
+	_, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.yaml"))
+	if !errors.Is(err, ErrInvalidInternalToken) {
+		t.Fatalf("LoadConfig() error = %v, want ErrInvalidInternalToken", err)
 	}
 }

@@ -54,13 +54,13 @@ export function LoginPage() {
 
   return (
     <main className="auth-page" data-ui="auth-page">
-      <section className="auth-visual" aria-label="GCFeed">
+      <section className="auth-visual" aria-label="Frux">
         <div className="auth-preview">
           <img src={image.stage} alt="" />
           <div className="auth-preview-card">
             <span className="auth-preview-icon"><Icon name="play" /></span>
             <div>
-              <strong>GCFeed</strong>
+              <strong>FRUX</strong>
               <span>沉浸式桌面短视频</span>
             </div>
           </div>
@@ -71,7 +71,7 @@ export function LoginPage() {
           <div className="brand-block">
             <BrandMark />
             <div>
-              <h1>登录 GCFeed</h1>
+              <h1>登录 Frux</h1>
               <p>登录后继续刷视频、互动和发布作品。</p>
             </div>
           </div>

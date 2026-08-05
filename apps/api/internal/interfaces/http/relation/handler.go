@@ -1,9 +1,9 @@
 package interfaceshttprelation
 
 import (
-	applicationrelation "GCFeed/internal/application/relation"
-	domainrelation "GCFeed/internal/domain/relation"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	applicationrelation "github.com/shiyudesu/frux/internal/application/relation"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
+	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	"context"
 	"errors"
 	"net/http"

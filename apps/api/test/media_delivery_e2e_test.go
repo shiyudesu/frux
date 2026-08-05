@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	applicationmedia "GCFeed/internal/application/media"
-	applicationvideo "GCFeed/internal/application/video"
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
-	inframedia "GCFeed/internal/infra/media"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 )
 
 func TestProductionMediaDeliveryEndToEnd(t *testing.T) {

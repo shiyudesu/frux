@@ -1,8 +1,8 @@
 package applicationinteraction
 
 import (
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainrecommendation "GCFeed/internal/domain/recommendation"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"errors"
 	"strings"

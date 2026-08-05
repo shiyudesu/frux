@@ -1,8 +1,8 @@
 package infracache
 
 import (
-	applicationinteraction "GCFeed/internal/application/interaction"
-	domaininteraction "GCFeed/internal/domain/interaction"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"context"
 	"encoding/json"
 	"errors"

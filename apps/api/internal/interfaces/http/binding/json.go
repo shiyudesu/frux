@@ -6,7 +6,7 @@ import (
 	"errors"
 	"io"
 
-	infrahttphertz "GCFeed/internal/infra/httphertz"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 
 	"github.com/cloudwego/hertz/pkg/app"
 )

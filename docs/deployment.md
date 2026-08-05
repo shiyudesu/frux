@@ -8,12 +8,12 @@
 | --- | --- |
 | S3 API | `http://127.0.0.1:9000` |
 | Console | `http://127.0.0.1:9001` |
-| Bucket | `gcfeed-media` |
+| Bucket | `frux-media` |
 
 `minio-init` 创建 bucket、设置浏览器直传 CORS，并只允许匿名下载 `media/` 公共输出前缀。
 
 Compose 不包含可用的内部 API token。启动 API/Worker 前必须通过环境变量或部署平台
-Secret 注入 `GCFEED_INTERNAL_TOKEN`；配置中的 `internal.enabled=true` 会拒绝空值、
+Secret 注入 `FRUX_INTERNAL_TOKEN`；配置中的 `internal.enabled=true` 会拒绝空值、
 `replace-with-internal-token` 占位值，以及少于 32 字符或字符类别不足的弱值。可用
 `openssl rand -base64 48` 生成值，并在执行 `docker compose config` 时一并导出。
 

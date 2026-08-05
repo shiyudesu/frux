@@ -1,12 +1,12 @@
 package infrainteraction
 
 import (
-	domainaccount "GCFeed/internal/domain/account"
-	domaininteraction "GCFeed/internal/domain/interaction"
-	domainmedia "GCFeed/internal/domain/media"
-	domainvideo "GCFeed/internal/domain/video"
-	infrapersistence "GCFeed/internal/infra/persistence"
-	infravideo "GCFeed/internal/infra/persistence/video"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"context"
 	"errors"
 	"fmt"
