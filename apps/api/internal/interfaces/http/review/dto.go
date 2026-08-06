@@ -70,11 +70,20 @@ type humanQueueResponse struct {
 	Items      []humanQueueItemResponse `json:"items"`
 	NextCursor string                   `json:"next_cursor"`
 	HasMore    bool                     `json:"has_more"`
+	Scope      string                   `json:"scope"`
 }
 
 type humanLeaseResponse struct {
 	Case       humanCaseResponse `json:"case"`
 	LeaseToken string            `json:"lease_token"`
+	ServerTime time.Time         `json:"server_time"`
+}
+
+type humanPreviewResponse struct {
+	MediaURL   string    `json:"media_url"`
+	CoverURL   string    `json:"cover_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	ServerTime time.Time `json:"server_time"`
 }
 
 type humanSubjectResponse struct {
@@ -96,6 +105,7 @@ type evidenceSignalResponse struct {
 	Provider      string    `json:"provider"`
 	ModelVersion  string    `json:"model_version"`
 	PolicyVersion int       `json:"policy_version"`
+	SourceKind    string    `json:"source_kind"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

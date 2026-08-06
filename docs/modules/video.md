@@ -26,6 +26,7 @@
 | POST | `/api/upload-sessions` | 创建对象存储直传会话；本地模式返回 multipart 回退 | 登录 | 支持 |
 | POST | `/api/upload-sessions/{sessionId}/complete` | 校验对象并完成上传会话 | 登录 | 自然幂等 |
 | GET | `/api/media-assets/{assetId}/access` | 获取本人原始/保护资产短期签名 URL | 登录 | 无 |
+| GET | `/api/admin/review/cases/{caseId}/preview-access` | 获取当前审核主体的短期保护视频/封面预览 | `review.read` | 无 |
 | GET | `/api/admin/videos` | 后台稳定游标查询非删除视频 | `content.enforce` | 无 |
 | POST | `/api/admin/videos/{videoId}/enforcement` | 原因化、版本检查的下架 | `content.enforce` | 无 |
 | POST | `/api/admin/videos/{videoId}/restoration` | 恢复已批准的下架视频 | `content.enforce` | 无 |
@@ -147,6 +148,7 @@
 | 批量原子性 | 事务内锁定全部视频并验证所有权；公开/私密动作拒绝下架或删除视频 |
 | 缓存防泄露 | 可见性、删除和生命周期变化清除视频卡片/统计缓存；Feed 组装还会用数据库重新校验缓存 ID 的公开可读性 |
 | 本地媒体防泄露 | `/uploads` 视频/封面同时验证不可变上传所有权、同所有者视频引用、生命周期、可见性和当前身份；他人公开重引用不能授权资产，保护资源禁用缓存 |
+| 审核专用预览 | 当前 review version 且非删除的视频可由 `review.read` 获得最长 5 分钟的 S3 预签名或本地 HMAC URL；不恢复公共 `media_url`，不改变 Feed/搜索/媒体公开资格 |
 | 生产媒体撤销 | 私密、下架、拒绝或删除会把已提升的 `media/` 变体降回 `processed/` 保护前缀；本地 `/media` 读取还会实时查询当前公开资格 |
 | 有界缓存撤销 | 公共对象和本地 `/media` 使用 60 秒 `must-revalidate` 缓存；状态变化后旧缓存最多保留一个短窗口，撤销失败返回错误并可幂等重试 |
 | 公共 URL 版本 | 新提升使用 `media/v2/{exposure-generation}/...`，恢复会产生新 URL；首次上线必须清理 CDN 中旧 `media/*` 一年缓存条目 |
@@ -173,6 +175,7 @@
 | 重复增删合集成员 | 不改变合集 `updated_at`；真实增删会改变并影响合集排序 |
 | 更新合集响应 | PATCH 返回当前真实、已补齐视频卡的成员数组 |
 | 直接读取待审/拒绝/私密/下架/删除媒体 | 匿名返回 404；作者可读取非删除保护媒体，删除媒体对作者也返回 404 |
+| 审核员预览待审媒体 | 授权 preview-access 可播放；未授权、过期、篡改、旧 review version 或删除主体均不可读取 |
 | 他人重引用保护 URL | 发布返回 403，且伪造的公开引用不能让资产对匿名用户可读 |
 | 历史资产回填 | 唯一作者引用的保护 URL 获得该作者所有权并继续按公开视频/本人规则读取 |
 | 上传非法媒体 | 返回 400 并清理失败文件 |

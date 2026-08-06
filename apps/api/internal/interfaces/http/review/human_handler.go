@@ -45,6 +45,17 @@ func parseOptionalPositiveInt(raw string, fallback int) (int, error) {
 	return value, nil
 }
 
+func parseHumanQueueScope(raw string) (string, error) {
+	scope := strings.ToLower(strings.TrimSpace(raw))
+	if scope == "" {
+		scope = domainreview.HumanQueueScopeAvailable
+	}
+	if !domainreview.ValidHumanQueueScope(scope) {
+		return "", domainreview.ErrInvalidQueueFilter
+	}
+	return scope, nil
+}
+
 func writeHumanReviewError(c *app.RequestContext, err error) {
 	switch {
 	case errors.Is(err, domainreview.ErrInvalidQueueCursor):
@@ -63,6 +74,8 @@ func writeHumanReviewError(c *app.RequestContext, err error) {
 		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeReviewValidationFailed, "invalid human review request")
 	case errors.Is(err, domainreview.ErrReviewCaseNotFound):
 		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeReviewCaseNotFound, "review case not found")
+	case errors.Is(err, domainreview.ErrReviewPreviewUnavailable):
+		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeReviewPreviewUnavailable, "review preview unavailable")
 	case errors.Is(err, domainreview.ErrReviewCaseClaimed):
 		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeReviewCaseClaimed, "review case already claimed")
 	case errors.Is(err, domainreview.ErrReviewLeaseExpired):

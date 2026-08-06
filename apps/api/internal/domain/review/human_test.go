@@ -40,6 +40,35 @@ func TestHumanLeaseOwnershipExpiryRenewalAndRelease(t *testing.T) {
 	}
 }
 
+func TestHumanLeaseResumeRotatesToken(t *testing.T) {
+	now := time.Date(2026, 8, 6, 4, 0, 0, 0, time.UTC)
+	oldHash := strings.Repeat("a", 64)
+	newHash := strings.Repeat("b", 64)
+	reviewCase := RestoreHumanCase(
+		1, 2, 1, CaseStatusPendingHuman, 1, 50, 2, 7, oldHash,
+		timePointer(now.Add(5*time.Minute)), now, now, nil,
+	)
+	if err := reviewCase.Resume(8, newHash, 2, now, 10*time.Minute); !errors.Is(err, ErrReviewLeaseNotOwned) {
+		t.Fatalf("foreign resume error = %v", err)
+	}
+	if err := reviewCase.Resume(7, oldHash, 2, now, 10*time.Minute); !errors.Is(err, ErrInvalidLeaseToken) {
+		t.Fatalf("same-token resume error = %v", err)
+	}
+	if err := reviewCase.Resume(7, newHash, 2, now, 10*time.Minute); err != nil {
+		t.Fatalf("resume lease: %v", err)
+	}
+	if reviewCase.Version != 3 || reviewCase.LeaseTokenHash != newHash ||
+		reviewCase.LeaseExpiresAt == nil || !reviewCase.LeaseExpiresAt.Equal(now.Add(10*time.Minute)) {
+		t.Fatalf("resumed case = %#v", reviewCase)
+	}
+	if err := reviewCase.Renew(7, oldHash, 3, now.Add(time.Minute), 10*time.Minute); !errors.Is(err, ErrReviewLeaseNotOwned) {
+		t.Fatalf("old token renewal error = %v", err)
+	}
+	if err := reviewCase.Renew(7, newHash, 3, now.Add(time.Minute), 10*time.Minute); err != nil {
+		t.Fatalf("new token renewal: %v", err)
+	}
+}
+
 func TestHumanDecisionValidationAndPayloadBinding(t *testing.T) {
 	now := time.Date(2026, 8, 6, 4, 0, 0, 0, time.UTC)
 	input := HumanDecisionInput{

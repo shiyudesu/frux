@@ -255,7 +255,8 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		next, err := repo.ListHumanQueue(context.Background(), domainreview.HumanQueueFilter{
 			MinPriority: 0, MaxPriority: 100, Limit: 2,
 			Cursor: &domainreview.QueueCursor{
-				Priority: firstPage[1].Case.Priority, CreatedAt: firstPage[1].Case.CreatedAt,
+				Scope:    domainreview.HumanQueueScopeAvailable,
+				Priority: firstPage[1].Case.Priority, SortTime: firstPage[1].Case.CreatedAt,
 				CaseID: firstPage[1].Case.ID,
 			},
 		})
@@ -315,6 +316,45 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		)
 		if err != nil || reclaimed.Version != 4 || reclaimed.AssignedReviewerID != 9 {
 			t.Fatalf("expired lease reclaim = %#v err=%v", reclaimed, err)
+		}
+		if _, err := repo.ClaimHumanCase(
+			context.Background(), 202, 9, strings.Repeat("e", 64),
+			1, domainreview.DefaultHumanLeaseDuration,
+		); err != nil {
+			t.Fatalf("claim second reviewer task: %v", err)
+		}
+		mine, err := repo.ListHumanAssigned(context.Background(), domainreview.HumanQueueFilter{
+			Scope: domainreview.HumanQueueScopeMine, ReviewerID: 9,
+			MinPriority: 0, MaxPriority: 100, Limit: 1,
+		})
+		if err != nil || len(mine) != 1 || mine[0].Case.ID != 201 || mine[0].SnapshotAt.IsZero() {
+			t.Fatalf("reviewer work = %#v err=%v", mine, err)
+		}
+		resumed, err := repo.ResumeHumanLease(
+			context.Background(), 201, 9, strings.Repeat("d", 64),
+			4, domainreview.DefaultHumanLeaseDuration,
+		)
+		if err != nil || resumed.Version != 5 || resumed.LeaseTokenHash != strings.Repeat("d", 64) {
+			t.Fatalf("resumed lease = %#v err=%v", resumed, err)
+		}
+		nextMine, err := repo.ListHumanAssigned(context.Background(), domainreview.HumanQueueFilter{
+			Scope: domainreview.HumanQueueScopeMine, ReviewerID: 9,
+			MinPriority: 0, MaxPriority: 100, Limit: 10,
+			Cursor: &domainreview.QueueCursor{
+				Scope: domainreview.HumanQueueScopeMine, Priority: mine[0].Case.Priority,
+				SortTime:    mine[0].Case.LeaseExpiresAt.UTC(),
+				SnapshotAt:  resumed.UpdatedAt.Add(time.Second),
+				SeenCaseIDs: []int64{mine[0].Case.ID}, CaseID: mine[0].Case.ID,
+			},
+		})
+		if err != nil || len(nextMine) != 1 || nextMine[0].Case.ID != 202 {
+			t.Fatalf("snapshot reviewer work = %#v err=%v", nextMine, err)
+		}
+		if _, err := repo.RenewHumanLease(
+			context.Background(), 201, 9, strings.Repeat("c", 64),
+			5, domainreview.DefaultHumanLeaseDuration,
+		); !errors.Is(err, domainreview.ErrReviewLeaseNotOwned) {
+			t.Fatalf("old token renew error = %v", err)
 		}
 		var expiredEvents int64
 		if err := db.Model(&AssignmentModel{}).
@@ -501,6 +541,13 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		committed, err := repo.CommitHumanDecision(context.Background(), decision, tokenHash, fact)
 		if err != nil || committed.Duplicate || committed.Case.Status != domainreview.CaseStatusApproved {
 			t.Fatalf("committed decision = %#v err=%v", committed, err)
+		}
+		recent, err := repo.ListHumanRecent(context.Background(), domainreview.HumanQueueFilter{
+			Scope: domainreview.HumanQueueScopeRecent, ReviewerID: 7,
+			MinPriority: 0, MaxPriority: 100, Limit: 10,
+		})
+		if err != nil || len(recent) != 1 || recent[0].Case.ID != 301 {
+			t.Fatalf("recent decisions = %#v err=%v", recent, err)
 		}
 		replayed, err := repo.CommitHumanDecision(context.Background(), decision, tokenHash, fact)
 		if err != nil || !replayed.Duplicate || replayed.Decision.ID != committed.Decision.ID ||

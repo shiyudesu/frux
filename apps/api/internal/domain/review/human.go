@@ -12,6 +12,7 @@ import (
 
 const (
 	AssignmentEventClaimed    = "claimed"
+	AssignmentEventResumed    = "resumed"
 	AssignmentEventRenewed    = "renewed"
 	AssignmentEventReleased   = "released"
 	AssignmentEventExpired    = "expired"
@@ -39,6 +40,10 @@ const (
 	MinHumanLeaseDuration     = time.Minute
 	MaxHumanLeaseDuration     = 30 * time.Minute
 	DefaultHumanLeaseDuration = 10 * time.Minute
+
+	HumanQueueScopeAvailable = "available"
+	HumanQueueScopeMine      = "mine"
+	HumanQueueScopeRecent    = "recent"
 )
 
 type ReasonCode struct {
@@ -167,7 +172,7 @@ func NewHumanDecision(input HumanDecisionInput) (*HumanDecision, error) {
 
 func ValidAssignmentEvent(event string) bool {
 	switch normalizeToken(event) {
-	case AssignmentEventClaimed, AssignmentEventRenewed, AssignmentEventReleased,
+	case AssignmentEventClaimed, AssignmentEventResumed, AssignmentEventRenewed, AssignmentEventReleased,
 		AssignmentEventExpired, AssignmentEventDecided, AssignmentEventCancelled,
 		AssignmentEventSuperseded:
 		return true
@@ -177,6 +182,15 @@ func ValidAssignmentEvent(event string) bool {
 }
 
 func ValidPriority(priority int) bool { return priority >= 0 && priority <= 100 }
+
+func ValidHumanQueueScope(scope string) bool {
+	switch normalizeToken(scope) {
+	case HumanQueueScopeAvailable, HumanQueueScopeMine, HumanQueueScopeRecent:
+		return true
+	default:
+		return false
+	}
+}
 
 func ValidLeaseDuration(duration time.Duration) bool {
 	return duration >= MinHumanLeaseDuration && duration <= MaxHumanLeaseDuration
@@ -208,6 +222,36 @@ func (c *ReviewCase) Claim(reviewerID int64, tokenHash string, expectedVersion i
 	c.LeaseExpiresAt = &expiresAt
 	c.Version++
 	c.UpdatedAt = now.Truncate(time.Microsecond)
+	return nil
+}
+
+func (c *ReviewCase) Resume(reviewerID int64, tokenHash string, expectedVersion int, now time.Time, duration time.Duration) error {
+	if c == nil || c.Status != CaseStatusPendingHuman {
+		return ErrReviewCaseNotHuman
+	}
+	if expectedVersion <= 0 || c.Version != expectedVersion {
+		return ErrReviewCaseVersion
+	}
+	if reviewerID <= 0 || c.AssignedReviewerID != reviewerID {
+		return ErrReviewLeaseNotOwned
+	}
+	if !validTokenHash(tokenHash) {
+		return ErrInvalidLeaseToken
+	}
+	if secureTokenHashEqual(c.LeaseTokenHash, tokenHash) {
+		return ErrInvalidLeaseToken
+	}
+	if now.IsZero() || c.LeaseExpiresAt == nil || !now.UTC().Before(c.LeaseExpiresAt.UTC()) {
+		return ErrReviewLeaseExpired
+	}
+	if !ValidLeaseDuration(duration) {
+		return ErrInvalidLeaseDuration
+	}
+	expiresAt := now.UTC().Add(duration).Truncate(time.Microsecond)
+	c.LeaseTokenHash = tokenHash
+	c.LeaseExpiresAt = &expiresAt
+	c.Version++
+	c.UpdatedAt = now.UTC().Truncate(time.Microsecond)
 	return nil
 }
 
@@ -295,34 +339,43 @@ func secureTokenHashEqual(expected, actual string) bool {
 }
 
 type QueueCursor struct {
-	Priority  int
-	CreatedAt time.Time
-	CaseID    int64
+	Scope       string
+	Priority    int
+	SortTime    time.Time
+	SnapshotAt  time.Time
+	SeenCaseIDs []int64
+	CaseID      int64
 }
 
 type HumanQueueFilter struct {
 	MinPriority int
 	MaxPriority int
+	Scope       string
+	ReviewerID  int64
 	Cursor      *QueueCursor
 	Limit       int
 }
 
 type HumanQueueItem struct {
-	Case     *ReviewCase
-	Title    string
-	AuthorID int64
-	MediaURL string
-	CoverURL string
+	Case       *ReviewCase
+	Title      string
+	AuthorID   int64
+	MediaURL   string
+	CoverURL   string
+	SnapshotAt time.Time
 }
 
 type ReviewSubject struct {
-	VideoID       int64
-	AuthorID      int64
-	Title         string
-	Description   string
-	MediaURL      string
-	CoverURL      string
-	ReviewVersion int
+	VideoID        int64
+	AuthorID       int64
+	Title          string
+	Description    string
+	MediaURL       string
+	CoverURL       string
+	ReviewVersion  int
+	PreviewAllowed bool
+	MediaAssetID   int64
+	CoverAssetID   int64
 }
 
 type CaseHistory struct {
@@ -348,6 +401,13 @@ type HumanCaseDetail struct {
 	Case    *ReviewCase
 	Subject ReviewSubject
 	History CaseHistory
+}
+
+type HumanPreviewAccess struct {
+	MediaURL   string
+	CoverURL   string
+	ExpiresAt  time.Time
+	ServerTime time.Time
 }
 
 type LeaseResult struct {

@@ -9,8 +9,11 @@ import {
   claimReviewCase,
   decideReviewCase,
   fetchReviewCase,
+  fetchReviewPreview,
   fetchReviewQueue,
-  renewReviewLease
+  releaseReviewLease,
+  renewReviewLease,
+  resumeReviewLease
 } from "../api/review";
 import {
   restoreAdminVideo,
@@ -22,6 +25,7 @@ import { RouterProvider } from "../router";
 import { SessionProvider } from "../session";
 import type { ReviewCaseDetail } from "../types";
 import AdminApp from "./AdminApp";
+import { forgetReviewLease } from "./reviewLeaseMemory";
 import { defaultAdminVideoFilters } from "./VideoOperationsPage";
 
 vi.mock("../api/admin", () => ({ fetchAdminPrincipal: vi.fn() }));
@@ -30,9 +34,11 @@ vi.mock("../api/review", () => ({
   claimReviewCase: vi.fn(),
   decideReviewCase: vi.fn(),
   fetchReviewCase: vi.fn(),
+  fetchReviewPreview: vi.fn(),
   fetchReviewQueue: vi.fn(),
   renewReviewLease: vi.fn(),
-  releaseReviewLease: vi.fn()
+  releaseReviewLease: vi.fn(),
+  resumeReviewLease: vi.fn()
 }));
 vi.mock("../api/videoAdmin", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/videoAdmin")>()),
@@ -55,13 +61,23 @@ describe("admin content operations workspace", () => {
       ...emptyProfile, id: 7, nickname: "Reviewer", role: "reviewer"
     }));
     vi.mocked(fetchUnreadStat).mockResolvedValue({ unread_count: 0 });
-    vi.mocked(fetchReviewQueue).mockResolvedValue({ items: [], next_cursor: "", has_more: false });
+    vi.mocked(fetchReviewQueue).mockResolvedValue({
+      items: [], next_cursor: "", has_more: false, scope: "available"
+    });
+    vi.mocked(fetchReviewPreview).mockResolvedValue({
+      media_url: "https://preview.example.test/video.mp4",
+      cover_url: "",
+      expires_at: "2099-01-01T00:00:00Z"
+    });
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
     localStorage.clear();
+    forgetReviewLease(1);
+    forgetReviewLease(2);
+    forgetReviewLease(3);
     vi.clearAllMocks();
   });
 
@@ -71,7 +87,7 @@ describe("admin content operations workspace", () => {
     });
     window.history.replaceState({}, "", "/admin/reviews");
     await renderAdmin();
-    expect(container.textContent).toContain("审核队列");
+    expect(container.textContent).toContain("审核任务");
     expect(container.textContent).not.toContain("视频运营");
   });
 
@@ -86,9 +102,9 @@ describe("admin content operations workspace", () => {
     });
     window.history.replaceState({}, "", "/admin/reviews/1");
     await renderAdmin();
-    await clickButton("领取案件");
+    await clickButton("开始审核");
     expect(container.textContent).toContain("sexual_content");
-    expect(container.textContent).toContain("租约已过期");
+    expect(container.textContent).toContain("审核占用时间已结束");
     expect(button("确认通过").disabled).toBe(true);
   });
 
@@ -111,10 +127,10 @@ describe("admin content operations workspace", () => {
     });
     window.history.replaceState({}, "", "/admin/reviews/1");
     await renderAdmin();
-    await clickButton("领取案件");
+    await clickButton("开始审核");
     await clickButton("确认通过");
     expect(container.textContent).toContain("审核结果已提交");
-    expect(container.textContent).toContain("approved");
+    expect(container.textContent).toContain("已通过");
   });
 
   it("reuses the decision idempotency key after response loss", async () => {
@@ -138,7 +154,7 @@ describe("admin content operations workspace", () => {
       });
     window.history.replaceState({}, "", "/admin/reviews/1");
     await renderAdmin();
-    await clickButton("领取案件");
+    await clickButton("开始审核");
     await clickButton("确认通过");
     await clickButton("确认通过");
     const first = vi.mocked(decideReviewCase).mock.calls[0][2].idempotencyKey;
@@ -155,7 +171,8 @@ describe("admin content operations workspace", () => {
       .mockResolvedValueOnce({
         items: [reviewQueueItem()],
         next_cursor: "next",
-        has_more: true
+        has_more: true,
+        scope: "available"
       })
       .mockRejectedValueOnce(new ApiError("forbidden", 403, "ADMIN_PERMISSION_DENIED"));
     window.history.replaceState({}, "", "/admin/reviews");
@@ -163,9 +180,209 @@ describe("admin content operations workspace", () => {
     expect(container.querySelector("table")).not.toBeNull();
     expect(container.textContent).toContain("Cached subject");
     await clickButton("刷新");
-    expect(container.textContent).toContain("服务端拒绝了审核队列访问");
+    expect(container.textContent).toContain("服务端拒绝了审核任务访问");
     expect(container.querySelector("table")).toBeNull();
     expect(container.textContent).not.toContain("Cached subject");
+  });
+
+  it("keeps queue scope states isolated", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+    });
+    vi.mocked(fetchReviewQueue).mockImplementation((_token, query) => {
+      const scope = query?.scope || "available";
+      const item = scope === "mine"
+        ? { ...reviewQueueItem(), case: { ...reviewQueueItem().case, id: 3 }, title: "Owned subject" }
+        : reviewQueueItem();
+      return Promise.resolve({ items: [item], next_cursor: "", has_more: false, scope });
+    });
+    window.history.replaceState({}, "", "/admin/reviews");
+    await renderAdmin();
+    expect(container.textContent).toContain("Cached subject");
+    await clickButton("我正在审核");
+    expect(container.textContent).toContain("Owned subject");
+    expect(container.textContent).not.toContain("Cached subject");
+  });
+
+  it("starts available work and carries the in-memory credential to detail", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+    });
+    vi.mocked(fetchReviewQueue).mockResolvedValue({
+      items: [reviewQueueItem()], next_cursor: "", has_more: false, scope: "available"
+    });
+    const claimedCase = {
+      ...reviewQueueItem().case,
+      version: 2,
+      assigned_reviewer_id: 7,
+      lease_expires_at: "2099-01-01T00:00:00Z"
+    };
+    vi.mocked(claimReviewCase).mockResolvedValue({ case: claimedCase, lease_token: "queue-lease" });
+    vi.mocked(fetchReviewCase).mockResolvedValue({
+      ...reviewDetail(),
+      case: claimedCase
+    });
+    window.history.replaceState({}, "", "/admin/reviews");
+    await renderAdmin();
+    await clickButton("开始审核");
+    expect(claimReviewCase).toHaveBeenCalledWith("admin-token", 2, 1);
+    expect(container.textContent).toContain("审核任务 #2");
+    expect(container.textContent).toContain("审核占用至");
+  });
+
+  it("resumes owned work after reload and can return it to the queue", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+    });
+    const owned = {
+      ...reviewDetail().case,
+      version: 2,
+      assigned_reviewer_id: 7,
+      lease_expires_at: "2099-01-01T00:00:00Z"
+    };
+    vi.mocked(fetchReviewCase).mockResolvedValue({ ...reviewDetail(), case: owned });
+    vi.mocked(resumeReviewLease).mockResolvedValue({
+      case: { ...owned, version: 3 },
+      lease_token: "resumed-lease"
+    });
+    vi.mocked(releaseReviewLease).mockResolvedValue({
+      ...owned,
+      version: 4,
+      assigned_reviewer_id: undefined,
+      lease_expires_at: undefined
+    });
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    expect(resumeReviewLease).toHaveBeenCalledWith("admin-token", 1, 2);
+    expect(container.textContent).toContain("已恢复正在审核的任务");
+    await clickButton("放回待处理");
+    expect(releaseReviewLease).toHaveBeenCalledWith("admin-token", 1, "resumed-lease", 3);
+    expect(container.textContent).toContain("任务已放回待处理列表");
+  });
+
+  it("automatically extends actively viewed work", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+    });
+    const owned = {
+      ...reviewDetail().case,
+      version: 2,
+      assigned_reviewer_id: 7,
+      lease_expires_at: new Date(Date.now() + 2_100).toISOString()
+    };
+    vi.mocked(fetchReviewCase).mockResolvedValue({ ...reviewDetail(), case: owned });
+    vi.mocked(resumeReviewLease).mockResolvedValue({
+      case: { ...owned, version: 3, lease_expires_at: new Date(Date.now() + 2_100).toISOString() },
+      lease_token: "resumed-lease"
+    });
+    vi.mocked(renewReviewLease).mockResolvedValue({
+      case: {
+        ...owned,
+        version: 4,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString()
+      },
+      lease_token: "resumed-lease"
+    });
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+    });
+    expect(renewReviewLease).toHaveBeenCalledWith("admin-token", 1, "resumed-lease", 3);
+  });
+
+  it("uses server time instead of the browser clock for occupancy", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+    });
+    vi.mocked(fetchReviewCase).mockResolvedValue(reviewDetail());
+    const serverTime = Date.now() - 60 * 60 * 1000;
+    vi.mocked(claimReviewCase).mockResolvedValue({
+      case: {
+        ...reviewDetail().case,
+        version: 2,
+        assigned_reviewer_id: 7,
+        lease_expires_at: new Date(serverTime + 5 * 60 * 1000).toISOString()
+      },
+      lease_token: "clock-safe-lease",
+      server_time: new Date(serverTime).toISOString()
+    });
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    await clickButton("开始审核");
+    expect(button("确认通过").disabled).toBe(false);
+    expect(container.textContent).not.toContain("时间已结束");
+  });
+
+  it("shows protected-preview denial and seeded evidence truthfully", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read"]
+    });
+    const seeded = reviewDetail();
+    seeded.history.signals[0] = {
+      ...seeded.history.signals[0],
+      provider: "manual-seed",
+      source_kind: "test_seed"
+    };
+    vi.mocked(fetchReviewCase).mockResolvedValue(seeded);
+    vi.mocked(fetchReviewPreview).mockRejectedValue(
+      new ApiError("preview unavailable", 409, "REVIEW_PREVIEW_UNAVAILABLE")
+    );
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    expect(container.textContent).toContain("视频预览暂时不可用");
+    expect(container.textContent).toContain("测试证据");
+    expect(container.textContent).toContain("manual-seed");
+  });
+
+  it("does not restore an in-flight preview after a version conflict", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+    });
+    vi.mocked(fetchReviewCase).mockResolvedValue(reviewDetail());
+    vi.mocked(claimReviewCase).mockResolvedValue({
+      case: {
+        ...reviewDetail().case,
+        version: 2,
+        assigned_reviewer_id: 7,
+        lease_expires_at: "2099-01-01T00:00:00Z"
+      },
+      lease_token: "lease"
+    });
+    let resolvePreview: ((access: {
+      media_url: string;
+      cover_url: string;
+      expires_at: string;
+    }) => void) | undefined;
+    vi.mocked(fetchReviewPreview)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolvePreview = resolve;
+      }))
+      .mockResolvedValue({
+        media_url: "https://preview.example.test/fresh.mp4",
+        cover_url: "",
+        expires_at: "2099-01-01T00:00:00Z"
+      });
+    vi.mocked(renewReviewLease).mockRejectedValue(
+      new ApiError("conflict", 409, "REVIEW_CONFLICT")
+    );
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    await clickButton("开始审核");
+    await clickButton("延长审核时间");
+    await act(async () => {
+      resolvePreview?.({
+        media_url: "https://preview.example.test/stale.mp4",
+        cover_url: "",
+        expires_at: "2099-01-01T00:00:00Z"
+      });
+      await flush();
+    });
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.textContent).toContain("审核任务状态已变化");
+    await clickButton("刷新任务");
+    expect(container.querySelector<HTMLVideoElement>("video")?.src)
+      .toContain("https://preview.example.test/fresh.mp4");
   });
 
   it("includes the current minute in the default video creation upper bound", () => {
@@ -268,7 +485,7 @@ function reviewDetail(): ReviewCaseDetail {
       signals: [{
         id: 1, result_id: "r1", label: "sexual_content", confidence: 0.91,
         evidence_refs: ["frame:10"], provider: "model", model_version: "v1",
-        policy_version: 1, created_at: "2026-08-01T00:00:00Z"
+        policy_version: 1, source_kind: "unverified", created_at: "2026-08-01T00:00:00Z"
       }],
       automated_decisions: [],
       assignments: [],
@@ -296,4 +513,6 @@ async function flush() {
 }
 
 void renewReviewLease;
+void releaseReviewLease;
+void resumeReviewLease;
 void restoreAdminVideo;

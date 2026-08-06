@@ -369,7 +369,11 @@ export interface ReviewQueueItem {
   cover_url: string;
 }
 
-export type ReviewQueuePage = CursorPage<ReviewQueueItem>;
+export type ReviewQueueScope = "available" | "mine" | "recent";
+
+export interface ReviewQueuePage extends CursorPage<ReviewQueueItem> {
+  scope: ReviewQueueScope;
+}
 
 export interface ReviewSubject {
   video_id: number;
@@ -390,6 +394,7 @@ export interface ReviewEvidenceSignal {
   provider: string;
   model_version: string;
   policy_version: number;
+  source_kind: "test_seed" | "unverified";
   created_at: string;
 }
 
@@ -435,6 +440,14 @@ export interface ReviewCaseDetail {
 export interface ReviewLeaseResponse {
   case: ReviewCase;
   lease_token: string;
+  server_time?: string;
+}
+
+export interface ReviewPreviewAccess {
+  media_url: string;
+  cover_url: string;
+  expires_at: string;
+  server_time?: string;
 }
 
 export interface ReviewDecisionResponse {

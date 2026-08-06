@@ -26,6 +26,16 @@ type Handler struct {
 }
 
 func (h *Handler) ListHumanQueue(ctx context.Context, c *app.RequestContext) {
+	principal, ok := interfaceshttpmiddleware.AdminPrincipalFromContext(c)
+	if !ok {
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeAdminPermissionDenied, "admin permission denied")
+		return
+	}
+	scope, err := parseHumanQueueScope(c.Query("scope"))
+	if err != nil {
+		writeHumanReviewError(c, err)
+		return
+	}
 	minPriority, err := parseOptionalPriority(c.Query("min_priority"), 0)
 	if err != nil {
 		writeHumanReviewError(c, err)
@@ -42,8 +52,9 @@ func (h *Handler) ListHumanQueue(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	page, err := h.service.ListHumanQueue(ctx, applicationreview.HumanQueueRequest{
-		MinPriority: minPriority, MaxPriority: maxPriority,
-		Cursor: strings.TrimSpace(c.Query("cursor")), Limit: limit,
+		MinPriority: minPriority, MaxPriority: maxPriority, Scope: scope,
+		ReviewerID: principal.UserID,
+		Cursor:     strings.TrimSpace(c.Query("cursor")), Limit: limit,
 	})
 	if err != nil {
 		writeHumanReviewError(c, err)
@@ -51,7 +62,7 @@ func (h *Handler) ListHumanQueue(ctx context.Context, c *app.RequestContext) {
 	}
 	response := humanQueueResponse{
 		Items:      make([]humanQueueItemResponse, 0, len(page.Items)),
-		NextCursor: page.NextCursor, HasMore: page.HasMore,
+		NextCursor: page.NextCursor, HasMore: page.HasMore, Scope: scope,
 	}
 	for _, item := range page.Items {
 		response.Items = append(response.Items, humanQueueItemResponse{
@@ -60,6 +71,22 @@ func (h *Handler) ListHumanQueue(ctx context.Context, c *app.RequestContext) {
 		})
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) GetHumanPreview(ctx context.Context, c *app.RequestContext) {
+	caseID, ok := parseCaseID(c)
+	if !ok {
+		return
+	}
+	access, err := h.service.GetHumanPreview(ctx, caseID)
+	if err != nil {
+		writeHumanReviewError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, humanPreviewResponse{
+		MediaURL: access.MediaURL, CoverURL: access.CoverURL,
+		ExpiresAt: access.ExpiresAt, ServerTime: access.ServerTime,
+	})
 }
 
 func (h *Handler) GetHumanCase(ctx context.Context, c *app.RequestContext) {
@@ -99,6 +126,7 @@ func (h *Handler) ClaimHumanCase(ctx context.Context, c *app.RequestContext) {
 	}
 	c.JSON(http.StatusOK, humanLeaseResponse{
 		Case: humanCaseResponseFromDomain(result.Case), LeaseToken: result.LeaseToken,
+		ServerTime: result.Case.UpdatedAt,
 	})
 }
 
@@ -127,6 +155,35 @@ func (h *Handler) RenewHumanLease(ctx context.Context, c *app.RequestContext) {
 	}
 	c.JSON(http.StatusOK, humanLeaseResponse{
 		Case: humanCaseResponseFromDomain(result.Case), LeaseToken: result.LeaseToken,
+		ServerTime: result.Case.UpdatedAt,
+	})
+}
+
+func (h *Handler) ResumeHumanLease(ctx context.Context, c *app.RequestContext) {
+	caseID, ok := parseCaseID(c)
+	if !ok {
+		return
+	}
+	principal, ok := interfaceshttpmiddleware.AdminPrincipalFromContext(c)
+	if !ok {
+		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeAdminPermissionDenied, "admin permission denied")
+		return
+	}
+	var request humanClaimRequest
+	if err := interfaceshttpbinding.BindStrictJSON(c, &request, maxHumanReviewBodyBytes); err != nil {
+		interfaceshttpapierror.WriteInvalidRequest(c)
+		return
+	}
+	result, err := h.service.ResumeHumanLease(ctx, applicationreview.ResumeLeaseRequest{
+		CaseID: caseID, ReviewerID: principal.UserID, ExpectedCaseVersion: request.ExpectedCaseVersion,
+	})
+	if err != nil {
+		writeHumanReviewError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, humanLeaseResponse{
+		Case: humanCaseResponseFromDomain(result.Case), LeaseToken: result.LeaseToken,
+		ServerTime: result.Case.UpdatedAt,
 	})
 }
 

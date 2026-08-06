@@ -130,6 +130,22 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	reviewPreviewSigner, err := inframediastore.NewLocalProtectedURLSigner(
+		"/review-media", cfg.JWT.Secret, applicationreview.DefaultHumanPreviewTTL,
+	)
+	if err != nil {
+		return err
+	}
+	reviewLocalStore, err := inframediastore.NewLocalStore(cfg.Media.LocalRoot)
+	if err != nil {
+		return err
+	}
+	reviewMediaHandler, err := interfaceshttpupload.NewProtectedMediaHandler(
+		reviewLocalStore, cfg.Media.LocalRoot, "/review-media", reviewPreviewSigner,
+	)
+	if err != nil {
+		return err
+	}
 	mediaCatalog := inframediastore.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
 	videoRepo := infravideo.New(
 		gormDB,
@@ -297,6 +313,9 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		applicationreview.WithHumanRepository(reviewRepo),
 		applicationreview.WithHumanCursorSecret(cfg.JWT.Secret),
 		applicationreview.WithHumanObserver(reviewObserver),
+		applicationreview.WithHumanPreviewProvider(reviewPreviewProvider{
+			repository: mediaRepo, resolver: mediaURLResolver, localSigner: reviewPreviewSigner,
+		}),
 		applicationreview.WithOutcomeApplier(reviewOutcomeApplier{
 			videoReader: videoRepo, mediaPublication: mediaPublicationService,
 			publisher: reviewPublisher, cacheInvalidator: feedCache,
@@ -386,6 +405,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 
 	h.GET("/health", HealthCheck)
 	h.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
+	h.GET("/review-media/*filepath", reviewMediaHandler.Get)
+	h.HEAD("/review-media/*filepath", reviewMediaHandler.Head)
 	h.GET("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Get)
 	h.HEAD("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Head)
 	if localMediaStore, ok := mediaStore.(*inframediastore.LocalStore); ok {
@@ -471,10 +492,20 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewRead),
 		reviewHandler.GetHumanCase,
 	)
+	admin.GET(
+		"/review/cases/:caseId/preview-access",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewRead),
+		reviewHandler.GetHumanPreview,
+	)
 	admin.POST(
 		"/review/cases/:caseId/claim",
 		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewDecide),
 		reviewHandler.ClaimHumanCase,
+	)
+	admin.POST(
+		"/review/cases/:caseId/lease/resume",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewDecide),
+		reviewHandler.ResumeHumanLease,
 	)
 	admin.POST(
 		"/review/cases/:caseId/lease/renew",

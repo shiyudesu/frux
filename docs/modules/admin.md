@@ -13,9 +13,10 @@
 | 已实现 | GET | `/api/admin/videos` | 按生命周期、作者、ID、关键词和有界创建时间查询视频 | `content.enforce` |
 | 已实现 | POST | `/api/admin/videos/{videoId}/enforcement` | 按预期版本、注册原因和备注下架已发布视频 | `content.enforce` |
 | 已实现 | POST | `/api/admin/videos/{videoId}/restoration` | 按预期版本恢复已批准的下架视频 | `content.enforce` |
-| 已实现 | GET | `/api/admin/review/cases` | 查询稳定人工审核队列 | `review.read` |
+| 已实现 | GET | `/api/admin/review/cases` | 查询待处理、本人进行中和最近完成的审核任务 | `review.read` |
 | 已实现 | GET | `/api/admin/review/cases/{caseId}` | 查询案件证据和历史 | `review.read` |
-| 已实现 | POST/DELETE | `/api/admin/review/cases/{caseId}/claim`、`.../lease/*` | 领取、续租和释放 | `review.decide` |
+| 已实现 | GET | `/api/admin/review/cases/{caseId}/preview-access` | 获取审核专用短期保护预览 | `review.read` |
+| 已实现 | POST/DELETE | `/api/admin/review/cases/{caseId}/claim`、`.../lease/*` | 开始、恢复、延长和放回审核任务 | `review.decide` |
 | 已实现 | POST | `/api/admin/review/cases/{caseId}/decision` | 幂等批准或拒绝 | `review.decide` |
 | 规划中 | PATCH | `/api/admin/configs/{configKey}` | 发布配置修订 | `config.publish` |
 
@@ -73,11 +74,14 @@ Resolved Admin Principal → Handler
 | 兼容 `admin` 账号访问 | 获得全部初始注册权限 |
 | 缺少或无效 Token | 保持既有 401 响应 |
 | 两名 Reviewer 并发领取 | 只有一人获得 opaque lease token，另一人收到稳定 409 |
+| 当前 Reviewer 刷新详情 | resume 轮换 token、旧 token 失效，任务继续出现在“我正在审核” |
 | 非持有人或过期租约决定 | 返回稳定冲突，不写案件、视频、审计或通知 |
+| Reviewer 请求待审视频预览 | 返回最长 5 分钟保护 URL，公共媒体资格保持不变 |
 
 ## 7. 前端接入点
 
 Web 使用现有 History API typed router 懒加载 `/admin/reviews`、`/admin/reviews/{reviewId}` 和
-`/admin/videos`。Admin Shell 通过 `/api/admin/me` 获取服务端确认的封闭权限集合，只展示获准
-目的地；直接 URL 仍请求拥有领域的后台 API，并稳定呈现登录、权限验证、403 和服务不可用状态，
-不会把客户端导航隐藏当作安全边界。
+`/admin/videos`。审核任务页提供“待我处理 / 我正在审核 / 最近完成”，详情页使用短期保护预览、
+自动延长占用、刷新恢复和主动放回，不向审核员暴露 lease token。Admin Shell 通过 `/api/admin/me`
+获取服务端确认的封闭权限集合，只展示获准目的地；直接 URL 仍请求拥有领域的后台 API，并稳定呈现
+登录、权限验证、403 和服务不可用状态，不会把客户端导航隐藏当作安全边界。

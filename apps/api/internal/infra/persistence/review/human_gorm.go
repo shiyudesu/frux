@@ -39,14 +39,15 @@ func (r *Repository) ListHumanQueue(ctx context.Context, filter domainreview.Hum
 			domainreview.CaseStatusPendingHuman, filter.MinPriority, filter.MaxPriority,
 			domainvideo.StatusPendingReview)
 	if cursor := filter.Cursor; cursor != nil {
-		if !domainreview.ValidPriority(cursor.Priority) || cursor.CaseID <= 0 || cursor.CreatedAt.IsZero() {
+		if (cursor.Scope != "" && cursor.Scope != domainreview.HumanQueueScopeAvailable) ||
+			!domainreview.ValidPriority(cursor.Priority) || cursor.CaseID <= 0 || cursor.SortTime.IsZero() {
 			return nil, domainreview.ErrInvalidQueueCursor
 		}
 
 		query = query.Where(
 			"(rc.priority < ? OR (rc.priority = ? AND rc.created_at > ?) OR (rc.priority = ? AND rc.created_at = ? AND rc.id > ?))",
-			cursor.Priority, cursor.Priority, cursor.CreatedAt.UTC(),
-			cursor.Priority, cursor.CreatedAt.UTC(), cursor.CaseID,
+			cursor.Priority, cursor.Priority, cursor.SortTime.UTC(),
+			cursor.Priority, cursor.SortTime.UTC(), cursor.CaseID,
 		)
 	}
 	type queueRow struct {
@@ -71,6 +72,111 @@ func (r *Repository) ListHumanQueue(ctx context.Context, filter domainreview.Hum
 			reviewCase.LeaseTokenHash = ""
 			reviewCase.LeaseExpiresAt = nil
 		}
+		items = append(items, &domainreview.HumanQueueItem{
+			Case: reviewCase, Title: strings.TrimSpace(row.Title),
+			AuthorID: row.AuthorID, MediaURL: strings.TrimSpace(row.MediaURL),
+			CoverURL: strings.TrimSpace(row.CoverURL),
+		})
+	}
+	return items, nil
+}
+
+func (r *Repository) ListHumanAssigned(ctx context.Context, filter domainreview.HumanQueueFilter) ([]*domainreview.HumanQueueItem, error) {
+	if filter.ReviewerID <= 0 || filter.Limit < 1 || filter.Limit > 101 ||
+		!domainreview.ValidPriority(filter.MinPriority) || !domainreview.ValidPriority(filter.MaxPriority) ||
+		filter.MinPriority > filter.MaxPriority {
+		return nil, domainreview.ErrInvalidQueueFilter
+	}
+	query := r.db.WithContext(ctx).Table("review_case AS rc").
+		Select("rc.*, v.author_id, v.title, v.media_url, v.cover_url, statement_timestamp() AS snapshot_at").
+		Joins("JOIN video AS v ON v.id = rc.video_id").
+		Where(`rc.status = ? AND rc.priority BETWEEN ? AND ? AND
+			rc.assigned_reviewer_id = ? AND rc.lease_expires_at > clock_timestamp() AND
+			v.status = ? AND v.review_version = rc.review_version`,
+			domainreview.CaseStatusPendingHuman, filter.MinPriority, filter.MaxPriority,
+			filter.ReviewerID, domainvideo.StatusPendingReview)
+	if cursor := filter.Cursor; cursor != nil {
+		if cursor.Scope != domainreview.HumanQueueScopeMine ||
+			!domainreview.ValidPriority(cursor.Priority) || cursor.CaseID <= 0 ||
+			cursor.SortTime.IsZero() || cursor.SnapshotAt.IsZero() {
+			return nil, domainreview.ErrInvalidQueueCursor
+		}
+		query = query.Where("rc.updated_at <= ?", cursor.SnapshotAt.UTC()).Where(
+			`(rc.lease_expires_at > ? OR
+			 (rc.lease_expires_at = ? AND rc.priority < ?) OR
+			 (rc.lease_expires_at = ? AND rc.priority = ? AND rc.id > ?))`,
+			cursor.SortTime.UTC(), cursor.SortTime.UTC(), cursor.Priority,
+			cursor.SortTime.UTC(), cursor.Priority, cursor.CaseID,
+		)
+		if len(cursor.SeenCaseIDs) > 0 {
+			query = query.Where("rc.id NOT IN ?", cursor.SeenCaseIDs)
+		}
+	}
+	type assignedRow struct {
+		CaseModel
+		AuthorID   int64
+		Title      string
+		MediaURL   string
+		CoverURL   string
+		SnapshotAt time.Time
+	}
+	var rows []assignedRow
+	if err := query.Order("rc.lease_expires_at ASC").Order("rc.priority DESC").Order("rc.id ASC").
+		Limit(filter.Limit).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]*domainreview.HumanQueueItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, &domainreview.HumanQueueItem{
+			Case: restoreCase(row.CaseModel), Title: strings.TrimSpace(row.Title),
+			AuthorID: row.AuthorID, MediaURL: strings.TrimSpace(row.MediaURL),
+			CoverURL: strings.TrimSpace(row.CoverURL), SnapshotAt: row.SnapshotAt.UTC(),
+		})
+	}
+	return items, nil
+}
+
+func (r *Repository) ListHumanRecent(ctx context.Context, filter domainreview.HumanQueueFilter) ([]*domainreview.HumanQueueItem, error) {
+	if filter.ReviewerID <= 0 || filter.Limit < 1 || filter.Limit > 101 ||
+		!domainreview.ValidPriority(filter.MinPriority) || !domainreview.ValidPriority(filter.MaxPriority) ||
+		filter.MinPriority > filter.MaxPriority {
+		return nil, domainreview.ErrInvalidQueueFilter
+	}
+	query := r.db.WithContext(ctx).Table("review_human_decision AS hd").
+		Select("rc.*, v.author_id, v.title, v.media_url, v.cover_url, hd.created_at AS decided_at").
+		Joins("JOIN review_case AS rc ON rc.id = hd.case_id").
+		Joins("JOIN video AS v ON v.id = rc.video_id").
+		Where(`hd.reviewer_id = ? AND rc.priority BETWEEN ? AND ? AND
+			hd.created_at >= clock_timestamp() - interval '30 days'`,
+			filter.ReviewerID, filter.MinPriority, filter.MaxPriority)
+	if cursor := filter.Cursor; cursor != nil {
+		if cursor.Scope != domainreview.HumanQueueScopeRecent ||
+			cursor.CaseID <= 0 || cursor.SortTime.IsZero() {
+			return nil, domainreview.ErrInvalidQueueCursor
+		}
+		query = query.Where(
+			"(hd.created_at < ? OR (hd.created_at = ? AND rc.id < ?))",
+			cursor.SortTime.UTC(), cursor.SortTime.UTC(), cursor.CaseID,
+		)
+	}
+	type recentRow struct {
+		CaseModel
+		AuthorID  int64
+		Title     string
+		MediaURL  string
+		CoverURL  string
+		DecidedAt time.Time
+	}
+	var rows []recentRow
+	if err := query.Order("hd.created_at DESC").Order("rc.id DESC").
+		Limit(filter.Limit).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]*domainreview.HumanQueueItem, 0, len(rows))
+	for _, row := range rows {
+		reviewCase := restoreCase(row.CaseModel)
+		decidedAt := row.DecidedAt.UTC()
+		reviewCase.ClosedAt = &decidedAt
 		items = append(items, &domainreview.HumanQueueItem{
 			Case: reviewCase, Title: strings.TrimSpace(row.Title),
 			AuthorID: row.AuthorID, MediaURL: strings.TrimSpace(row.MediaURL),
@@ -132,6 +238,8 @@ func (r *Repository) GetHumanCaseDetail(ctx context.Context, caseID int64) (*dom
 			VideoID: video.ID, AuthorID: video.AuthorID, Title: strings.TrimSpace(video.Title),
 			Description: strings.TrimSpace(video.Description), MediaURL: strings.TrimSpace(video.MediaURL),
 			CoverURL: strings.TrimSpace(video.CoverURL), ReviewVersion: video.ReviewVersion,
+			PreviewAllowed: video.Status != domainvideo.StatusDeleted,
+			MediaAssetID:   positiveValue(video.MediaAssetID), CoverAssetID: positiveValue(video.CoverAssetID),
 		},
 	}
 	if err := r.loadHumanHistory(ctx, detail); err != nil {
@@ -211,6 +319,72 @@ func (r *Repository) ClaimHumanCase(
 		return nil, subjectErr
 	}
 	return claimed, err
+}
+
+func (r *Repository) ResumeHumanLease(
+	ctx context.Context,
+	caseID, reviewerID int64,
+	tokenHash string,
+	expectedVersion int,
+	duration time.Duration,
+) (*domainreview.ReviewCase, error) {
+	var resumed *domainreview.ReviewCase
+	var subjectErr error
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var model CaseModel
+		if err := lockCase(tx, caseID, &model); err != nil {
+			return err
+		}
+		var video infravideo.VideoModel
+		videoErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", model.VideoID).Take(&video).Error
+		if videoErr != nil && !errors.Is(videoErr, gorm.ErrRecordNotFound) {
+			return videoErr
+		}
+		now, err := databaseNow(tx)
+		if err != nil {
+			return err
+		}
+		if errors.Is(videoErr, gorm.ErrRecordNotFound) ||
+			video.Status != domainvideo.StatusPendingReview {
+			if err := retireHumanCase(
+				tx, &model, reviewerID, domainreview.CaseStatusCancelled,
+				domainreview.AssignmentEventCancelled, now,
+			); err != nil {
+				return err
+			}
+			subjectErr = domainreview.ErrReviewSubjectState
+			return nil
+		}
+		if video.ReviewVersion != model.ReviewVersion {
+			if err := retireHumanCase(
+				tx, &model, reviewerID, domainreview.CaseStatusSuperseded,
+				domainreview.AssignmentEventSuperseded, now,
+			); err != nil {
+				return err
+			}
+			subjectErr = domainreview.ErrReviewSubjectStale
+			return nil
+		}
+		reviewCase := restoreCase(model)
+		if err := reviewCase.Resume(reviewerID, tokenHash, expectedVersion, now, duration); err != nil {
+			return err
+		}
+		if err := updateCaseLease(tx, reviewCase); err != nil {
+			return err
+		}
+		if err := appendAssignment(
+			tx, reviewCase, reviewerID, domainreview.AssignmentEventResumed, reviewCase.LeaseExpiresAt, now,
+		); err != nil {
+			return err
+		}
+		resumed = reviewCase
+		return nil
+	})
+	if err == nil && subjectErr != nil {
+		return nil, subjectErr
+	}
+	return resumed, err
 }
 
 func (r *Repository) RenewHumanLease(

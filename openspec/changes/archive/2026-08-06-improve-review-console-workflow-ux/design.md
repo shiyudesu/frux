@@ -32,7 +32,7 @@ The change crosses review persistence/application/HTTP, media access control, an
 - `mine` returns pending-human cases actively leased to the current reviewer, ordered by `lease_expires_at ASC, priority DESC, id ASC`.
 - `recent` returns cases decided by the current reviewer, ordered by `decided_at DESC, id DESC`, within a bounded retention window and stable cursor.
 
-The cursor binds the scope and all filters. Reusing the current endpoint avoids a second queue representation while preserving backward compatibility through `scope=available`.
+The cursor binds the scope and all filters. A `mine` cursor additionally preserves the first page's database statement snapshot and an HMAC-protected bounded set of already returned case IDs. Later pages exclude assignments updated after that snapshot and all prior IDs, so renewal/resume cannot move an already-rendered row behind the cursor and duplicate it. Reusing the current endpoint avoids a second queue representation while preserving backward compatibility through `scope=available`.
 
 Alternative considered: merge available and owned tasks into one result. Rejected because rows would have different ordering keys and actions, making pagination and empty/error states ambiguous.
 
@@ -52,7 +52,7 @@ Alternative considered: make claim idempotently return the old token. Rejected b
 
 ### Keep-alive is automatic but visible
 
-While an owned task detail is active, the Web client renews before half the remaining lease duration elapses and displays a server-time-derived countdown labeled “审核占用至”. Renewal pauses when no token is held and stops after decision, release, expiry, permission failure, or version conflict.
+While an owned task detail is active, the Web client renews before half the remaining lease duration elapses and displays a countdown labeled “审核占用至”. Lease responses include server time so the browser derives an offset instead of trusting its local clock. Claim, resume, automatic/manual renewal, release, and decision share one in-memory mutation lock and cannot overlap. Renewal pauses when no token is held and stops after decision, release, expiry, permission failure, or version conflict.
 
 The page also exposes “延长审核时间” for an immediate manual retry and “放回待处理” for explicit release. Navigation does not silently release work because browser unload delivery is unreliable; the user chooses whether to retain or release it.
 
@@ -66,7 +66,7 @@ The response contains typed media and cover URLs plus `expires_at`, with a maxim
 - local storage returns an authenticated, expiring admin media URL;
 - neither path changes `video.media_url`, promotes protected objects, or grants anonymous access.
 
-The client refreshes preview access shortly before expiry and clears URLs on 401/403/conflict. The detail response remains bounded and does not embed long-lived media credentials.
+Preview responses include server time for expiry scheduling. The client generation-gates preview requests, refreshes access shortly before expiry, and invalidates current plus in-flight URLs on 401/403/conflict or detail reload. The detail response remains bounded and does not embed long-lived media credentials. Compatibility HTTP(S) URLs that cannot be re-signed or served through the local protected route are rejected rather than presented with a synthetic expiry.
 
 Alternative considered: let `review.read` call the creator's asset-access endpoint. Rejected because ownership semantics differ from review authorization and would couple admin access to creator APIs.
 

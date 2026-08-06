@@ -1,6 +1,8 @@
 package interfaceshttpreview
 
 import (
+	"strings"
+
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 )
 
@@ -35,9 +37,11 @@ func humanCaseDetailResponseFromDomain(detail *domainreview.HumanCaseDetail) hum
 		response.History.Signals = append(response.History.Signals, evidenceSignalResponse{
 			ID: signal.ID, ResultID: signal.ResultID, Label: signal.Label, Confidence: signal.Confidence,
 			EvidenceRefs: signal.EvidenceRefs, Provider: signal.Provider, ModelVersion: signal.ModelVersion,
-			PolicyVersion: signal.PolicyVersion, CreatedAt: signal.CreatedAt,
+			PolicyVersion: signal.PolicyVersion, SourceKind: evidenceSourceKind(signal.Provider),
+			CreatedAt: signal.CreatedAt,
 		})
 	}
+
 	for _, decision := range detail.History.AutomatedDecisions {
 		response.History.AutomatedDecisions = append(response.History.AutomatedDecisions, automatedDecisionResponse{
 			ID: decision.ID, ResultID: decision.ResultID, Outcome: decision.Outcome,
@@ -57,6 +61,13 @@ func humanCaseDetailResponseFromDomain(detail *domainreview.HumanCaseDetail) hum
 		)
 	}
 	return response
+}
+
+func evidenceSourceKind(provider string) string {
+	if strings.EqualFold(strings.TrimSpace(provider), "manual-seed") {
+		return "test_seed"
+	}
+	return "unverified"
 }
 
 func humanDecisionResponseFromDomain(decision *domainreview.HumanDecision) humanDecisionResponse {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,46 @@ func TestURLResolverPublicAndProtectedURLs(t *testing.T) {
 	}
 	if protectedURL != "https://signed.example.test/originals/1/source.mp4" || expiresAt.IsZero() {
 		t.Fatalf("unexpected protected URL %q %v", protectedURL, expiresAt)
+	}
+}
+
+func TestLocalProtectedURLSignerExpiryAndTampering(t *testing.T) {
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	signer, err := NewLocalProtectedURLSigner("/review-media", "preview-secret", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("new protected URL signer: %v", err)
+	}
+	signer.now = func() time.Time { return now }
+	signedURL, expiresAt, err := signer.Sign("processed/1/baseline.mp4", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("sign protected URL: %v", err)
+	}
+	parsed, err := url.Parse(signedURL)
+	if err != nil {
+		t.Fatalf("parse protected URL: %v", err)
+	}
+	if expiresAt != now.Add(5*time.Minute) ||
+		!signer.Verify(
+			"processed/1/baseline.mp4",
+			parsed.Query().Get("expires"),
+			parsed.Query().Get("signature"),
+		) {
+		t.Fatalf("signed URL did not verify: %s", signedURL)
+	}
+	if signer.Verify(
+		"processed/2/baseline.mp4",
+		parsed.Query().Get("expires"),
+		parsed.Query().Get("signature"),
+	) {
+		t.Fatal("tampered key verified")
+	}
+	signer.now = func() time.Time { return now.Add(5*time.Minute + time.Second) }
+	if signer.Verify(
+		"processed/1/baseline.mp4",
+		parsed.Query().Get("expires"),
+		parsed.Query().Get("signature"),
+	) {
+		t.Fatal("expired URL verified")
 	}
 }
 

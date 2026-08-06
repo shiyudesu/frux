@@ -1,82 +1,191 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchReviewQueue } from "../api/review";
+import { claimReviewCase, fetchReviewQueue } from "../api/review";
 import { ApiError, apiErrorMessage } from "../api/client";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
-import type { ReviewQueueItem } from "../types";
+import type { ReviewQueueItem, ReviewQueueScope } from "../types";
+import { rememberReviewLease } from "./reviewLeaseMemory";
 
 type QueueState = "loading" | "ready" | "empty" | "error" | "forbidden";
 
+interface QueueSnapshot {
+  items: ReviewQueueItem[];
+  state: QueueState;
+  message: string;
+  cursor: string;
+  hasMore: boolean;
+  loadingMore: boolean;
+  refreshing: boolean;
+}
+
+const scopes: Array<{ value: ReviewQueueScope; label: string }> = [
+  { value: "available", label: "待我处理" },
+  { value: "mine", label: "我正在审核" },
+  { value: "recent", label: "最近完成" }
+];
+
+function emptySnapshot(): QueueSnapshot {
+  return {
+    items: [], state: "loading", message: "", cursor: "", hasMore: false,
+    loadingMore: false, refreshing: false
+  };
+}
+
+function initialSnapshots(): Record<ReviewQueueScope, QueueSnapshot> {
+  return {
+    available: emptySnapshot(),
+    mine: emptySnapshot(),
+    recent: emptySnapshot()
+  };
+}
+
 export function ReviewQueuePage() {
-  const { token } = useSession();
+  const { token, adminPrincipal } = useSession();
   const navigate = useNavigate();
-  const [items, setItems] = useState<ReviewQueueItem[]>([]);
-  const [state, setState] = useState<QueueState>("loading");
-  const [message, setMessage] = useState("");
-  const [cursor, setCursor] = useState("");
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [scope, setScope] = useState<ReviewQueueScope>("available");
+  const [snapshots, setSnapshots] = useState(initialSnapshots);
   const [minPriority, setMinPriority] = useState(0);
   const [appliedMinPriority, setAppliedMinPriority] = useState(0);
-  const generation = useRef(0);
+  const [startingID, setStartingID] = useState(0);
+  const generations = useRef<Record<ReviewQueueScope, number>>({
+    available: 0, mine: 0, recent: 0
+  });
+  const canDecide = adminPrincipal?.permissions.includes("review.decide") || false;
+  const active = snapshots[scope];
 
-  const load = useCallback(async (nextCursor = "", append = false) => {
-    const requestGeneration = ++generation.current;
-    if (append) setLoadingMore(true);
-    else if (items.length > 0) setRefreshing(true);
-    else setState("loading");
-    setMessage("");
+  const updateSnapshot = useCallback((
+    target: ReviewQueueScope,
+    update: (current: QueueSnapshot) => QueueSnapshot
+  ) => {
+    setSnapshots((current) => ({ ...current, [target]: update(current[target]) }));
+  }, []);
+
+  const load = useCallback(async (
+    target: ReviewQueueScope,
+    nextCursor = "",
+    append = false
+  ) => {
+    const requestGeneration = ++generations.current[target];
+    updateSnapshot(target, (current) => ({
+      ...current,
+      state: append || current.items.length > 0 ? current.state : "loading",
+      message: "",
+      loadingMore: append,
+      refreshing: !append && current.items.length > 0
+    }));
     try {
       const page = await fetchReviewQueue(token, {
+        scope: target,
         minPriority: appliedMinPriority,
         maxPriority: 100,
         cursor: nextCursor,
         limit: 20
       });
-      if (generation.current !== requestGeneration) return;
-      setItems((current) => append ? [...current, ...page.items] : page.items);
-      setCursor(page.next_cursor);
-      setHasMore(page.has_more);
-      setState(append || page.items.length > 0 ? "ready" : "empty");
+      if (generations.current[target] !== requestGeneration) return;
+      updateSnapshot(target, (current) => {
+        const items = append ? [...current.items, ...page.items] : page.items;
+        return {
+          items,
+          cursor: page.next_cursor,
+          hasMore: page.has_more,
+          state: items.length > 0 ? "ready" : "empty",
+          message: "",
+          loadingMore: false,
+          refreshing: false
+        };
+      });
     } catch (error: unknown) {
-      if (generation.current !== requestGeneration) return;
-      if (error instanceof ApiError && error.status === 403) {
-        setItems([]);
-        setCursor("");
-        setHasMore(false);
-        setState("forbidden");
-      } else if (!append) {
-        setState("error");
-      }
-      setMessage(apiErrorMessage(error, "审核队列加载失败，请重试"));
-    } finally {
-      if (generation.current === requestGeneration) {
-        setLoadingMore(false);
-        setRefreshing(false);
-      }
+      if (generations.current[target] !== requestGeneration) return;
+      updateSnapshot(target, (current) => {
+        if (error instanceof ApiError && error.status === 403) {
+          return {
+            ...emptySnapshot(),
+            state: "forbidden",
+            message: apiErrorMessage(error, "服务端拒绝了审核任务访问")
+          };
+        }
+        return {
+          ...current,
+          state: append && current.items.length > 0 ? "ready" : "error",
+          message: apiErrorMessage(error, "审核任务加载失败，请重试"),
+          loadingMore: false,
+          refreshing: false
+        };
+      });
     }
-  }, [appliedMinPriority, token]);
+  }, [appliedMinPriority, token, updateSnapshot]);
 
   useEffect(() => {
-    void load();
+    void load(scope);
     return () => {
-      generation.current++;
+      generations.current[scope]++;
     };
-  }, [load]);
+  }, [load, scope]);
+
+  const startReview = async (item: ReviewQueueItem) => {
+    if (!canDecide) {
+      navigate(`/admin/reviews/${item.case.id}`);
+      return;
+    }
+    setStartingID(item.case.id);
+    updateSnapshot("available", (current) => ({ ...current, message: "" }));
+    try {
+      const lease = await claimReviewCase(token, item.case.id, item.case.version);
+      rememberReviewLease(item.case.id, lease);
+      updateSnapshot("available", (current) => {
+        const items = current.items.filter((candidate) => candidate.case.id !== item.case.id);
+        return { ...current, items, state: items.length > 0 ? "ready" : "empty" };
+      });
+      updateSnapshot("mine", (current) => ({
+        ...current,
+        items: [{ ...item, case: lease.case }, ...current.items.filter(
+          (candidate) => candidate.case.id !== item.case.id
+        )],
+        state: "ready"
+      }));
+      navigate(`/admin/reviews/${item.case.id}`);
+    } catch (error: unknown) {
+      updateSnapshot("available", (current) => ({
+        ...current,
+        message: apiErrorMessage(error, "开始审核失败，任务可能已被其他审核员处理")
+      }));
+    } finally {
+      setStartingID(0);
+    }
+  };
+
+  const emptyMessage = scope === "available"
+    ? "当前没有待处理的审核任务"
+    : scope === "mine"
+      ? "当前没有正在审核的任务"
+      : "最近没有已完成的审核任务";
 
   return (
     <section className="admin-page">
       <header className="admin-page-header">
         <div>
           <span className="admin-eyebrow">Human review</span>
-          <h1>审核队列</h1>
-          <p>按风险优先级和案件年龄稳定排序。</p>
+          <h1>审核任务</h1>
+          <p>按处理状态查看待处理、进行中和最近完成的内容。</p>
         </div>
-        <button type="button" disabled={refreshing} onClick={() => void load()}>
-          {refreshing ? "刷新中…" : "刷新"}
+        <button type="button" disabled={active.refreshing} onClick={() => void load(scope)}>
+          {active.refreshing ? "刷新中…" : "刷新"}
         </button>
       </header>
+      <div className="admin-review-tabs" role="tablist" aria-label="审核任务范围">
+        {scopes.map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            role="tab"
+            aria-selected={scope === item.value}
+            className={scope === item.value ? "active" : ""}
+            onClick={() => setScope(item.value)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
       <div className="admin-toolbar">
         <label>
           最低优先级
@@ -89,60 +198,78 @@ export function ReviewQueuePage() {
           />
         </label>
         <button type="button" onClick={() => {
-          if (minPriority === appliedMinPriority) void load();
+          if (minPriority === appliedMinPriority) void load(scope);
           else setAppliedMinPriority(minPriority);
         }}>应用筛选</button>
       </div>
-      {state === "loading" && <AdminState title="正在加载审核队列…" />}
-      {state === "error" && <AdminState title={message} action="重试" onAction={() => void load()} />}
-      {state === "forbidden" && <AdminState title="服务端拒绝了审核队列访问" />}
-      {state === "empty" && <AdminState title="当前没有可领取的审核案件" action="刷新" onAction={() => void load()} />}
-      {(state === "ready" || (state !== "forbidden" && items.length > 0)) && (
+      {active.state === "loading" && <AdminState title="正在加载审核任务…" />}
+      {active.state === "error" && (
+        <AdminState title={active.message} action="重试" onAction={() => void load(scope)} />
+      )}
+      {active.state === "forbidden" && <AdminState title="服务端拒绝了审核任务访问" />}
+      {active.state === "empty" && (
+        <AdminState title={emptyMessage} action="刷新" onAction={() => void load(scope)} />
+      )}
+      {(active.state === "ready" ||
+        (active.state !== "forbidden" && active.items.length > 0)) && (
         <>
           <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
                 <tr>
-                  <th>案件</th>
+                  <th>审核任务</th>
                   <th>视频</th>
                   <th>优先级</th>
-                  <th>创建时间</th>
+                  <th>{scope === "mine" ? "审核占用至" : scope === "recent" ? "完成时间" : "创建时间"}</th>
                   <th>状态</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
+                {active.items.map((item) => (
                   <tr key={item.case.id}>
-                    <td>
-                      <button
-                        className="admin-link"
-                        type="button"
-                        onClick={() => navigate(`/admin/reviews/${item.case.id}`)}
-                      >
-                        #{item.case.id}
-                      </button>
-                    </td>
+                    <td>#{item.case.id}</td>
                     <td>
                       <strong>{item.title || `视频 #${item.case.video_id}`}</strong>
                       <small>作者 #{item.author_id}</small>
                     </td>
                     <td><span className="admin-priority">{item.case.priority}</span></td>
-                    <td>{formatTime(item.case.created_at)}</td>
-                    <td>{item.case.status}</td>
+                    <td>{formatScopeTime(scope, item)}</td>
+                    <td>{reviewStatusLabel(item.case.status)}</td>
+                    <td>
+                      {scope === "available" ? (
+                        <button
+                          className="subtle"
+                          type="button"
+                          disabled={startingID === item.case.id}
+                          onClick={() => void startReview(item)}
+                        >
+                          {startingID === item.case.id ? "开始中…" : canDecide ? "开始审核" : "查看内容"}
+                        </button>
+                      ) : (
+                        <button
+                          className="subtle"
+                          type="button"
+                          onClick={() => navigate(`/admin/reviews/${item.case.id}`)}
+                        >
+                          {scope === "mine" ? "继续审核" : "查看记录"}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {message && <p className="admin-inline-error">{message}</p>}
-          {hasMore && (
+          {active.message && <p className="admin-inline-error">{active.message}</p>}
+          {active.hasMore && (
             <button
               className="admin-load-more"
               type="button"
-              disabled={loadingMore}
-              onClick={() => void load(cursor, true)}
+              disabled={active.loadingMore}
+              onClick={() => void load(scope, active.cursor, true)}
             >
-              {loadingMore ? "加载中…" : "加载更多"}
+              {active.loadingMore ? "加载中…" : "加载更多"}
             </button>
           )}
         </>
@@ -168,6 +295,22 @@ function AdminState({
   );
 }
 
-function formatTime(value: string): string {
-  return new Date(value).toLocaleString();
+function formatScopeTime(scope: ReviewQueueScope, item: ReviewQueueItem): string {
+  const value = scope === "mine"
+    ? item.case.lease_expires_at
+    : scope === "recent"
+      ? item.case.closed_at
+      : item.case.created_at;
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
+function reviewStatusLabel(status: string): string {
+  switch (status) {
+    case "pending_human": return "待人工审核";
+    case "approved": return "已通过";
+    case "rejected": return "未通过";
+    case "cancelled": return "已取消";
+    case "superseded": return "已更新";
+    default: return status;
+  }
 }

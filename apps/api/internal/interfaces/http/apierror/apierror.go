@@ -98,6 +98,7 @@ const (
 	CodeReviewSubjectVersionConflict      = "REVIEW_SUBJECT_VERSION_CONFLICT"
 	CodeReviewDecisionIdempotencyConflict = "REVIEW_DECISION_IDEMPOTENCY_CONFLICT"
 	CodeReviewCursorInvalid               = "REVIEW_CURSOR_INVALID"
+	CodeReviewPreviewUnavailable          = "REVIEW_PREVIEW_UNAVAILABLE"
 
 	CodeLibraryValidationFailed   = "LIBRARY_VALIDATION_FAILED"
 	CodeLibraryVideoNotFound      = "LIBRARY_VIDEO_NOT_FOUND"

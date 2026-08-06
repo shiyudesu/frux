@@ -9,9 +9,11 @@
 | 方法 | 路径 | 作用 | 鉴权 |
 | --- | --- | --- | --- |
 | PUT | `/internal/review/cases/{caseId}/machine-results/{resultId}` | 幂等写入机器证据并应用策略决定 | `X-Internal-Token` |
-| GET | `/api/admin/review/cases` | 按优先级和年龄读取可领取案件 | `review.read` |
+| GET | `/api/admin/review/cases` | 按 `available`、`mine`、`recent` 读取审核任务 | `review.read` |
 | GET | `/api/admin/review/cases/{caseId}` | 读取主体、机器证据和完整决定历史 | `review.read` |
+| GET | `/api/admin/review/cases/{caseId}/preview-access` | 获取最长 5 分钟的受保护视频/封面预览 | `review.read` |
 | POST | `/api/admin/review/cases/{caseId}/claim` | 按预期 case version 领取案件 | `review.decide` |
+| POST | `/api/admin/review/cases/{caseId}/lease/resume` | 当前持有人刷新后轮换 token 并恢复占用 | `review.decide` |
 | POST | `/api/admin/review/cases/{caseId}/lease/renew` | 当前持有人续租 | `review.decide` |
 | DELETE | `/api/admin/review/cases/{caseId}/lease` | 当前持有人释放租约 | `review.decide` |
 | POST | `/api/admin/review/cases/{caseId}/decision` | 幂等批准或拒绝 | `review.decide` |
@@ -25,7 +27,7 @@
 - `review_signal`：不可变保存 label、confidence、有界证据引用、provider、model 和 policy provenance。
 - `review_decision`：每个机器结果最多一个自动决定，保存 outcome 和 policy version。
 - `review_policy`：配置使用 JSONB，但读取必须恢复成经过 Domain 校验的 typed policy；版本唯一，数据库只允许一个 active 版本。
-- `review_assignment_history`：不可变保存 claimed、renewed、released、expired、decided、cancelled、superseded 事件。
+- `review_assignment_history`：不可变保存 claimed、resumed、renewed、released、expired、decided、cancelled、superseded 事件。
 - `review_human_decision`：每案最多一个人工决定，保存 reviewer、outcome、注册 reason、bounded note 和版本。
 - `review_human_decision_idempotency`：按 case、reviewer 和幂等键摘要绑定规范化 payload。
 - `review_notification_outbox`：与决定同事务写入的作者通知事实，由 Worker 租约投递到 message。
@@ -59,11 +61,12 @@
 
 ## 7. 人工复审规则
 
-- 可领取队列固定按 `priority DESC, created_at ASC, id ASC` 排序；HMAC 游标绑定 priority 过滤和完整排序元组。待人审优先级按触发人审的最高 signal confidence 确定为 `1..100`，默认 human 路由为 `1`，并与路由状态原子持久化。
+- `available` 固定按 `priority DESC, created_at ASC, id ASC` 排序；`mine` 按 `lease_expires_at ASC, priority DESC, id ASC` 返回当前审核员持有的有效任务；`recent` 按决定时间倒序返回当前审核员 30 天内完成的任务。HMAC 游标绑定 scope、priority 过滤和对应完整排序元组。
 - 迁移会把历史 `pending_human` 案件的零优先级回填为最低有效优先级 `1`，避免被后续新案件长期饿死。
 - 队列查询直接把 `lease_expires_at <= clock_timestamp()` 视为可领取，不依赖固定批量的过期租约回收；重新领取时仍原子记录 expired 和 claimed 历史。
 - 队列及其统计只包含视频仍为 pending-review 且 `video.review_version = case.review_version` 的案件。claim 同时锁定案件和视频；视频已终态时把案件置为 `cancelled`，版本已推进时置为 `superseded`，只写一次对应历史并返回既有冲突，不创建租约。
-- claim、renew、release 和 decision 都校验 case version。租约只保存 256-bit opaque token 的 SHA-256，所有有效期判断使用 PostgreSQL `clock_timestamp()`；过期领取会保留 expired 历史。
+- claim、resume、renew、release 和 decision 都校验 case version。resume 只允许当前持有人在未过期时调用，轮换 256-bit opaque token、立即作废旧 token，并记录 resumed 历史。数据库只保存 token 的 SHA-256，所有有效期判断使用 PostgreSQL `clock_timestamp()`。
+- 审核预览先校验当前 case/video review version 和非删除状态，再为生产对象签发最长 5 分钟的保护 URL；本地对象使用 HMAC 过期 URL。该链路不写回公共 `media_url`，不改变视频公开资格。
 - 决定仅允许 approve/reject。批准 reason 为 `content_compliant`、`false_positive`；拒绝 reason 为注册审核分类或 `other_policy_violation`，后者必须填写最多 1000 Unicode 字符的 note。
 - decision 要求当前 reviewer、未过期 token、匹配 case/review version 和必填 `Idempotency-Key`。同键同规范化 payload 返回原结果；异 payload 返回稳定 409。
 - 人工决定、案件关闭、视频生命周期、内容统计、成功审计事实、通知 Outbox 和幂等回执在同一事务提交；审计插入失败全部回滚。
@@ -75,10 +78,13 @@
 
 ## 8. Web 审核工作台
 
-- `/admin/reviews` 独立维护首屏加载、刷新、分页、空、错误和服务端 403 状态。
-- 队列收到服务端 403 时清空缓存案件、cursor 和 `has_more`，禁止在 forbidden 状态继续渲染旧表格。
-- `/admin/reviews/{reviewId}` 展示审核主体、机器 signal、自动决定、租约历史和人工决定不可变历史。
-- Reviewer 领取后只在内存保存 opaque lease token；领取、续租和决定始终携带最新 case version。
+- `/admin/reviews` 使用“待我处理 / 我正在审核 / 最近完成”三个独立状态 Tab，各自维护加载、刷新、分页、空、错误和服务端 403 状态。
+- 页面面向审核员统一使用“审核任务、视频内容、审核记录、开始审核、审核占用至、延长审核时间、放回待处理”；case/lease 只保留为后端领域和 API 兼容名。
+- 队列收到服务端 403 时清空当前 scope 的缓存任务、cursor 和 `has_more`，禁止在 forbidden 状态继续渲染旧表格。
+- `/admin/reviews/{reviewId}` 通过独立 preview-access API 播放保护视频，展示机器 signal、自动决定、任务占用事件和人工决定审核记录。
+- Reviewer 开始审核后只在内存保存 opaque lease token；刷新时由当前持有人调用 resume 轮换 token，不写入 localStorage/sessionStorage。
+- 页面在有效任务打开期间自动延长占用并显示服务端到期倒计时，同时提供手动延长和“放回待处理”。
+- `manual-seed` 明确显示为“测试证据”；其他未持久化来源分类的旧结果显示“来源未验证”，证据引用仅作为有界文本展示。
 - 同一 case/version 与决定 payload 在成功前复用同一 Web 幂等键，响应丢失后的重试不会创建第二个决定；payload 或 case 变化后生成新键。
-- 租约过期时保留已检查证据，禁用旧决定并提供返回队列；case/video 版本冲突提供显式刷新。
+- 审核占用过期时保留已检查证据，禁用旧决定并提供返回任务列表；case/video 版本冲突提供显式刷新。
 - 只有 `review.decide` 才渲染领取和决定控件，但每个写接口仍由服务端权限中间件强制授权。

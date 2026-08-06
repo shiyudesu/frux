@@ -150,6 +150,24 @@
   background: #171a23;
 }
 
+.admin-review-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.admin-review-tabs button {
+  color: #aeb2c0;
+  border: 1px solid #303440;
+  background: #1b1e27;
+}
+
+.admin-review-tabs button.active {
+  color: #11131a;
+  border-color: #25f4ee;
+  background: #25f4ee;
+}
+
 .admin-filter-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));

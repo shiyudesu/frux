@@ -47,5 +47,6 @@ var (
 	ErrDecisionIdentityConflict = errors.New("review decision idempotency conflict")
 	ErrInvalidQueueCursor       = errors.New("invalid review queue cursor")
 	ErrInvalidQueueFilter       = errors.New("invalid review queue filter")
+	ErrReviewPreviewUnavailable = errors.New("review preview is unavailable")
 	ErrReviewAuditUnavailable   = errors.New("review audit writer unavailable")
 )

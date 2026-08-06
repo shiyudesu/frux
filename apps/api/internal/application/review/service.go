@@ -24,6 +24,7 @@ type Service struct {
 	humanObserver     HumanObserver
 	humanCursorSecret []byte
 	humanTokenReader  io.Reader
+	humanPreview      HumanPreviewProvider
 }
 
 type Option func(*Service)

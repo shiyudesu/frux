@@ -3,16 +3,16 @@ package infrareview
 import "time"
 
 type CaseModel struct {
-	ID                 int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_review_case_human_queue,priority:4"`
+	ID                 int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_review_case_human_queue,priority:4;index:idx_review_case_reviewer_work,priority:5"`
 	VideoID            int64      `gorm:"column:video_id;not null;uniqueIndex:uk_review_case_video_version,priority:1;index:idx_review_case_status_created,priority:2"`
 	ReviewVersion      int        `gorm:"column:review_version;not null;uniqueIndex:uk_review_case_video_version,priority:2"`
-	Status             string     `gorm:"column:status;size:32;not null;index:idx_review_case_status_created,priority:1;index:idx_review_case_human_queue,priority:1"`
+	Status             string     `gorm:"column:status;size:32;not null;index:idx_review_case_status_created,priority:1;index:idx_review_case_human_queue,priority:1;index:idx_review_case_reviewer_work,priority:1"`
 	PolicyVersion      int        `gorm:"column:policy_version;not null"`
-	Priority           int        `gorm:"column:priority;not null;default:0;index:idx_review_case_human_queue,priority:2,sort:desc"`
+	Priority           int        `gorm:"column:priority;not null;default:0;index:idx_review_case_human_queue,priority:2,sort:desc;index:idx_review_case_reviewer_work,priority:4,sort:desc"`
 	Version            int        `gorm:"column:version;not null;default:1"`
-	AssignedReviewerID int64      `gorm:"column:assigned_reviewer_id;not null;default:0;index:idx_review_case_lease,priority:1"`
+	AssignedReviewerID int64      `gorm:"column:assigned_reviewer_id;not null;default:0;index:idx_review_case_lease,priority:1;index:idx_review_case_reviewer_work,priority:2"`
 	LeaseTokenHash     string     `gorm:"column:lease_token_hash;size:64;not null;default:''"`
-	LeaseExpiresAt     *time.Time `gorm:"column:lease_expires_at;index:idx_review_case_lease,priority:2"`
+	LeaseExpiresAt     *time.Time `gorm:"column:lease_expires_at;index:idx_review_case_lease,priority:2;index:idx_review_case_reviewer_work,priority:3"`
 	CreatedAt          time.Time  `gorm:"column:created_at;not null;autoCreateTime;index:idx_review_case_status_created,priority:3;index:idx_review_case_human_queue,priority:3"`
 	UpdatedAt          time.Time  `gorm:"column:updated_at;not null;autoUpdateTime"`
 	ClosedAt           *time.Time `gorm:"column:closed_at"`
@@ -89,13 +89,13 @@ func (AssignmentModel) TableName() string { return "review_assignment_history" }
 type HumanDecisionModel struct {
 	ID            int64     `gorm:"column:id;primaryKey;autoIncrement"`
 	CaseID        int64     `gorm:"column:case_id;not null;uniqueIndex:uk_review_human_decision_case;index:idx_review_human_decision_case_created,priority:1"`
-	ReviewerID    int64     `gorm:"column:reviewer_id;not null"`
+	ReviewerID    int64     `gorm:"column:reviewer_id;not null;index:idx_review_human_decision_reviewer_created,priority:1"`
 	Outcome       string    `gorm:"column:outcome;size:16;not null"`
 	ReasonCode    string    `gorm:"column:reason_code;size:64;not null"`
 	Note          string    `gorm:"column:note;size:4000;not null;default:''"`
 	ReviewVersion int       `gorm:"column:review_version;not null"`
 	CaseVersion   int       `gorm:"column:case_version;not null"`
-	CreatedAt     time.Time `gorm:"column:created_at;not null;index:idx_review_human_decision_case_created,priority:2"`
+	CreatedAt     time.Time `gorm:"column:created_at;not null;index:idx_review_human_decision_case_created,priority:2;index:idx_review_human_decision_reviewer_created,priority:2,sort:desc"`
 }
 
 func (HumanDecisionModel) TableName() string { return "review_human_decision" }

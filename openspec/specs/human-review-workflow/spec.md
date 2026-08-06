@@ -7,34 +7,54 @@ Define stable human-review work selection, expiring reviewer leases, atomic deci
 ## Requirements
 
 ### Requirement: Stable Human Review Queue
-Authorized reviewers SHALL be able to list pending human-review cases ordered by `priority DESC, created_at ASC, id ASC` using a cursor bound to the active filters.
+Authorized reviewers SHALL be able to list pending human-review cases in `available`, `mine`, and `recent` scopes using stable cursors bound to the selected scope and active filters. Available work SHALL be ordered by `priority DESC, created_at ASC, id ASC`; current-reviewer work SHALL use a deterministic lease-expiry order; recently completed work SHALL use a deterministic decision-time order.
 
-#### Scenario: Reviewer requests the next queue page
-- **WHEN** a reviewer supplies a valid cursor with unchanged filters
-- **THEN** Frux returns the next stable queue slice without duplicates
+#### Scenario: Reviewer requests the next available page
+- **WHEN** a reviewer supplies a valid available-scope cursor with unchanged filters
+- **THEN** Frux returns the next stable claimable queue slice without duplicates
+
+#### Scenario: Reviewer requests current work
+- **WHEN** an authorized reviewer selects the mine scope
+- **THEN** Frux returns pending-human cases with an unexpired lease currently held by that reviewer and does not return another reviewer's work
+
+#### Scenario: Reviewer requests recently completed work
+- **WHEN** an authorized reviewer selects the recent scope
+- **THEN** Frux returns a bounded stable page of cases decided by that reviewer in reverse decision order
+
+#### Scenario: Cursor scope changes
+- **WHEN** a cursor created for one queue scope is submitted for another scope
+- **THEN** Frux rejects the cursor without mixing result sets
 
 #### Scenario: Policy routes cases to human review
 - **WHEN** machine evidence produces a human outcome
 - **THEN** Frux atomically persists a deterministic priority from `1` through `100` and higher-confidence human signals sort first
 
 #### Scenario: More than one recovery batch of leases has expired
-- **WHEN** a reviewer requests the queue
+- **WHEN** a reviewer requests the available scope
 - **THEN** all expired leases are considered available by database time without depending on a fixed-size recovery pass
 
 #### Scenario: Pending case subject is no longer reviewable
 - **WHEN** a video's lifecycle is terminal or its review version no longer matches a pending-human case
-- **THEN** Frux excludes that case from queue pages and queue metrics
+- **THEN** Frux excludes that case from active queue pages and queue metrics
 
 #### Scenario: Caller lacks review-read permission
-- **WHEN** an authenticated principal without `review.read` requests the queue
+- **WHEN** an authenticated principal without `review.read` requests any queue scope
 - **THEN** Frux returns HTTP 403 and no case evidence
 
 ### Requirement: Expiring Review Lease
-A human-review case SHALL be claimed, renewed, released, or decided only with the expected case version, and SHALL be decided only by its current authorized lease holder using an unexpired opaque lease token. Lease validity SHALL be evaluated using database/server time rather than reviewer-supplied time.
+A human-review case SHALL be claimed, resumed, renewed, released, or decided only with the expected case version, and SHALL be decided only by its current authorized lease holder using an unexpired opaque lease token. Lease validity SHALL be evaluated using database/server time rather than reviewer-supplied time, and resume SHALL rotate rather than recover the prior plaintext token.
 
 #### Scenario: Reviewer claims an available case
 - **WHEN** an authorized reviewer claims an unleased pending case
 - **THEN** Frux records the reviewer, lease expiry, token hash, and incremented case version
+
+#### Scenario: Current holder resumes after losing the token
+- **WHEN** the current reviewer supplies the expected case and review versions for an unexpired assignment they own
+- **THEN** Frux invalidates the prior token, returns a new opaque token once, extends the bounded lease, increments case version, and records immutable resume history
+
+#### Scenario: Another reviewer attempts resume
+- **WHEN** a reviewer attempts to resume a case actively held by another reviewer
+- **THEN** Frux returns a stable conflict and does not rotate or disclose the lease token
 
 #### Scenario: Current holder renews a lease
 - **WHEN** the current reviewer supplies the unexpired lease token and expected case version
@@ -45,7 +65,7 @@ A human-review case SHALL be claimed, renewed, released, or decided only with th
 - **THEN** Frux clears the lease, increments the case version, records immutable release history, and makes the case available
 
 #### Scenario: Lease mutation uses a stale case version
-- **WHEN** a reviewer claims, renews, releases, or decides with a case version that is no longer current
+- **WHEN** a reviewer claims, resumes, renews, releases, or decides with a case version that is no longer current
 - **THEN** Frux returns a stable version conflict and leaves the case unchanged
 
 #### Scenario: Another reviewer decides a leased case
@@ -58,7 +78,7 @@ A human-review case SHALL be claimed, renewed, released, or decided only with th
 
 #### Scenario: Reviewer clocks differ
 - **WHEN** a reviewer clock disagrees with database/server time
-- **THEN** Frux evaluates claim, renewal, release, and decision lease validity only from database/server time
+- **THEN** Frux evaluates claim, resume, renewal, release, and decision lease validity only from database/server time
 
 #### Scenario: Reviewer claims a stale subject
 - **WHEN** a claim locks a pending-human case whose video is terminal or has a newer review version
@@ -87,8 +107,16 @@ A valid human decision SHALL commit the immutable decision, final case state, ma
 - **THEN** the decision is rejected as a conflict and the newer subject is not published
 
 ### Requirement: Immutable Review History
-Authorized review readers SHALL receive machine evidence, automated decisions, assignments, lease events, and human decisions as ordered immutable history.
+Authorized review readers SHALL receive machine evidence, automated decisions, assignments, claim/resume/renew/release events, and human decisions as ordered immutable history, with bounded provider, model, policy, label, confidence, and evidence-reference provenance suitable for truthful presentation.
 
 #### Scenario: Reviewer opens case detail
 - **WHEN** an authorized reviewer requests a case
 - **THEN** Frux returns the bounded current subject plus prior evidence and decisions without exposing credentials or mutable raw provider payloads
+
+#### Scenario: Seeded machine evidence is displayed
+- **WHEN** a machine result uses the reserved manual seed provider
+- **THEN** the review detail identifies it as test evidence rather than implying that a production model generated it
+
+#### Scenario: Arbitrary evidence reference is returned
+- **WHEN** a provider evidence reference is not a recognized internal review reference
+- **THEN** Frux preserves it as bounded text and the Web client does not turn it into an automatically navigable external link

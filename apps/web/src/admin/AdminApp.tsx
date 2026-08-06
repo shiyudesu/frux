@@ -16,7 +16,7 @@ interface AdminDestination {
 }
 
 const destinations: AdminDestination[] = [
-  { label: "审核队列", route: "/admin/reviews", permission: "review.read" },
+  { label: "审核任务", route: "/admin/reviews", permission: "review.read" },
   { label: "视频运营", route: "/admin/videos", permission: "content.enforce" }
 ];
 

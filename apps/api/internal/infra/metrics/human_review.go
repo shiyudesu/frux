@@ -69,7 +69,7 @@ func ObserveHumanReviewNotification(result string) {
 
 func boundedHumanReviewOperation(value string) string {
 	switch strings.TrimSpace(value) {
-	case "queue", "detail", "claim", "renew", "release", "lease_expiry", "decision":
+	case "queue", "detail", "preview", "claim", "resume", "renew", "release", "lease_expiry", "decision":
 		return strings.TrimSpace(value)
 	default:
 		return "unknown"
