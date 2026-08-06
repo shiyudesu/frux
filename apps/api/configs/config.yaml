@@ -65,3 +65,7 @@ playback:
     cleanup_interval: "1h"
     cleanup_batch_size: 1000
     max_batches_per_minute: 60
+
+governance:
+  poll_interval: "5s"
+  poll_timeout: "2s"

@@ -2,14 +2,20 @@ package infraconfig
 
 // Config 是应用启动配置的根结构，对应 configs/config.yaml。
 type Config struct {
-	Port     int            `yaml:"port"`
-	JWT      JWTConfig      `yaml:"jwt"`
-	Internal InternalConfig `yaml:"internal"`
-	Database DatabaseConfig `yaml:"database"`
-	Redis    RedisConfig    `yaml:"redis"`
-	RabbitMQ RabbitMQConfig `yaml:"rabbitmq"`
-	Media    MediaConfig    `yaml:"media"`
-	Playback PlaybackConfig `yaml:"playback"`
+	Port       int              `yaml:"port"`
+	JWT        JWTConfig        `yaml:"jwt"`
+	Internal   InternalConfig   `yaml:"internal"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Redis      RedisConfig      `yaml:"redis"`
+	RabbitMQ   RabbitMQConfig   `yaml:"rabbitmq"`
+	Media      MediaConfig      `yaml:"media"`
+	Playback   PlaybackConfig   `yaml:"playback"`
+	Governance GovernanceConfig `yaml:"governance"`
+}
+
+type GovernanceConfig struct {
+	PollInterval string `yaml:"poll_interval"`
+	PollTimeout  string `yaml:"poll_timeout"`
 }
 
 type MediaConfig struct {

@@ -7,6 +7,7 @@ import (
 	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
+	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
@@ -20,16 +21,19 @@ import (
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	inframq "github.com/shiyudesu/frux/internal/infra/mq"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
+	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
 	infralibrary "github.com/shiyudesu/frux/internal/infra/persistence/library"
 	infrapersistencemedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
@@ -44,6 +48,7 @@ import (
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
+	interfaceshttpgovernance "github.com/shiyudesu/frux/internal/interfaces/http/governance"
 	interfaceshttpinteraction "github.com/shiyudesu/frux/internal/interfaces/http/interaction"
 	interfaceshttplibrary "github.com/shiyudesu/frux/internal/interfaces/http/library"
 	interfaceshttpmessage "github.com/shiyudesu/frux/internal/interfaces/http/message"
@@ -103,6 +108,16 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		applicationadminaudit.WithAttemptObserver(adminAuditMetrics),
 	)
 	adminHandler := interfaceshttpadmin.New(interfaceshttpadmin.WithAuditQueryService(adminAuditService))
+	governanceRegistry := domaingovernance.DefaultRegistry()
+	governanceRepo := infragovernance.New(gormDB, governanceRegistry, adminAuditRepo)
+	governanceService := applicationgovernance.New(governanceRegistry, governanceRepo)
+	governanceHandler := interfaceshttpgovernance.New(governanceService)
+	governanceRuntime := applicationgovernance.NewRuntime(
+		governanceRegistry,
+		domaingovernance.ProcessAPI,
+		governanceRepo,
+		applicationgovernance.WithRuntimeObserver(inframetrics.GovernanceObserver{}),
+	)
 	mediaRepo := infrapersistencemedia.New(gormDB)
 	mediaStore, err := inframediastore.NewObjectStore(context.Background(), cfg.Media)
 	if err != nil {
@@ -167,6 +182,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		playbackRepo,
 		applicationplayback.WithTelemetryRepository(playbackRepo),
 		applicationplayback.WithTelemetryObserver(playbackMetricsAdapter{}),
+		applicationplayback.WithControlReader(governanceRuntime),
 	)
 	playbackHandler := interfaceshttpplayback.New(
 		playbackService,
@@ -452,6 +468,40 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		),
 		videoAdminHandler.Restore,
 	)
+	governancePermission := func(
+		targetID string,
+	) app.HandlerFunc {
+		return interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionGovernanceExecute,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionGovernanceExecute,
+				domainadminaudit.TargetGovernanceControl,
+				targetID,
+			),
+		)
+	}
+	admin.GET(
+		"/governance/controls",
+		governancePermission("controls"),
+		governanceHandler.List,
+	)
+	admin.GET(
+		"/governance/controls/:key/revisions",
+		governancePermission("control"),
+		governanceHandler.ListRevisions,
+	)
+	admin.PATCH(
+		"/governance/controls/:key",
+		governancePermission("control"),
+		governanceHandler.Update,
+	)
+	admin.POST(
+		"/governance/controls/:key/rollback",
+		governancePermission("control"),
+		governanceHandler.Rollback,
+	)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。
 	videos := api.Group("/videos")
@@ -513,6 +563,22 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	h.HEAD("/uploads", infrahttphertz.RedirectTo("/uploads/"))
 
 	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
+	governanceContext, stopGovernance := context.WithCancel(context.Background())
+	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
+	if err != nil {
+		return err
+	}
+	governancePollTimeout, err := time.ParseDuration(cfg.Governance.PollTimeout)
+	if err != nil {
+		return err
+	}
+	go func() {
+		if err := governanceRuntime.Run(
+			governanceContext, governancePollInterval, governancePollTimeout,
+		); err != nil {
+			log.Printf("governance snapshot poller stopped: %v", err)
+		}
+	}()
 	go telemetryCleaner.Run(
 		telemetryCleanerContext,
 		playbackMetricsAdapter{}.RecordTelemetryCleanup,
@@ -523,6 +589,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	)
 	h.Engine.OnShutdown = append(h.Engine.OnShutdown, func(context.Context) {
 		stopTelemetryCleaner()
+		stopGovernance()
 	})
 
 	return nil

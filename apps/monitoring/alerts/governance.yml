@@ -1,0 +1,20 @@
+groups:
+  - name: frux-governance
+    rules:
+      - alert: FruxGovernanceSnapshotStale
+        expr: frux_governance_snapshot_age_seconds > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Frux degradation-control snapshot is stale"
+          description: "The {{ $labels.process }} process has used the {{ $labels.key }} snapshot for more than two minutes and may be evaluating the failure default."
+
+      - alert: FruxGovernancePollingFailures
+        expr: increase(frux_governance_poll_total{result="failure"}[5m]) >= 3
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Frux degradation-control polling repeatedly failed"
+          description: "The {{ $labels.process }} process recorded at least three control-plane poll failures in five minutes."

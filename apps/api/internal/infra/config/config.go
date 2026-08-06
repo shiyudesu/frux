@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	"github.com/goccy/go-yaml"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
 var ErrEmptyConfigPath = errors.New("config file path is empty")
@@ -15,6 +15,7 @@ var ErrReadConfigFailed = errors.New("read config file failed")
 var ErrUnmarshalConfigFailed = errors.New("unmarshal config failed")
 var ErrInvalidMediaConfig = errors.New("invalid media config")
 var ErrInvalidPlaybackConfig = errors.New("invalid playback config")
+var ErrInvalidGovernanceConfig = errors.New("invalid governance config")
 var ErrInvalidInternalToken = errors.New("invalid internal token")
 
 const minInternalTokenLength = 32
@@ -43,8 +44,28 @@ func LoadConfig(path string) (*Config, error) {
 	if err := normalizeAndValidatePlaybackConfig(&cfg.Playback); err != nil {
 		return nil, err
 	}
+	if err := normalizeAndValidateGovernanceConfig(&cfg.Governance); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
+}
+
+func normalizeAndValidateGovernanceConfig(cfg *GovernanceConfig) error {
+	if cfg == nil {
+		return ErrInvalidGovernanceConfig
+	}
+	cfg.PollInterval = defaultDuration(cfg.PollInterval, "5s")
+	cfg.PollTimeout = defaultDuration(cfg.PollTimeout, "2s")
+	interval, err := time.ParseDuration(cfg.PollInterval)
+	if err != nil || interval < time.Second || interval > time.Minute {
+		return ErrInvalidGovernanceConfig
+	}
+	timeout, err := time.ParseDuration(cfg.PollTimeout)
+	if err != nil || timeout < 100*time.Millisecond || timeout > interval {
+		return ErrInvalidGovernanceConfig
+	}
+	return nil
 }
 
 // ValidateAPIConfig validates settings that protect API routes. Internal

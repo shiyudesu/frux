@@ -60,6 +60,20 @@ func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidateGovernanceConfig(t *testing.T) {
+	var cfg GovernanceConfig
+	if err := normalizeAndValidateGovernanceConfig(&cfg); err != nil {
+		t.Fatalf("normalize governance config: %v", err)
+	}
+	if cfg.PollInterval != "5s" || cfg.PollTimeout != "2s" {
+		t.Fatalf("unexpected governance defaults: %+v", cfg)
+	}
+	cfg.PollTimeout = "6s"
+	if err := normalizeAndValidateGovernanceConfig(&cfg); !errors.Is(err, ErrInvalidGovernanceConfig) {
+		t.Fatalf("expected invalid governance timeout, got %v", err)
+	}
+}
+
 func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
 	validToken := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
 	tests := []struct {

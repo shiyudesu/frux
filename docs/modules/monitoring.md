@@ -180,3 +180,19 @@ queue oldest age 持续上升时先检查可领取量、lease expiry recovery �
 conflict 上升通常表示并发领取或陈旧页面；decision conflict 按服务日志区分 lease ownership、
 expiry、case version、review version 和 idempotency payload。notification retry 上升不影响已
 提交决定，检查 message 数据库和 Worker；terminal 表示违反封闭消息契约，需要修复生产代码。
+
+## 12. Runtime degradation control observability
+
+运行时降级控制暴露 active revision、poll result、snapshot age、invalid snapshot 和 evaluation
+fallback 指标。标签只允许 `api/worker`、代码注册 key 和封闭 result/reason；不得使用 actor、
+request、任意动态 key 或 revision 作为标签。revision 是 gauge value。
+
+告警规则位于 `apps/monitoring/alerts/governance.yml`：
+
+1. `FruxGovernanceSnapshotStale`：snapshot age 持续超过 120 秒；
+2. `FruxGovernancePollingFailures`：5 分钟内至少 3 次 poll failure 且持续 2 分钟。
+
+告警时比较 PostgreSQL active pointer 与
+`frux_governance_active_revision{process,key}`，再检查数据库连接、poll timeout 和非法持久化
+值。snapshot 超过 key 的 max staleness 后会使用 failure default，因此先确认可选能力已安全
+关闭，再恢复控制面；不要直接修改历史 revision。

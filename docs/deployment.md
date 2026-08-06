@@ -29,6 +29,10 @@ Secret 注入 `FRUX_INTERNAL_TOKEN`；配置中的 `internal.enabled=true` 会�
 
 API 凭据需要 Put/Head/Get，Worker 另需 List/Delete；浏览器只获得单对象、短时 PUT 签名。生产 bucket 不应整体公开，CDN origin 只读取内容寻址公共前缀。
 
+运行时降级控制由 API 与 Worker 使用 `governance.poll_interval` 和
+`governance.poll_timeout` 轮询 PostgreSQL；默认分别为 5 秒和 2 秒。timeout 必须不大于
+interval。发布时应同时确认两个进程的 `/metrics` 中 active revision 和 snapshot age 正常。
+
 ## 灰度与回滚
 
 1. 先部署新增表、配置和本地适配器，旧视频自动标记 `legacy_ready`，响应字段保持兼容。

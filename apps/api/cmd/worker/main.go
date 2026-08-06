@@ -10,12 +10,14 @@ import (
 
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
@@ -27,6 +29,7 @@ import (
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
+	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
 	infrapersistencemedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
 	inframessage "github.com/shiyudesu/frux/internal/infra/persistence/message"
@@ -93,6 +96,29 @@ func main() {
 func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB, rabbitMQ *inframq.RabbitMQ) error {
 	redisClient := infracache.NewRedisClient(cfg.Redis)
 	feedCache := infracache.NewFeedCache(redisClient)
+	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
+	if err != nil {
+		return err
+	}
+	governancePollTimeout, err := time.ParseDuration(cfg.Governance.PollTimeout)
+	if err != nil {
+		return err
+	}
+	governanceRegistry := domaingovernance.DefaultRegistry()
+	governanceRepo := infragovernance.New(gormDB, governanceRegistry, nil)
+	governanceRuntime := applicationgovernance.NewRuntime(
+		governanceRegistry,
+		domaingovernance.ProcessWorker,
+		governanceRepo,
+		applicationgovernance.WithRuntimeObserver(inframetrics.GovernanceObserver{}),
+	)
+	go func() {
+		if err := governanceRuntime.Run(
+			ctx, governancePollInterval, governancePollTimeout,
+		); err != nil {
+			log.Printf("governance snapshot poller stopped: %v", err)
+		}
+	}()
 
 	recommendationRepo := infrarecommendation.New(gormDB)
 	interactionRepo := infrainteraction.New(gormDB)
@@ -222,7 +248,10 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	applicationmedia.NewReconciliationWorker(reconciler).Start(ctx)
 	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))
 	feedPreheater := applicationvideo.NewFeedPreheater(feedRepo, feedCache)
-	fanoutWorker := applicationvideo.NewFanoutWorker(feedRepo, rabbitMQ, feedCache, feedPreheater)
+	fanoutWorker := applicationvideo.NewFanoutWorker(
+		feedRepo, rabbitMQ, feedCache, feedPreheater,
+		applicationvideo.WithFanoutControlReader(governanceRuntime),
+	)
 	if err := fanoutWorker.Start(ctx); err != nil {
 		return err
 	}

@@ -186,6 +186,13 @@ GORM Repository 规则：
 - 在线实例可能并发写聚合时，reconciliation 不得绝对覆盖统计行；应基于同一语句快照计算“事实值 - 快照聚合值”差量，再叠加到获得行锁后的当前值。
 - 由业务模块拥有的 Transactional Outbox 与业务事实同事务提交。通用 Worker 模式为：有界批次、`FOR UPDATE SKIP LOCKED`、稳定 lease owner、租约超时、指数退避、terminal 分类、稳定 event ID 下游去重和受监督 shutdown；不得让 message 或 RabbitMQ 成为互动 HTTP 事务的提交前依赖。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。
+- 运行时降级控制使用 `domain/governance` 封闭注册表；定义必须包含 typed normal/failure
+  default、process scope 和 max staleness。持久化使用 immutable revision +
+  active pointer，更新/回滚在按 key PostgreSQL advisory lock 内校验 expected revision，并与
+  `governance.execute` audit 同事务提交。API/Worker 只能由后台 poller 读取 Repository，验证
+  完整 snapshot 后用原子指针替换；Application 热路径只能依赖 `Bool(key)` 等窄 reader，不得
+  查询数据库、Redis 或治理 HTTP。新 control 必须同时增加 registry、低基数 metric label、
+  normal/missing/expired/stale/process-scope 测试和模块文档。
 
 ## 8. Interfaces 规则
 
@@ -496,3 +503,6 @@ openspec validate --all --strict
   Admin Shell 必须 route-level lazy load；权限集合只控制展示，API 403、租约过期和版本冲突必须
   作为独立可恢复状态，不能显示乐观成功。审核决定在同一 case 与规范化 payload 未变化且尚未
   成功时必须复用同一幂等键；队列收到 403 必须清除缓存行；视频查询默认结束时间必须包含当前分钟。
+- 治理 control mutation 要求 `governance.execute`、非空 reason 和 expected revision；rollback
+  选择较早且未过期 revision，但必须创建新的 immutable revision。控制面失败不得阻塞请求：
+  last-known-good 在 max staleness 内继续使用，之后使用代码注册 failure default。

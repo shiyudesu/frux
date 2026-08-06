@@ -20,7 +20,7 @@
 | 治理 | 后台操作审计 | [admin-audit.md](admin-audit.md) | 已实现 |
 | 体验 | 消息 | [message.md](message.md) | 已实现 |
 | 体验 | 播放优化 | [playback.md](playback.md) | 已实现 |
-| 稳定性 | 系统治理 | [governance.md](governance.md) | 规划中 |
+| 稳定性 | 系统治理 | [governance.md](governance.md) | 部分实现（运行时降级控制已实现） |
 | 稳定性 | 监控告警 | [monitoring.md](monitoring.md) | 规划中 |
 
 ## 模块文档模板

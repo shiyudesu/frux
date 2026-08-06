@@ -2,70 +2,79 @@
 
 ## 1. 模块职责
 
-系统治理模块负责限流、降级开关和失败任务重试，保障高峰期服务可用。
+系统治理模块提供代码注册、版本化、可审计的运行时降级控制。控制面保存在 PostgreSQL；
+API 与 Worker 只在后台轮询并原子替换本地快照，业务热路径不访问 PostgreSQL、Redis 或治理
+HTTP API。
 
-## 2. 接口设计
+限流和死信恢复仍属于后续能力，本模块当前只实现降级控制。
 
-| 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
-| --- | --- | --- | --- | --- |
-| POST | `/internal/rate-limit-decisions` | 判断当前请求是否放行 | 服务鉴权 | 支持 |
-| GET | `/internal/governance/degrade-switches` | 获取降级开关状态 | 服务鉴权 | 无 |
-| PATCH | `/api/admin/governance/degrade-switches/{key}` | 更新降级开关 | Bearer JWT(管理员) | 支持 |
-| POST | `/internal/dead-letter-retries` | 重试死信任务 | 服务鉴权 | 支持 |
+## 2. 注册控制
 
-## 3. 数据表设计
+控制键只能在 `domain/governance` 注册。每个定义固定声明：
 
-### 3.1 `governance_degrade_switch`
+- owner、说明和 value type；
+- normal default 与 control-plane failure default；
+- 允许读取的 `api` / `worker` 进程；
+- last-known-good 最大陈旧时间。
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| `id` | BIGINT | PK | 记录 ID |
-| `switch_key` | VARCHAR(64) | UNIQUE, NOT NULL | 开关键 |
-| `enabled` | TINYINT | NOT NULL, DEFAULT 0 | 0 关 / 1 开 |
-| `updated_by` | BIGINT | NOT NULL | 更新人 |
-| `updated_at` | DATETIME | NOT NULL | 更新时间 |
+当前注册 `feed.preload.enabled`，类型为 boolean，API 与 Worker 都可用；normal default 为
+`true`，failure default 为 `false`，最大陈旧时间为 2 分钟。它只关闭兼容
+`/api/preload-videos` 返回和 Worker Feed cache preheat，不改变发布 fanout、Feed 正确性或耐久
+业务事实。
 
-索引建议：`uk_switch_key(switch_key)`。
+未知键不能经 API 创建；进程读取不支持的键时使用该键的 failure default 并记录有界指标。
 
-### 3.2 `governance_dead_letter`
+## 3. 数据与并发
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| `id` | BIGINT | PK | 任务 ID |
-| `task_type` | VARCHAR(64) | NOT NULL | 任务类型 |
-| `payload` | JSON | NOT NULL | 任务参数 |
-| `retry_count` | INT | NOT NULL, DEFAULT 0 | 重试次数 |
-| `status` | TINYINT | NOT NULL, DEFAULT 1 | 1 待重试 / 2 已完成 / 3 放弃 |
-| `last_error` | VARCHAR(512) | NULLABLE | 最后错误 |
-| `updated_at` | DATETIME | NOT NULL | 更新时间 |
-| `created_at` | DATETIME | NOT NULL | 创建时间 |
+`governance_control_revision` 保存不可变 revision：`control_key + revision`、typed value、
+reason、可选 expiry、actor、创建时间和可选 rollback source。
 
-索引建议：`idx_status_updated(status, updated_at)`。
+`governance_control_active` 每个键只保存一个 active revision pointer。更新和回滚都要求
+`expected_revision`；事务先取得按 key 的 PostgreSQL advisory lock，再校验 active pointer，
+创建 `expected + 1` revision、切换 pointer，并追加 `governance.execute` 成功审计。任一步失败
+都整体回滚。回滚复制较早且尚未过期 revision 的 typed value，生成新 revision，不修改历史。
 
-## 4. 业务规则
+## 4. 管理接口
 
-| 规则 | 说明 |
-| --- | --- |
-| 限流按资源维度决策 | 可按用户、IP、接口或场景组合判断 |
-| 降级开关全局可查 | 内部服务读取开关后决定是否关闭非核心能力 |
-| 管理员更新开关 | 更新动作写后台审计日志 |
-| 死信重试有次数上限 | 超过上限后任务进入放弃状态 |
-| 重试操作保持幂等 | 同一死信任务重复重试不会重复产生业务事实 |
+全部接口要求当前账号具有 `governance.execute`：
 
-## 5. 测试建议
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/api/admin/governance/controls` | 查询注册定义和 active revision |
+| GET | `/api/admin/governance/controls/{key}/revisions` | 查询不可变 revision 历史，默认 20、最大 100 |
+| PATCH | `/api/admin/governance/controls/{key}` | 使用 expected revision 更新 typed value、reason 和可选 expiry |
+| POST | `/api/admin/governance/controls/{key}/rollback` | 使用 expected revision 选择较早有效 revision |
 
-| 场景 | 期望 |
-| --- | --- |
-| 请求限流决策 | 返回 allow 和原因 |
-| 更新降级开关 | 开关状态变化 |
-| 查询降级开关 | 返回当前开关集合 |
-| 重试死信任务 | retry_count 增加，成功后状态完成 |
-| 超过重试上限 | 状态变为放弃 |
+并发冲突返回 409；未知 key、非法 reason/expiry/revision 返回 400；目标 revision 缺失返回
+404；控制面或原子审计提交失败返回 503。
 
-## 6. 前端接入点
+## 5. 本地快照与失败语义
 
-| 页面 | 接入能力 |
-| --- | --- |
-| 治理控制台 | 查看和更新降级开关 |
-| 死信任务页 | 查看失败任务和触发重试 |
-| 监控看板 | 展示限流和降级状态 |
+API 和 Worker 默认每 5 秒轮询，单次最多 2 秒。有效 snapshot 完整验证后通过
+`atomic.Pointer` 一次替换；轮询失败或非法 snapshot 不覆盖 last-known-good。
+
+求值顺序：
+
+1. 未成功加载、进程不支持或 snapshot 超过 key 的最大陈旧时间：failure default；
+2. key 没有 active revision：normal default；
+3. active revision 已过期：normal default；
+4. 其余情况：active typed value。
+
+进程关闭会取消 poller；热路径只进行注册表查询和原子内存读取。
+
+## 6. 观测与处置
+
+暴露：
+
+- `frux_governance_active_revision{process,key}`
+- `frux_governance_poll_total{process,result}`
+- `frux_governance_snapshot_age_seconds{process,key}`
+- `frux_governance_invalid_controls_total{process,reason}`
+- `frux_governance_evaluation_fallback_total{process,key,reason}`
+
+标签仅来自封闭 process、key、result 和 reason 集合。告警位于
+`apps/monitoring/alerts/governance.yml`，覆盖 snapshot 超过 2 分钟和 5 分钟内重复 poll
+failure。
+
+处置时先确认 API/Worker applied revision 与 active pointer 一致，再检查 PostgreSQL 连接和
+poll failure。紧急回滚仍通过 Admin API 生成新 revision；不要更新或删除历史行。

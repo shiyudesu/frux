@@ -41,6 +41,12 @@ const (
 	CodeAdminVideoStateConflict       = "ADMIN_VIDEO_STATE_CONFLICT"
 	CodeAdminVideoUnavailable         = "ADMIN_VIDEO_UNAVAILABLE"
 
+	CodeGovernanceValidationFailed = "GOVERNANCE_VALIDATION_FAILED"
+	CodeGovernanceControlUnknown   = "GOVERNANCE_CONTROL_UNKNOWN"
+	CodeGovernanceRevisionConflict = "GOVERNANCE_REVISION_CONFLICT"
+	CodeGovernanceRevisionNotFound = "GOVERNANCE_REVISION_NOT_FOUND"
+	CodeGovernanceUnavailable      = "GOVERNANCE_UNAVAILABLE"
+
 	CodeFeedValidationFailed             = "FEED_VALIDATION_FAILED"
 	CodeFeedRecommendationContextInvalid = "FEED_RECOMMENDATION_CONTEXT_INVALID"
 	CodeFeedCursorInvalid                = "FEED_CURSOR_INVALID"

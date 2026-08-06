@@ -1,9 +1,10 @@
 package applicationplayback
 
 import (
-	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
 	"context"
 	"errors"
+	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
 	"strings"
 	"time"
 )
@@ -16,6 +17,7 @@ type Service struct {
 	repo              domainplayback.Repository
 	telemetryRepo     domainplayback.TelemetryRepository
 	telemetryObserver TelemetryObserver
+	controlReader     ControlReader
 	now               func() time.Time
 }
 
@@ -41,6 +43,10 @@ type Option func(*Service)
 type TelemetryObserver interface {
 	RecordTelemetryBatch(batch *domainplayback.TelemetryBatch, summary *domainplayback.TelemetryBatchWriteResult, receivedAt time.Time)
 	RecordTelemetryRejection(eventCount int)
+}
+
+type ControlReader interface {
+	Bool(key domaingovernance.Key) bool
 }
 
 func New(repo domainplayback.Repository, options ...Option) *Service {
@@ -71,6 +77,12 @@ func WithNow(now func() time.Time) Option {
 		if now != nil {
 			service.now = now
 		}
+	}
+}
+
+func WithControlReader(reader ControlReader) Option {
+	return func(service *Service) {
+		service.controlReader = reader
 	}
 }
 
@@ -107,6 +119,9 @@ func (s *Service) ListPreloadVideos(ctx context.Context, currentVideoID int64, l
 		return nil, domainplayback.ErrInvalidVideoID
 	}
 	limit = normalizeLimit(limit)
+	if s.controlReader != nil && !s.controlReader.Bool(domaingovernance.FeedPreloadEnabled) {
+		return &PreloadResult{Items: []*domainplayback.PreloadVideo{}}, nil
+	}
 
 	items, err := s.repo.ListPreloadVideos(ctx, currentVideoID, limit)
 	if err != nil {

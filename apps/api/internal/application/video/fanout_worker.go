@@ -3,6 +3,7 @@ package applicationvideo
 import (
 	"context"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"time"
 )
@@ -35,14 +36,17 @@ type FeedCacheWriter interface {
 }
 
 type FanoutWorker struct {
-	repo         FanoutRepository
-	consumer     PublishedEventConsumer
-	index        FollowingIndexCache
-	preheater    FeedPreheater
-	batchSize    int
-	inboxMaxLen  int64
-	outboxMaxLen int64
-	preheatTTL   time.Duration
+	repo          FanoutRepository
+	consumer      PublishedEventConsumer
+	index         FollowingIndexCache
+	preheater     FeedPreheater
+	batchSize     int
+	inboxMaxLen   int64
+	outboxMaxLen  int64
+	preheatTTL    time.Duration
+	controlReader interface {
+		Bool(key domaingovernance.Key) bool
+	}
 }
 
 type FanoutWorkerOption func(*FanoutWorker)
@@ -104,6 +108,14 @@ func WithFanoutBatchSize(size int) FanoutWorkerOption {
 	}
 }
 
+func WithFanoutControlReader(reader interface {
+	Bool(key domaingovernance.Key) bool
+}) FanoutWorkerOption {
+	return func(w *FanoutWorker) {
+		w.controlReader = reader
+	}
+}
+
 func (w *FanoutWorker) Start(ctx context.Context) error {
 	if w == nil || w.consumer == nil {
 		return nil
@@ -162,6 +174,9 @@ func (w *FanoutWorker) HandleVideoPublished(ctx context.Context, event *Publishe
 
 func (w *FanoutWorker) preheat(ctx context.Context, event *PublishedEvent) error {
 	if w.preheater == nil {
+		return nil
+	}
+	if w.controlReader != nil && !w.controlReader.Bool(domaingovernance.FeedPreloadEnabled) {
 		return nil
 	}
 	return w.preheater.PreheatFeedVideo(ctx, event.VideoID, w.preheatTTL)

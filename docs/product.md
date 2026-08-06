@@ -51,8 +51,8 @@ Frux 是一个短视频 Feed 系统，目标是用最小可行架构承载完整
 | 审核 | 已实现 | 视频审核状态机、模型无关自动审核、人工队列/租约/决定、审计和作者通知 |
 | 后台运营 | 部分实现 | typed 懒加载内容运营工作台、审核队列/详情/租约/决定和视频查询/下架/恢复；配置管理仍规划中 |
 | 播放优化 | 已实现 | 播放参数、预加载建议、旧 QoS、准确首帧/卡顿/错误遥测、Web Feed 接入 |
-| 系统治理 | 规划中 | 限流、降级、死信重试 |
-| 监控告警 | 规划中 | 指标写入、看板、告警 |
+| 系统治理 | 部分实现 | 已实现版本化运行时降级控制；限流和死信重试仍规划中 |
+| 监控告警 | 部分实现 | 已实现播放、推荐、审核和降级控制 Prometheus 指标与告警；业务指标写入/看板仍规划中 |
 
 ## 4. P0 首发闭环
 
@@ -142,8 +142,10 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 已实现 | 播放优化 | POST | `/api/playback-qos-reports` | Web 播放质量上报 |
 | 已实现 | 播放优化 | POST | `/api/playback-telemetry-batches` | 认证 Web 客户端批量上报隐私安全播放遥测 |
 | 已实现 | 播放优化 | POST | `/internal/playback-qos-reports` | 服务端播放质量上报 |
-| 规划中 | 系统治理 | GET | `/internal/governance/degrade-switches` | 查询降级开关 |
-| 规划中 | 系统治理 | PATCH | `/api/admin/governance/degrade-switches/{key}` | 调整降级开关 |
+| 已实现 | 系统治理 | GET | `/api/admin/governance/controls` | 以 `governance.execute` 查询代码注册控制及 active revision |
+| 已实现 | 系统治理 | GET | `/api/admin/governance/controls/{key}/revisions` | 查询不可变 revision 历史 |
+| 已实现 | 系统治理 | PATCH | `/api/admin/governance/controls/{key}` | expected-revision 更新 typed value、reason 和 expiry |
+| 已实现 | 系统治理 | POST | `/api/admin/governance/controls/{key}/rollback` | expected-revision 回滚到较早有效值并生成新 revision |
 | 规划中 | 系统治理 | POST | `/internal/dead-letter-retries` | 死信任务重试 |
 | 规划中 | 监控告警 | GET | `/api/admin/metric-dashboard` | 监控看板查询 |
 | 规划中 | 监控告警 | POST | `/api/admin/alerts/rules` | 告警规则创建 |

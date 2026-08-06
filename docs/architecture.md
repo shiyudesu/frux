@@ -554,6 +554,24 @@ sequenceDiagram
 意图：先失效 Redis，再按当前数据库状态保护或发布媒体，全部成功后才标记 delivered；失败保留
 有界错误并重试。按当前状态收敛也避免旧恢复意图在后续再次下架后错误公开内容。
 
+### 5.3 运行时降级控制链路
+
+```mermaid
+flowchart LR
+  Admin["Operator + governance.execute"] -->|"expected revision update / rollback"| API["Admin Governance API"]
+  API -->|"revision + active pointer + audit 同事务"| DB[("PostgreSQL")]
+  APIPoller["API Poller"] -->|"有界周期读取"| DB
+  WorkerPoller["Worker Poller"] -->|"有界周期读取"| DB
+  APIPoller -->|"验证后 atomic swap"| APISnapshot["API Local Snapshot"]
+  WorkerPoller -->|"验证后 atomic swap"| WorkerSnapshot["Worker Local Snapshot"]
+  APISnapshot -->|"纯内存求值"| Preload["兼容 preload API"]
+  WorkerSnapshot -->|"纯内存求值"| Preheat["Feed cache preheat"]
+```
+
+revision 不可变，active pointer 使用 expected revision 和按 key advisory lock 串行更新；成功
+审计与 pointer 切换原子提交。API/Worker poll failure 保留 last-known-good，超过注册 key 的
+max staleness 后使用 failure default。请求和消费热路径不访问控制面。
+
 ## 6. 说明
 
 - 当前代码以 Go API 承载同步 HTTP，用 Worker 消费互动、发布、曝光预热、嵌入和媒体处理事件；内部按接口层、应用层、领域层、基础设施层组织。
@@ -568,6 +586,9 @@ sequenceDiagram
 - 播放技术遥测与观看行为事实分流：Web 将渲染首帧、播放结果、rebuffer/seek、选源、帧质量和终止错误组成有界版本化批次；API 严格校验并原子写入 `playback_telemetry_batch/event`，立即聚合低基数 Prometheus 指标。批次失败不影响播放，旧 QoS 端点在迁移窗口内继续兼容。
 - 人工审核使用数据库时间租约和 optimistic case/review version；最终决定、视频生命周期、成功审计和作者通知 Outbox 原子提交，Review Worker 再通过 message Application 幂等生成站内通知。
 - Web Admin Shell 复用 typed History router 和 SessionProvider，`AdminApp` 通过动态 import 形成独立 JS/CSS chunk；客户端权限只过滤导航，直接 URL 和所有动作仍由后台中间件授权。
+- 运行时降级控制只接受代码注册 typed key；API 与 Worker 轮询 PostgreSQL 后原子替换本地
+  snapshot。当前 `feed.preload.enabled` 仅影响兼容 preload 与非关键 cache preheat；poll
+  failure 使用 last-known-good，过度陈旧使用 failure default，不能关闭 fanout 或耐久事实。
 
 ## 7. 生产媒体交付
 

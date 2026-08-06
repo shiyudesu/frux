@@ -7,6 +7,7 @@ import (
 
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 )
 
 type memoryFanoutRepo struct {
@@ -71,6 +72,12 @@ type memoryFeedPreheater struct {
 	videoID int64
 }
 
+type staticFanoutControlReader bool
+
+func (r staticFanoutControlReader) Bool(key domaingovernance.Key) bool {
+	return bool(r)
+}
+
 func (p *memoryFeedPreheater) PreheatFeedVideo(ctx context.Context, videoID int64, ttl time.Duration) error {
 	p.videoID = videoID
 	return nil
@@ -126,5 +133,28 @@ func TestFanoutWorkerWritesBigCreatorOutbox(t *testing.T) {
 	}
 	if index.outboxAuthor != 8 || index.outboxVideoID != 100 {
 		t.Fatalf("unexpected outbox fanout: %+v", index)
+	}
+}
+
+func TestFanoutWorkerSkipsPreheatWhenRuntimeControlIsDisabled(t *testing.T) {
+	repo := &memoryFanoutRepo{followerCount: 1, followerIDs: []int64{10}}
+	index := &memoryFollowingIndex{}
+	preheater := &memoryFeedPreheater{}
+	worker := applicationvideo.NewFanoutWorker(
+		repo, nil, index, preheater,
+		applicationvideo.WithFanoutControlReader(staticFanoutControlReader(false)),
+	)
+	event := &applicationvideo.PublishedEvent{
+		VideoID: 101, AuthorID: 8,
+		PublishedAt: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
+	}
+	if err := worker.HandleVideoPublished(context.Background(), event); err != nil {
+		t.Fatalf("handle video published: %v", err)
+	}
+	if preheater.videoID != 0 {
+		t.Fatalf("disabled control still preheated video %d", preheater.videoID)
+	}
+	if index.inboxVideoID != 101 {
+		t.Fatal("disabling optional preheat changed required fanout behavior")
 	}
 }

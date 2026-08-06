@@ -73,7 +73,7 @@ var allowedDetailsByAction = map[Action]map[string]struct{}{
 		"http_method", "new_revision", "previous_revision", "reason_code", "route",
 	),
 	ActionGovernanceExecute: detailKeys(
-		"http_method", "new_revision", "previous_revision", "reason_code", "route",
+		"http_method", "new_revision", "operation", "previous_revision", "reason_code", "route",
 	),
 	ActionDeadLetterReplay: detailKeys(
 		"http_method", "reason_code", "route",
@@ -135,9 +135,7 @@ var schemasByAction = map[Action]actionSchema{
 	ActionGovernanceExecute: {
 		permission:     domainaccount.PermissionGovernanceExecute,
 		targetType:     TargetGovernanceControl,
-		route:          "/api/admin/governance/controls/:key",
-		method:         "PATCH",
-		successKeys:    detailKeys("http_method", "new_revision", "previous_revision", "reason_code", "route"),
+		successKeys:    detailKeys("http_method", "new_revision", "operation", "previous_revision", "reason_code", "route"),
 		successReasons: detailKeys("governance_changed"),
 	},
 	ActionDeadLetterReplay: {
@@ -177,6 +175,13 @@ var reviewRejectReasons = detailKeys(
 	"sexual_content", "graphic_violence", "hate", "harassment", "self_harm",
 	"illegal_activity", "spam", "other_policy_violation",
 )
+
+var governanceRoutes = map[string]string{
+	"/api/admin/governance/controls":                "GET",
+	"/api/admin/governance/controls/:key/revisions": "GET",
+	"/api/admin/governance/controls/:key":           "PATCH",
+	"/api/admin/governance/controls/:key/rollback":  "POST",
+}
 
 var validStatuses = map[string]struct{}{
 	"offline":        {},
@@ -372,7 +377,13 @@ func validDetailValue(action Action, key, value string) bool {
 			return false
 		}
 	case "route":
+		if action == ActionGovernanceExecute {
+			_, ok := governanceRoutes[value]
+			return ok
+		}
 		return value == schemasByAction[action].route
+	case "operation":
+		return action == ActionGovernanceExecute && (value == "update" || value == "rollback")
 	case "decision":
 		_, ok := validDecisions[value]
 		return ok
@@ -389,9 +400,14 @@ func validDetailValue(action Action, key, value string) bool {
 func validDetailSchema(action Action, outcome Outcome, detail map[string]string) bool {
 	schema := schemasByAction[action]
 	if outcome == OutcomeDenied {
-		if !sameDetailKeys(detail, detailKeys("http_method", "reason_code", "route")) ||
-			detail["http_method"] != schema.method ||
-			detail["route"] != schema.route {
+		if !sameDetailKeys(detail, detailKeys("http_method", "reason_code", "route")) {
+			return false
+		}
+		if action == ActionGovernanceExecute {
+			if governanceRoutes[detail["route"]] != detail["http_method"] {
+				return false
+			}
+		} else if detail["http_method"] != schema.method || detail["route"] != schema.route {
 			return false
 		}
 		_, ok := deniedReasonCodes[detail["reason_code"]]
@@ -400,7 +416,8 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 	if !sameDetailKeys(detail, schema.successKeys) {
 		return false
 	}
-	if detail["http_method"] != schema.method || detail["route"] != schema.route {
+	if action != ActionGovernanceExecute &&
+		(detail["http_method"] != schema.method || detail["route"] != schema.route) {
 		return false
 	}
 	if reason, ok := detail["reason_code"]; ok {
@@ -426,7 +443,20 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 		return detail["previous_status"] == "published" && detail["new_status"] == "offline"
 	case ActionContentRestore:
 		return detail["previous_status"] == "offline" && detail["new_status"] == "published"
-	case ActionConfigPublish, ActionGovernanceExecute:
+	case ActionConfigPublish:
+		previous, previousErr := strconv.ParseUint(detail["previous_revision"], 10, 64)
+		next, nextErr := strconv.ParseUint(detail["new_revision"], 10, 64)
+		return previousErr == nil && nextErr == nil && next > previous
+	case ActionGovernanceExecute:
+		if governanceRoutes[detail["route"]] != detail["http_method"] {
+			return false
+		}
+		if detail["operation"] == "update" && detail["route"] != "/api/admin/governance/controls/:key" {
+			return false
+		}
+		if detail["operation"] == "rollback" && detail["route"] != "/api/admin/governance/controls/:key/rollback" {
+			return false
+		}
 		previous, previousErr := strconv.ParseUint(detail["previous_revision"], 10, 64)
 		next, nextErr := strconv.ParseUint(detail["new_revision"], 10, 64)
 		return previousErr == nil && nextErr == nil && next > previous

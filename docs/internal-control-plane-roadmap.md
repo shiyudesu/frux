@@ -271,6 +271,10 @@ Web 工作台最后实施，不能先于稳定的权限和审核 API。
 
 ### 5.1 运行时降级控制
 
+状态：已实现。当前以 `feed.preload.enabled` 接入兼容 preload API 和 Worker 非关键 cache
+preheat；Admin API、不可变 revision、原子审计、本地 snapshot、陈旧 failure default、指标与
+告警均已落地。后续新增 key 仍按本节约束逐项注册和验证。
+
 实施顺序：
 
 ```text

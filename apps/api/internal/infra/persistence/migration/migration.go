@@ -9,6 +9,7 @@ import (
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
+	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
 	infralibrary "github.com/shiyudesu/frux/internal/infra/persistence/library"
 	inframedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
@@ -74,6 +75,8 @@ func AutoMigrate(db *gorm.DB) error {
 			&infravideo.EnforcementActionModel{},
 			&infravideo.AdminTransitionIntentModel{},
 			&infrafeed.InboxModel{},
+			&infragovernance.RevisionModel{},
+			&infragovernance.ActiveModel{},
 			&infraexposure.ViewEventModel{},
 			&infraexposure.ExposureModel{},
 			&infraexposure.ViewHistoryModel{},

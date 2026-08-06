@@ -136,3 +136,45 @@ func TestRequestIDAndIdempotencyKeyDigestAreOpaque(t *testing.T) {
 		t.Fatalf("unexpected idempotency key digest: first=%q second=%q", first, second)
 	}
 }
+
+func TestGovernanceAuditSupportsUpdateRollbackAndProtectedReads(t *testing.T) {
+	now := time.Date(2026, 8, 6, 14, 0, 0, 0, time.UTC)
+	for _, input := range []FactInput{
+		{
+			ActorID: 1, Permission: domainaccount.PermissionGovernanceExecute,
+			Action: ActionGovernanceExecute, TargetType: TargetGovernanceControl,
+			TargetID: "feed.preload.enabled", Outcome: OutcomeSuccess,
+			RequestID: NewRequestID(), CreatedAt: now,
+			Detail: map[string]string{
+				"http_method": "PATCH", "route": "/api/admin/governance/controls/:key",
+				"operation": "update", "reason_code": "governance_changed",
+				"previous_revision": "0", "new_revision": "1",
+			},
+		},
+		{
+			ActorID: 1, Permission: domainaccount.PermissionGovernanceExecute,
+			Action: ActionGovernanceExecute, TargetType: TargetGovernanceControl,
+			TargetID: "feed.preload.enabled", Outcome: OutcomeSuccess,
+			RequestID: NewRequestID(), CreatedAt: now,
+			Detail: map[string]string{
+				"http_method": "POST", "route": "/api/admin/governance/controls/:key/rollback",
+				"operation": "rollback", "reason_code": "governance_changed",
+				"previous_revision": "2", "new_revision": "3",
+			},
+		},
+		{
+			ActorID: 1, Permission: domainaccount.PermissionGovernanceExecute,
+			Action: ActionGovernanceExecute, TargetType: TargetGovernanceControl,
+			TargetID: "controls", Outcome: OutcomeDenied,
+			RequestID: NewRequestID(), CreatedAt: now,
+			Detail: map[string]string{
+				"http_method": "GET", "route": "/api/admin/governance/controls",
+				"reason_code": "permission_denied",
+			},
+		},
+	} {
+		if _, err := NewFact(input); err != nil {
+			t.Fatalf("valid governance audit rejected: %v detail=%#v", err, input.Detail)
+		}
+	}
+}
