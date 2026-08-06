@@ -189,6 +189,20 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 		}
 		return w.completeJob(ctx, job, leaseOwner)
 	}
+	if asset.State == domainmedia.AssetStateFailed {
+		if w.notifier != nil {
+			if err := w.notifier.MediaFailed(ctx, asset.ID, asset.ErrorCode); err != nil {
+				return err
+			}
+		}
+		now := w.now()
+		job.State = domainmedia.JobStateFailed
+		job.ErrorCode = asset.ErrorCode
+		job.LeaseOwner = ""
+		job.LeaseUntil = nil
+		job.CompletedAt = &now
+		return w.repo.UpdateProcessingJobOwned(ctx, job, leaseOwner)
+	}
 	asset.State = domainmedia.AssetStateProcessing
 	asset.ErrorCode = ""
 	if err := w.repo.UpdateAsset(ctx, asset); err != nil {
@@ -306,10 +320,6 @@ func (w *MediaProcessingWorker) failJobOwned(ctx context.Context, asset *domainm
 		job.State = domainmedia.JobStateRetryable
 		job.NextAttemptAt = now.Add(processingRetryDelay(job.Attempts))
 	}
-	if err := w.repo.UpdateProcessingJobOwned(ctx, job, leaseOwner); err != nil {
-		return err
-	}
-	inframetrics.ObserveMediaProcessing(job.State, code)
 	if asset != nil {
 		asset.ErrorCode = code
 		if terminal {
@@ -320,12 +330,16 @@ func (w *MediaProcessingWorker) failJobOwned(ctx context.Context, asset *domainm
 		if err := w.repo.UpdateAsset(ctx, asset); err != nil {
 			return err
 		}
-		if terminal && w.notifier != nil {
-			if err := w.notifier.MediaFailed(ctx, asset.ID, code); err != nil {
-				return err
-			}
+	}
+	if terminal && asset != nil && w.notifier != nil {
+		if err := w.notifier.MediaFailed(ctx, asset.ID, code); err != nil {
+			return err
 		}
 	}
+	if err := w.repo.UpdateProcessingJobOwned(ctx, job, leaseOwner); err != nil {
+		return err
+	}
+	inframetrics.ObserveMediaProcessing(job.State, code)
 	if terminal {
 		return nil
 	}

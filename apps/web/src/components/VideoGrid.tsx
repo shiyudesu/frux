@@ -1,7 +1,7 @@
 // 作品网格：资料页"我的作品"/"他的作品"列表。
 import { image } from "../constants";
 import type { Video } from "../types";
-import { formatMetric } from "../utils";
+import { creatorVideoStatusLabel, formatMetric } from "../utils";
 import { Icon } from "./Icon";
 
 interface VideoGridProps {
@@ -27,7 +27,7 @@ export function VideoGrid({ videos, state, onSelect }: VideoGridProps) {
           <div className="work-meta">
             <h3>{video.title}</h3>
             <p>{formatMetric(video.like_count || 0)} 点赞 · {formatMetric(video.comment_count || 0)} 评论</p>
-            <span className="status-badge">{video.status === 0 ? "审核中" : "已发布"}</span>
+            <span className="status-badge">{creatorVideoStatusLabel(video)}</span>
           </div>
         </button>
       ))}

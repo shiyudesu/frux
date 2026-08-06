@@ -186,7 +186,7 @@ sequenceDiagram
   Note over R,Auth: Cookie 身份同时要求 HttpOnly Token 与 Web 活跃标记；Authorization 不要求标记
   S->>Repo: 查询 local_upload_asset 和 media_url / cover_url 引用
   Repo->>DB: SELECT owner/author/status/visibility
-  alt 已发布且公开
+  alt 审核已通过、已发布且公开
     R->>FS: 匿名 Range/HEAD 读取
   else 作者读取非删除作品
     R->>FS: 私有 Range/HEAD 读取
@@ -196,12 +196,12 @@ sequenceDiagram
 
   C->>R: POST /api/videos
   R->>H: Video.Create
-  H->>S: CreatePublished
+  H->>S: 创建 Pending Review 视频
   S->>Repo: Save video and video_stat
   Repo->>DB: INSERT video, video_stat
   DB-->>Repo: 返回 video id
   Repo-->>S: 返回视频实体
-  S-->>H: 返回视频详情
+  S-->>H: 返回待审视频详情
   H-->>C: 201 Created
 
   C->>R: GET /api/feed-items?scene=timeline&cursor=...&limit=...
@@ -496,7 +496,7 @@ flowchart TB
 - 数据持久化使用 PostgreSQL；API 和 Worker 通过 advisory transaction lock 串行执行完整 GORM 自动迁移。内容统计校正采用快照差量叠加，既修复旧偏差也保留其他在线实例已提交的并发增量；观看历史聚合修复只修正仍存在的投影，不会从原始事件恢复用户已删除的历史。
 - Feed 通过 `scene` 分发策略：`timeline` 按 `published_at DESC, id DESC` 排序，`hot` 按最近 60 分钟互动热度排序，并通过 Base64 游标分页。
 - Web 预加载直接消费活动 Feed 的有序 items，并按网络、save-data、内存和 `buffer_ms` 保留有界上一条/当前条/后续媒体资源；场景、请求、身份或源版本变化会取消旧代际。`/api/preload-videos` 仅保留为按发布时间补充资源的兼容接口。
-- 公开读取统一要求视频已发布、公开且媒体状态为 `legacy_ready` 或 `ready`；Feed 缓存命中后仍通过数据库批量验证公开可读性，避免旧缓存泄露私密或处理中内容。
+- 新视频默认进入待审核且没有 `published_at`。批准和媒体基线就绪是独立门：只有 `status=published`、`visibility=public` 且媒体为 `legacy_ready/ready` 时才公开；Feed 缓存命中后仍通过数据库批量验证，避免旧缓存泄露待审、拒绝、私密或处理中内容。
 - Web 为每次激活视频建立播放会话，按 10 秒边界和暂停、seek、切换、隐藏、退出上报曝光、播放、进度、完播和跳过。观看事实按 `(user_id, event_id)` 幂等，历史投影按有界 `(occurred_at, event_id)` 单调更新；事实、历史/曝光投影和 `view_event_outbox` 同事务提交，Worker 通过租约、重试与 publisher confirm 将反馈可靠送入推荐链路。
 - 新互动请求只接受当前已发布公开视频；Redis 在状态/计数事务内为每个行为事实分配单调版本。RabbitMQ 使用 publisher confirm；失败或确认不确定时同步落库，双失败时只条件回滚仍由该版本拥有的 Redis 状态，相同幂等重试会重发原事件。Redis 提交后若计数读取失败，应用使用脱离请求取消且有超时的上下文条件回滚；回滚报错时重新确认投递原事件并以同步回执持久化兜底，并发更高版本不会被旧请求覆盖。事件回执按 `event_id` 去重，行为行优先按 `version` 拒绝延迟旧事件，同版本才用 `(occurred_at, event_id)` 兼容定序；重复和旧事件成功确认且不改变统计。缺失/删除视频和无效载荷终止消费而不无限重入队，所有内容读取仍按当前可见性过滤。
 - 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品、公开合集和隐私允许的喜欢。“短剧”和“我的预约”没有领域模型或接口，明确不在架构范围内。
@@ -520,8 +520,8 @@ flowchart LR
 
 - 本地开发继续支持 `/api/uploads` 和受保护 `/uploads/*`；生产模式通过 `media.backend=s3` 使用上传会话。
 - `media_asset` 保存原始资产，`media_variant` 保存基线、清晰度、manifest 和 segment，`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。
-- Worker 只在临时对象通过大小与 SHA-256 校验后发布受保护的内容寻址输出；已挂载且公开的视频再提升到 `media/` 公共前缀。基线就绪后才更新视频 `media_status=ready`、兼容 `media_url`/`cover_url` 并发送原有发布事件。
-- 公共变体使用长缓存、ETag、Range/HEAD；原始对象和未完成资产只能由不可变 owner 获取短期签名 URL。
+- Worker 只在临时对象通过大小与 SHA-256 校验后发布受保护的内容寻址输出；只有审核已通过且公开的视频才提升到 `media/` 公共前缀。基线先就绪时仅更新 `media_status=ready` 并保持公共 URL 为空；批准先发生时也等待基线，双门满足后才投影 URL 和发送发布事件。
+- 公共变体使用版本化 `media/v2/{exposure-generation}/...` URL、60 秒可重验证缓存、ETag 和 Range/HEAD；私密、下架、拒绝、媒体失败或删除转换会将变体降回保护前缀，本地 `/media` 还实时校验数据库公开资格。状态撤销允许最多一个短缓存窗口，失败返回错误并由幂等请求重试；首次上线需 purge 旧 `media/*` 一年缓存条目。原始对象和未完成资产只能由不可变 owner 获取短期签名 URL。
 - 删除视频立即停止 API 发现，并通过 `media_cleanup_task` 延迟删除对象；Reconciler 修复过期租约、缺失对象、不完整变体和孤儿对象。
 
 ## 8. 播放观测链路

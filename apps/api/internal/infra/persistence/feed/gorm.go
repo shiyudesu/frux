@@ -1,6 +1,8 @@
 package infrafeed
 
 import (
+	"context"
+	"fmt"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
@@ -8,8 +10,6 @@ import (
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
-	"context"
-	"fmt"
 
 	"gorm.io/gorm"
 )
@@ -241,10 +241,17 @@ func (r *Repository) BatchGetFeedCards(ctx context.Context, videoIDs []int64) (m
 				models[index].MediaURL = delivery.MediaURL
 				models[index].CoverURL = delivery.CoverURL
 				models[index].PlaybackSources = delivery.PlaybackSources
+			} else if models[index].MediaAssetID > 0 {
+				models[index].MediaURL = ""
+				models[index].CoverURL = ""
+				models[index].PlaybackSources = nil
 			}
 		}
 	}
 	for index := range models {
+		if models[index].MediaAssetID > 0 && models[index].MediaURL == "" {
+			continue
+		}
 		cards[models[index].VideoID] = &models[index]
 	}
 	return cards, nil

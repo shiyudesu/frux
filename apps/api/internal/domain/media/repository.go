@@ -18,7 +18,14 @@ type VariantRepository interface {
 	ListReadyVariants(ctx context.Context, assetID int64) ([]*MediaVariant, error)
 	ListReadyVariantsByAssetIDs(ctx context.Context, assetIDs []int64) (map[int64][]*MediaVariant, error)
 	ListReadyVariantsByVideoIDs(ctx context.Context, videoIDs []int64) (map[int64][]*MediaVariant, error)
-	UpdateVariantPromotion(ctx context.Context, variantID int64, objectKey string, public bool) error
+	UpdateVariantPromotion(
+		ctx context.Context,
+		variantID int64,
+		expectedObjectKey string,
+		expectedPublic bool,
+		objectKey string,
+		public bool,
+	) (bool, error)
 }
 
 type ProcessingRepository interface {

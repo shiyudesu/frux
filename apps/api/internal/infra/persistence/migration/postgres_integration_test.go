@@ -168,8 +168,16 @@ func postgresDSNWithSchema(dsn string, schema string) string {
 			parsed.RawQuery = query.Encode()
 			return parsed.String()
 		}
+
 	}
 	return strings.TrimSpace(dsn) + " search_path=" + schema + " TimeZone=UTC"
+}
+
+func approveVideoFixture(t *testing.T, video *domainvideo.Video) {
+	t.Helper()
+	if err := video.Approve(time.Now().UTC()); err != nil {
+		t.Fatalf("approve video fixture: %v", err)
+	}
 }
 
 func TestPostgreSQLMigration(t *testing.T) {
@@ -179,6 +187,7 @@ func TestPostgreSQLMigration(t *testing.T) {
 	if err := AutoMigrate(db); err != nil {
 		t.Fatalf("clean migration: %v", err)
 	}
+
 	if err := db.Model(&infrarecommendation.PolicyModel{}).
 		Where("scene = ? AND version = ?", "recommend", 1).
 		Update("enabled", false).Error; err != nil {
@@ -797,6 +806,86 @@ func TestPostgreSQLConcurrentMigration(t *testing.T) {
 	}
 }
 
+func TestReviewLifecycleMigrationPreservesPublishedRows(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := db.AutoMigrate(&infravideo.VideoModel{}); err != nil {
+		t.Fatalf("create legacy-compatible video table: %v", err)
+	}
+	publishedAt := time.Date(2026, 8, 1, 8, 30, 0, 0, time.UTC)
+	existing := infravideo.VideoModel{
+		AuthorID: 7, Title: "historical published", MediaURL: "https://example.com/video.mp4",
+		CoverURL: "https://example.com/cover.jpg", Status: domainvideo.StatusPublished,
+		Visibility: domainvideo.VisibilityPublic, PublishedAt: &publishedAt,
+	}
+	if err := db.Create(&existing).Error; err != nil {
+		t.Fatalf("create historical published video: %v", err)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("run review lifecycle migration: %v", err)
+	}
+	var stored infravideo.VideoModel
+	if err := db.Where("id = ?", existing.ID).Take(&stored).Error; err != nil {
+		t.Fatalf("load historical published video: %v", err)
+	}
+	if stored.Status != domainvideo.StatusPublished || stored.PublishedAt == nil ||
+		!stored.PublishedAt.Equal(publishedAt) {
+		t.Fatalf("historical publication changed: %+v", stored)
+	}
+
+	pending := infravideo.VideoModel{
+		AuthorID: 8, Title: "new default", MediaURL: "https://example.com/pending.mp4",
+		CoverURL: "https://example.com/pending.jpg",
+	}
+	if err := db.Omit("Status", "PublishedAt").Create(&pending).Error; err != nil {
+		t.Fatalf("create default lifecycle video: %v", err)
+	}
+	if err := db.Where("id = ?", pending.ID).Take(&pending).Error; err != nil {
+		t.Fatalf("load default lifecycle video: %v", err)
+	}
+	if pending.Status != domainvideo.StatusPendingReview || pending.PublishedAt != nil {
+		t.Fatalf("new database default is not pending review: %+v", pending)
+	}
+}
+
+func TestReviewAwareContentStatReconciliation(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := db.Create(&infraaccount.UserModel{
+		ID: 99, Account: "review-stats", Password: "hash", Nickname: "review stats",
+		Status: domainaccount.StatusNormal, Role: domainaccount.RoleUser,
+	}).Error; err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	publishedAt := time.Now().UTC()
+	videos := []infravideo.VideoModel{
+		{AuthorID: 99, Title: "published", MediaURL: "published", CoverURL: "cover", Status: domainvideo.StatusPublished, Visibility: domainvideo.VisibilityPublic, MediaStatus: domainmedia.MediaStatusReady, PublishedAt: &publishedAt},
+		{AuthorID: 99, Title: "pending public", MediaURL: "pending", CoverURL: "cover", Status: domainvideo.StatusPendingReview, Visibility: domainvideo.VisibilityPublic, MediaStatus: domainmedia.MediaStatusReady},
+		{AuthorID: 99, Title: "rejected public", MediaURL: "rejected", CoverURL: "cover", Status: domainvideo.StatusRejected, Visibility: domainvideo.VisibilityPublic, MediaStatus: domainmedia.MediaStatusReady},
+		{AuthorID: 99, Title: "offline public", MediaURL: "offline", CoverURL: "cover", Status: domainvideo.StatusOffline, Visibility: domainvideo.VisibilityPublic, MediaStatus: domainmedia.MediaStatusReady, PublishedAt: &publishedAt},
+		{AuthorID: 99, Title: "pending private", MediaURL: "pending-private", CoverURL: "cover", Status: domainvideo.StatusPendingReview, Visibility: domainvideo.VisibilityPrivate, MediaStatus: domainmedia.MediaStatusReady},
+		{AuthorID: 99, Title: "rejected private", MediaURL: "rejected-private", CoverURL: "cover", Status: domainvideo.StatusRejected, Visibility: domainvideo.VisibilityPrivate, MediaStatus: domainmedia.MediaStatusReady},
+		{AuthorID: 99, Title: "deleted private", MediaURL: "deleted", CoverURL: "cover", Status: domainvideo.StatusDeleted, Visibility: domainvideo.VisibilityPrivate, MediaStatus: domainmedia.MediaStatusReady},
+		{AuthorID: 99, Title: "processing published", MediaURL: "processing", CoverURL: "cover", Status: domainvideo.StatusPublished, Visibility: domainvideo.VisibilityPublic, MediaStatus: domainmedia.MediaStatusProcessing, PublishedAt: &publishedAt},
+	}
+	if err := db.Create(&videos).Error; err != nil {
+		t.Fatalf("create review-aware videos: %v", err)
+	}
+	if err := infravideo.ReconcileContentStats(db); err != nil {
+		t.Fatalf("reconcile content stats: %v", err)
+	}
+	var stat infravideo.UserContentStatModel
+	if err := db.Where("user_id = ?", 99).Take(&stat).Error; err != nil {
+		t.Fatalf("load content stats: %v", err)
+	}
+	if stat.PublicWorkCount != 1 || stat.PrivateWorkCount != 2 {
+		t.Fatalf("unexpected review-aware counts: %+v", stat)
+	}
+}
+
 func TestPostgreSQLContentStatReconciliationPreservesConcurrentDelta(t *testing.T) {
 	fixture := newPostgresFixture(t)
 	db := fixture.openGORM(t)
@@ -896,6 +985,7 @@ func TestPostgreSQLProfileBackendTransactions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("new video: %v", err)
 		}
+		approveVideoFixture(t, video)
 		if err := videoRepo.Save(context.Background(), video); err != nil {
 			t.Fatalf("save video: %v", err)
 		}
@@ -966,7 +1056,12 @@ func TestPostgreSQLProfileBackendTransactions(t *testing.T) {
 		t.Fatalf("published public lifecycle video not counted: %+v", creatorStat)
 	}
 	lifecycle.Status = domainvideo.StatusOffline
-	if err := videoRepo.UpdateStatus(context.Background(), lifecycle); err != nil {
+	if _, err := videoRepo.ApplyLifecycleTransition(
+		context.Background(),
+		lifecycle.ID,
+		domainvideo.LifecycleTakeOffline,
+		time.Time{},
+	); err != nil {
 		t.Fatalf("set lifecycle video offline: %v", err)
 	}
 	if err := db.Where("user_id = ?", 1).Take(&creatorStat).Error; err != nil {
@@ -976,7 +1071,12 @@ func TestPostgreSQLProfileBackendTransactions(t *testing.T) {
 		t.Fatalf("offline public video remained in public count: %+v", creatorStat)
 	}
 	lifecycle.Status = domainvideo.StatusPublished
-	if err := videoRepo.UpdateStatus(context.Background(), lifecycle); err != nil {
+	if _, err := videoRepo.ApplyLifecycleTransition(
+		context.Background(),
+		lifecycle.ID,
+		domainvideo.LifecycleRestore,
+		time.Time{},
+	); err != nil {
 		t.Fatalf("restore lifecycle video: %v", err)
 	}
 	if err := db.Where("user_id = ?", 1).Take(&creatorStat).Error; err != nil {
@@ -1356,6 +1456,7 @@ func TestPostgreSQLRepositorySemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new video: %v", err)
 	}
+	approveVideoFixture(t, video)
 	if err := videoRepo.Save(ctx, video); err != nil {
 		t.Fatalf("save video: %v", err)
 	}
@@ -1363,6 +1464,7 @@ func TestPostgreSQLRepositorySemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new second video: %v", err)
 	}
+	approveVideoFixture(t, secondVideo)
 	if err := videoRepo.Save(ctx, secondVideo); err != nil {
 		t.Fatalf("save second video without idempotency key: %v", err)
 	}
@@ -1496,6 +1598,7 @@ func TestPostgreSQLCommentListingRequiresPublicPublishedVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new comment video: %v", err)
 	}
+	approveVideoFixture(t, video)
 	if err := videoRepo.Save(ctx, video); err != nil {
 		t.Fatalf("save comment video: %v", err)
 	}
@@ -1596,6 +1699,7 @@ func TestPostgreSQLThreadedCommentPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new threaded comment video: %v", err)
 	}
+	approveVideoFixture(t, video)
 	if err := videoRepo.Save(ctx, video); err != nil {
 		t.Fatalf("save threaded comment video: %v", err)
 	}
@@ -1775,6 +1879,7 @@ func TestPostgreSQLThreadedCommentPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	approveVideoFixture(t, notificationVideo)
 	if err := videoRepo.Save(ctx, notificationVideo); err != nil {
 		t.Fatalf("save notification video: %v", err)
 	}
@@ -2166,6 +2271,7 @@ func TestPostgreSQLThreadedCommentOrderingHydrationAndCascadeModeration(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	approveVideoFixture(t, moderationVideo)
 	if err := infravideo.New(db).Save(ctx, moderationVideo); err != nil {
 		t.Fatalf("save cascade moderation video: %v", err)
 	}
@@ -2356,6 +2462,7 @@ func newPostgresThreadedCommentFixture(
 	if err != nil {
 		t.Fatalf("new threaded fixture video: %v", err)
 	}
+	approveVideoFixture(t, video)
 	if err := infravideo.New(db).Save(ctx, video); err != nil {
 		t.Fatalf("save threaded fixture video: %v", err)
 	}
@@ -2429,6 +2536,7 @@ func TestPostgreSQLAcceptedInteractionEventPersistsAfterPrivacyChange(t *testing
 	if err != nil {
 		t.Fatalf("new accepted interaction video: %v", err)
 	}
+	approveVideoFixture(t, video)
 	if err := videoRepo.Save(ctx, video); err != nil {
 		t.Fatalf("save accepted interaction video: %v", err)
 	}
@@ -3193,6 +3301,7 @@ func newPostgresInteractionEventFixture(t *testing.T) (*gorm.DB, *infrainteracti
 	if err != nil {
 		t.Fatalf("new ordered interaction video: %v", err)
 	}
+	approveVideoFixture(t, video)
 	if err := infravideo.New(db).Save(ctx, video); err != nil {
 		t.Fatalf("save ordered interaction video: %v", err)
 	}

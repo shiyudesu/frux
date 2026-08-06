@@ -1,10 +1,10 @@
 package inframedia
 
 import (
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
-	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"errors"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"strings"
 	"time"
 
@@ -158,16 +158,21 @@ func (r *Repository) ListReadyVariantsByVideoIDs(ctx context.Context, videoIDs [
 	return result, nil
 }
 
-func (r *Repository) UpdateVariantPromotion(ctx context.Context, variantID int64, objectKey string, public bool) error {
-	result := r.db.WithContext(ctx).Model(&VariantModel{}).Where("id = ?", variantID).
+func (r *Repository) UpdateVariantPromotion(
+	ctx context.Context,
+	variantID int64,
+	expectedObjectKey string,
+	expectedPublic bool,
+	objectKey string,
+	public bool,
+) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&VariantModel{}).
+		Where("id = ? AND object_key = ? AND public = ?", variantID, expectedObjectKey, expectedPublic).
 		Updates(map[string]any{"object_key": objectKey, "public": public, "updated_at": time.Now().UTC()})
 	if result.Error != nil {
-		return result.Error
+		return false, result.Error
 	}
-	if result.RowsAffected == 0 {
-		return domainmedia.ErrMediaVariantNotFound
-	}
-	return nil
+	return result.RowsAffected == 1, nil
 }
 
 func (r *Repository) UpsertProcessingProfile(ctx context.Context, profile *domainmedia.ProcessingProfile) error {
@@ -635,10 +640,37 @@ func (r *Repository) UpdateCleanupTask(ctx context.Context, task *domainmedia.Cl
 	if result.Error != nil {
 		return result.Error
 	}
+
 	if result.RowsAffected == 0 {
 		return domainmedia.ErrCleanupTaskNotFound
 	}
 	return nil
+}
+
+func (r *Repository) ListIncompletePublicCleanupTasks(
+	ctx context.Context,
+	assetIDs []int64,
+) ([]*domainmedia.CleanupTask, error) {
+	if len(assetIDs) == 0 {
+		return []*domainmedia.CleanupTask{}, nil
+	}
+	var models []CleanupTaskModel
+	if err := r.db.WithContext(ctx).
+		Where(
+			"asset_id IN ? AND object_key LIKE ? AND state <> ?",
+			assetIDs,
+			"media/%",
+			domainmedia.CleanupStateCompleted,
+		).
+		Order("id ASC").
+		Find(&models).Error; err != nil {
+		return nil, err
+	}
+	tasks := make([]*domainmedia.CleanupTask, 0, len(models))
+	for _, model := range models {
+		tasks = append(tasks, cleanupTaskFromModel(model))
+	}
+	return tasks, nil
 }
 
 func (r *Repository) ReleaseExpiredCleanupLeases(ctx context.Context, now time.Time) (int64, error) {

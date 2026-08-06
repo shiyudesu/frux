@@ -1,16 +1,16 @@
 package infraplayback
 
 import (
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
-	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
-	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
-	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
-	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"hash/fnv"
 	"strconv"
 	"strings"
@@ -106,12 +106,19 @@ func (r *Repository) ListPreloadVideos(ctx context.Context, currentVideoID int64
 				models[index].MediaURL = delivery.MediaURL
 				models[index].CoverURL = delivery.CoverURL
 				models[index].PlaybackSources = delivery.PlaybackSources
+			} else if models[index].MediaAssetID > 0 {
+				models[index].MediaURL = ""
+				models[index].CoverURL = ""
+				models[index].PlaybackSources = nil
 			}
 		}
 	}
 
 	items := make([]*domainplayback.PreloadVideo, 0, len(models))
 	for _, model := range models {
+		if model.MediaAssetID > 0 && model.MediaURL == "" {
+			continue
+		}
 		item := domainplayback.RestorePreloadVideo(model.VideoID, model.MediaURL, model.CoverURL)
 		item.MediaStatus = model.MediaStatus
 		item.PlaybackSources = model.PlaybackSources

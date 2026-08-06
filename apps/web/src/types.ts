@@ -130,7 +130,7 @@ export interface Video {
   description: string;
   media_url: string;
   cover_url: string;
-  status: number;
+  status: VideoStatus;
   visibility: VideoVisibility;
   like_count: number;
   comment_count: number;
@@ -148,6 +148,7 @@ export interface Video {
 }
 
 export type MediaStatus = "legacy_ready" | "pending" | "processing" | "ready" | "failed";
+export type VideoStatus = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface PlaybackSource {
   type: "mp4" | "dash" | "image";
@@ -170,6 +171,7 @@ export type AsyncState = "idle" | "loading" | "loadingMore" | "ready" | "error" 
 
 export interface CreatorVideoQueryRequest {
   visibility: VideoVisibility;
+  statuses?: VideoStatus[];
   query: string;
   created_from: string;
   created_to: string;

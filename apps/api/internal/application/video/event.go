@@ -1,10 +1,8 @@
 package applicationvideo
 
 import (
-	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"strings"
 	"time"
 )
@@ -22,11 +20,11 @@ type PublishedEvent struct {
 }
 
 func NewPublishedEvent(video *domainvideo.Video) *PublishedEvent {
-	if video == nil || video.PublishedAt == nil {
+	if video == nil || video.PublishedAt == nil || !video.IsPubliclyReadable() {
 		return nil
 	}
 	return &PublishedEvent{
-		EventID:     newEventID(),
+		EventID:     publishedEventID(video),
 		VideoID:     video.ID,
 		AuthorID:    video.AuthorID,
 		Title:       strings.TrimSpace(video.Title),
@@ -38,10 +36,6 @@ func NewPublishedEvent(video *domainvideo.Video) *PublishedEvent {
 	}
 }
 
-func newEventID() string {
-	content := make([]byte, 12)
-	if _, err := rand.Read(content); err == nil {
-		return hex.EncodeToString(content)
-	}
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+func publishedEventID(video *domainvideo.Video) string {
+	return fmt.Sprintf("video-published:%d:%d", video.ID, video.PublishedAt.UTC().UnixNano())
 }

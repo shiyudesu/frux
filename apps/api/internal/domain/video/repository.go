@@ -1,6 +1,9 @@
 package domainvideo
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Repository 定义视频领域需要的持久化能力。
 type Repository interface {
@@ -14,6 +17,10 @@ type Repository interface {
 	FindByAuthorAndIdempotencyKey(ctx context.Context, authorID int64, key string) (*Video, error)
 	// ListByAuthor 查询作者已发布视频列表。
 	ListByAuthor(ctx context.Context, authorID int64, limit, offset int) ([]*Video, error)
+	// ListByOwner 查询作者自己的非删除视频，包括待审和拒绝状态。
+	ListByOwner(ctx context.Context, authorID int64, limit, offset int) ([]*Video, error)
 	// UpdateStatus 更新视频状态，例如软删除。
-	UpdateStatus(ctx context.Context, video *Video) error
+	UpdateStatus(ctx context.Context, video *Video) (bool, error)
+	// ApplyLifecycleTransition 在数据库锁内执行具体审核生命周期转换。
+	ApplyLifecycleTransition(ctx context.Context, videoID int64, transition LifecycleTransition, at time.Time) (bool, error)
 }

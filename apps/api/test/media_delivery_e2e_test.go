@@ -97,15 +97,48 @@ func TestProductionMediaDeliveryEndToEnd(t *testing.T) {
 	if err := worker.HandleRequested(ctx, applicationmedia.NewProcessingRequestedEvent(videoAsset.Asset.ID, "v1", time.Now().UTC())); err != nil {
 		t.Fatalf("process media: %v", err)
 	}
-	ready, err := videoRepo.FindByID(ctx, created.Video.ID)
+	ready, err := videoRepo.FindByIDAnyStatus(ctx, created.Video.ID)
 	if err != nil {
 		t.Fatalf("load ready video: %v", err)
 	}
-	if ready.MediaStatus != domainmedia.MediaStatusReady ||
-		ready.MediaURL != "https://cdn.example.test/"+mediaVariantPath(videoAsset.Asset.ID) ||
-		len(ready.PlaybackSources) != 1 ||
-		publisher.EventCount() != 1 {
-		t.Fatalf("unexpected ready video: %+v events=%d", ready, publisher.EventCount())
+	if ready.Status != domainvideo.StatusPendingReview ||
+		ready.MediaStatus != domainmedia.MediaStatusReady ||
+		ready.MediaURL != "" || len(ready.PlaybackSources) != 0 ||
+		publisher.EventCount() != 0 {
+		t.Fatalf("media readiness bypassed review: %+v events=%d", ready, publisher.EventCount())
+	}
+	if err := videoService.Approve(ctx, ready.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("approve ready video: %v", err)
+	}
+	ready, err = videoRepo.FindByID(ctx, created.Video.ID)
+	if err != nil {
+		t.Fatalf("load approved video: %v", err)
+	}
+	if !strings.HasPrefix(ready.MediaURL, "https://cdn.example.test/media/v2/") ||
+		!strings.HasSuffix(ready.MediaURL, "/"+protectedMediaVariantSuffix(videoAsset.Asset.ID)) ||
+		len(ready.PlaybackSources) != 1 || publisher.EventCount() != 1 {
+		t.Fatalf("approval did not release ready media: %+v events=%d", ready, publisher.EventCount())
+	}
+	if err := videoService.SetOffline(ctx, ready.ID); err != nil {
+		t.Fatalf("take production video offline: %v", err)
+	}
+	publicKey := strings.TrimPrefix(ready.MediaURL, "https://cdn.example.test/")
+	if _, err := store.Head(ctx, publicKey); err == nil {
+		t.Fatal("offline video retained public object")
+	}
+	protectedKey := "processed/" + protectedMediaVariantSuffix(videoAsset.Asset.ID)
+	if _, err := store.Head(ctx, protectedKey); err != nil {
+		t.Fatalf("offline video missing protected object: %v", err)
+	}
+	if _, err := videoRepo.FindByID(ctx, ready.ID); err != domainvideo.ErrVideoNotFound {
+		t.Fatalf("offline video remained public: %v", err)
+	}
+	if err := videoService.RestorePublished(ctx, ready.ID); err != nil {
+		t.Fatalf("restore production video: %v", err)
+	}
+	ready, err = videoRepo.FindByID(ctx, ready.ID)
+	if err != nil || ready.MediaURL == "" {
+		t.Fatalf("restored video did not republish media: video=%+v err=%v", ready, err)
 	}
 
 	if err := videoService.Delete(ctx, 42, ready.ID); err != nil {
@@ -132,19 +165,27 @@ func (r *memoryVideoRepo) ListByMediaAssetID(_ context.Context, mediaAssetID int
 	return result, nil
 }
 
-func (r *memoryVideoRepo) UpdateMediaProjection(_ context.Context, video *domainvideo.Video) error {
+func (r *memoryVideoRepo) UpdateMediaProjection(_ context.Context, video *domainvideo.Video) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	stored := r.byID[video.ID]
 	if stored == nil {
-		return domainvideo.ErrVideoNotFound
+		return false, domainvideo.ErrVideoNotFound
+	}
+	eligible := stored.Status == domainvideo.StatusPublished &&
+		stored.Visibility == domainvideo.VisibilityPublic &&
+		domainmedia.IsPublicReadyStatus(video.MediaStatus)
+	if !eligible {
+		video.MediaURL = ""
+		video.CoverURL = ""
+		video.PlaybackSources = nil
 	}
 	stored.MediaURL = video.MediaURL
 	stored.CoverURL = video.CoverURL
 	stored.MediaStatus = video.MediaStatus
 	stored.MediaErrorCode = video.MediaErrorCode
 	stored.PlaybackSources = append([]domainmedia.PlaybackSource(nil), video.PlaybackSources...)
-	return nil
+	return eligible, nil
 }
 
 type e2eMediaRepo struct {
@@ -278,8 +319,24 @@ func (r *e2eMediaRepo) ListReadyVariantsByAssetIDs(_ context.Context, ids []int6
 	return result, nil
 }
 
-func (*e2eMediaRepo) UpdateVariantPromotion(context.Context, int64, string, bool) error {
-	return nil
+func (r *e2eMediaRepo) UpdateVariantPromotion(
+	_ context.Context,
+	variantID int64,
+	expectedObjectKey string,
+	expectedPublic bool,
+	objectKey string,
+	public bool,
+) (bool, error) {
+	for _, variants := range r.variants {
+		for _, variant := range variants {
+			if variant.ID == variantID && variant.ObjectKey == expectedObjectKey && variant.Public == expectedPublic {
+				variant.ObjectKey = objectKey
+				variant.Public = public
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (r *e2eMediaRepo) ListReadyVariants(_ context.Context, assetID int64) ([]*domainmedia.MediaVariant, error) {
@@ -312,6 +369,22 @@ func (r *e2eMediaRepo) LeaseCleanupTasks(_ context.Context, owner string, now, l
 
 func (*e2eMediaRepo) UpdateCleanupTask(context.Context, *domainmedia.CleanupTask) error {
 	return nil
+}
+
+func (r *e2eMediaRepo) ListIncompletePublicCleanupTasks(_ context.Context, assetIDs []int64) ([]*domainmedia.CleanupTask, error) {
+	allowed := map[int64]struct{}{}
+	for _, assetID := range assetIDs {
+		allowed[assetID] = struct{}{}
+	}
+	var tasks []*domainmedia.CleanupTask
+	for _, task := range r.cleanupTasks {
+		if _, ok := allowed[task.AssetID]; ok &&
+			strings.HasPrefix(task.ObjectKey, "media/") &&
+			task.State != domainmedia.CleanupStateCompleted {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks, nil
 }
 
 func (*e2eMediaRepo) ReleaseExpiredCleanupLeases(context.Context, time.Time) (int64, error) {
@@ -379,7 +452,7 @@ func (c *e2eCacheInvalidator) InvalidateVideo(context.Context, int64) error {
 }
 
 func (p *e2eProcessor) Process(_ context.Context, asset *domainmedia.MediaAsset, job *domainmedia.MediaProcessingJob) (*applicationmedia.ProcessResult, error) {
-	key := mediaVariantPath(asset.ID)
+	key := "processed/" + protectedMediaVariantSuffix(asset.ID)
 	p.store.objects[key] = domainmedia.ObjectMetadata{Key: key, SizeBytes: 96, ChecksumSHA256: strings.Repeat("b", 64)}
 	return &applicationmedia.ProcessResult{
 		Width: 1280, Height: 720, DurationMS: 5000, VideoCodec: "h264", AudioCodec: "aac",
@@ -388,11 +461,11 @@ func (p *e2eProcessor) Process(_ context.Context, asset *domainmedia.MediaAsset,
 			Format: "mp4", Codec: "h264", AudioCodec: "aac", Width: 1280, Height: 720,
 			Bitrate: 2_500_000, Quality: "720p", ObjectKey: key, Role: domainmedia.VariantRoleBaseline,
 			SortOrder: 10, State: domainmedia.VariantStateReady, ChecksumSHA256: strings.Repeat("b", 64),
-			SizeBytes: 96, Public: true,
+			SizeBytes: 96, Public: false,
 		}},
 	}, nil
 }
 
-func mediaVariantPath(assetID int64) string {
-	return "media/" + strconv.FormatInt(assetID, 10) + "/v1/baseline.mp4"
+func protectedMediaVariantSuffix(assetID int64) string {
+	return strconv.FormatInt(assetID, 10) + "/v1/baseline.mp4"
 }

@@ -1,13 +1,14 @@
 package applicationvideo
 
 import (
-	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"net/url"
 	"path"
 	"sort"
@@ -21,13 +22,16 @@ type ManagementService struct {
 	repo             domainvideo.ManagementRepository
 	cacheInvalidator VideoCacheInvalidator
 	mediaCleanup     MediaCleanupScheduler
+	publisher        PublishedEventPublisher
 	mediaPublisher   interface {
 		MediaReady(ctx context.Context, assetID int64) error
+		ProtectVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) error
 	}
 }
 
 type CreatorQueryRequest struct {
 	Visibility  string
+	Statuses    []int
 	Query       string
 	CreatedFrom *time.Time
 	CreatedTo   *time.Time
@@ -48,9 +52,13 @@ type BatchResult struct {
 }
 
 type MediaAssetRef struct {
-	VideoID      int64
-	MediaAssetID int64
-	CoverAssetID int64
+	VideoID        int64
+	MediaAssetID   int64
+	CoverAssetID   int64
+	Status         int
+	Visibility     string
+	MediaStatus    string
+	MediaErrorCode string
 }
 
 type MediaAssetRefReader interface {
@@ -67,10 +75,21 @@ func WithManagementMediaCleanup(scheduler MediaCleanupScheduler) ManagementOptio
 
 func WithManagementMediaPublisher(publisher interface {
 	MediaReady(ctx context.Context, assetID int64) error
+	ProtectVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) error
 }) ManagementOption {
 	return func(service *ManagementService) {
 		service.mediaPublisher = publisher
 	}
+}
+
+func WithManagementPublishedPublisher(publisher PublishedEventPublisher) ManagementOption {
+	return func(service *ManagementService) {
+		service.publisher = publisher
+	}
+}
+
+type VideoByIDReader interface {
+	FindByIDAnyStatus(ctx context.Context, videoID int64) (*domainvideo.Video, error)
 }
 
 type CollectionListResult struct {
@@ -109,8 +128,20 @@ func (s *ManagementService) QueryCreatorVideos(ctx context.Context, userID int64
 	if err != nil {
 		return nil, err
 	}
+	statuses := make([]int, 0, len(request.Statuses))
+	seenStatuses := make(map[int]struct{}, len(request.Statuses))
+	for _, status := range request.Statuses {
+		if !domainvideo.ValidStatus(status) || status == domainvideo.StatusDeleted {
+			return nil, domainvideo.ErrInvalidStatus
+		}
+		if _, exists := seenStatuses[status]; exists {
+			continue
+		}
+		seenStatuses[status] = struct{}{}
+		statuses = append(statuses, status)
+	}
 	items, err := s.repo.QueryCreatorVideos(ctx, domainvideo.CreatorVideoFilter{
-		AuthorID: userID, Visibility: visibility, Query: strings.TrimSpace(request.Query),
+		AuthorID: userID, Visibility: visibility, Statuses: statuses, Query: strings.TrimSpace(request.Query),
 		CreatedFrom: request.CreatedFrom, CreatedTo: request.CreatedTo, Cursor: cursor, Limit: limit + 1,
 	})
 	if err != nil {
@@ -145,9 +176,15 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 	if err != nil {
 		return nil, err
 	}
+	fingerprint := batchFingerprint(action, ids)
+	operation, replayed, err := s.repo.ApplyBatch(ctx, userID, action, ids, idempotencyKey, fingerprint)
+	if err != nil {
+		return nil, err
+	}
 	var mediaRefs []MediaAssetRef
-	if (action == domainvideo.BatchActionDelete && s.mediaCleanup != nil) ||
-		(action == domainvideo.BatchActionMakePublic && s.mediaPublisher != nil) {
+	if (action == domainvideo.BatchActionDelete && (s.mediaCleanup != nil || s.mediaPublisher != nil)) ||
+		(action == domainvideo.BatchActionMakePublic && (s.mediaPublisher != nil || s.publisher != nil)) ||
+		(action == domainvideo.BatchActionMakePrivate && s.mediaPublisher != nil) {
 		if reader, ok := s.repo.(MediaAssetRefReader); ok {
 			mediaRefs, err = reader.ListMediaAssetRefs(ctx, ids)
 			if err != nil {
@@ -155,31 +192,66 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 			}
 		}
 	}
-	fingerprint := batchFingerprint(action, ids)
-	operation, replayed, err := s.repo.ApplyBatch(ctx, userID, action, ids, idempotencyKey, fingerprint)
-	if err != nil {
-		return nil, err
-	}
 	if s.cacheInvalidator != nil && !replayed {
 		for _, videoID := range operation.VideoIDs {
 			_ = s.cacheInvalidator.InvalidateVideo(ctx, videoID)
 		}
-		if action == domainvideo.BatchActionDelete && s.mediaCleanup != nil {
-			for _, ref := range mediaRefs {
-				if err := s.mediaCleanup.ScheduleMediaCleanup(ctx, ref.MediaAssetID, ref.CoverAssetID); err != nil {
-					return nil, err
-				}
-				if action == domainvideo.BatchActionMakePublic && s.mediaPublisher != nil {
-					for _, ref := range mediaRefs {
-						if ref.MediaAssetID > 0 {
-							if err := s.mediaPublisher.MediaReady(ctx, ref.MediaAssetID); err != nil {
-								return nil, err
-							}
-						}
+	}
+	var sideEffectErr error
+	for _, ref := range mediaRefs {
+		var mediaErr error
+		switch action {
+		case domainvideo.BatchActionMakePublic:
+			if s.mediaPublisher != nil && ref.MediaAssetID > 0 &&
+				ref.Visibility == domainvideo.VisibilityPublic &&
+				ref.Status != domainvideo.StatusDeleted && ref.Status != domainvideo.StatusOffline &&
+				(domainmedia.IsPublicReadyStatus(ref.MediaStatus) ||
+					ref.MediaErrorCode == "publication_event_failed") {
+				mediaErr = errors.Join(mediaErr, s.mediaPublisher.MediaReady(ctx, ref.MediaAssetID))
+			} else if s.publisher != nil && ref.MediaAssetID == 0 &&
+				ref.Visibility == domainvideo.VisibilityPublic &&
+				ref.Status == domainvideo.StatusPublished &&
+				domainmedia.IsPublicReadyStatus(ref.MediaStatus) {
+				if reader, ok := s.repo.(VideoByIDReader); ok {
+					video, err := reader.FindByIDAnyStatus(ctx, ref.VideoID)
+					if err != nil {
+						mediaErr = errors.Join(mediaErr, err)
+					} else if event := NewPublishedEvent(video); event != nil {
+						mediaErr = errors.Join(mediaErr, s.publisher.PublishVideoPublished(ctx, event))
 					}
 				}
 			}
+		case domainvideo.BatchActionMakePrivate:
+			if s.mediaPublisher != nil && ref.Visibility == domainvideo.VisibilityPrivate &&
+				ref.Status != domainvideo.StatusDeleted {
+				mediaErr = errors.Join(
+					mediaErr,
+					s.mediaPublisher.ProtectVideo(ctx, ref.VideoID, ref.MediaAssetID, ref.CoverAssetID),
+				)
+			}
+		case domainvideo.BatchActionDelete:
+			if ref.Status != domainvideo.StatusDeleted {
+				continue
+			}
+			if s.mediaPublisher != nil {
+				mediaErr = errors.Join(
+					mediaErr,
+					s.mediaPublisher.ProtectVideo(ctx, ref.VideoID, ref.MediaAssetID, ref.CoverAssetID),
+				)
+			}
+			if s.mediaCleanup != nil {
+				mediaErr = errors.Join(
+					mediaErr,
+					s.mediaCleanup.ScheduleMediaCleanup(ctx, ref.MediaAssetID, ref.CoverAssetID),
+				)
+			}
 		}
+		if mediaErr != nil {
+			sideEffectErr = errors.Join(sideEffectErr, mediaErr)
+		}
+	}
+	if sideEffectErr != nil {
+		return nil, sideEffectErr
 	}
 	return &BatchResult{Action: operation.Action, VideoIDs: operation.VideoIDs, Replayed: replayed}, nil
 }

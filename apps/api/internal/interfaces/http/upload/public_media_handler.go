@@ -1,10 +1,10 @@
 package interfaceshttpupload
 
 import (
+	"context"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 	inframedia "github.com/shiyudesu/frux/internal/infra/media"
-	"context"
 	"net/http"
 	"strings"
 
@@ -12,17 +12,36 @@ import (
 )
 
 type PublicMediaHandler struct {
-	store *inframedia.LocalStore
-	get   app.HandlerFunc
-	head  app.HandlerFunc
+	store      *inframedia.LocalStore
+	authorizer PublicMediaAuthorizer
+	get        app.HandlerFunc
+	head       app.HandlerFunc
 }
 
-func NewPublicMediaHandler(store *inframedia.LocalStore, root, prefix string) (*PublicMediaHandler, error) {
+type PublicMediaAuthorizer interface {
+	AuthorizePublicMediaObject(ctx context.Context, objectKey string) (bool, error)
+}
+
+type PublicMediaOption func(*PublicMediaHandler)
+
+func WithPublicMediaAuthorizer(authorizer PublicMediaAuthorizer) PublicMediaOption {
+	return func(handler *PublicMediaHandler) {
+		handler.authorizer = authorizer
+	}
+}
+
+func NewPublicMediaHandler(store *inframedia.LocalStore, root, prefix string, options ...PublicMediaOption) (*PublicMediaHandler, error) {
 	getHandler, headHandler, err := infrahttphertz.StaticHandlers(root, prefix)
 	if err != nil {
 		return nil, err
 	}
-	return &PublicMediaHandler{store: store, get: getHandler, head: headHandler}, nil
+	handler := &PublicMediaHandler{store: store, get: getHandler, head: headHandler}
+	for _, option := range options {
+		if option != nil {
+			option(handler)
+		}
+	}
+	return handler, nil
 }
 
 func (h *PublicMediaHandler) Get(ctx context.Context, c *app.RequestContext) {
@@ -38,6 +57,13 @@ func (h *PublicMediaHandler) serve(ctx context.Context, c *app.RequestContext, s
 	if !domainmedia.ValidObjectKey(key) || !strings.HasPrefix(key, "media/") {
 		c.Status(http.StatusNotFound)
 		return
+	}
+	if h.authorizer != nil {
+		allowed, err := h.authorizer.AuthorizePublicMediaObject(ctx, key)
+		if err != nil || !allowed {
+			c.Status(http.StatusNotFound)
+			return
+		}
 	}
 	metadata, err := h.store.Head(ctx, key)
 	if err != nil {
@@ -56,8 +82,5 @@ func (h *PublicMediaHandler) serve(ctx context.Context, c *app.RequestContext, s
 }
 
 func publicMediaCacheControl(key string) string {
-	if strings.HasSuffix(strings.ToLower(key), ".mpd") {
-		return "public, max-age=60"
-	}
-	return "public, max-age=31536000, immutable"
+	return "public, max-age=60, must-revalidate"
 }

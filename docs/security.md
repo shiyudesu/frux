@@ -11,7 +11,7 @@
 
 | 资产 | 访问方式 | 缓存 |
 | --- | --- | --- |
-| 已就绪公开 MP4/segment/cover | CDN 或公开 `media/` 前缀 | 一年 immutable |
+| 已就绪公开 MP4/segment/cover | CDN 或公开 `media/` 前缀 | 60 秒并 `must-revalidate`，支持审核撤销 |
 | DASH manifest | CDN 或公开 `media/` 前缀 | 短缓存 |
 | 原始上传、处理中资产 | owner 获取短期签名 URL | `private, no-store` |
 | 私密作品 | API 不返回公共播放源；owner 按当前引用状态获取签名访问 | `private, no-store` |

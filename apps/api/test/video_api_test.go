@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -53,6 +54,7 @@ type memoryVideoRepo struct {
 type memoryVideoPublisher struct {
 	mu     sync.Mutex
 	events []*applicationvideo.PublishedEvent
+	err    error
 }
 
 type localAssetOwnershipStub map[string]struct {
@@ -149,6 +151,7 @@ func (r *memoryVideoRepo) ListByAuthor(ctx context.Context, authorID int64, limi
 		if video.AuthorID == authorID && video.Status == domainvideo.StatusPublished {
 			videos = append(videos, cloneVideo(video))
 		}
+
 	}
 	sort.Slice(videos, func(i, j int) bool {
 		left := publishedAtUnix(videos[i])
@@ -169,23 +172,82 @@ func (r *memoryVideoRepo) ListByAuthor(ctx context.Context, authorID int64, limi
 	return videos[offset:end], nil
 }
 
+func (r *memoryVideoRepo) ListByOwner(ctx context.Context, authorID int64, limit, offset int) ([]*domainvideo.Video, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	videos := make([]*domainvideo.Video, 0)
+	for _, video := range r.byID {
+		if video.AuthorID == authorID && video.Status != domainvideo.StatusDeleted {
+			videos = append(videos, cloneVideo(video))
+		}
+	}
+	sort.Slice(videos, func(i, j int) bool {
+		if videos[i].CreatedAt.Equal(videos[j].CreatedAt) {
+			return videos[i].ID > videos[j].ID
+		}
+		return videos[i].CreatedAt.After(videos[j].CreatedAt)
+	})
+	if offset >= len(videos) {
+		return []*domainvideo.Video{}, nil
+	}
+	end := offset + limit
+	if end > len(videos) {
+		end = len(videos)
+	}
+	return videos[offset:end], nil
+}
+
 // UpdateStatus 模拟视频状态更新，当前用于软删除。
-func (r *memoryVideoRepo) UpdateStatus(ctx context.Context, video *domainvideo.Video) error {
+func (r *memoryVideoRepo) UpdateStatus(ctx context.Context, video *domainvideo.Video) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	stored, exists := r.byID[video.ID]
 	if !exists {
-		return domainvideo.ErrVideoNotFound
+		return false, domainvideo.ErrVideoNotFound
+	}
+	if stored.Status == video.Status {
+		video.PublishedAt = stored.PublishedAt
+		return false, nil
+	}
+	if video.Status != domainvideo.StatusDeleted {
+		return false, domainvideo.ErrVideoStateNotAllowed
 	}
 	stored.Status = video.Status
+	stored.PublishedAt = video.PublishedAt
 	stored.UpdatedAt = time.Now()
-	return nil
+	return true, nil
+}
+
+func (r *memoryVideoRepo) ApplyLifecycleTransition(
+	_ context.Context,
+	videoID int64,
+	transition domainvideo.LifecycleTransition,
+	at time.Time,
+) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored, exists := r.byID[videoID]
+	if !exists {
+		return false, domainvideo.ErrVideoNotFound
+	}
+	previous := stored.Status
+	if err := stored.ApplyLifecycleTransition(transition, at); err != nil {
+		return false, err
+	}
+	if stored.Status == previous {
+		return false, nil
+	}
+	stored.UpdatedAt = time.Now()
+	return true, nil
 }
 
 func (p *memoryVideoPublisher) PublishVideoPublished(ctx context.Context, event *applicationvideo.PublishedEvent) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.err != nil {
+		return p.err
+	}
 	p.events = append(p.events, event)
 	return nil
 }
@@ -198,7 +260,7 @@ func (p *memoryVideoPublisher) EventCount() int {
 
 // TestVideoAPIFlow 覆盖视频发布、幂等重放、详情、列表、删除和重复删除。
 func TestVideoAPIFlow(t *testing.T) {
-	router, jwtManager := newVideoRouter(t)
+	router, jwtManager, repo := newVideoRouterWithPublisher(t, nil)
 	token := signTestToken(t, jwtManager, 42)
 
 	createResponse := performVideoJSONRequest(
@@ -213,10 +275,11 @@ func TestVideoAPIFlow(t *testing.T) {
 
 	var created videoAPIResponse
 	decodeJSON(t, createResponse, &created)
-	if created.ID == 0 || created.AuthorID != 42 || created.Status != domainvideo.StatusPublished {
+	if created.ID == 0 || created.AuthorID != 42 || created.Status != domainvideo.StatusPendingReview {
 		t.Fatalf("unexpected create response: %+v", created)
 	}
-	if created.Title != "first video" || created.Description != "hello timeline" || created.MediaURL == "" || created.CoverURL == "" || created.PublishedAt == nil {
+	if created.Title != "first video" || created.Description != "hello timeline" ||
+		created.MediaURL == "" || created.CoverURL == "" || created.PublishedAt != nil {
 		t.Fatalf("unexpected create response: %+v", created)
 	}
 
@@ -237,14 +300,14 @@ func TestVideoAPIFlow(t *testing.T) {
 	}
 
 	getResponse := performJSONRequest(router, http.MethodGet, fmt.Sprintf("/api/videos/%d", created.ID), "", "")
-	requireStatus(t, getResponse, http.StatusOK)
+	requireStatus(t, getResponse, http.StatusNotFound)
 
 	listResponse := performJSONRequest(router, http.MethodGet, "/api/users/42/videos?limit=10&offset=0", "", "")
 	requireStatus(t, listResponse, http.StatusOK)
 
 	var list videoListAPIResponse
 	decodeJSON(t, listResponse, &list)
-	if len(list.Items) != 1 || list.Items[0].ID != created.ID || list.Limit != 10 || list.Offset != 0 {
+	if len(list.Items) != 0 || list.Limit != 10 || list.Offset != 0 {
 		t.Fatalf("unexpected author list response: %+v", list)
 	}
 
@@ -255,6 +318,23 @@ func TestVideoAPIFlow(t *testing.T) {
 	decodeJSON(t, mineResponse, &mine)
 	if len(mine.Items) != 1 || mine.Items[0].ID != created.ID {
 		t.Fatalf("unexpected mine list response: %+v", mine)
+	}
+	if mine.Items[0].Status != domainvideo.StatusPendingReview || mine.Items[0].PublishedAt != nil {
+		t.Fatalf("owner list hid pending lifecycle: %+v", mine.Items[0])
+	}
+
+	reviewService := applicationvideo.New(repo)
+	if err := reviewService.Approve(context.Background(), created.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("approve created video: %v", err)
+	}
+	getResponse = performJSONRequest(router, http.MethodGet, fmt.Sprintf("/api/videos/%d", created.ID), "", "")
+	requireStatus(t, getResponse, http.StatusOK)
+	listResponse = performJSONRequest(router, http.MethodGet, "/api/users/42/videos?limit=10&offset=0", "", "")
+	requireStatus(t, listResponse, http.StatusOK)
+	decodeJSON(t, listResponse, &list)
+	if len(list.Items) != 1 || list.Items[0].ID != created.ID ||
+		list.Items[0].Status != domainvideo.StatusPublished || list.Items[0].PublishedAt == nil {
+		t.Fatalf("approved video missing from public list: %+v", list)
 	}
 
 	deleteResponse := performJSONRequest(router, http.MethodDelete, fmt.Sprintf("/api/videos/%d", created.ID), "", token)
@@ -278,7 +358,7 @@ func TestVideoAPIFlow(t *testing.T) {
 
 func TestVideoPublishedEvent(t *testing.T) {
 	publisher := &memoryVideoPublisher{}
-	router, jwtManager, _ := newVideoRouterWithPublisher(t, publisher)
+	router, jwtManager, repo := newVideoRouterWithPublisher(t, publisher)
 	token := signTestToken(t, jwtManager, 42)
 
 	createResponse := performVideoJSONRequest(
@@ -290,7 +370,7 @@ func TestVideoPublishedEvent(t *testing.T) {
 		"create-video-event",
 	)
 	requireStatus(t, createResponse, http.StatusCreated)
-	if publisher.EventCount() != 1 {
+	if publisher.EventCount() != 0 {
 		t.Fatalf("unexpected published event count after create: %d", publisher.EventCount())
 	}
 
@@ -303,8 +383,42 @@ func TestVideoPublishedEvent(t *testing.T) {
 		"create-video-event",
 	)
 	requireStatus(t, replayResponse, http.StatusOK)
-	if publisher.EventCount() != 1 {
+	if publisher.EventCount() != 0 {
 		t.Fatalf("unexpected published event count after replay: %d", publisher.EventCount())
+	}
+	var created videoAPIResponse
+	decodeJSON(t, createResponse, &created)
+	reviewService := applicationvideo.New(repo, applicationvideo.WithPublishedEventPublisher(publisher))
+	publisher.err = errors.New("publish failed")
+	if err := reviewService.Approve(context.Background(), created.ID, time.Now().UTC()); err == nil {
+		t.Fatal("expected approval publication failure")
+	}
+	if publisher.EventCount() != 0 {
+		t.Fatalf("failed approval recorded event: %d", publisher.EventCount())
+	}
+	publisher.err = nil
+	if err := reviewService.Approve(context.Background(), created.ID, time.Now().UTC().Add(time.Hour)); err != nil {
+		t.Fatalf("retry approved event video: %v", err)
+	}
+	if publisher.EventCount() != 1 {
+		t.Fatalf("unexpected published event count after approval: %d", publisher.EventCount())
+	}
+	firstEventID := publisher.events[0].EventID
+	if err := reviewService.Approve(context.Background(), created.ID, time.Now().UTC().Add(2*time.Hour)); err != nil {
+		t.Fatalf("idempotent approval event retry: %v", err)
+	}
+	if publisher.EventCount() != 2 || publisher.events[1].EventID != firstEventID {
+		t.Fatalf("published event identity was not stable: %+v", publisher.events)
+	}
+	if err := reviewService.SetOffline(context.Background(), created.ID); err != nil {
+		t.Fatalf("take event video offline: %v", err)
+	}
+	if err := reviewService.Approve(context.Background(), created.ID, time.Now().UTC().Add(3*time.Hour)); err != domainvideo.ErrVideoStateNotAllowed {
+		t.Fatalf("stale approval retry after takedown = %v, want ErrVideoStateNotAllowed", err)
+	}
+	offline, err := repo.FindByIDAnyStatus(context.Background(), created.ID)
+	if err != nil || offline.Status != domainvideo.StatusOffline {
+		t.Fatalf("stale approval reversed takedown: video=%+v err=%v", offline, err)
 	}
 }
 

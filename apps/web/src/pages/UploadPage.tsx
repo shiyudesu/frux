@@ -79,7 +79,9 @@ export function UploadPage() {
         description: form.description.trim(),
         ...uploadReferences
       }, creationKey);
-      setStatus(video.media_status === "processing" ? "上传完成，视频正在处理中" : "发布成功");
+      setStatus(video.media_status === "processing"
+        ? "上传完成，视频处理中并等待审核"
+        : "上传成功，等待审核");
       uploadAttemptRef.current = "";
       navigate("/profile");
     } catch (error) {
@@ -173,7 +175,7 @@ export function UploadPage() {
                 <UploadProgress label="封面" value={coverProgress} />
               </div>
             )}
-            {status && <p className={`form-message ${status === "发布成功" ? "success" : ""}`}>{status}</p>}
+            {status && <p className={`form-message ${status.startsWith("上传完成") || status.startsWith("上传成功") ? "success" : ""}`}>{status}</p>}
             <button className="primary-button" disabled={submitting}>
               <Icon name="publish" size={18} />
               {submitting ? "发布中" : "发布"}

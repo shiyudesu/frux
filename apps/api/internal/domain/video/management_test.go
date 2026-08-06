@@ -10,6 +10,9 @@ func TestVisibilityTransitionPreservesLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new video: %v", err)
 	}
+	if err := video.Approve(time.Now().UTC()); err != nil {
+		t.Fatalf("approve video: %v", err)
+	}
 	publishedAt := *video.PublishedAt
 	if err := video.SetVisibilityBy(7, VisibilityPrivate); err != nil {
 		t.Fatalf("make private: %v", err)

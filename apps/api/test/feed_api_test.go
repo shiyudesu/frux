@@ -60,6 +60,7 @@ type memoryFeedRepo struct {
 	followerCounts           map[int64]int
 	inbox                    map[int64]map[int64]struct{}
 	viewerActions            map[int64]map[int64]*domainfeed.ViewerActionState
+	publicVideoIDs           map[int64]struct{}
 	followingCalls           int
 	followingPullAuthorCalls int
 }
@@ -126,13 +127,36 @@ func (r *capturingRecommender) Input() applicationrecommendation.CandidateReques
 }
 
 func newMemoryFeedRepo(items []*domainfeed.FeedItem) *memoryFeedRepo {
+	publicVideoIDs := make(map[int64]struct{}, len(items))
+	for _, item := range items {
+		publicVideoIDs[item.VideoID] = struct{}{}
+	}
 	return &memoryFeedRepo{
 		items:          items,
 		following:      map[int64]map[int64]struct{}{},
 		followerCounts: map[int64]int{},
 		inbox:          map[int64]map[int64]struct{}{},
 		viewerActions:  map[int64]map[int64]*domainfeed.ViewerActionState{},
+		publicVideoIDs: publicVideoIDs,
 	}
+}
+
+func (r *memoryFeedRepo) BatchPublicVideoIDs(_ context.Context, videoIDs []int64) (map[int64]struct{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[int64]struct{}, len(videoIDs))
+	for _, videoID := range videoIDs {
+		if _, ok := r.publicVideoIDs[videoID]; ok {
+			result[videoID] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func (r *memoryFeedRepo) HidePublicVideo(videoID int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.publicVideoIDs, videoID)
 }
 
 func newMemoryFeedCache() *memoryFeedCache {
@@ -908,6 +932,7 @@ func TestTimelineFeedCache(t *testing.T) {
 		t.Fatalf("unexpected card/stat repo calls after first request: card=%d stat=%d", repo.CardCalls(), repo.StatCalls())
 	}
 
+	repo.HidePublicVideo(2)
 	secondResponse := performJSONRequest(router, http.MethodGet, "/api/feed-items?scene=timeline&limit=2", "", "")
 	requireStatus(t, secondResponse, http.StatusOK)
 	if repo.TimelineCalls() != 1 {
@@ -919,8 +944,8 @@ func TestTimelineFeedCache(t *testing.T) {
 
 	var secondPage feedAPIResponse
 	decodeJSON(t, secondResponse, &secondPage)
-	if len(secondPage.Items) != 2 || secondPage.Items[0].VideoID != 3 || secondPage.Items[1].VideoID != 2 {
-		t.Fatalf("unexpected cached timeline response: %+v", secondPage)
+	if len(secondPage.Items) != 1 || secondPage.Items[0].VideoID != 3 {
+		t.Fatalf("stale cached video leaked into timeline response: %+v", secondPage)
 	}
 }
 

@@ -213,10 +213,7 @@ func (s *S3Store) PresignPut(ctx context.Context, key, contentType, checksumSHA2
 
 func cacheControlForObjectKey(key string) string {
 	if strings.HasPrefix(key, "media/") {
-		if strings.HasSuffix(strings.ToLower(key), ".mpd") {
-			return "public, max-age=60"
-		}
-		return "public, max-age=31536000, immutable"
+		return "public, max-age=60, must-revalidate"
 	}
 	return "private, no-store"
 }

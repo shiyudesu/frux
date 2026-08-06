@@ -7,10 +7,12 @@ import (
 )
 
 const (
-	StatusDraft     = 1
-	StatusPublished = 2
-	StatusOffline   = 3
-	StatusDeleted   = 4
+	StatusDraft         = 1
+	StatusPublished     = 2
+	StatusOffline       = 3
+	StatusDeleted       = 4
+	StatusPendingReview = 5
+	StatusRejected      = 6
 
 	VisibilityPublic  = "public"
 	VisibilityPrivate = "private"
@@ -44,6 +46,15 @@ type Video struct {
 	PlaybackSources []domainmedia.PlaybackSource
 }
 
+type LifecycleTransition string
+
+const (
+	LifecycleApprove     LifecycleTransition = "approve"
+	LifecycleReject      LifecycleTransition = "reject"
+	LifecycleTakeOffline LifecycleTransition = "take_offline"
+	LifecycleRestore     LifecycleTransition = "restore"
+)
+
 func NewProcessing(authorID int64, title, description string, mediaAssetID, coverAssetID int64, idempotencyKey string) (*Video, error) {
 	if authorID <= 0 {
 		return nil, ErrInvalidAuthorID
@@ -66,10 +77,9 @@ func NewProcessing(authorID int64, title, description string, mediaAssetID, cove
 	if len(idempotencyKey) > MaxIdempotencyKeyLength {
 		return nil, ErrIdempotencyKeyTooLong
 	}
-	now := time.Now()
 	return &Video{
 		AuthorID: authorID, Title: title, Description: description,
-		Status: StatusPublished, Visibility: VisibilityPublic, PublishedAt: &now,
+		Status: StatusPendingReview, Visibility: VisibilityPublic,
 		IdempotencyKey: idempotencyKey, MediaAssetID: mediaAssetID, CoverAssetID: coverAssetID,
 		MediaStatus: domainmedia.MediaStatusProcessing,
 	}, nil
@@ -106,17 +116,15 @@ func NewPublished(authorID int64, title, description, mediaURL, coverURL, idempo
 		return nil, ErrIdempotencyKeyTooLong
 	}
 
-	now := time.Now()
-	// 新建视频直接进入 Published 状态，同时记录发布时间用于 Feed 排序。
+	// 兼容媒体路径与生产媒体路径使用相同审核生命周期。
 	return &Video{
 		AuthorID:       authorID,
 		Title:          title,
 		Description:    description,
 		MediaURL:       mediaURL,
 		CoverURL:       coverURL,
-		Status:         StatusPublished,
+		Status:         StatusPendingReview,
 		Visibility:     VisibilityPublic,
-		PublishedAt:    &now,
 		IdempotencyKey: idempotencyKey,
 		MediaStatus:    domainmedia.MediaStatusLegacyReady,
 	}, nil
@@ -196,6 +204,8 @@ func RestoreVideoWithMedia(
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	if status == 0 {
 		status = StatusPublished
+	} else if !ValidStatus(status) {
+		status = StatusDraft
 	}
 	visibility = strings.ToLower(strings.TrimSpace(visibility))
 	if !ValidVisibility(visibility) {
@@ -253,6 +263,114 @@ func (v *Video) IsPubliclyReadable() bool {
 		v.Status == StatusPublished &&
 		v.Visibility == VisibilityPublic &&
 		domainmedia.IsPublicReadyStatus(v.MediaStatus)
+}
+
+func (v *Video) Approve(approvedAt time.Time) error {
+	if v == nil || approvedAt.IsZero() {
+		return ErrVideoStateNotAllowed
+	}
+	switch v.Status {
+	case StatusPublished:
+		return nil
+	case StatusPendingReview:
+		approvedAt = approvedAt.UTC().Truncate(time.Microsecond)
+		v.Status = StatusPublished
+		if v.PublishedAt == nil {
+			v.PublishedAt = &approvedAt
+		}
+		return nil
+	default:
+		return ErrVideoStateNotAllowed
+	}
+}
+
+func (v *Video) ApplyLifecycleTransition(transition LifecycleTransition, at time.Time) error {
+	switch transition {
+	case LifecycleApprove:
+		return v.Approve(at)
+	case LifecycleReject:
+		return v.Reject()
+	case LifecycleTakeOffline:
+		return v.TakeOffline()
+	case LifecycleRestore:
+		return v.Restore()
+	default:
+		return ErrVideoStateNotAllowed
+	}
+}
+
+func (v *Video) Reject() error {
+	if v == nil {
+		return ErrVideoStateNotAllowed
+	}
+	switch v.Status {
+	case StatusRejected:
+		return nil
+	case StatusPendingReview:
+		v.Status = StatusRejected
+		return nil
+	default:
+		return ErrVideoStateNotAllowed
+	}
+}
+
+func (v *Video) TakeOffline() error {
+	if v == nil {
+		return ErrVideoStateNotAllowed
+	}
+	switch v.Status {
+	case StatusOffline:
+		return nil
+	case StatusPublished:
+		v.Status = StatusOffline
+		return nil
+	default:
+		return ErrVideoStateNotAllowed
+	}
+}
+
+func (v *Video) Restore() error {
+	if v == nil {
+		return ErrVideoStateNotAllowed
+	}
+	switch v.Status {
+	case StatusPublished:
+		return nil
+	case StatusOffline:
+		if v.PublishedAt == nil {
+			return ErrVideoStateNotAllowed
+		}
+		v.Status = StatusPublished
+		return nil
+	default:
+		return ErrVideoStateNotAllowed
+	}
+}
+
+func ValidStatus(status int) bool {
+	return status >= StatusDraft && status <= StatusRejected
+}
+
+func ValidLifecycleTransition(from, to int) bool {
+	if !ValidStatus(from) || !ValidStatus(to) {
+		return false
+	}
+	if from == to {
+		return true
+	}
+	if to == StatusDeleted {
+		return from != StatusDeleted
+	}
+	switch {
+	case from == StatusPendingReview && (to == StatusPublished || to == StatusRejected):
+		return true
+	case from == StatusPublished && to == StatusOffline:
+		return true
+	case from == StatusOffline && to == StatusPublished:
+		return true
+	default:
+		return false
+	}
 }
 
 func ValidVisibility(value string) bool {

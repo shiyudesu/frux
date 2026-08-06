@@ -1,8 +1,9 @@
 package applicationvideo
 
 import (
-	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"context"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"reflect"
 	"testing"
 	"time"
@@ -16,6 +17,33 @@ type managementRepoStub struct {
 	collection      *domainvideo.Collection
 	collectionItems []*domainvideo.CollectionItem
 	lastUpdate      domainvideo.CollectionUpdate
+	mediaRefs       []MediaAssetRef
+	replayed        bool
+	videos          map[int64]*domainvideo.Video
+}
+
+type managementMediaPublisherStub struct {
+	readyCalls   int
+	protectCalls int
+}
+
+type managementPublishedPublisherStub struct {
+	events []*PublishedEvent
+}
+
+func (p *managementPublishedPublisherStub) PublishVideoPublished(_ context.Context, event *PublishedEvent) error {
+	p.events = append(p.events, event)
+	return nil
+}
+
+func (p *managementMediaPublisherStub) MediaReady(context.Context, int64) error {
+	p.readyCalls++
+	return nil
+}
+
+func (p *managementMediaPublisherStub) ProtectVideo(context.Context, int64, int64, int64) error {
+	p.protectCalls++
+	return nil
 }
 
 func (r *managementRepoStub) QueryCreatorVideos(context.Context, domainvideo.CreatorVideoFilter) ([]*domainvideo.Video, error) {
@@ -24,7 +52,18 @@ func (r *managementRepoStub) QueryCreatorVideos(context.Context, domainvideo.Cre
 func (r *managementRepoStub) ApplyBatch(_ context.Context, userID int64, action string, videoIDs []int64, key, fingerprint string) (*domainvideo.BatchOperation, bool, error) {
 	r.lastIDs = append([]int64(nil), videoIDs...)
 	r.lastFingerprint = fingerprint
-	return &domainvideo.BatchOperation{UserID: userID, Key: key, Action: action, VideoIDs: videoIDs}, false, nil
+	return &domainvideo.BatchOperation{UserID: userID, Key: key, Action: action, VideoIDs: videoIDs}, r.replayed, nil
+}
+func (r *managementRepoStub) ListMediaAssetRefs(context.Context, []int64) ([]MediaAssetRef, error) {
+	return append([]MediaAssetRef(nil), r.mediaRefs...), nil
+}
+func (r *managementRepoStub) FindByIDAnyStatus(_ context.Context, videoID int64) (*domainvideo.Video, error) {
+	video := r.videos[videoID]
+	if video == nil {
+		return nil, domainvideo.ErrVideoNotFound
+	}
+	cloned := *video
+	return &cloned, nil
 }
 func (r *managementRepoStub) CreateCollection(context.Context, *domainvideo.Collection) (*domainvideo.Collection, bool, error) {
 	return nil, false, nil
@@ -91,6 +130,7 @@ func TestBatchNormalizationAndFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply batch: %v", err)
 	}
+
 	if !reflect.DeepEqual(result.VideoIDs, []int64{1, 2, 3}) {
 		t.Fatalf("unexpected normalized ids: %v", result.VideoIDs)
 	}
@@ -103,6 +143,76 @@ func TestBatchNormalizationAndFingerprint(t *testing.T) {
 	}
 	if _, err := service.ApplyBatch(context.Background(), 7, "archive", []int64{1}, "key"); err != domainvideo.ErrInvalidBatchAction {
 		t.Fatalf("expected invalid action, got %v", err)
+	}
+}
+
+func TestReplayedPrivateBatchDoesNotDemoteCurrentlyPublicVideo(t *testing.T) {
+	publisher := &managementMediaPublisherStub{}
+	repo := &managementRepoStub{
+		replayed: true,
+		mediaRefs: []MediaAssetRef{{
+			VideoID: 1, MediaAssetID: 11, CoverAssetID: 12,
+			Status: domainvideo.StatusPublished, Visibility: domainvideo.VisibilityPublic,
+		}},
+	}
+
+	service := NewManagement(repo, nil, WithManagementMediaPublisher(publisher))
+	if _, err := service.ApplyBatch(
+		context.Background(),
+		7,
+		domainvideo.BatchActionMakePrivate,
+		[]int64{1},
+		"old-private-key",
+	); err != nil {
+		t.Fatalf("replay old private batch: %v", err)
+	}
+	if publisher.protectCalls != 0 {
+		t.Fatalf("old replay demoted current public video: %d", publisher.protectCalls)
+	}
+
+	repo.mediaRefs[0].Visibility = domainvideo.VisibilityPrivate
+	if _, err := service.ApplyBatch(
+		context.Background(),
+		7,
+		domainvideo.BatchActionMakePrivate,
+		[]int64{1},
+		"current-private-key",
+	); err != nil {
+		t.Fatalf("retry current private batch: %v", err)
+	}
+	if publisher.protectCalls != 1 {
+		t.Fatalf("current private state was not protected: %d", publisher.protectCalls)
+	}
+}
+
+func TestMakePublicPublishesLegacyVideoEvent(t *testing.T) {
+	publishedAt := time.Now().UTC()
+	publisher := &managementPublishedPublisherStub{}
+	repo := &managementRepoStub{
+		mediaRefs: []MediaAssetRef{{
+			VideoID: 1, Status: domainvideo.StatusPublished,
+			Visibility: domainvideo.VisibilityPublic, MediaStatus: domainmedia.MediaStatusLegacyReady,
+		}},
+		videos: map[int64]*domainvideo.Video{
+			1: domainvideo.RestoreVideoWithVisibility(
+				1, 7, "legacy", "", "media", "cover",
+				domainvideo.StatusPublished, domainvideo.VisibilityPublic,
+				0, 0, 0, &publishedAt, publishedAt, publishedAt, "",
+			),
+		},
+	}
+	service := NewManagement(repo, nil, WithManagementPublishedPublisher(publisher))
+	if _, err := service.ApplyBatch(
+		context.Background(),
+		7,
+		domainvideo.BatchActionMakePublic,
+		[]int64{1},
+		"legacy-public",
+	); err != nil {
+		t.Fatalf("make legacy video public: %v", err)
+	}
+	if len(publisher.events) != 1 || publisher.events[0].VideoID != 1 {
+		t.Fatalf("legacy public event missing: %+v", publisher.events)
 	}
 }
 
@@ -173,6 +283,19 @@ func TestAuthorizeLocalAsset(t *testing.T) {
 	_, _, allowed, err = service.AuthorizeLocalAsset(context.Background(), "/uploads/video/private.mp4", 42)
 	if err != nil || !allowed {
 		t.Fatalf("owner private authorization: allowed=%v err=%v", allowed, err)
+	}
+	for _, status := range []int{domainvideo.StatusPendingReview, domainvideo.StatusRejected} {
+		repo.assetReferences[0] = domainvideo.AssetReference{
+			AuthorID: 42, Status: status, Visibility: domainvideo.VisibilityPublic,
+		}
+		_, public, allowed, err = service.AuthorizeLocalAsset(context.Background(), "/uploads/video/private.mp4", 0)
+		if err != nil || public || allowed {
+			t.Fatalf("status %d anonymous authorization: public=%v allowed=%v err=%v", status, public, allowed, err)
+		}
+		_, public, allowed, err = service.AuthorizeLocalAsset(context.Background(), "/uploads/video/private.mp4", 42)
+		if err != nil || public || !allowed {
+			t.Fatalf("status %d owner authorization: public=%v allowed=%v err=%v", status, public, allowed, err)
+		}
 	}
 
 	repo.assetReferences[0].Status = domainvideo.StatusDeleted

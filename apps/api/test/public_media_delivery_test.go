@@ -18,6 +18,14 @@ import (
 	"github.com/cloudwego/hertz/pkg/network/standard"
 )
 
+type publicMediaAuthorizerStub struct {
+	allowed bool
+}
+
+func (a *publicMediaAuthorizerStub) AuthorizePublicMediaObject(context.Context, string) (bool, error) {
+	return a.allowed, nil
+}
+
 func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
 	root := t.TempDir()
 	store, err := inframedia.NewLocalStore(root)
@@ -31,7 +39,13 @@ func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
 	if _, err := store.Put(context.Background(), key, bytes.NewReader(content), int64(len(content)), "video/mp4", checksum); err != nil {
 		t.Fatalf("put public media: %v", err)
 	}
-	handler, err := interfaceshttpupload.NewPublicMediaHandler(store, root, "/media")
+	authorizer := &publicMediaAuthorizerStub{allowed: true}
+	handler, err := interfaceshttpupload.NewPublicMediaHandler(
+		store,
+		root,
+		"/media",
+		interfaceshttpupload.WithPublicMediaAuthorizer(authorizer),
+	)
 	if err != nil {
 		t.Fatalf("create public media handler: %v", err)
 	}
@@ -67,7 +81,7 @@ func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
 	if string(body) != "01234567" {
 		t.Fatalf("unexpected range body %q", body)
 	}
-	if response.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+	if response.Header.Get("Cache-Control") != "public, max-age=60, must-revalidate" {
 		t.Fatalf("unexpected cache control %q", response.Header.Get("Cache-Control"))
 	}
 	etag := response.Header.Get("ETag")
@@ -93,5 +107,15 @@ func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
 	_ = notModified.Body.Close()
 	if notModified.StatusCode != http.StatusNotModified {
 		t.Fatalf("expected not modified, got %d", notModified.StatusCode)
+	}
+
+	authorizer.allowed = false
+	revoked, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("request revoked public media: %v", err)
+	}
+	_ = revoked.Body.Close()
+	if revoked.StatusCode != http.StatusNotFound {
+		t.Fatalf("revoked public media status = %d, want 404", revoked.StatusCode)
 	}
 }

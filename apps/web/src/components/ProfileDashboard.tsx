@@ -10,7 +10,7 @@ import type {
   Video,
   VideoCollection
 } from "../types";
-import { formatMetric } from "../utils";
+import { creatorVideoStatusLabel, formatMetric } from "../utils";
 import { Icon } from "./Icon";
 
 export interface ProfileHeroData {
@@ -180,7 +180,7 @@ interface CreatorWorkTabsProps {
 }
 
 const workTabs: TabDefinition<CreatorWorkTab>[] = [
-  { id: "published", label: "已发布" },
+  { id: "published", label: "公开作品" },
   { id: "private", label: "私密作品" },
   { id: "collections", label: "合集" }
 ];
@@ -332,17 +332,6 @@ interface ProfileVideoGridProps {
   itemActionLabel?: string;
 }
 
-function statusLabel(video: Video): string {
-  if (video.media_status === "failed") return "处理失败";
-  if (video.media_status === "pending" || video.media_status === "processing") return "处理中";
-  if (video.visibility === "private") return "私密";
-  if (video.status === 0) return "审核中";
-  if (video.status === 1) return "草稿";
-  if (video.status === 3) return "已下架";
-  if (video.status === 4) return "已删除";
-  return "";
-}
-
 export function ProfileVideoGrid({
   items,
   state,
@@ -390,7 +379,7 @@ export function ProfileVideoGrid({
         {items.map((item) => {
           const video = item.video;
           const selected = selectedIDs.has(video.id);
-          const label = statusLabels ? statusLabel(video) : "";
+          const label = statusLabels ? creatorVideoStatusLabel(video) : "";
           return (
             <article className={`profile-video-card ${selected ? "selected" : ""}`} key={video.id}>
               <button

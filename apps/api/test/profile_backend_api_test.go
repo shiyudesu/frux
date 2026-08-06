@@ -38,6 +38,8 @@ func newManagementMemoryRepo() *managementMemoryRepo {
 			1: domainvideo.RestoreVideoWithVisibility(1, 42, "public work", "", "media-1", "cover-1", domainvideo.StatusPublished, domainvideo.VisibilityPublic, 1, 0, 0, &now, now.Add(-time.Minute), now, ""),
 			2: domainvideo.RestoreVideoWithVisibility(2, 42, "private work", "", "media-2", "cover-2", domainvideo.StatusPublished, domainvideo.VisibilityPrivate, 2, 0, 0, &now, now, now, ""),
 			3: domainvideo.RestoreVideoWithVisibility(3, 77, "other work", "", "media-3", "cover-3", domainvideo.StatusPublished, domainvideo.VisibilityPublic, 0, 0, 0, &now, now, now, ""),
+			4: domainvideo.RestoreVideoWithVisibility(4, 42, "pending work", "", "media-4", "cover-4", domainvideo.StatusPendingReview, domainvideo.VisibilityPublic, 0, 0, 0, nil, now.Add(time.Minute), now, ""),
+			5: domainvideo.RestoreVideoWithVisibility(5, 42, "rejected work", "", "media-5", "cover-5", domainvideo.StatusRejected, domainvideo.VisibilityPublic, 0, 0, 0, nil, now.Add(2*time.Minute), now, ""),
 		},
 		operations:       map[string]*domainvideo.BatchOperation{},
 		collections:      map[int64]*domainvideo.Collection{},
@@ -54,6 +56,9 @@ func (r *managementMemoryRepo) QueryCreatorVideos(_ context.Context, filter doma
 			continue
 		}
 		if filter.Visibility != "" && video.Visibility != filter.Visibility {
+			continue
+		}
+		if len(filter.Statuses) > 0 && !containsVideoStatus(filter.Statuses, video.Status) {
 			continue
 		}
 		items = append(items, cloneVideo(video))
@@ -271,6 +276,15 @@ func (r *managementMemoryRepo) FindLocalAsset(_ context.Context, assetURL string
 	return nil, domainvideo.ErrLocalAssetNotFound
 }
 
+func containsVideoStatus(statuses []int, target int) bool {
+	for _, status := range statuses {
+		if status == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCreatorManagementAPIFlow(t *testing.T) {
 	router := server.New()
 	jwtManager, _ := infrajwt.NewManager("test-secret", "15m")
@@ -297,6 +311,20 @@ func TestCreatorManagementAPIFlow(t *testing.T) {
 	if len(queryPayload.Items) != 1 || queryPayload.Items[0].ID != 2 {
 		t.Fatalf("unexpected private query: %s", query.Body.String())
 	}
+	pendingQuery := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/users/me/video-queries",
+		`{"visibility":"public","statuses":[5,6],"limit":20}`,
+		token,
+	)
+	requireStatus(t, pendingQuery, http.StatusOK)
+	decodeJSON(t, pendingQuery, &queryPayload)
+	if len(queryPayload.Items) != 2 ||
+		queryPayload.Items[0].Status != domainvideo.StatusRejected ||
+		queryPayload.Items[1].Status != domainvideo.StatusPendingReview {
+		t.Fatalf("unexpected review lifecycle query: %s", pendingQuery.Body.String())
+	}
 
 	mixed := performJSONRequestWithHeaders(router, http.MethodPost, "/api/users/me/video-batch-actions", `{"video_ids":[1,3],"action":"make_private"}`,
 		utHeader("Authorization", "Bearer "+token), utHeader("Idempotency-Key", "mixed"))
@@ -304,6 +332,7 @@ func TestCreatorManagementAPIFlow(t *testing.T) {
 	if repo.videos[1].Visibility != domainvideo.VisibilityPublic {
 		t.Fatal("mixed ownership batch partially applied")
 	}
+
 	success := performJSONRequestWithHeaders(router, http.MethodPost, "/api/users/me/video-batch-actions", `{"video_ids":[1],"action":"make_private"}`,
 		utHeader("Authorization", "Bearer "+token), utHeader("Idempotency-Key", "privacy"))
 	requireStatus(t, success, http.StatusOK)

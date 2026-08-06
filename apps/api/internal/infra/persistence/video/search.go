@@ -1,10 +1,10 @@
 package infravideo
 
 import (
+	"context"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
-	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -44,30 +44,51 @@ type videoSearchModel struct {
 }
 
 func (r *Repository) SearchVideos(ctx context.Context, query string, cursor *domainsearch.VideoCursor, limit int) ([]*domainsearch.VideoIndexItem, error) {
-	var models []videoSearchModel
-	if err := buildVideoSearchQuery(r.db.WithContext(ctx), query, cursor, limit).Scan(&models).Error; err != nil {
-		return nil, err
+	items := make([]*domainsearch.VideoIndexItem, 0, limit)
+	scanCursor := cursor
+	batchSize := limit * 2
+	if batchSize < 20 {
+		batchSize = 20
 	}
-
-	videos := make([]*domainvideo.Video, 0, len(models))
-	for _, model := range models {
-		videos = append(videos, restoreVideo(model.videoWithStatModel()))
-	}
-	if err := r.hydrateMediaDelivery(ctx, videos); err != nil {
-		return nil, err
-	}
-
-	items := make([]*domainsearch.VideoIndexItem, 0, len(models))
-	for index, model := range models {
-		video := videos[index]
-		items = append(items, &domainsearch.VideoIndexItem{
-			ID: video.ID, AuthorID: video.AuthorID, Title: video.Title, Description: video.Description,
-			MediaURL: video.MediaURL, CoverURL: video.CoverURL, Status: video.Status,
-			Visibility: video.Visibility, LikeCount: video.LikeCount, CommentCount: video.CommentCount,
-			FavoriteCount: video.FavoriteCount, PublishedAt: model.PublishedAt,
-			CreatedAt: video.CreatedAt, UpdatedAt: video.UpdatedAt, MediaStatus: video.MediaStatus,
-			PlaybackSources: video.PlaybackSources, Relevance: model.Relevance,
-		})
+	for len(items) < limit {
+		var models []videoSearchModel
+		if err := buildVideoSearchQuery(r.db.WithContext(ctx), query, scanCursor, batchSize).Scan(&models).Error; err != nil {
+			return nil, err
+		}
+		if len(models) == 0 {
+			break
+		}
+		videos := make([]*domainvideo.Video, 0, len(models))
+		for _, model := range models {
+			videos = append(videos, restoreVideo(model.videoWithStatModel()))
+		}
+		if err := r.hydrateMediaDelivery(ctx, videos); err != nil {
+			return nil, err
+		}
+		for index, model := range models {
+			video := videos[index]
+			if video.MediaAssetID > 0 && video.MediaURL == "" {
+				continue
+			}
+			items = append(items, &domainsearch.VideoIndexItem{
+				ID: video.ID, AuthorID: video.AuthorID, Title: video.Title, Description: video.Description,
+				MediaURL: video.MediaURL, CoverURL: video.CoverURL, Status: video.Status,
+				Visibility: video.Visibility, LikeCount: video.LikeCount, CommentCount: video.CommentCount,
+				FavoriteCount: video.FavoriteCount, PublishedAt: model.PublishedAt,
+				CreatedAt: video.CreatedAt, UpdatedAt: video.UpdatedAt, MediaStatus: video.MediaStatus,
+				PlaybackSources: video.PlaybackSources, Relevance: model.Relevance,
+			})
+			if len(items) == limit {
+				break
+			}
+		}
+		last := models[len(models)-1]
+		scanCursor = &domainsearch.VideoCursor{
+			Relevance: last.Relevance, PublishedAt: last.PublishedAt, VideoID: last.ID,
+		}
+		if len(models) < batchSize {
+			break
+		}
 	}
 	return items, nil
 }

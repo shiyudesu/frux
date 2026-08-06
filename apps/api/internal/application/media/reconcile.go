@@ -159,6 +159,9 @@ func (r *Reconciler) reconcileAsset(ctx context.Context, asset *domainmedia.Medi
 		}
 	}
 	if baselineReady {
+		if r.notifier != nil {
+			return r.notifier.MediaReady(ctx, asset.ID)
+		}
 		return nil
 	}
 	asset.State = domainmedia.AssetStateUploaded

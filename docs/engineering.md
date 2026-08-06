@@ -303,7 +303,7 @@ DELETE /api/videos/{videoId}/like
 
 生产媒体公开读条件额外要求 `media_status IN ('legacy_ready', 'ready')`。新对象存储视频在处理期间不计入公开作品数；基线就绪转换与统计增量在同一视频投影事务中更新。媒体任务按 `(asset_id, profile_version)` 唯一并使用数据库租约和指数退避，RabbitMQ 只负责唤醒，数据库任务是可恢复事实来源。对象删除不得放进用户请求事务；视频删除创建延迟 `media_cleanup_task`，Worker 幂等删除，Reconciler 修复过期租约、缺失对象和孤儿对象。
 
-视频 `status` 表达生命周期，`visibility` 表达公开/私密，两者不得复用。所有匿名或跨用户内容读取必须同时验证 `status=published AND visibility=public`；缓存命中不能跳过数据库可读性校验。
+视频 `status` 表达审核生命周期：1 草稿、2 已发布、3 下架、4 删除、5 待审核、6 已拒绝；`visibility` 表达公开/私密，`media_status` 表达媒体处理，三者不得复用。新建视频固定为待审核且 `published_at` 为空；批准首次设置微秒精度发布时间，恢复下架内容不重写。批准、拒绝、下架和恢复必须在数据库行锁内执行操作型转换，不能用通用目标状态覆盖并发决定。所有匿名或跨用户内容读取必须同时验证 `status=published AND visibility=public AND media_status IN (legacy_ready, ready)`；媒体提升在投影事务内重新确认当前资格，失效变体降回保护前缀，任意状态 hydration、`/media` 直读和缓存命中都不能跳过审核门。公共提升使用 CAS 和新 exposure generation，保护副本不删除；公共媒体缓存最长 60 秒并要求重验证。撤销失败返回错误且幂等重试继续执行，过期并发副作用必须按当前数据库资格补偿。发布事件 ID 绑定 `video_id + published_at`，允许失败后安全重试。
 
 最新状态投影与原始流水分表保存。例如 `video_view_events` 是不可变观看流水，`video_view_history` 是可删除的用户历史投影；清空投影不得级联删除原始事实。
 

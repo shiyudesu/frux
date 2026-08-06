@@ -1,13 +1,13 @@
 package infravideo
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
-	"context"
-	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
@@ -24,6 +24,9 @@ func (r *Repository) QueryCreatorVideos(ctx context.Context, filter domainvideo.
 		Where("v.author_id = ? AND v.status <> ?", filter.AuthorID, domainvideo.StatusDeleted)
 	if filter.Visibility != "" {
 		query = query.Where("v.visibility = ?", filter.Visibility)
+	}
+	if len(filter.Statuses) > 0 {
+		query = query.Where("v.status IN ?", filter.Statuses)
 	}
 	if filter.Query != "" {
 		query = query.Where("v.title ILIKE ? ESCAPE '\\' OR v.description ILIKE ? ESCAPE '\\'", likePattern(filter.Query), likePattern(filter.Query))
@@ -55,18 +58,25 @@ func (r *Repository) ListMediaAssetRefs(ctx context.Context, videoIDs []int64) (
 		return []applicationvideo.MediaAssetRef{}, nil
 	}
 	var models []struct {
-		VideoID      int64
-		MediaAssetID *int64
-		CoverAssetID *int64
+		VideoID        int64
+		MediaAssetID   *int64
+		CoverAssetID   *int64
+		Status         int
+		Visibility     string
+		MediaStatus    string
+		MediaErrorCode string
 	}
 	if err := r.db.WithContext(ctx).Model(&VideoModel{}).
-		Select("id AS video_id, media_asset_id, cover_asset_id").
+		Select("id AS video_id, media_asset_id, cover_asset_id, status, visibility, media_status, media_error_code").
 		Where("id IN ?", videoIDs).Scan(&models).Error; err != nil {
 		return nil, err
 	}
 	result := make([]applicationvideo.MediaAssetRef, 0, len(models))
 	for _, model := range models {
-		ref := applicationvideo.MediaAssetRef{VideoID: model.VideoID}
+		ref := applicationvideo.MediaAssetRef{
+			VideoID: model.VideoID, Status: model.Status, Visibility: model.Visibility,
+			MediaStatus: model.MediaStatus, MediaErrorCode: model.MediaErrorCode,
+		}
 		if model.MediaAssetID != nil {
 			ref.MediaAssetID = *model.MediaAssetID
 		}
@@ -243,7 +253,7 @@ func (r *Repository) ListCollections(ctx context.Context, ownerID int64, publicO
 	}
 	previewLimit := 0
 	if publicOnly {
-		previewLimit = domainvideo.MaxPublicCollectionPreviewItems
+		previewLimit = domainvideo.MaxPublicCollectionPreviewItems * 4
 	}
 	itemsByCollection, memberCounts, err := r.listCollectionItemsBatch(ctx, collectionIDs, publicOnly, previewLimit)
 	if err != nil {
@@ -251,6 +261,9 @@ func (r *Repository) ListCollections(ctx context.Context, ownerID int64, publicO
 	}
 	for _, collection := range collections {
 		collection.Items = itemsByCollection[collection.ID]
+		if publicOnly && len(collection.Items) > domainvideo.MaxPublicCollectionPreviewItems {
+			collection.Items = collection.Items[:domainvideo.MaxPublicCollectionPreviewItems]
+		}
 		collection.MemberCount = memberCounts[collection.ID]
 	}
 	return collections, nil
@@ -379,6 +392,9 @@ type collectionMembershipRow struct {
 func (r *Repository) listCollectionItemsBatch(ctx context.Context, collectionIDs []int64, publicOnly bool, previewLimit int) (map[int64][]*domainvideo.CollectionItem, map[int64]int, error) {
 	itemsByCollection := make(map[int64][]*domainvideo.CollectionItem, len(collectionIDs))
 	memberCounts := make(map[int64]int, len(collectionIDs))
+	for _, collectionID := range collectionIDs {
+		memberCounts[collectionID] = 0
+	}
 	if len(collectionIDs) == 0 {
 		return itemsByCollection, memberCounts, nil
 	}
@@ -400,10 +416,25 @@ func (r *Repository) listCollectionItemsBatch(ctx context.Context, collectionIDs
 		Where("i.collection_id IN ?", collectionIDs)
 	if publicOnly {
 		membershipQuery = membershipQuery.Where(
-			"member_video.status = ? AND member_video.visibility = ? AND member_video.media_status IN ?",
+			`member_video.status = ?
+				AND member_video.visibility = ?
+				AND member_video.media_status IN ?
+				AND (
+					member_video.media_asset_id IS NULL
+					OR EXISTS (
+						SELECT 1
+						FROM media_variant AS public_variant
+						WHERE public_variant.asset_id = member_video.media_asset_id
+							AND public_variant.role = ?
+							AND public_variant.state = ?
+							AND public_variant.public = TRUE
+					)
+				)`,
 			domainvideo.StatusPublished,
 			domainvideo.VisibilityPublic,
 			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
+			domainmedia.VariantRoleBaseline,
+			domainmedia.VariantStateReady,
 		)
 	} else {
 		membershipQuery = membershipQuery.Where("member_video.status <> ?", domainvideo.StatusDeleted)
@@ -458,13 +489,20 @@ func (r *Repository) listCollectionItemsBatch(ctx context.Context, collectionIDs
 	}
 	for _, membership := range memberships {
 		video := videos[membership.VideoID]
-		if video == nil {
+		if video == nil || (publicOnly && video.MediaAssetID > 0 && video.MediaURL == "") {
 			continue
 		}
 		itemsByCollection[membership.CollectionID] = append(itemsByCollection[membership.CollectionID], &domainvideo.CollectionItem{
 			CollectionID: membership.CollectionID, VideoID: membership.VideoID, Position: membership.Position,
 			CreatedAt: membership.CreatedAt, Video: video,
 		})
+	}
+	if publicOnly {
+		for _, collectionID := range collectionIDs {
+			if len(itemsByCollection[collectionID]) == 0 {
+				memberCounts[collectionID] = 0
+			}
+		}
 	}
 	return itemsByCollection, memberCounts, nil
 }
@@ -497,6 +535,13 @@ func (r *Repository) BatchGetReadable(ctx context.Context, viewerID int64, video
 	}
 	if err := r.hydrateMediaDelivery(ctx, videoList); err != nil {
 		return nil, err
+	}
+	if publicOnly {
+		for videoID, video := range result {
+			if video.MediaAssetID > 0 && video.MediaURL == "" {
+				delete(result, videoID)
+			}
+		}
 	}
 	return result, nil
 }

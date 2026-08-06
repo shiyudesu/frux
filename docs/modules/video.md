@@ -2,13 +2,13 @@
 
 ## 1. 模块职责
 
-视频模块负责视频发布、详情读取、作品列表、独立可见性、创作者查询、原子批量操作、创作者合集、上传入口和软删除。互动计数由互动模块维护；视频模块同时维护用户内容聚合统计，并为个人内容库提供可读视频批量补齐。
+视频模块负责视频创建、审核生命周期、详情读取、作品列表、独立可见性、创作者查询、原子批量操作、创作者合集、上传入口和软删除。互动计数由互动模块维护；视频模块同时维护用户内容聚合统计，并为个人内容库提供可读视频批量补齐。
 
 ## 2. 接口设计
 
 | 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
 | --- | --- | --- | --- | --- |
-| POST | `/api/videos` | 创建并发布公开视频 | 登录 | 支持 |
+| POST | `/api/videos` | 创建待审核视频 | 登录 | 支持 |
 | GET | `/api/videos/{videoId}` | 查询已发布公开视频详情 | 可匿名 | 无 |
 | DELETE | `/api/videos/{videoId}` | 软删除自己的视频 | 登录 | 支持 |
 | GET | `/api/users/{userId}/videos` | 查询用户已发布公开视频 | 可匿名 | 无 |
@@ -27,7 +27,7 @@
 | POST | `/api/upload-sessions/{sessionId}/complete` | 校验对象并完成上传会话 | 登录 | 自然幂等 |
 | GET | `/api/media-assets/{assetId}/access` | 获取本人原始/保护资产短期签名 URL | 登录 | 无 |
 
-复杂作品查询请求使用 `visibility`、`query`、`created_from`、`created_to`、`cursor`、`limit`，响应为 `items`、`next_cursor`、`has_more`。日期接受 RFC 3339 或 `YYYY-MM-DD`；仅日期形式的结束日期包含当天末尾。默认 `limit=20`，范围 1–100，排序为 `created_at DESC, id DESC`。
+复杂作品查询请求使用 `visibility`、可选 `statuses`、`query`、`created_from`、`created_to`、`cursor`、`limit`，响应为 `items`、`next_cursor`、`has_more`。`statuses` 可筛选草稿、已发布、下架、待审和拒绝，但不查询已删除状态。日期接受 RFC 3339 或 `YYYY-MM-DD`；仅日期形式的结束日期包含当天末尾。默认 `limit=20`，范围 1–100，排序为 `created_at DESC, id DESC`。
 
 批量接口支持 `make_public`、`make_private`、`delete`，先去重并按 ID 排序，最多 100 个正整数 ID。成功返回：
 
@@ -39,7 +39,7 @@
 
 合集列表按 `updated_at DESC, id DESC` 使用稳定游标。列表响应包含 `member_count` 和有序 `items`：公开列表的 `member_count` 只统计当前已发布公开成员，`items` 只返回最多 3 张主页预览卡；本人列表返回全部未删除成员，保证合集编辑器能识别完整成员关系。合集页、成员关系和视频卡分别批量查询，不随合集数量形成 N+1；即使匿名请求 `limit=100`，最多也只补齐 300 张公开预览卡。创建首次返回 201，幂等重放返回已有合集和 200；更新返回 200 并补齐当前真实成员卡片；删除和成员增删返回 204。成员真正增加或移除时才更新合集 `updated_at`，重复 PUT/DELETE 不改变排序时间。
 
-`GET/HEAD /uploads/*` 保留标准 Range/条件请求语义，但视频和封面不再作为无条件静态文件暴露。认证上传会把 `/uploads/video/*` 和 `/uploads/cover/*` 的不可变上传者写入 `local_upload_asset`；发布时只有上传者可以引用这些保护 URL。已发布公开作品只有在视频作者等于资产上传者时才可匿名读取；非删除私密/下架作品仅资产上传者本人可读。删除作品、未引用文件、无所有权记录文件和跨作者引用都返回 404。登录成功时服务端写入仅限 `/uploads` 的 HttpOnly、SameSite=Strict 短期资产 Cookie；Cookie 身份还要求 Web 会话维护的同路径活跃标记。普通鉴权响应不续期 Cookie，Web 退出时先移除活跃标记，因此旧慢响应或离线登出都不能重新开放私有媒体。
+`GET/HEAD /uploads/*` 保留标准 Range/条件请求语义，但视频和封面不再作为无条件静态文件暴露。认证上传会把 `/uploads/video/*` 和 `/uploads/cover/*` 的不可变上传者写入 `local_upload_asset`；创建视频时只有上传者可以引用这些保护 URL。已发布公开作品只有在视频作者等于资产上传者时才可匿名读取；待审、拒绝、私密和下架作品仅资产上传者本人可读。删除作品、未引用文件、无所有权记录文件和跨作者引用都返回 404。
 
 ## 3. 数据表设计
 
@@ -57,7 +57,7 @@
 | `cover_asset_id` | BIGINT | NULLABLE | 生产封面资产 |
 | `media_status` | VARCHAR(24) | NOT NULL | `legacy_ready` / `processing` / `ready` / `failed` |
 | `media_error_code` | VARCHAR(64) | NOT NULL | 处理失败代码 |
-| `status` | SMALLINT | NOT NULL, DEFAULT 2 | 1 草稿 / 2 已发布 / 3 下架 / 4 删除 |
+| `status` | SMALLINT | NOT NULL, DEFAULT 5 | 1 草稿 / 2 已发布 / 3 下架 / 4 删除 / 5 待审核 / 6 已拒绝 |
 | `visibility` | VARCHAR(16) | NOT NULL, DEFAULT `public` | `public` / `private`，独立于生命周期 |
 | `published_at` | TIMESTAMPTZ | NULLABLE | 发布时间 |
 | `idempotency_key` | VARCHAR(128) | NULLABLE | 发布幂等键，与作者组成唯一约束 |
@@ -93,7 +93,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | `user_id` | 主键 |
-| `public_work_count` | `status=published AND visibility=public` 的作品数 |
+| `public_work_count` | `status=published AND visibility=public AND media ready` 的作品数 |
 | `private_work_count` | 非删除、`visibility=private` 的作品数 |
 | `received_like_count` | 非删除作品当前持久化点赞数之和 |
 | `collection_count` | 状态为有效的合集总数，包含公开和私密合集 |
@@ -116,23 +116,28 @@
 
 | 规则 | 说明 |
 | --- | --- |
-| 创建即发布 | 发布成功后 `status=2`、`visibility=public` |
+| 创建进入待审 | 生产媒体和兼容 URL 创建均返回 `status=5`、`published_at=null` |
+| 审核转换 | 待审可幂等批准为已发布或拒绝；批准首次设置 `published_at` |
+| 处罚与恢复 | 已发布可下架；下架恢复时保留原始 `published_at`；删除状态为终态 |
 | 历史视频默认公开 | 迁移将空可见性补为 `public` |
 | 生命周期与可见性分离 | 设为私密不会改变 `status` 或 `published_at` |
-| 创建统计行 | 发布视频时同步创建 `video_stat` 并增加公开作品计数 |
+| 创建统计行 | 创建视频时同步创建 `video_stat`；只有审核通过、公开且媒体就绪后才增加公开作品计数 |
 | 本地上传所有权 | 认证上传视频/封面后持久化不可变 owner；记录失败会删除已写入文件 |
 | 发布 URL 规则 | `http/https` 远程 URL 可用；本地媒体只接受属于作者的 `/uploads/video/*`，本地封面只接受属于作者的 `/uploads/cover/*`；`file`、`avatar`、类型互换和无所有权路径均拒绝 |
 | 公开视频可读 | 视频详情、公开作者作品、Feed、推荐、预加载和公开合集只返回 `status=2 AND visibility=public AND media_status IN (legacy_ready, ready)` |
 | 生产上传 | Web 创建上传会话后直传 S3 兼容存储，完成接口严格校验 owner、对象键、大小、类型、SHA-256 和过期时间；本地模式继续使用 `/api/uploads` |
-| 基线就绪门禁 | 新生产视频在 H.264/AAC faststart 基线完成前只对作者显示“处理中”，不进入公开读模型或公开作品计数 |
+| 双门门禁 | 审核通过和 H.264/AAC faststart 基线就绪相互独立；两者同时满足前只对作者展示真实处理/审核状态 |
 | 兼容与增量响应 | `media_url`、`cover_url` 继续投影可播放基线和封面；新客户端可读取有序 `playback_sources` |
 | 延迟清理 | 删除视频立即移除公开发现，并为原始对象、封面和所有变体创建延迟清理任务 |
 | 旧列表兼容 | `/users/me/videos` 与 `/users/{userId}/videos` 保留 offset 响应 |
-| 创作者查询语义 | `/video-queries` 查询作者自己的所有非删除作品；公开/私密过滤按 `visibility`，不额外限制为已发布状态 |
+| 创作者查询语义 | `/users/me/videos` 和 `/video-queries` 查询作者自己的所有非删除作品；公开/私密过滤按 `visibility`，`statuses` 可筛选待审与拒绝 |
 | 关键词安全 | 标题和描述使用参数化 `ILIKE`，并转义 `\`、`%`、`_` |
 | 批量原子性 | 事务内锁定全部视频并验证所有权；公开/私密动作拒绝下架或删除视频 |
 | 缓存防泄露 | 可见性、删除和生命周期变化清除视频卡片/统计缓存；Feed 组装还会用数据库重新校验缓存 ID 的公开可读性 |
 | 本地媒体防泄露 | `/uploads` 视频/封面同时验证不可变上传所有权、同所有者视频引用、生命周期、可见性和当前身份；他人公开重引用不能授权资产，保护资源禁用缓存 |
+| 生产媒体撤销 | 私密、下架、拒绝或删除会把已提升的 `media/` 变体降回 `processed/` 保护前缀；本地 `/media` 读取还会实时查询当前公开资格 |
+| 有界缓存撤销 | 公共对象和本地 `/media` 使用 60 秒 `must-revalidate` 缓存；状态变化后旧缓存最多保留一个短窗口，撤销失败返回错误并可幂等重试 |
+| 公共 URL 版本 | 新提升使用 `media/v2/{exposure-generation}/...`，恢复会产生新 URL；首次上线必须清理 CDN 中旧 `media/*` 一年缓存条目 |
 | 合集所有权 | 只能管理自己的有效合集，并只能加入自己未删除的作品 |
 | 合集公开读取 | 只返回有效公开合集，成员只保留已发布公开作品 |
 | 合集本人读取 | 返回有效公开/私密合集，成员过滤已删除作品但可包含草稿或下架作品 |
@@ -143,7 +148,9 @@
 
 | 场景 | 期望 |
 | --- | --- |
-| 登录用户发布视频 | 返回视频详情并创建统计行 |
+| 登录用户创建视频 | 返回待审视频、空 `published_at` 并创建统计行 |
+| 媒体先就绪 | 保持待审、公共 URL 为空且不发送发布事件 |
+| 审核先通过 | 保持公共不可读，直到媒体基线就绪 |
 | 查询私密视频详情 | 匿名接口返回 404 |
 | 查询私密作品 | 创作者查询只返回自己的非删除私密作品并稳定翻页 |
 | 批量混入他人视频 | 返回权限错误，所有视频保持原状 |
@@ -153,7 +160,7 @@
 | 重复添加合集成员 | 不产生重复成员 |
 | 重复增删合集成员 | 不改变合集 `updated_at`；真实增删会改变并影响合集排序 |
 | 更新合集响应 | PATCH 返回当前真实、已补齐视频卡的成员数组 |
-| 直接读取私密/下架/删除媒体 | 匿名返回 404；作者可读取非删除媒体，删除媒体对作者也返回 404 |
+| 直接读取待审/拒绝/私密/下架/删除媒体 | 匿名返回 404；作者可读取非删除保护媒体，删除媒体对作者也返回 404 |
 | 他人重引用保护 URL | 发布返回 403，且伪造的公开引用不能让资产对匿名用户可读 |
 | 历史资产回填 | 唯一作者引用的保护 URL 获得该作者所有权并继续按公开视频/本人规则读取 |
 | 上传非法媒体 | 返回 400 并清理失败文件 |
@@ -168,6 +175,6 @@
 | --- | --- |
 | 发布页 | 生产模式使用预签名直传和独立视频/封面进度，本地模式保留 multipart 回退 |
 | Feed/详情 | 展示已发布公开视频 |
-| 个人主页作品 Tab | 展示处理中/处理失败状态；“已发布”当前对应公开可见性，“私密作品”对应私密可见性 |
+| 个人主页作品 Tab | “公开作品”按公开可见性查询并展示处理中、审核中、未通过、已发布和已下架标签；“私密作品”对应私密可见性 |
 | 个人主页合集 Tab | 创建、编辑、删除合集并管理成员；编辑器独立搜索和游标加载全部公开/私密候选作品 |
 | 公开主页 | 展示已发布公开作品和公开合集 |

@@ -41,15 +41,27 @@ Frux SHALL process each source asset with an idempotent versioned media profile 
 - **THEN** the asset records a retryable or terminal failure without advertising incomplete outputs
 
 ### Requirement: Baseline-Gated Public Availability
-Videos backed by the production media pipeline SHALL enter public Feed, detail, recommendation, preload, and public-profile reads only after the required baseline output is ready.
+Videos backed by the production media pipeline SHALL enter public Feed, detail, recommendation, preload, search, public-profile, collection, and media reads only after the required baseline output is ready and the video lifecycle is review-approved and published.
 
 #### Scenario: New video is still processing
-- **WHEN** an owner creates a video whose required baseline has not completed
-- **THEN** the owner can observe processing state but public reads do not return the video
+- **WHEN** an owner creates a pending-review video whose required baseline has not completed
+- **THEN** the owner can observe processing and review state but public reads do not return the video
 
 #### Scenario: Baseline becomes ready
-- **WHEN** the processing worker verifies and publishes the required baseline
-- **THEN** the video becomes eligible for its normal published visibility and additive renditions can appear later
+- **WHEN** the processing worker verifies and publishes the required baseline for a review-approved, published, public video
+- **THEN** the video becomes publicly eligible and additive renditions can appear later
+
+#### Scenario: Baseline becomes ready before approval
+- **WHEN** the processing worker verifies and publishes the required baseline while the video remains pending review
+- **THEN** the video remains public-ineligible and additive renditions do not bypass review
+
+#### Scenario: Approval occurs before baseline is ready
+- **WHEN** review publishes a video whose required baseline is still processing
+- **THEN** public reads continue to omit it until the baseline becomes ready
+
+#### Scenario: Both gates become ready
+- **WHEN** the required baseline is ready and the video is review-approved, published, and public
+- **THEN** the video becomes publicly eligible and additive renditions can appear later
 
 #### Scenario: Legacy local video is read
 - **WHEN** an existing readable local video has not yet been migrated
@@ -67,15 +79,27 @@ Video and Feed responses SHALL preserve `media_url` and `cover_url` while option
 - **THEN** the compatibility fields resolve to a playable baseline and cover
 
 ### Requirement: Public CDN Cache Contract
-Ready public variants and covers SHALL use immutable versioned delivery URLs with Range, HEAD, ETag, and long-lived public caching.
+Ready public variants and covers SHALL use versioned exposure URLs with Range, HEAD, ETag, and a bounded revalidating public cache so lifecycle revocation can take effect.
 
 #### Scenario: Browser requests a public byte range
-- **WHEN** a browser requests a valid byte range for a public immutable variant
-- **THEN** the delivery path returns correct partial-content semantics and cache validators
+- **WHEN** a browser requests a valid byte range for a currently eligible public variant
+- **THEN** the delivery path returns correct partial-content semantics, cache validators, and a public cache lifetime no longer than 60 seconds with `must-revalidate`
 
 #### Scenario: Public variant is requested repeatedly
-- **WHEN** the same immutable public URL is requested before expiry
-- **THEN** browser and CDN caching are permitted without requiring per-request application authorization
+- **WHEN** the same currently eligible versioned exposure URL is requested within its bounded cache window
+- **THEN** browser and CDN caching are permitted without per-request application authorization, but revalidation is required no later than 60 seconds
+
+#### Scenario: Video becomes public-ineligible
+- **WHEN** a published video becomes private, offline, rejected, deleted, or media-failed
+- **THEN** its promoted variants are moved back to the protected prefix, public delivery stops after the bounded cache window, and failed object cleanup remains durably retryable
+
+#### Scenario: Video becomes public again
+- **WHEN** an eligible restored video is published again
+- **THEN** Frux promotes the protected bundle under a new exposure generation without changing its original publication time
+
+#### Scenario: Legacy immutable cache is migrated
+- **WHEN** the bounded-revocation delivery policy is first deployed
+- **THEN** operators purge legacy `media/*` entries that were previously advertised with year-long immutable caching
 
 ### Requirement: Protected Media Delivery
 Originals, private outputs, and incomplete assets SHALL remain owner-protected and SHALL NOT inherit public immutable caching.

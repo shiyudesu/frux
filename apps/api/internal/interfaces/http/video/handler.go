@@ -55,7 +55,7 @@ func (h *Handler) QueryMine(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	result, err := h.management.QueryCreatorVideos(ctx, userID, applicationvideo.CreatorQueryRequest{
-		Visibility: req.Visibility, Query: req.Query, CreatedFrom: createdFrom,
+		Visibility: req.Visibility, Statuses: req.Statuses, Query: req.Query, CreatedFrom: createdFrom,
 		CreatedTo: createdTo, Cursor: req.Cursor, Limit: req.Limit,
 	})
 	if err != nil {
@@ -341,7 +341,7 @@ func (h *Handler) ListMine(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	videos, err := h.service.ListByAuthor(ctx, userID, limit, offset)
+	videos, err := h.service.ListMine(ctx, userID, limit, offset)
 	if err != nil {
 		writeVideoError(c, err)
 		return
@@ -518,6 +518,7 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainvideo.ErrInvalidLimit) ||
 		errors.Is(err, domainvideo.ErrInvalidOffset) ||
 		errors.Is(err, domainvideo.ErrInvalidVisibility) ||
+		errors.Is(err, domainvideo.ErrInvalidStatus) ||
 		errors.Is(err, domainvideo.ErrVideoStateNotAllowed) ||
 		errors.Is(err, domainvideo.ErrInvalidCursor) ||
 		errors.Is(err, domainvideo.ErrInvalidDateRange) ||

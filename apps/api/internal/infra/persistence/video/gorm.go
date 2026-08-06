@@ -1,12 +1,12 @@
 package infravideo
 
 import (
+	"context"
+	"errors"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
-	"context"
-	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -163,6 +163,9 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainvideo.Video
 	if err := r.hydrateMediaDelivery(ctx, []*domainvideo.Video{video}); err != nil {
 		return nil, err
 	}
+	if video.MediaAssetID > 0 && video.MediaURL == "" {
+		return nil, domainvideo.ErrVideoNotFound
+	}
 	return video, nil
 }
 
@@ -218,13 +221,65 @@ func (r *Repository) FindByAuthorAndIdempotencyKey(ctx context.Context, authorID
 
 // ListByAuthor 按发布时间倒序返回作者已发布视频。
 func (r *Repository) ListByAuthor(ctx context.Context, authorID int64, limit, offset int) ([]*domainvideo.Video, error) {
+	result := make([]*domainvideo.Video, 0, limit)
+	resolvedSeen := 0
+	rawOffset := 0
+	batchSize := limit * 2
+	if batchSize < 40 {
+		batchSize = 40
+	}
+	for len(result) < limit {
+		var models []videoWithStatModel
+		err := r.db.WithContext(ctx).
+			Table("video AS v").
+			Select(videoWithStatSelect()).
+			Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
+			Where("v.author_id = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?", authorID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
+			Order("v.published_at DESC").
+			Order("v.id DESC").
+			Limit(batchSize).
+			Offset(rawOffset).
+			Scan(&models).
+			Error
+		if err != nil {
+			return nil, err
+		}
+		if len(models) == 0 {
+			break
+		}
+		rawOffset += len(models)
+		videos := make([]*domainvideo.Video, 0, len(models))
+		for _, model := range models {
+			videos = append(videos, restoreVideo(model))
+		}
+		if err := r.hydrateMediaDelivery(ctx, videos); err != nil {
+			return nil, err
+		}
+		for _, video := range filterResolvedPublicVideos(videos) {
+			if resolvedSeen < offset {
+				resolvedSeen++
+				continue
+			}
+			result = append(result, video)
+			if len(result) == limit {
+				break
+			}
+		}
+		if len(models) < batchSize {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (r *Repository) ListByOwner(ctx context.Context, authorID int64, limit, offset int) ([]*domainvideo.Video, error) {
 	var models []videoWithStatModel
 	err := r.db.WithContext(ctx).
 		Table("video AS v").
 		Select(videoWithStatSelect()).
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
-		Where("v.author_id = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?", authorID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
-		Order("v.published_at DESC").
+		Where("v.author_id = ? AND v.status <> ?", authorID, domainvideo.StatusDeleted).
+		Order("v.created_at DESC").
 		Order("v.id DESC").
 		Limit(limit).
 		Offset(offset).
@@ -233,10 +288,8 @@ func (r *Repository) ListByAuthor(ctx context.Context, authorID int64, limit, of
 	if err != nil {
 		return nil, err
 	}
-
 	videos := make([]*domainvideo.Video, 0, len(models))
 	for _, model := range models {
-		// 查询模型逐条恢复为领域对象，应用层无需知道数据库联表细节。
 		videos = append(videos, restoreVideo(model))
 	}
 	if err := r.hydrateMediaDelivery(ctx, videos); err != nil {
@@ -245,21 +298,32 @@ func (r *Repository) ListByAuthor(ctx context.Context, authorID int64, limit, of
 	return videos, nil
 }
 
-// UpdateStatus 只更新状态字段，用于软删除。
-func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// UpdateStatus 在同一事务中更新生命周期和首次发布时间。
+func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video) (bool, error) {
+	applied := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current VideoModel
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", video.ID).Take(&current).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return domainvideo.ErrVideoNotFound
 			}
+
 			return err
 		}
 		if current.Status == video.Status {
+			video.PublishedAt = current.PublishedAt
 			return nil
 		}
+		if video.Status != domainvideo.StatusDeleted ||
+			!domainvideo.ValidLifecycleTransition(current.Status, video.Status) {
+			return domainvideo.ErrVideoStateNotAllowed
+		}
 		previousStatus := current.Status
-		if err := tx.Model(&current).Update("status", video.Status).Error; err != nil {
+		publishedAt := current.PublishedAt
+		if err := tx.Model(&current).Updates(map[string]any{
+			"status":       video.Status,
+			"published_at": publishedAt,
+		}).Error; err != nil {
 			return err
 		}
 		publicDelta, privateDelta := contentWorkDeltas(previousStatus, current.Visibility, current.MediaStatus, video.Status, current.Visibility, current.MediaStatus)
@@ -271,8 +335,59 @@ func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video)
 			}
 			receivedLikeDelta = -stat.LikeCount
 		}
-		return AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, receivedLikeDelta, 0)
+		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, receivedLikeDelta, 0); err != nil {
+			return err
+		}
+		video.PublishedAt = publishedAt
+		applied = true
+		return nil
 	})
+	return applied, err
+}
+
+func (r *Repository) ApplyLifecycleTransition(
+	ctx context.Context,
+	videoID int64,
+	transition domainvideo.LifecycleTransition,
+	at time.Time,
+) (bool, error) {
+	applied := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current VideoModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", videoID).Take(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domainvideo.ErrVideoNotFound
+			}
+			return err
+		}
+		video := &domainvideo.Video{Status: current.Status, PublishedAt: current.PublishedAt}
+		if err := video.ApplyLifecycleTransition(transition, at); err != nil {
+			return err
+		}
+		if video.Status == current.Status {
+			return nil
+		}
+		if err := tx.Model(&current).Updates(map[string]any{
+			"status":       video.Status,
+			"published_at": video.PublishedAt,
+		}).Error; err != nil {
+			return err
+		}
+		publicDelta, privateDelta := contentWorkDeltas(
+			current.Status,
+			current.Visibility,
+			current.MediaStatus,
+			video.Status,
+			current.Visibility,
+			current.MediaStatus,
+		)
+		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	return applied, err
 }
 
 func (r *Repository) ListByMediaAssetID(ctx context.Context, mediaAssetID int64) ([]*domainvideo.Video, error) {
@@ -294,14 +409,23 @@ func (r *Repository) ListByMediaAssetID(ctx context.Context, mediaAssetID int64)
 	return videos, nil
 }
 
-func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvideo.Video) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvideo.Video) (bool, error) {
+	eligible := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current VideoModel
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", video.ID).Take(&current).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return domainvideo.ErrVideoNotFound
 			}
 			return err
+		}
+		eligible = current.Status == domainvideo.StatusPublished &&
+			current.Visibility == domainvideo.VisibilityPublic &&
+			domainmedia.IsPublicReadyStatus(video.MediaStatus)
+		if !eligible {
+			video.MediaURL = ""
+			video.CoverURL = ""
+			video.PlaybackSources = nil
 		}
 		publicDelta, privateDelta := contentWorkDeltas(
 			current.Status, current.Visibility, current.MediaStatus,
@@ -316,6 +440,7 @@ func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvid
 		}
 		return AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0)
 	})
+	return eligible, err
 }
 
 func (r *Repository) AuthorizeMediaAsset(ctx context.Context, assetID, ownerID int64) (referenced, allowed bool, err error) {
@@ -323,6 +448,7 @@ func (r *Repository) AuthorizeMediaAsset(ctx context.Context, assetID, ownerID i
 		AuthorID int64
 		Status   int
 	}
+
 	if err := r.db.WithContext(ctx).Model(&VideoModel{}).
 		Select("author_id, status").
 		Where("media_asset_id = ? OR cover_asset_id = ?", assetID, assetID).
@@ -336,6 +462,30 @@ func (r *Repository) AuthorizeMediaAsset(ctx context.Context, assetID, ownerID i
 		}
 	}
 	return referenced, allowed, nil
+}
+
+func (r *Repository) AuthorizePublicMediaObject(ctx context.Context, objectKey string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Table("media_variant AS mv").
+		Joins(`
+			JOIN video AS v
+				ON v.id = mv.video_id
+				OR v.media_asset_id = mv.asset_id
+				OR v.cover_asset_id = mv.asset_id
+		`).
+		Where(
+			"mv.object_key = ? AND mv.public = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?",
+			objectKey,
+			true,
+			domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic,
+			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
+		).
+		Distinct("v.id").
+		Count(&count).
+		Error
+	return count > 0, err
 }
 
 // restoreVideo 把联表查询结果转换成领域视频对象。
@@ -408,12 +558,13 @@ func (r *Repository) hydrateMediaDelivery(ctx context.Context, videos []*domainv
 	if r.mediaCatalog == nil || len(videos) == 0 {
 		return nil
 	}
+
 	refs := make([]inframediastore.DeliveryRef, 0, len(videos))
 	for _, video := range videos {
 		if video == nil || video.MediaAssetID <= 0 || !domainmedia.IsPublicReadyStatus(video.MediaStatus) {
 			continue
 		}
-		if video.Visibility != domainvideo.VisibilityPublic {
+		if video.Status != domainvideo.StatusPublished || video.Visibility != domainvideo.VisibilityPublic {
 			video.MediaURL = ""
 			video.CoverURL = ""
 			video.PlaybackSources = nil
@@ -432,7 +583,22 @@ func (r *Repository) hydrateMediaDelivery(ctx context.Context, videos []*domainv
 			video.MediaURL = delivery.MediaURL
 			video.CoverURL = delivery.CoverURL
 			video.PlaybackSources = delivery.PlaybackSources
+		} else if video.MediaAssetID > 0 {
+			video.MediaURL = ""
+			video.CoverURL = ""
+			video.PlaybackSources = nil
 		}
 	}
 	return nil
+}
+
+func filterResolvedPublicVideos(videos []*domainvideo.Video) []*domainvideo.Video {
+	filtered := make([]*domainvideo.Video, 0, len(videos))
+	for _, video := range videos {
+		if video == nil || (video.MediaAssetID > 0 && video.MediaURL == "") {
+			continue
+		}
+		filtered = append(filtered, video)
+	}
+	return filtered
 }

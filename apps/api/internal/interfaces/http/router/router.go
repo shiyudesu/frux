@@ -221,11 +221,17 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
 	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
 	mediaPublicationService := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
-	videoManagementService := applicationvideo.NewManagement(
-		videoRepo, feedCache,
+	videoManagementOptions := []applicationvideo.ManagementOption{
 		applicationvideo.WithManagementMediaCleanup(mediaCleanupService),
 		applicationvideo.WithManagementMediaPublisher(mediaPublicationService),
-	)
+	}
+	if rabbitMQ != nil {
+		videoManagementOptions = append(
+			videoManagementOptions,
+			applicationvideo.WithManagementPublishedPublisher(rabbitMQ),
+		)
+	}
+	videoManagementService := applicationvideo.NewManagement(videoRepo, feedCache, videoManagementOptions...)
 	videoOptions = append(videoOptions, applicationvideo.WithLocalAssetOwnership(videoManagementService))
 	videoOptions = append(videoOptions, applicationvideo.WithMediaAssets(mediaRepo))
 	videoOptions = append(videoOptions, applicationvideo.WithMediaDelivery(mediaCatalog))
@@ -268,7 +274,12 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	h.GET("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Get)
 	h.HEAD("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Head)
 	if localMediaStore, ok := mediaStore.(*inframediastore.LocalStore); ok {
-		publicMediaHandler, err := interfaceshttpupload.NewPublicMediaHandler(localMediaStore, cfg.Media.LocalRoot, "/media")
+		publicMediaHandler, err := interfaceshttpupload.NewPublicMediaHandler(
+			localMediaStore,
+			cfg.Media.LocalRoot,
+			"/media",
+			interfaceshttpupload.WithPublicMediaAuthorizer(videoRepo),
+		)
 		if err != nil {
 			return err
 		}

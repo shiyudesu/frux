@@ -1,11 +1,12 @@
 package applicationvideo
 
 import (
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
-	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"context"
 	"errors"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"strings"
+	"time"
 )
 
 var ErrLoadVideoFailed = errors.New("failed to load video")
@@ -40,6 +41,8 @@ type MediaAssetReader interface {
 
 type MediaDeliveryResolver interface {
 	ResolveVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) (*domainmedia.ResolvedDelivery, error)
+	ProtectVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) error
+	HasPublicVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) (bool, error)
 }
 
 type MediaCleanupScheduler interface {
@@ -215,20 +218,18 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, de
 		}
 		return nil, ErrSaveVideoFailed
 	}
-	s.publishCreatedVideo(ctx, video)
-
 	return &CreateResult{Video: video, Created: true}, nil
 }
 
-func (s *Service) publishCreatedVideo(ctx context.Context, video *domainvideo.Video) {
+func (s *Service) publishCreatedVideo(ctx context.Context, video *domainvideo.Video) error {
 	if s.publisher == nil {
-		return
+		return nil
 	}
 	event := NewPublishedEvent(video)
 	if event == nil {
-		return
+		return nil
 	}
-	_ = s.publisher.PublishVideoPublished(ctx, event)
+	return s.publisher.PublishVideoPublished(ctx, event)
 }
 
 // Get 只返回已发布视频，删除或下线的视频在公开详情里表现为找不到。
@@ -252,6 +253,7 @@ func (s *Service) ListByAuthor(ctx context.Context, authorID int64, limit, offse
 	if authorID <= 0 {
 		return nil, domainvideo.ErrInvalidAuthorID
 	}
+
 	if limit <= 0 {
 		return nil, domainvideo.ErrInvalidLimit
 	}
@@ -264,6 +266,26 @@ func (s *Service) ListByAuthor(ctx context.Context, authorID int64, limit, offse
 	}
 
 	videos, err := s.repo.ListByAuthor(ctx, authorID, limit, offset)
+	if err != nil {
+		return nil, ErrLoadVideoFailed
+	}
+	return videos, nil
+}
+
+func (s *Service) ListMine(ctx context.Context, authorID int64, limit, offset int) ([]*domainvideo.Video, error) {
+	if authorID <= 0 {
+		return nil, domainvideo.ErrInvalidAuthorID
+	}
+	if limit <= 0 {
+		return nil, domainvideo.ErrInvalidLimit
+	}
+	if offset < 0 {
+		return nil, domainvideo.ErrInvalidOffset
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	videos, err := s.repo.ListByOwner(ctx, authorID, limit, offset)
 	if err != nil {
 		return nil, ErrLoadVideoFailed
 	}
@@ -292,12 +314,14 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 		return err
 	}
 	if alreadyDeleted {
+		protectErr := s.protectVideoDelivery(ctx, video)
+		var cleanupErr error
 		if s.mediaCleanup != nil {
-			return s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID)
+			cleanupErr = s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID)
 		}
-		return nil
+		return errors.Join(protectErr, cleanupErr)
 	}
-	if err := s.repo.UpdateStatus(ctx, video); err != nil {
+	if _, err := s.repo.UpdateStatus(ctx, video); err != nil {
 		if errors.Is(err, domainvideo.ErrVideoNotFound) {
 			return domainvideo.ErrVideoNotFound
 		}
@@ -306,42 +330,94 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 	if s.cacheInvalidator != nil {
 		_ = s.cacheInvalidator.InvalidateVideo(ctx, video.ID)
 	}
+	protectErr := s.protectVideoDelivery(ctx, video)
+	var cleanupErr error
 	if s.mediaCleanup != nil {
-		if err := s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID); err != nil {
-			return err
-		}
+		cleanupErr = s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID)
 	}
-	return nil
+	return errors.Join(protectErr, cleanupErr)
 }
 
 func (s *Service) SetOffline(ctx context.Context, videoID int64) error {
-	return s.setLifecycleStatus(ctx, videoID, domainvideo.StatusOffline)
+	return s.applyLifecycleTransition(ctx, videoID, domainvideo.LifecycleTakeOffline, time.Time{})
 }
 
 func (s *Service) RestorePublished(ctx context.Context, videoID int64) error {
-	return s.setLifecycleStatus(ctx, videoID, domainvideo.StatusPublished)
+	return s.applyLifecycleTransition(ctx, videoID, domainvideo.LifecycleRestore, time.Time{})
 }
 
-func (s *Service) setLifecycleStatus(ctx context.Context, videoID int64, status int) error {
+func (s *Service) Approve(ctx context.Context, videoID int64, approvedAt time.Time) error {
+	return s.applyLifecycleTransition(ctx, videoID, domainvideo.LifecycleApprove, approvedAt)
+}
+
+func (s *Service) Reject(ctx context.Context, videoID int64) error {
+	return s.applyLifecycleTransition(ctx, videoID, domainvideo.LifecycleReject, time.Time{})
+}
+
+func (s *Service) applyLifecycleTransition(
+	ctx context.Context,
+	videoID int64,
+	transition domainvideo.LifecycleTransition,
+	at time.Time,
+) error {
 	if videoID <= 0 {
 		return domainvideo.ErrInvalidVideoID
 	}
-	video, err := s.repo.FindByIDAnyStatus(ctx, videoID)
+	applied, err := s.repo.ApplyLifecycleTransition(ctx, videoID, transition, at)
 	if err != nil {
 		if errors.Is(err, domainvideo.ErrVideoNotFound) {
 			return domainvideo.ErrVideoNotFound
 		}
+		if errors.Is(err, domainvideo.ErrVideoStateNotAllowed) {
+			return err
+		}
+		return ErrUpdateVideoFailed
+	}
+	video, err := s.repo.FindByIDAnyStatus(ctx, videoID)
+	if err != nil {
 		return ErrLoadVideoFailed
 	}
-	if video.Status == domainvideo.StatusDeleted {
-		return domainvideo.ErrVideoStateNotAllowed
+	if s.cacheInvalidator != nil && applied {
+		_ = s.cacheInvalidator.InvalidateVideo(ctx, video.ID)
 	}
-	if video.Status == status {
+	if video.Status == domainvideo.StatusPublished {
+		if video.MediaAssetID > 0 && s.mediaDelivery != nil &&
+			(domainmedia.IsPublicReadyStatus(video.MediaStatus) ||
+				video.MediaErrorCode == "publication_event_failed") {
+			if projectionRepo, ok := s.repo.(MediaProjectionRepository); ok {
+				publication := NewMediaPublicationService(projectionRepo, s.mediaDelivery, s.publisher, s.cacheInvalidator)
+				if err := publication.MediaReady(ctx, video.MediaAssetID); err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+		if video.IsPubliclyReadable() {
+			return s.publishCreatedVideo(ctx, video)
+		}
+	}
+	return s.protectVideoDelivery(ctx, video)
+}
+
+func (s *Service) protectVideoDelivery(ctx context.Context, video *domainvideo.Video) error {
+	if video == nil || video.MediaAssetID <= 0 || s.mediaDelivery == nil {
 		return nil
 	}
-	video.Status = status
-	if err := s.repo.UpdateStatus(ctx, video); err != nil {
-		return ErrUpdateVideoFailed
+	if err := s.mediaDelivery.ProtectVideo(ctx, video.ID, video.MediaAssetID, video.CoverAssetID); err != nil {
+		return err
+	}
+	video.MediaURL = ""
+	video.CoverURL = ""
+	video.PlaybackSources = nil
+	if projectionRepo, ok := s.repo.(MediaProjectionRepository); ok {
+		eligible, err := projectionRepo.UpdateMediaProjection(ctx, video)
+		if err != nil {
+			return err
+		}
+		if eligible {
+			publication := NewMediaPublicationService(projectionRepo, s.mediaDelivery, s.publisher, s.cacheInvalidator)
+			return publication.MediaReady(ctx, video.MediaAssetID)
+		}
 	}
 	if s.cacheInvalidator != nil {
 		_ = s.cacheInvalidator.InvalidateVideo(ctx, video.ID)

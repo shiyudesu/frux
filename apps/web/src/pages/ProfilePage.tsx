@@ -413,8 +413,8 @@ export function ProfilePage() {
           }}
         />
         <ProfileVideoGrid
-          emptyDescription={workTab === "published" ? "发布后的作品会显示在这里" : "设为私密的作品会显示在这里"}
-          emptyTitle={workTab === "published" ? "暂无已发布作品" : "暂无私密作品"}
+          emptyDescription={workTab === "published" ? "公开、待审和未通过作品会显示在这里" : "设为私密的作品会显示在这里"}
+          emptyTitle={workTab === "published" ? "暂无公开作品" : "暂无私密作品"}
           error={current.error}
           hasMore={current.hasMore}
           items={current.items.map((video) => ({ video }))}

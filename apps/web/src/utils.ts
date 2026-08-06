@@ -13,7 +13,8 @@ import {
   type FeedVideo,
   type Message,
   type PlaybackConfig,
-  type StoredPublicProfile
+  type StoredPublicProfile,
+  type Video
 } from "./types";
 
 // ---------- Feed 数据加工 ----------
@@ -91,6 +92,22 @@ export function mapFeedItem(item: FeedItem, feedScene = "timeline", requestID = 
     media_status: item.media_status,
     playback_sources: item.playback_sources
   };
+}
+
+export function creatorVideoStatusLabel(video: Video): string {
+  if (video.media_status === "failed") return "处理失败";
+  if (video.status === 5) {
+    return video.media_status === "pending" || video.media_status === "processing"
+      ? "处理中，等待审核"
+      : "审核中";
+  }
+  if (video.status === 6) return "未通过";
+  if (video.status === 1) return "草稿";
+  if (video.status === 3) return "已下架";
+  if (video.status === 4) return "已删除";
+  if (video.visibility === "private") return "私密";
+  if (video.media_status === "pending" || video.media_status === "processing") return "处理中";
+  return "已发布";
 }
 
 // ---------- 播放配置与网络探测 ----------

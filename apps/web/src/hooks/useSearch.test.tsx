@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SearchUserPage, SearchVideoPage } from "../types";
+import type { SearchUserPage, SearchVideoPage, Video } from "../types";
 import { ApiError, NetworkError } from "../api/client";
 import { searchErrorMessage, useSearch } from "./useSearch";
 
@@ -100,7 +100,7 @@ function Harness({ query, onValue }: { query: string; onValue: (value: ReturnTyp
   return null;
 }
 
-function video(id: number) {
+function video(id: number): Video {
   const time = "2026-08-04T00:00:00Z";
   return {
     id,
