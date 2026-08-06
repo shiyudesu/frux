@@ -330,6 +330,167 @@ export interface CompleteUploadSessionResponse {
   replayed?: boolean;
 }
 
+// ---------- 后台内容运营 ----------
+
+export type AdminPermission =
+  | "review.read"
+  | "review.decide"
+  | "content.enforce"
+  | "config.publish"
+  | "governance.execute"
+  | "audit.read";
+
+export interface AdminPrincipal {
+  user_id: number;
+  role: string;
+  permissions: AdminPermission[];
+}
+
+export interface ReviewCase {
+  id: number;
+  video_id: number;
+  review_version: number;
+  status: string;
+  policy_version: number;
+  priority: number;
+  version: number;
+  assigned_reviewer_id?: number;
+  lease_expires_at?: string;
+  created_at: string;
+  updated_at: string;
+  closed_at?: string;
+}
+
+export interface ReviewQueueItem {
+  case: ReviewCase;
+  author_id: number;
+  title: string;
+  media_url: string;
+  cover_url: string;
+}
+
+export type ReviewQueuePage = CursorPage<ReviewQueueItem>;
+
+export interface ReviewSubject {
+  video_id: number;
+  author_id: number;
+  title: string;
+  description: string;
+  media_url: string;
+  cover_url: string;
+  review_version: number;
+}
+
+export interface ReviewEvidenceSignal {
+  id: number;
+  result_id: string;
+  label: string;
+  confidence: number;
+  evidence_refs: string[];
+  provider: string;
+  model_version: string;
+  policy_version: number;
+  created_at: string;
+}
+
+export interface ReviewAutomatedDecision {
+  id: number;
+  result_id: string;
+  outcome: string;
+  policy_version: number;
+  created_at: string;
+}
+
+export interface ReviewAssignment {
+  id: number;
+  reviewer_id: number;
+  event: string;
+  case_version: number;
+  lease_until?: string;
+  created_at: string;
+}
+
+export interface ReviewHumanDecision {
+  id: number;
+  reviewer_id: number;
+  outcome: string;
+  reason_code: string;
+  note: string;
+  review_version: number;
+  case_version: number;
+  created_at: string;
+}
+
+export interface ReviewCaseDetail {
+  case: ReviewCase;
+  subject: ReviewSubject;
+  history: {
+    signals: ReviewEvidenceSignal[];
+    automated_decisions: ReviewAutomatedDecision[];
+    assignments: ReviewAssignment[];
+    human_decisions: ReviewHumanDecision[];
+  };
+}
+
+export interface ReviewLeaseResponse {
+  case: ReviewCase;
+  lease_token: string;
+}
+
+export interface ReviewDecisionResponse {
+  case: ReviewCase;
+  decision: ReviewHumanDecision;
+  duplicate: boolean;
+}
+
+export type AdminVideoStatusName =
+  | "draft"
+  | "published"
+  | "offline"
+  | "pending_review"
+  | "rejected";
+
+export interface AdminVideo {
+  id: number;
+  author_id: number;
+  title: string;
+  description: string;
+  media_url: string;
+  cover_url: string;
+  status: VideoStatus;
+  status_name: AdminVideoStatusName;
+  visibility: VideoVisibility;
+  media_status: MediaStatus;
+  review_version: number;
+  version: number;
+  published_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AdminVideoPage = CursorPage<AdminVideo>;
+
+export interface AdminVideoSearchFilters {
+  status: "" | AdminVideoStatusName;
+  author_id: string;
+  video_id: string;
+  keyword: string;
+  created_from: string;
+  created_to: string;
+}
+
+export interface AdminEnforcementRequest {
+  reason_code: "manual_enforcement" | "policy_violation" | "compliance_restored";
+  note: string;
+  expected_version: number;
+}
+
+export interface AdminTransitionResponse {
+  video: AdminVideo;
+  previous_status: AdminVideoStatusName;
+  audit_committed: boolean;
+}
+
 // ---------- Feed ----------
 
 /** GET /api/feed-items 与 POST /api/feed-queries 的 item 结构 */

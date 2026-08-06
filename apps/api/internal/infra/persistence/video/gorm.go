@@ -3,6 +3,7 @@ package infravideo
 import (
 	"context"
 	"errors"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
@@ -16,9 +17,15 @@ import (
 type Repository struct {
 	db           *gorm.DB
 	mediaCatalog *inframediastore.DeliveryCatalog
+	auditWriter  AuditWriter
 }
 
 type Option func(*Repository)
+
+type AuditWriter interface {
+	AppendInTransaction(ctx context.Context, tx *gorm.DB, fact *domainadminaudit.Fact) error
+	RecordCommittedWrite(fact *domainadminaudit.Fact)
+}
 
 // videoWithStatModel 承接 video 与 video_stat 联表查询结果。
 type videoWithStatModel struct {
@@ -33,6 +40,7 @@ type videoWithStatModel struct {
 	MediaStatus    string
 	MediaErrorCode string
 	ReviewVersion  int
+	Version        int
 	Status         int
 	Visibility     string
 	LikeCount      int
@@ -56,6 +64,12 @@ func New(db *gorm.DB, options ...Option) *Repository {
 func WithMediaCatalog(catalog *inframediastore.DeliveryCatalog) Option {
 	return func(repository *Repository) {
 		repository.mediaCatalog = catalog
+	}
+}
+
+func WithAdminAuditWriter(writer AuditWriter) Option {
+	return func(repository *Repository) {
+		repository.auditWriter = writer
 	}
 }
 
@@ -105,6 +119,7 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 			MediaStatus:    video.MediaStatus,
 			MediaErrorCode: video.MediaErrorCode,
 			ReviewVersion:  video.ReviewVersion,
+			Version:        video.Version,
 			Status:         video.Status,
 			Visibility:     video.Visibility,
 			PublishedAt:    video.PublishedAt,
@@ -504,7 +519,7 @@ func restoreVideoWithSources(model videoWithStatModel, sources []domainmedia.Pla
 	if model.CoverAssetID != nil {
 		coverAssetID = *model.CoverAssetID
 	}
-	return domainvideo.RestoreVideoWithReviewVersion(
+	video := domainvideo.RestoreVideoWithReviewVersion(
 		model.ID,
 		model.AuthorID,
 		model.Title,
@@ -527,11 +542,15 @@ func restoreVideoWithSources(model videoWithStatModel, sources []domainmedia.Pla
 		coverAssetID,
 		model.ReviewVersion,
 	)
+	if model.Version > 0 {
+		video.Version = model.Version
+	}
+	return video
 }
 
 // videoWithStatSelect 统一视频详情查询字段，避免多个查询写重复 SQL 字段列表。
 func videoWithStatSelect() string {
-	return "v.id, v.author_id, v.title, v.description, v.media_url, v.cover_url, v.media_asset_id, v.cover_asset_id, v.media_status, v.media_error_code, v.review_version, v.status, v.visibility, COALESCE(vs.like_count, 0) AS like_count, COALESCE(vs.comment_count, 0) AS comment_count, COALESCE(vs.favorite_count, 0) AS favorite_count, v.published_at, v.idempotency_key, v.created_at, v.updated_at"
+	return "v.id, v.author_id, v.title, v.description, v.media_url, v.cover_url, v.media_asset_id, v.cover_asset_id, v.media_status, v.media_error_code, v.review_version, v.version, v.status, v.visibility, COALESCE(vs.like_count, 0) AS like_count, COALESCE(vs.comment_count, 0) AS comment_count, COALESCE(vs.favorite_count, 0) AS favorite_count, v.published_at, v.idempotency_key, v.created_at, v.updated_at"
 }
 
 // idempotencyKeyPtr 将空幂等键存为 NULL，配合唯一索引允许普通创建多次执行。

@@ -72,3 +72,13 @@
 人工指标为 `frux_human_review_queue_available`、`frux_human_review_queue_oldest_age_seconds`、
 `frux_human_review_operations_total{operation,result}` 和
 `frux_human_review_notifications_total{result}`；标签不包含 reviewer、case、video、reason 或 token。
+
+## 8. Web 审核工作台
+
+- `/admin/reviews` 独立维护首屏加载、刷新、分页、空、错误和服务端 403 状态。
+- 队列收到服务端 403 时清空缓存案件、cursor 和 `has_more`，禁止在 forbidden 状态继续渲染旧表格。
+- `/admin/reviews/{reviewId}` 展示审核主体、机器 signal、自动决定、租约历史和人工决定不可变历史。
+- Reviewer 领取后只在内存保存 opaque lease token；领取、续租和决定始终携带最新 case version。
+- 同一 case/version 与决定 payload 在成功前复用同一 Web 幂等键，响应丢失后的重试不会创建第二个决定；payload 或 case 变化后生成新键。
+- 租约过期时保留已检查证据，禁用旧决定并提供返回队列；case/video 版本冲突提供显式刷新。
+- 只有 `review.decide` 才渲染领取和决定控件，但每个写接口仍由服务端权限中间件强制授权。

@@ -16,6 +16,10 @@ export type Route =
   | "/search"
   | "/upload"
   | "/messages"
+  | "/not-found"
+  | "/admin/reviews"
+  | "/admin/videos"
+  | `/admin/reviews/${number}`
   | `/users/${number}`
   | `/videos/${number}`;
 
@@ -47,11 +51,22 @@ export interface VideoDiscussionRoute {
   invalidFocus: boolean;
 }
 
+export interface AdminReviewRoute {
+  reviewID: number;
+}
+
 export function normalizeRoute(pathname: string): Route {
   if (pathname === "/login") return "/auth";
   if (pathname === "/me") return "/profile";
   if (/^\/users\/\d+$/.test(pathname)) return pathname as `/users/${number}`;
   if (/^\/videos\/\d+$/.test(pathname)) return pathname as `/videos/${number}`;
+  const reviewMatch = /^\/admin\/reviews\/(\d+)$/.exec(pathname);
+  if (reviewMatch) {
+    return positiveInteger(reviewMatch[1]) > 0
+      ? pathname as `/admin/reviews/${number}`
+      : "/not-found";
+  }
+  if (pathname.startsWith("/admin/reviews/")) return "/not-found";
   switch (pathname) {
     case "/":
       return "/";
@@ -73,9 +88,22 @@ export function normalizeRoute(pathname: string): Route {
       return "/upload";
     case "/messages":
       return "/messages";
+    case "/not-found":
+      return "/not-found";
+    case "/admin/reviews":
+      return "/admin/reviews";
+    case "/admin/videos":
+      return "/admin/videos";
     default:
       return "/timeline";
   }
+}
+
+export function adminReviewFromRoute(route: Route): AdminReviewRoute | null {
+  const match = /^\/admin\/reviews\/(\d+)$/.exec(route);
+  if (!match) return null;
+  const reviewID = positiveInteger(match[1]);
+  return reviewID > 0 ? { reviewID } : null;
 }
 
 export function feedSceneFromRoute(route: Route): string {

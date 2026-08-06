@@ -35,6 +35,11 @@ const (
 	CodeAdminAuditQueryInvalid        = "ADMIN_AUDIT_QUERY_INVALID"
 	CodeAdminAuditCursorInvalid       = "ADMIN_AUDIT_CURSOR_INVALID"
 	CodeAdminAuditUnavailable         = "ADMIN_AUDIT_UNAVAILABLE"
+	CodeAdminVideoValidationFailed    = "ADMIN_VIDEO_VALIDATION_FAILED"
+	CodeAdminVideoCursorInvalid       = "ADMIN_VIDEO_CURSOR_INVALID"
+	CodeAdminVideoVersionConflict     = "ADMIN_VIDEO_VERSION_CONFLICT"
+	CodeAdminVideoStateConflict       = "ADMIN_VIDEO_STATE_CONFLICT"
+	CodeAdminVideoUnavailable         = "ADMIN_VIDEO_UNAVAILABLE"
 
 	CodeFeedValidationFailed             = "FEED_VALIDATION_FAILED"
 	CodeFeedRecommendationContextInvalid = "FEED_RECOMMENDATION_CONTEXT_INVALID"

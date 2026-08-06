@@ -113,7 +113,11 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		return err
 	}
 	mediaCatalog := inframediastore.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
-	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
+	videoRepo := infravideo.New(
+		gormDB,
+		infravideo.WithMediaCatalog(mediaCatalog),
+		infravideo.WithAdminAuditWriter(adminAuditRepo),
+	)
 	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))
 	recommendationRepo := infrarecommendation.New(gormDB)
 	relationRepo := infrarelation.New(gormDB)
@@ -260,6 +264,11 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videoOptions = append(videoOptions, applicationvideo.WithReviewIntake(videoReviewIntakeAdapter{service: reviewService}))
 	videoService := applicationvideo.New(videoRepo, videoOptions...)
 	videoHandler := interfaceshttpvideo.New(videoService, videoManagementService)
+	videoAdminService := applicationvideo.NewAdmin(
+		videoRepo,
+		cfg.JWT.Secret,
+	)
+	videoAdminHandler := interfaceshttpvideo.NewAdmin(videoAdminService)
 	searchService := applicationsearch.New(videoRepo, accountRepo)
 	searchHandler := interfaceshttpsearch.New(searchService)
 	interactionService := applicationinteraction.New(interactionRepo, interactionOptions...)
@@ -406,6 +415,42 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			),
 		),
 		reviewHandler.DecideHumanCase,
+	)
+	admin.GET(
+		"/videos",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionContentEnforce,
+		),
+		videoAdminHandler.Search,
+	)
+	admin.POST(
+		"/videos/:videoId/enforcement",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionContentEnforce,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionContentEnforce,
+				domainadminaudit.TargetVideo,
+				"video",
+			),
+		),
+		videoAdminHandler.TakeDown,
+	)
+	admin.POST(
+		"/videos/:videoId/restoration",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionContentEnforce,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionContentRestore,
+				domainadminaudit.TargetVideo,
+				"video",
+			),
+		),
+		videoAdminHandler.Restore,
 	)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。

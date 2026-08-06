@@ -23,4 +23,5 @@ var (
 	ErrTimeRangeTooLarge         = errors.New("audit time range too large")
 	ErrInvalidLimit              = errors.New("invalid audit limit")
 	ErrAuditQueryFailed          = errors.New("audit query failed")
+	ErrAuditWriteFailed          = errors.New("audit write failed")
 )

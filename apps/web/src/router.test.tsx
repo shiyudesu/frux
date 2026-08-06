@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   normalizeRoute,
+  adminReviewFromRoute,
   RouterProvider,
   searchFromLocation,
   searchPath,
@@ -99,6 +100,15 @@ describe("typed video discussion routing", () => {
       tab: "videos"
     });
     expect(normalizeRoute("/search")).toBe("/search");
+  });
+
+  it("normalizes typed admin routes and rejects invalid review identifiers", () => {
+    expect(normalizeRoute("/admin/reviews")).toBe("/admin/reviews");
+    expect(normalizeRoute("/admin/videos")).toBe("/admin/videos");
+    expect(normalizeRoute("/admin/reviews/42")).toBe("/admin/reviews/42");
+    expect(adminReviewFromRoute("/admin/reviews/42")).toEqual({ reviewID: 42 });
+    expect(normalizeRoute("/admin/reviews/0")).toBe("/not-found");
+    expect(normalizeRoute("/admin/reviews/nope")).toBe("/not-found");
   });
 
   function renderRouter() {

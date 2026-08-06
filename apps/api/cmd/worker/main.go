@@ -190,6 +190,18 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	mediaCatalog := inframedia.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
 	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
 	mediaPublication := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
+	adminIntentWorker := applicationvideo.NewAdminTransitionIntentWorker(
+		videoRepo,
+		videoRepo,
+		feedCache,
+		workerVideoAdminTransitionApplier{
+			mediaPublication: mediaPublication,
+			publisher:        rabbitMQ,
+		},
+	)
+	if err := adminIntentWorker.Start(ctx); err != nil {
+		return err
+	}
 	reviewService := applicationreview.New(
 		reviewRepo,
 		applicationreview.WithObserver(workerReviewObserver{}),
@@ -237,6 +249,41 @@ type reviewMediaReadyNotifier struct {
 	publication   *applicationvideo.MediaPublicationService
 	videoRepo     *infravideo.Repository
 	reviewService *applicationreview.Service
+}
+
+type workerVideoAdminTransitionApplier struct {
+	mediaPublication interface {
+		MediaReady(ctx context.Context, assetID int64) error
+		ProtectVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) error
+	}
+	publisher applicationvideo.PublishedEventPublisher
+}
+
+func (a workerVideoAdminTransitionApplier) ApplyAdminTransition(
+	ctx context.Context,
+	video *domainvideo.Video,
+) error {
+	if video == nil {
+		return nil
+	}
+	if video.Status == domainvideo.StatusOffline {
+		if video.MediaAssetID > 0 {
+			return a.mediaPublication.ProtectVideo(
+				ctx, video.ID, video.MediaAssetID, video.CoverAssetID,
+			)
+		}
+		return nil
+	}
+	if video.Status != domainvideo.StatusPublished {
+		return nil
+	}
+	if video.MediaAssetID > 0 {
+		return a.mediaPublication.MediaReady(ctx, video.MediaAssetID)
+	}
+	if event := applicationvideo.NewPublishedEvent(video); event != nil {
+		return a.publisher.PublishVideoPublished(ctx, event)
+	}
+	return nil
 }
 
 func (n reviewMediaReadyNotifier) MediaReady(ctx context.Context, assetID int64) error {

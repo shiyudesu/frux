@@ -44,6 +44,7 @@ type Video struct {
 	MediaStatus     string
 	MediaErrorCode  string
 	ReviewVersion   int
+	Version         int
 	PlaybackSources []domainmedia.PlaybackSource
 }
 
@@ -83,6 +84,7 @@ func NewProcessing(authorID int64, title, description string, mediaAssetID, cove
 		Status: StatusPendingReview, Visibility: VisibilityPublic,
 		IdempotencyKey: idempotencyKey, MediaAssetID: mediaAssetID, CoverAssetID: coverAssetID,
 		MediaStatus: domainmedia.MediaStatusProcessing, ReviewVersion: 1,
+		Version: 1,
 	}, nil
 }
 
@@ -129,6 +131,7 @@ func NewPublished(authorID int64, title, description, mediaURL, coverURL, idempo
 		IdempotencyKey: idempotencyKey,
 		MediaStatus:    domainmedia.MediaStatusLegacyReady,
 		ReviewVersion:  1,
+		Version:        1,
 	}, nil
 }
 
@@ -273,6 +276,7 @@ func RestoreVideoWithReviewVersion(
 		MediaStatus:     mediaStatus,
 		MediaErrorCode:  strings.TrimSpace(mediaErrorCode),
 		ReviewVersion:   reviewVersion,
+		Version:         1,
 		PlaybackSources: domainmedia.SortPlaybackSources(playbackSources),
 	}
 }

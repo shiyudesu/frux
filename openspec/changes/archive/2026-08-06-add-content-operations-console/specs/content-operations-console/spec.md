@@ -40,6 +40,10 @@ An operator with `content.enforce` SHALL be able to take an eligible video offli
 - **WHEN** an authorized operator confirms a valid takedown against the current version
 - **THEN** the video becomes offline, public caches are invalidated, and the action is audited
 
+#### Scenario: Enforcement side effect temporarily fails
+- **WHEN** cache invalidation or media protection/publication fails after the transition commits
+- **THEN** a bounded Worker retains and retries the transactional intent and marks it delivered only after all side effects succeed
+
 #### Scenario: Operator restores unapproved video
 - **WHEN** an operator attempts to restore a rejected or never-approved video
 - **THEN** Frux rejects the transition and the Web client displays the domain error

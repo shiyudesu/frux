@@ -26,6 +26,9 @@
 | POST | `/api/upload-sessions` | 创建对象存储直传会话；本地模式返回 multipart 回退 | 登录 | 支持 |
 | POST | `/api/upload-sessions/{sessionId}/complete` | 校验对象并完成上传会话 | 登录 | 自然幂等 |
 | GET | `/api/media-assets/{assetId}/access` | 获取本人原始/保护资产短期签名 URL | 登录 | 无 |
+| GET | `/api/admin/videos` | 后台稳定游标查询非删除视频 | `content.enforce` | 无 |
+| POST | `/api/admin/videos/{videoId}/enforcement` | 原因化、版本检查的下架 | `content.enforce` | 无 |
+| POST | `/api/admin/videos/{videoId}/restoration` | 恢复已批准的下架视频 | `content.enforce` | 无 |
 
 复杂作品查询请求使用 `visibility`、可选 `statuses`、`query`、`created_from`、`created_to`、`cursor`、`limit`，响应为 `items`、`next_cursor`、`has_more`。`statuses` 可筛选草稿、已发布、下架、待审和拒绝，但不查询已删除状态。日期接受 RFC 3339 或 `YYYY-MM-DD`；仅日期形式的结束日期包含当天末尾。默认 `limit=20`，范围 1–100，排序为 `created_at DESC, id DESC`。
 
@@ -58,6 +61,7 @@
 | `media_status` | VARCHAR(24) | NOT NULL | `legacy_ready` / `processing` / `ready` / `failed` |
 | `media_error_code` | VARCHAR(64) | NOT NULL | 处理失败代码 |
 | `review_version` | INTEGER | NOT NULL, DEFAULT 1, CHECK > 0 | 当前审核主体版本 |
+| `version` | INTEGER | NOT NULL, DEFAULT 1, CHECK > 0 | 内容运营乐观并发版本 |
 | `status` | SMALLINT | NOT NULL, DEFAULT 5 | 1 草稿 / 2 已发布 / 3 下架 / 4 删除 / 5 待审核 / 6 已拒绝 |
 | `visibility` | VARCHAR(16) | NOT NULL, DEFAULT `public` | `public` / `private`，独立于生命周期 |
 | `published_at` | TIMESTAMPTZ | NULLABLE | 发布时间 |
@@ -122,6 +126,11 @@
 | 媒体就绪触发审核 | legacy-ready 创建和生产媒体 ready 通知都会幂等创建当前版本案件；周期 reconciliation 修复遗漏 |
 | 审核转换 | 待审可幂等批准为已发布或拒绝；批准首次设置 `published_at` |
 | 处罚与恢复 | 已发布可下架；下架恢复时保留原始 `published_at`；删除状态为终态 |
+| 后台查询 | 排除删除状态，按 `created_at DESC, id DESC` 分页；cursor 绑定状态、作者、视频 ID、关键词和时间窗口 |
+| 运营并发 | 下架和恢复必须匹配 `expected_version`，成功后递增 version；旧版本稳定返回冲突 |
+| 原因与审计 | 下架只接受 `manual_enforcement`/`policy_violation`，恢复只接受 `compliance_restored`；note 最多 1000 Unicode 字符 |
+| 原子事实 | 生命周期、内容统计、不可变处罚记录、后台转换意图和成功审计同一 PostgreSQL 事务提交；审计失败整体回滚 |
+| 后台副作用 | Video Worker 有界租约转换意图，重试缓存失效和按当前状态执行的媒体保护/发布；全部成功后才标记 delivered |
 | 历史视频默认公开 | 迁移将空可见性补为 `public` |
 | 生命周期与可见性分离 | 设为私密不会改变 `status` 或 `published_at` |
 | 创建统计行 | 创建视频时同步创建 `video_stat`；只有审核通过、公开且媒体就绪后才增加公开作品计数 |
@@ -181,3 +190,4 @@
 | 个人主页作品 Tab | “公开作品”按公开可见性查询并展示处理中、审核中、未通过、已发布和已下架标签；“私密作品”对应私密可见性 |
 | 个人主页合集 Tab | 创建、编辑、删除合集并管理成员；编辑器独立搜索和游标加载全部公开/私密候选作品 |
 | 公开主页 | 展示已发布公开作品和公开合集 |
+| Admin Shell | 按 typed 筛选查询视频；下架/恢复弹窗携带原因、备注、确认和当前 version，只在服务端确认审计提交后报告成功 |

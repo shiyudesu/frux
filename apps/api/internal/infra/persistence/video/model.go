@@ -15,6 +15,7 @@ type VideoModel struct {
 	MediaStatus    string     `gorm:"column:media_status;size:24;not null;default:legacy_ready;index:idx_video_public_timeline,priority:3"`
 	MediaErrorCode string     `gorm:"column:media_error_code;size:64;not null;default:''"`
 	ReviewVersion  int        `gorm:"column:review_version;not null;default:1;check:chk_video_review_version,review_version > 0"`
+	Version        int        `gorm:"column:version;not null;default:1;check:chk_video_version,version > 0"`
 	Status         int        `gorm:"column:status;type:smallint;not null;default:5;check:chk_video_status,status IN (1,2,3,4,5,6);index:idx_video_author_status,priority:2;index:idx_video_status_published,priority:1;index:idx_video_timeline,priority:1;index:idx_video_public_timeline,priority:1"`
 	Visibility     string     `gorm:"column:visibility;size:16;not null;default:public;index:idx_video_public_timeline,priority:2;index:idx_video_author_visibility_created,priority:2"`
 	PublishedAt    *time.Time `gorm:"column:published_at;index:idx_video_status_published,priority:2;index:idx_video_timeline,priority:2;index:idx_video_public_timeline,priority:4"`
@@ -85,6 +86,43 @@ type BatchOperationModel struct {
 	VideoIDsJSON   string    `gorm:"column:video_ids_json;type:text;not null"`
 	ResultJSON     string    `gorm:"column:result_json;type:text;not null"`
 	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+type EnforcementActionModel struct {
+	ID              int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	VideoID         int64     `gorm:"column:video_id;not null;index:idx_video_enforcement_action_video_created,priority:1"`
+	ActorID         int64     `gorm:"column:actor_id;not null"`
+	Action          string    `gorm:"column:action;size:32;not null"`
+	ReasonCode      string    `gorm:"column:reason_code;size:64;not null"`
+	Note            string    `gorm:"column:note;size:4000;not null;default:''"`
+	PreviousStatus  int       `gorm:"column:previous_status;type:smallint;not null"`
+	NewStatus       int       `gorm:"column:new_status;type:smallint;not null"`
+	PreviousVersion int       `gorm:"column:previous_version;not null"`
+	NewVersion      int       `gorm:"column:new_version;not null"`
+	CreatedAt       time.Time `gorm:"column:created_at;not null;index:idx_video_enforcement_action_video_created,priority:2"`
+}
+
+func (EnforcementActionModel) TableName() string {
+	return "video_enforcement_action"
+}
+
+type AdminTransitionIntentModel struct {
+	ID          int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	EventID     string     `gorm:"column:event_id;size:128;not null;uniqueIndex:uk_video_admin_transition_intent_event"`
+	VideoID     int64      `gorm:"column:video_id;not null"`
+	State       string     `gorm:"column:state;size:16;not null;default:'pending';index:idx_video_admin_transition_intent_pending,priority:1"`
+	Attempts    int        `gorm:"column:attempts;not null;default:0"`
+	AvailableAt time.Time  `gorm:"column:available_at;not null;index:idx_video_admin_transition_intent_pending,priority:2"`
+	LeaseOwner  string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil  *time.Time `gorm:"column:lease_until;index:idx_video_admin_transition_intent_pending,priority:3"`
+	LastError   string     `gorm:"column:last_error;size:1024;not null;default:''"`
+	DeliveredAt *time.Time `gorm:"column:delivered_at"`
+	CreatedAt   time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt   time.Time  `gorm:"column:updated_at;not null"`
+}
+
+func (AdminTransitionIntentModel) TableName() string {
+	return "video_admin_transition_intent"
 }
 
 func (BatchOperationModel) TableName() string {

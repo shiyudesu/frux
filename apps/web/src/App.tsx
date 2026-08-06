@@ -1,5 +1,5 @@
 // 根组件：Provider 组装 + 路由分发。
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { AppShell } from "./components/AppShell";
 import { FeedPage } from "./pages/FeedPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -19,6 +19,9 @@ import {
   useVideoDiscussionRoute
 } from "./router";
 import { SessionProvider, useSession } from "./session";
+import { PageMessage } from "./components/StatusMessages";
+
+const AdminApp = lazy(() => import("./admin/AdminApp"));
 
 export default function App() {
   return (
@@ -53,6 +56,22 @@ function AppRoutes() {
 
   if (route === "/auth") {
     return <LoginPage />;
+  }
+
+  if (route.startsWith("/admin/")) {
+    return (
+      <Suspense fallback={<div className="admin-entry-state">正在加载运营工作台…</div>}>
+        <AdminApp />
+      </Suspense>
+    );
+  }
+
+  if (route === "/not-found") {
+    return (
+      <AppShell>
+        <PageMessage icon="alert" title="页面不存在" action="返回首页" onAction={() => navigate("/timeline")} />
+      </AppShell>
+    );
   }
 
   if (route === "/profile") {

@@ -485,3 +485,14 @@ openspec validate --all --strict
   audit 失败整体回滚。决定幂等重放只有在当前 video review version 仍匹配案件时才允许重试
   媒体提升、保护和发布副作用。作者通知由 Review Worker 通过 message Application 窄接口耐久
   投递，外部投递失败不得回滚决定。人工 Prometheus 标签不得含 reviewer、case、video、token 或 reason。
+- 内容运营查询和写入保留在 video domain/application/infrastructure/HTTP 四层，不创建通用后台数据仓储。
+  查询 cursor 必须签名并绑定 lifecycle、author、video ID、keyword 和完整时间窗口；排序固定为
+  `(created_at DESC, id DESC)`。下架/恢复使用注册 reason、bounded Unicode note 和正
+  `expected_version`，事务内同时提交 video/version、内容统计、不可变处罚记录、成功 audit 和
+  admin transition intent；audit 失败必须整体回滚。Worker 以有界批次、`SKIP LOCKED` 租约和
+  指数退避重试缓存失效及按当前视频状态执行的媒体保护/发布，只有全部成功才标记 delivered，
+  不得在请求路径吞掉副作用失败。
+- Web 后台继续使用 Route union、`normalizeRoute`、`useNavigate` 和 SessionProvider，不引入路由库。
+  Admin Shell 必须 route-level lazy load；权限集合只控制展示，API 403、租约过期和版本冲突必须
+  作为独立可恢复状态，不能显示乐观成功。审核决定在同一 case 与规范化 payload 未变化且尚未
+  成功时必须复用同一幂等键；队列收到 403 必须清除缓存行；视频查询默认结束时间必须包含当前分钟。

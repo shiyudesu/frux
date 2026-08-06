@@ -1,14 +1,17 @@
 package infravideo_test
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
-	"context"
-	"database/sql"
-	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -19,6 +22,18 @@ import (
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+type failingAdminAuditWriter struct{}
+
+func (failingAdminAuditWriter) AppendInTransaction(
+	context.Context,
+	*gorm.DB,
+	*domainadminaudit.Fact,
+) error {
+	return errors.New("audit unavailable")
+}
+
+func (failingAdminAuditWriter) RecordCommittedWrite(*domainadminaudit.Fact) {}
 
 func TestPostgresPublicSearchRankingVisibilityAndLiteralWildcards(t *testing.T) {
 	db := openSearchPostgres(t)
@@ -97,6 +112,118 @@ func TestPostgresPublicSearchRankingVisibilityAndLiteralWildcards(t *testing.T) 
 	}
 }
 
+func TestPostgresAdminVideoSearchFiltersAndStableOrder(t *testing.T) {
+	db := openSearchPostgres(t)
+	now := time.Date(2026, 8, 6, 5, 0, 0, 0, time.UTC)
+	if err := db.Create(&infraaccount.UserModel{
+		ID: 21, Account: "operator-target", Password: "hash", Nickname: "Target",
+		Status: 1, Role: "user", UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	videos := []infravideo.VideoModel{
+		searchVideoModel(201, "Policy match newest", "review", domainvideo.StatusRejected, domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now),
+		searchVideoModel(202, "Policy match older", "review", domainvideo.StatusRejected, domainvideo.VisibilityPrivate, domainmedia.MediaStatusReady, now.Add(-time.Minute)),
+		searchVideoModel(203, "Policy published", "review", domainvideo.StatusPublished, domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now.Add(-2*time.Minute)),
+		searchVideoModel(204, "Deleted policy", "review", domainvideo.StatusDeleted, domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now.Add(time.Minute)),
+	}
+	for index := range videos {
+		videos[index].AuthorID = 21
+		videos[index].Version = index + 1
+	}
+	if err := db.Create(&videos).Error; err != nil {
+		t.Fatalf("seed admin videos: %v", err)
+	}
+	repository := infravideo.New(db)
+	from, to := now.Add(-time.Hour), now.Add(time.Hour)
+	items, err := repository.ListAdminVideos(context.Background(), domainvideo.AdminVideoQuery{
+		Status: domainvideo.StatusRejected, AuthorID: 21, Keyword: "policy",
+		CreatedFrom: &from, CreatedTo: &to, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("admin search: %v", err)
+	}
+	if len(items) != 2 || items[0].ID != 201 || items[1].ID != 202 {
+		t.Fatalf("admin search order = %#v", items)
+	}
+	if items[0].Version != 1 || items[1].Version != 2 {
+		t.Fatalf("admin versions = %d,%d", items[0].Version, items[1].Version)
+	}
+	cursorItems, err := repository.ListAdminVideos(context.Background(), domainvideo.AdminVideoQuery{
+		AuthorID: 21, CreatedFrom: &from, CreatedTo: &to, Limit: 10,
+		Cursor: &domainvideo.AdminVideoCursor{CreatedAt: items[0].CreatedAt, VideoID: items[0].ID},
+	})
+	if err != nil {
+		t.Fatalf("admin cursor search: %v", err)
+	}
+	for _, item := range cursorItems {
+		if item.ID == 201 || item.ID == 204 {
+			t.Fatalf("cursor/deleted item leaked: %d", item.ID)
+		}
+	}
+}
+
+func TestPostgresAdminTransitionRollsBackWhenAuditFails(t *testing.T) {
+	db := openSearchPostgres(t)
+	if err := db.AutoMigrate(
+		&infravideo.EnforcementActionModel{},
+		&infravideo.AdminTransitionIntentModel{},
+	); err != nil {
+		t.Fatalf("migrate admin transition tables: %v", err)
+	}
+	now := time.Date(2026, 8, 6, 6, 0, 0, 0, time.UTC)
+	video := searchVideoModel(
+		301, "Published", "", domainvideo.StatusPublished,
+		domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now,
+	)
+	video.Version = 4
+	if err := db.Create(&video).Error; err != nil {
+		t.Fatalf("seed transition video: %v", err)
+	}
+	fact, err := domainadminaudit.NewFact(domainadminaudit.FactInput{
+		ActorID: 9, Permission: domainaccount.PermissionContentEnforce,
+		Action:     domainadminaudit.ActionContentEnforce,
+		TargetType: domainadminaudit.TargetVideo, TargetID: "301",
+		Outcome:   domainadminaudit.OutcomeSuccess,
+		RequestID: "audit-0123456789abcdef0123456789abcdef",
+		Detail: map[string]string{
+			"http_method": "POST", "previous_status": "published",
+			"new_status": "offline", "reason_code": "policy_violation",
+			"route": "/api/admin/videos/:videoId/enforcement",
+		},
+		CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("build audit fact: %v", err)
+	}
+	repository := infravideo.New(db, infravideo.WithAdminAuditWriter(failingAdminAuditWriter{}))
+	_, err = repository.CommitAdminTransition(context.Background(), domainvideo.AdminTransitionCommand{
+		VideoID: 301, ActorID: 9, ExpectedVersion: 4,
+		Transition: domainvideo.LifecycleTakeOffline,
+		ReasonCode: domainvideo.EnforcementReasonPolicy, OccurredAt: now,
+	}, fact)
+	if err == nil {
+		t.Fatal("expected audit failure")
+	}
+	var current infravideo.VideoModel
+	if err := db.Where("id = ?", 301).Take(&current).Error; err != nil {
+		t.Fatalf("reload video: %v", err)
+	}
+	if current.Status != domainvideo.StatusPublished || current.Version != 4 {
+		t.Fatalf("video changed despite rollback: status=%d version=%d", current.Status, current.Version)
+	}
+	var actionCount, outboxCount int64
+	if err := db.Model(&infravideo.EnforcementActionModel{}).Count(&actionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&infravideo.AdminTransitionIntentModel{}).Count(&outboxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if actionCount != 0 || outboxCount != 0 {
+		t.Fatalf("rollback counts action=%d outbox=%d", actionCount, outboxCount)
+	}
+}
+
 func openSearchPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
@@ -137,7 +264,7 @@ func searchVideoModel(id int64, title, description string, status int, visibilit
 		ID: id, AuthorID: 1, Title: title, Description: description,
 		MediaURL: fmt.Sprintf("https://example.com/%d.mp4", id),
 		CoverURL: fmt.Sprintf("https://example.com/%d.jpg", id),
-		Status:   status, Visibility: visibility, MediaStatus: mediaStatus,
+		Status:   status, Visibility: visibility, MediaStatus: mediaStatus, Version: 1,
 		PublishedAt: &publishedAt, CreatedAt: publishedAt, UpdatedAt: publishedAt,
 	}
 }

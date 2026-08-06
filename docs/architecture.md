@@ -547,6 +547,13 @@ sequenceDiagram
 决定要求当前 holder、匹配 video review version、注册 reason 和 payload-bound idempotency；
 旧版本决定重放不再触发媒体/发布副作用。审计失败整体回滚；通知失败只重试 durable Outbox。
 
+内容运营接口继续由视频领域拥有，而不是建立通用 Admin Repository。`GET /api/admin/videos`
+使用签名 cursor 绑定全部筛选并按 `created_at DESC, id DESC` 查询；下架/恢复锁定 video 行并校验
+独立运营 version，在同一事务提交生命周期、内容统计、不可变处罚记录、成功 audit 和缓存失效
+及媒体收敛意图。Video Worker 使用有界批次、`FOR UPDATE SKIP LOCKED`、租约和指数退避处理该
+意图：先失效 Redis，再按当前数据库状态保护或发布媒体，全部成功后才标记 delivered；失败保留
+有界错误并重试。按当前状态收敛也避免旧恢复意图在后续再次下架后错误公开内容。
+
 ## 6. 说明
 
 - 当前代码以 Go API 承载同步 HTTP，用 Worker 消费互动、发布、曝光预热、嵌入和媒体处理事件；内部按接口层、应用层、领域层、基础设施层组织。
@@ -560,6 +567,7 @@ sequenceDiagram
 - 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品、公开合集和隐私允许的喜欢。“短剧”和“我的预约”没有领域模型或接口，明确不在架构范围内。
 - 播放技术遥测与观看行为事实分流：Web 将渲染首帧、播放结果、rebuffer/seek、选源、帧质量和终止错误组成有界版本化批次；API 严格校验并原子写入 `playback_telemetry_batch/event`，立即聚合低基数 Prometheus 指标。批次失败不影响播放，旧 QoS 端点在迁移窗口内继续兼容。
 - 人工审核使用数据库时间租约和 optimistic case/review version；最终决定、视频生命周期、成功审计和作者通知 Outbox 原子提交，Review Worker 再通过 message Application 幂等生成站内通知。
+- Web Admin Shell 复用 typed History router 和 SessionProvider，`AdminApp` 通过动态 import 形成独立 JS/CSS chunk；客户端权限只过滤导航，直接 URL 和所有动作仍由后台中间件授权。
 
 ## 7. 生产媒体交付
 

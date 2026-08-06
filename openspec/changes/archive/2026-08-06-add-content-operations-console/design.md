@@ -39,6 +39,14 @@ Video search orders by `created_at DESC, id DESC` and binds status, author, iden
 
 Taking offline or restoring a video requires a reason code, optional bounded note, and confirmation. Review decisions use the dedicated case detail workflow and lease token.
 
+### Deliver enforcement side effects from a transactional intent
+
+The video transition transaction writes one durable intent with the lifecycle, content-stat, enforcement, and audit facts. A bounded Worker leases intents with `SKIP LOCKED`, invalidates public caches, converges media protection/publication from the current video state, and marks delivery only after every side effect succeeds. Failures retain the intent with bounded error text and exponential retry.
+
+### Retain pending review decision identity
+
+The review detail page derives one pending decision signature from the case and normalized decision payload. Retries after response loss reuse its idempotency key; success or any case/payload change creates a new identity.
+
 ## Risks / Trade-offs
 
 - [Admin code increases the public bundle] -> Use route-level lazy imports within the existing Vite build.

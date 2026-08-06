@@ -10,7 +10,9 @@
 | --- | --- | --- | --- | --- |
 | 已实现 | GET | `/api/admin/me` | 返回当前持久化后台角色和权限集合 | `review.read` |
 | 已实现 | GET | `/api/admin/audit-events` | 查询不可变后台操作事实 | `audit.read` |
-| 规划中 | GET | `/api/admin/videos` | 按条件查询和运营视频 | `content.enforce` |
+| 已实现 | GET | `/api/admin/videos` | 按生命周期、作者、ID、关键词和有界创建时间查询视频 | `content.enforce` |
+| 已实现 | POST | `/api/admin/videos/{videoId}/enforcement` | 按预期版本、注册原因和备注下架已发布视频 | `content.enforce` |
+| 已实现 | POST | `/api/admin/videos/{videoId}/restoration` | 按预期版本恢复已批准的下架视频 | `content.enforce` |
 | 已实现 | GET | `/api/admin/review/cases` | 查询稳定人工审核队列 | `review.read` |
 | 已实现 | GET | `/api/admin/review/cases/{caseId}` | 查询案件证据和历史 | `review.read` |
 | 已实现 | POST/DELETE | `/api/admin/review/cases/{caseId}/claim`、`.../lease/*` | 领取、续租和释放 | `review.decide` |
@@ -75,4 +77,7 @@ Resolved Admin Principal → Handler
 
 ## 7. 前端接入点
 
-后续 Admin Shell 可使用 `/api/admin/me` 获取服务端确认的权限集合控制导航展示，但展示控制不能代替每个后台接口的服务端权限检查。
+Web 使用现有 History API typed router 懒加载 `/admin/reviews`、`/admin/reviews/{reviewId}` 和
+`/admin/videos`。Admin Shell 通过 `/api/admin/me` 获取服务端确认的封闭权限集合，只展示获准
+目的地；直接 URL 仍请求拥有领域的后台 API，并稳定呈现登录、权限验证、403 和服务不可用状态，
+不会把客户端导航隐藏当作安全边界。
