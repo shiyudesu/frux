@@ -14,15 +14,18 @@ Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单�
 - RabbitMQ 异步互动落库、视频发布事件和向量任务。
 - React + Vite Web 客户端。
 - 消息中心和播放优化接入。
+- 当前账号驱动的 Reviewer、Operator 和 Admin 后台权限。
+- 不可变后台操作审计和审计查询。
+- 待审、批准、拒绝、下架和恢复的视频审核生命周期。
+- 机器证据、版本化审核策略和自动通过/拒绝/转人审。
+- 人工审核队列、租约、决定、通知 Outbox 和运营控制台。
+- 视频运营搜索、版本检查、下架和合规恢复。
+- 版本化运行时降级控制、本地快照和回滚。
+- 本地优先、Redis 协调的分层请求限流。
+- RabbitMQ Quorum Queue、DLQ 检查和审计重放。
 - API 流程测试和 Web 生产构建。
 - Prometheus 指标和 Grafana 监控面板。
-- S3 兼容对象存储、预签名直传、异步多码率 MP4/DASH 处理和不可变媒体交付。
-
-重点待补能力：
-
-- 审核后台。
-- 后台运营。
-- 系统治理。
+- S3 兼容对象存储、预签名直传、异步多码率 MP4/DASH 处理和审核感知的版本化媒体交付。
 
 ## 快速启动
 
@@ -96,6 +99,28 @@ docker compose down -v
 | MinIO Console | `http://127.0.0.1:9001` |
 | Prometheus | `http://127.0.0.1:9090` |
 | Grafana 面板 | `http://127.0.0.1:3000/d/frux-overview/frux-overview` |
+
+### 内部控制面验收
+
+在 Web 注册账号后，可将本地账号设为兼容管理员：
+
+```bash
+docker exec frux-postgres \
+  psql -U frux -d frux \
+  -c "UPDATE account SET role='admin' WHERE account='ops';"
+```
+
+重新登录后访问：
+
+| 页面 | 地址 |
+| --- | --- |
+| 审核队列 | `http://127.0.0.1:5173/admin/reviews` |
+| 视频运营 | `http://127.0.0.1:5173/admin/videos` |
+| RabbitMQ 队列与 DLQ | `http://127.0.0.1:15672` |
+| 限流、治理和死信监控 | `http://127.0.0.1:3000` |
+
+新视频默认进入待审核状态。媒体处理完成不能绕过审核；批准后才进入 Feed、搜索、
+公开主页和公共媒体交付。后台操作会写入不可变审计事实。
 
 ### 本地开发
 
@@ -195,6 +220,11 @@ Prometheus 抓取目标：
 | [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
 | [docs/recommendation-roadmap.md](docs/recommendation-roadmap.md) | 推荐训练数据、语义向量、pgvector 与 ANN 的实施顺序 |
 | [docs/internal-control-plane-roadmap.md](docs/internal-control-plane-roadmap.md) | 后台权限、审核运营、降级限流和死信恢复的实施路线 |
+| [docs/modules/admin.md](docs/modules/admin.md) | 后台权限、运营入口和 Admin 路由 |
+| [docs/modules/admin-audit.md](docs/modules/admin-audit.md) | 不可变后台操作审计 |
+| [docs/modules/review.md](docs/modules/review.md) | 自动审核与人工审核工作流 |
+| [docs/modules/rate-limiting.md](docs/modules/rate-limiting.md) | 分层请求限流 |
+| [docs/modules/rabbitmq-dead-letter-recovery.md](docs/modules/rabbitmq-dead-letter-recovery.md) | RabbitMQ 死信隔离、检查和重放 |
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
 | [docs/security.md](docs/security.md) | 媒体所有权、签名访问和缓存安全 |
 | [docs/deployment.md](docs/deployment.md) | MinIO/S3 配置、灰度和回滚 |
