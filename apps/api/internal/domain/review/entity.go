@@ -15,6 +15,8 @@ const (
 	CaseStatusPendingHuman = "pending_human"
 	CaseStatusApproved     = "approved"
 	CaseStatusRejected     = "rejected"
+	CaseStatusCancelled    = "cancelled"
+	CaseStatusSuperseded   = "superseded"
 
 	OutcomeApprove = "approve"
 	OutcomeReject  = "reject"
@@ -31,14 +33,19 @@ const (
 )
 
 type ReviewCase struct {
-	ID            int64
-	VideoID       int64
-	ReviewVersion int
-	Status        string
-	PolicyVersion int
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	ClosedAt      *time.Time
+	ID                 int64
+	VideoID            int64
+	ReviewVersion      int
+	Status             string
+	PolicyVersion      int
+	Priority           int
+	Version            int
+	AssignedReviewerID int64
+	LeaseTokenHash     string
+	LeaseExpiresAt     *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	ClosedAt           *time.Time
 }
 
 func NewCase(videoID int64, reviewVersion, policyVersion int, now time.Time) (*ReviewCase, error) {
@@ -57,7 +64,7 @@ func NewCase(videoID int64, reviewVersion, policyVersion int, now time.Time) (*R
 	now = now.UTC().Truncate(time.Microsecond)
 	return &ReviewCase{
 		VideoID: videoID, ReviewVersion: reviewVersion, PolicyVersion: policyVersion,
-		Status: CaseStatusOpen, CreatedAt: now, UpdatedAt: now,
+		Status: CaseStatusOpen, Version: 1, CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 
@@ -65,13 +72,34 @@ func RestoreCase(id, videoID int64, reviewVersion int, status string, policyVers
 	return &ReviewCase{
 		ID: id, VideoID: videoID, ReviewVersion: reviewVersion,
 		Status: normalizeToken(status), PolicyVersion: policyVersion,
-		CreatedAt: createdAt.UTC(), UpdatedAt: updatedAt.UTC(), ClosedAt: closedAt,
+		Version: 1, CreatedAt: createdAt.UTC(), UpdatedAt: updatedAt.UTC(), ClosedAt: closedAt,
 	}
+}
+
+func RestoreHumanCase(
+	id, videoID int64,
+	reviewVersion int,
+	status string,
+	policyVersion, priority, version int,
+	assignedReviewerID int64,
+	leaseTokenHash string,
+	leaseExpiresAt *time.Time,
+	createdAt, updatedAt time.Time,
+	closedAt *time.Time,
+) *ReviewCase {
+	reviewCase := RestoreCase(id, videoID, reviewVersion, status, policyVersion, createdAt, updatedAt, closedAt)
+	reviewCase.Priority = priority
+	reviewCase.Version = version
+	reviewCase.AssignedReviewerID = assignedReviewerID
+	reviewCase.LeaseTokenHash = strings.TrimSpace(leaseTokenHash)
+	reviewCase.LeaseExpiresAt = leaseExpiresAt
+	return reviewCase
 }
 
 func ValidCaseStatus(status string) bool {
 	switch normalizeToken(status) {
-	case CaseStatusOpen, CaseStatusPendingHuman, CaseStatusApproved, CaseStatusRejected:
+	case CaseStatusOpen, CaseStatusPendingHuman, CaseStatusApproved, CaseStatusRejected,
+		CaseStatusCancelled, CaseStatusSuperseded:
 		return true
 	default:
 		return false

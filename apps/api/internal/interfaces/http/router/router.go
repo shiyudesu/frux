@@ -224,7 +224,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
 	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
 	mediaPublicationService := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
-	reviewRepo := infrareview.New(gormDB)
+	reviewRepo := infrareview.New(gormDB, infrareview.WithAuditWriter(adminAuditRepo))
 	reviewObserver := reviewMetricsAdapter{}
 	var reviewPublisher applicationvideo.PublishedEventPublisher
 	if rabbitMQ != nil {
@@ -233,6 +233,9 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	reviewService := applicationreview.New(
 		reviewRepo,
 		applicationreview.WithObserver(reviewObserver),
+		applicationreview.WithHumanRepository(reviewRepo),
+		applicationreview.WithHumanCursorSecret(cfg.JWT.Secret),
+		applicationreview.WithHumanObserver(reviewObserver),
 		applicationreview.WithOutcomeApplier(reviewOutcomeApplier{
 			videoReader: videoRepo, mediaPublication: mediaPublicationService,
 			publisher: reviewPublisher, cacheInvalidator: feedCache,
@@ -364,6 +367,45 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			),
 		),
 		adminHandler.ListAuditEvents,
+	)
+	admin.GET(
+		"/review/cases",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewRead),
+		reviewHandler.ListHumanQueue,
+	)
+	admin.GET(
+		"/review/cases/:caseId",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewRead),
+		reviewHandler.GetHumanCase,
+	)
+	admin.POST(
+		"/review/cases/:caseId/claim",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewDecide),
+		reviewHandler.ClaimHumanCase,
+	)
+	admin.POST(
+		"/review/cases/:caseId/lease/renew",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewDecide),
+		reviewHandler.RenewHumanLease,
+	)
+	admin.DELETE(
+		"/review/cases/:caseId/lease",
+		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewDecide),
+		reviewHandler.ReleaseHumanLease,
+	)
+	admin.POST(
+		"/review/cases/:caseId/decision",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionReviewDecide,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionReviewDecide,
+				domainadminaudit.TargetReviewCase,
+				"case",
+			),
+		),
+		reviewHandler.DecideHumanCase,
 	)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。

@@ -11,8 +11,10 @@
 | 已实现 | GET | `/api/admin/me` | 返回当前持久化后台角色和权限集合 | `review.read` |
 | 已实现 | GET | `/api/admin/audit-events` | 查询不可变后台操作事实 | `audit.read` |
 | 规划中 | GET | `/api/admin/videos` | 按条件查询和运营视频 | `content.enforce` |
-| 规划中 | GET | `/api/admin/review/tasks` | 查询审核任务 | `review.read` |
-| 规划中 | PUT | `/api/admin/review/tasks/{taskId}/assignee` | 分配审核员 | `review.decide` |
+| 已实现 | GET | `/api/admin/review/cases` | 查询稳定人工审核队列 | `review.read` |
+| 已实现 | GET | `/api/admin/review/cases/{caseId}` | 查询案件证据和历史 | `review.read` |
+| 已实现 | POST/DELETE | `/api/admin/review/cases/{caseId}/claim`、`.../lease/*` | 领取、续租和释放 | `review.decide` |
+| 已实现 | POST | `/api/admin/review/cases/{caseId}/decision` | 幂等批准或拒绝 | `review.decide` |
 | 规划中 | PATCH | `/api/admin/configs/{configKey}` | 发布配置修订 | `config.publish` |
 
 ## 3. 角色和权限
@@ -68,6 +70,8 @@ Resolved Admin Principal → Handler
 | Admin Token 对应账号已停用 | 立即返回 403 |
 | 兼容 `admin` 账号访问 | 获得全部初始注册权限 |
 | 缺少或无效 Token | 保持既有 401 响应 |
+| 两名 Reviewer 并发领取 | 只有一人获得 opaque lease token，另一人收到稳定 409 |
+| 非持有人或过期租约决定 | 返回稳定冲突，不写案件、视频、审计或通知 |
 
 ## 7. 前端接入点
 

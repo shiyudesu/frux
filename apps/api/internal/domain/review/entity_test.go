@@ -67,6 +67,35 @@ func TestPolicyRejectHumanApprovePrecedenceAndUnknownLabels(t *testing.T) {
 	}
 }
 
+func TestPolicyDerivesBoundedHumanPriority(t *testing.T) {
+	human := 0.2
+	policy, err := NewPolicy(2, true, PolicyConfiguration{
+		DefaultOutcome: OutcomeApprove,
+		Rules: []LabelRule{
+			{Label: LabelHate, HumanThreshold: &human},
+			{Label: LabelSafe},
+		},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, low, err := policy.RouteWithPriority([]MachineSignal{{Label: LabelHate, Confidence: 0.21}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, high, err := policy.RouteWithPriority([]MachineSignal{{Label: LabelHate, Confidence: 0.91}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != OutcomeHuman || low == 0 || high <= low || !ValidPriority(low) || !ValidPriority(high) {
+		t.Fatalf("human priorities low=%d high=%d outcome=%q", low, high, outcome)
+	}
+	_, unknown, err := policy.RouteWithPriority([]MachineSignal{{Label: "new-label", Confidence: 1}})
+	if err != nil || unknown != 100 {
+		t.Fatalf("unknown priority = %d err=%v", unknown, err)
+	}
+}
+
 func TestPolicyRejectsUnknownRulesAndInvalidThresholds(t *testing.T) {
 	threshold := 1.2
 	_, err := NewPolicy(1, true, PolicyConfiguration{

@@ -3,6 +3,7 @@ package applicationreview
 import (
 	"context"
 	"errors"
+	"io"
 
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 )
@@ -16,9 +17,13 @@ type Observer interface {
 }
 
 type Service struct {
-	repo           domainreview.Repository
-	outcomeApplier OutcomeApplier
-	observer       Observer
+	repo              domainreview.Repository
+	outcomeApplier    OutcomeApplier
+	observer          Observer
+	humanRepo         HumanRepository
+	humanObserver     HumanObserver
+	humanCursorSecret []byte
+	humanTokenReader  io.Reader
 }
 
 type Option func(*Service)

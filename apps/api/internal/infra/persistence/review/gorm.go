@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
@@ -16,10 +17,30 @@ import (
 )
 
 type Repository struct {
-	db *gorm.DB
+	db          *gorm.DB
+	auditWriter AuditWriter
 }
 
-func New(db *gorm.DB) *Repository { return &Repository{db: db} }
+type AuditWriter interface {
+	AppendInTransaction(ctx context.Context, tx *gorm.DB, fact *domainadminaudit.Fact) error
+	RecordCommittedWrite(fact *domainadminaudit.Fact)
+}
+
+type Option func(*Repository)
+
+func WithAuditWriter(writer AuditWriter) Option {
+	return func(repository *Repository) { repository.auditWriter = writer }
+}
+
+func New(db *gorm.DB, options ...Option) *Repository {
+	repository := &Repository{db: db}
+	for _, option := range options {
+		if option != nil {
+			option(repository)
+		}
+	}
+	return repository
+}
 
 func (r *Repository) CreateOrGetCase(ctx context.Context, videoID int64) (*domainreview.ReviewCase, bool, error) {
 	if videoID <= 0 {
@@ -134,7 +155,7 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 		if err != nil {
 			return err
 		}
-		outcome, err := policy.Route(result.Signals)
+		outcome, priority, err := policy.RouteWithPriority(result.Signals)
 		if err != nil {
 			return err
 		}
@@ -184,11 +205,13 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 			caseModel.ClosedAt = &result.ReceivedAt
 		case domainreview.OutcomeHuman:
 			caseModel.Status = domainreview.CaseStatusPendingHuman
+			caseModel.Priority = priority
 		default:
 			return domainreview.ErrInvalidDecisionOutcome
 		}
 		if err := tx.Model(&caseModel).Updates(map[string]any{
-			"status": caseModel.Status, "updated_at": caseModel.UpdatedAt, "closed_at": caseModel.ClosedAt,
+			"status": caseModel.Status, "priority": caseModel.Priority,
+			"updated_at": caseModel.UpdatedAt, "closed_at": caseModel.ClosedAt,
 		}).Error; err != nil {
 			return err
 		}
@@ -305,8 +328,9 @@ func policyFromModel(model PolicyModel) (*domainreview.Policy, error) {
 }
 
 func restoreCase(model CaseModel) *domainreview.ReviewCase {
-	return domainreview.RestoreCase(
+	return domainreview.RestoreHumanCase(
 		model.ID, model.VideoID, model.ReviewVersion, model.Status, model.PolicyVersion,
+		model.Priority, model.Version, model.AssignedReviewerID, model.LeaseTokenHash, model.LeaseExpiresAt,
 		model.CreatedAt, model.UpdatedAt, model.ClosedAt,
 	)
 }

@@ -62,6 +62,10 @@
 
 当前注册 action 包括审计查询、审核决定、内容处罚与恢复、配置发布、治理执行和死信重放。后续领域 change 使用 Application builder 创建事实，并由其 Infrastructure Repository 在已有 GORM 事务内调用共享追加 helper。
 
+`review.decide` 成功事实绑定 `review.decide` 权限、review case、POST decision 路由、正
+`review_version`、approved/rejected 结果和人工审核注册 reason code。审计保存幂等键摘要，
+不保存租约 token 或 note；审计插入失败会回滚人工决定、案件、视频和通知 Outbox。
+
 ## 5. 错误码
 
 | HTTP 状态 | code | 场景 |

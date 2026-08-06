@@ -470,3 +470,18 @@ openspec validate --all --strict
 - 初始 review policy 只按版本 conflict-do-nothing 插入，不覆盖运营启停；ready pending 视频的
   丢失 intake 由有界 reconciliation 修复。Prometheus 标签不得包含 provider、model、policy、
   video、case 或 result identity。
+- 人工队列固定使用 `priority DESC, created_at ASC, id ASC`，签名 cursor 必须绑定 priority
+  过滤和完整排序元组。pending-human priority 必须由触发人审的 signal confidence 确定性映射到
+  `1..100` 并与状态原子落库；队列查询必须直接按数据库时间纳入已过期租约，不能依赖固定上限
+  的回收批次，并通过关联 video status 和 review version 排除终态或已被新版本替代的主体。
+  claim 必须依次锁定 case 和 video；发现无效主体时原子写入 cancelled/superseded 终态及单条
+  不可变历史后返回冲突，不能创建会被反复消费的租约。领取只返回一次 256-bit opaque token，
+  数据库只存 SHA-256；claim、
+  renew、release、decision 都校验 case version，decision 还校验 reviewer、数据库时间租约和
+  video review version。相关行锁必须先于数据库时间采样；decision 必须先锁 case 和 video。
+- 人工 reason code 是按 outcome 封闭注册表；note 规范化且有 Unicode 上限，特殊 other reason
+  必须有 note。决定幂等键按 reviewer+case 隔离并绑定 outcome/reason/note/review/case version。
+- 人工决定、case、video、内容统计、成功 audit、notification outbox 和幂等回执必须同事务；
+  audit 失败整体回滚。决定幂等重放只有在当前 video review version 仍匹配案件时才允许重试
+  媒体提升、保护和发布副作用。作者通知由 Review Worker 通过 message Application 窄接口耐久
+  投递，外部投递失败不得回滚决定。人工 Prometheus 标签不得含 reviewer、case、video、token 或 reason。

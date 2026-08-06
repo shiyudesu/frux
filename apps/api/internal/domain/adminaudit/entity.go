@@ -98,12 +98,15 @@ var schemasByAction = map[Action]actionSchema{
 		successKeys: detailKeys("filter_count", "http_method", "route"),
 	},
 	ActionReviewDecide: {
-		permission:     domainaccount.PermissionReviewDecide,
-		targetType:     TargetReviewCase,
-		route:          "/api/admin/review/cases/:caseId/decision",
-		method:         "POST",
-		successKeys:    detailKeys("decision", "http_method", "reason_code", "review_version", "route"),
-		successReasons: detailKeys("review_approved", "review_rejected"),
+		permission:  domainaccount.PermissionReviewDecide,
+		targetType:  TargetReviewCase,
+		route:       "/api/admin/review/cases/:caseId/decision",
+		method:      "POST",
+		successKeys: detailKeys("decision", "http_method", "reason_code", "review_version", "route"),
+		successReasons: detailKeys(
+			"content_compliant", "false_positive", "sexual_content", "graphic_violence",
+			"hate", "harassment", "self_harm", "illegal_activity", "spam", "other_policy_violation",
+		),
 	},
 	ActionContentEnforce: {
 		permission:     domainaccount.PermissionContentEnforce,
@@ -168,6 +171,12 @@ var validDecisions = map[string]struct{}{
 	"approved": {},
 	"rejected": {},
 }
+
+var reviewApproveReasons = detailKeys("content_compliant", "false_positive")
+var reviewRejectReasons = detailKeys(
+	"sexual_content", "graphic_violence", "hate", "harassment", "self_harm",
+	"illegal_activity", "spam", "other_policy_violation",
+)
 
 var validStatuses = map[string]struct{}{
 	"offline":        {},
@@ -407,8 +416,12 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 		if err != nil || version == 0 {
 			return false
 		}
-		return (detail["decision"] == "approved" && detail["reason_code"] == "review_approved") ||
-			(detail["decision"] == "rejected" && detail["reason_code"] == "review_rejected")
+		reasons := reviewApproveReasons
+		if detail["decision"] == "rejected" {
+			reasons = reviewRejectReasons
+		}
+		_, ok := reasons[detail["reason_code"]]
+		return ok
 	case ActionContentEnforce:
 		return detail["previous_status"] == "published" && detail["new_status"] == "offline"
 	case ActionContentRestore:

@@ -1,4 +1,10 @@
-## ADDED Requirements
+# human-review-workflow Specification
+
+## Purpose
+
+Define stable human-review work selection, expiring reviewer leases, atomic decisions, and immutable review history.
+
+## Requirements
 
 ### Requirement: Stable Human Review Queue
 Authorized reviewers SHALL be able to list pending human-review cases ordered by `priority DESC, created_at ASC, id ASC` using a cursor bound to the active filters.
@@ -7,16 +13,40 @@ Authorized reviewers SHALL be able to list pending human-review cases ordered by
 - **WHEN** a reviewer supplies a valid cursor with unchanged filters
 - **THEN** Frux returns the next stable queue slice without duplicates
 
+#### Scenario: Policy routes cases to human review
+- **WHEN** machine evidence produces a human outcome
+- **THEN** Frux atomically persists a deterministic priority from `1` through `100` and higher-confidence human signals sort first
+
+#### Scenario: More than one recovery batch of leases has expired
+- **WHEN** a reviewer requests the queue
+- **THEN** all expired leases are considered available by database time without depending on a fixed-size recovery pass
+
+#### Scenario: Pending case subject is no longer reviewable
+- **WHEN** a video's lifecycle is terminal or its review version no longer matches a pending-human case
+- **THEN** Frux excludes that case from queue pages and queue metrics
+
 #### Scenario: Caller lacks review-read permission
 - **WHEN** an authenticated principal without `review.read` requests the queue
 - **THEN** Frux returns HTTP 403 and no case evidence
 
 ### Requirement: Expiring Review Lease
-A human-review case SHALL be decided only by its current authorized lease holder using an unexpired opaque lease token and expected case version.
+A human-review case SHALL be claimed, renewed, released, or decided only with the expected case version, and SHALL be decided only by its current authorized lease holder using an unexpired opaque lease token. Lease validity SHALL be evaluated using database/server time rather than reviewer-supplied time.
 
 #### Scenario: Reviewer claims an available case
 - **WHEN** an authorized reviewer claims an unleased pending case
 - **THEN** Frux records the reviewer, lease expiry, token hash, and incremented case version
+
+#### Scenario: Current holder renews a lease
+- **WHEN** the current reviewer supplies the unexpired lease token and expected case version
+- **THEN** Frux extends the lease by the bounded duration, increments the case version, and records immutable renewal history
+
+#### Scenario: Current holder releases a lease
+- **WHEN** the current reviewer supplies the unexpired lease token and expected case version to release the case
+- **THEN** Frux clears the lease, increments the case version, records immutable release history, and makes the case available
+
+#### Scenario: Lease mutation uses a stale case version
+- **WHEN** a reviewer claims, renews, releases, or decides with a case version that is no longer current
+- **THEN** Frux returns a stable version conflict and leaves the case unchanged
 
 #### Scenario: Another reviewer decides a leased case
 - **WHEN** a different reviewer submits a decision for an actively leased case
@@ -25,6 +55,14 @@ A human-review case SHALL be decided only by its current authorized lease holder
 #### Scenario: Lease expires
 - **WHEN** server time passes the lease expiry without renewal or decision
 - **THEN** the case becomes claimable again without deleting its prior assignment history
+
+#### Scenario: Reviewer clocks differ
+- **WHEN** a reviewer clock disagrees with database/server time
+- **THEN** Frux evaluates claim, renewal, release, and decision lease validity only from database/server time
+
+#### Scenario: Reviewer claims a stale subject
+- **WHEN** a claim locks a pending-human case whose video is terminal or has a newer review version
+- **THEN** Frux atomically retires the case as cancelled or superseded with immutable history and returns a conflict without creating a lease
 
 ### Requirement: Idempotent Human Decision
 Human decisions SHALL be limited to approve or reject, require a registered reason code, accept only a bounded optional note, and support payload-bound idempotency.

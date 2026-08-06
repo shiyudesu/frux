@@ -21,11 +21,15 @@ Automated review produces cases that require human judgment. Reviewers need stab
 
 ### Use priority and age ordering
 
-Cases order by `priority DESC, created_at ASC, id ASC`. The signed cursor binds filters and the complete sort tuple. Priority is bounded and assigned by policy, not supplied by the browser.
+Cases order by `priority DESC, created_at ASC, id ASC`. The signed cursor binds filters and the complete sort tuple. Priority is bounded to `1..100` for pending-human cases and is derived deterministically from the confidence of the signal that triggered human routing; default-human routing uses priority `1`. It is persisted with the routing transition and is never supplied by the browser.
 
 ### Use expiring leases with opaque tokens
 
 Claiming or assigning a case records reviewer ID, lease token hash, lease expiry, and case version. A decision requires the matching reviewer, unexpired token, and expected case version. Expired leases return the case to the available queue through reads and reconciliation.
+
+Queue reads treat `lease_expires_at <= clock_timestamp()` as available directly, so pagination does not depend on a bounded recovery batch. Claiming such a row records the expired history event before the new claim.
+
+Queue reads also require the joined video to remain pending review at the case review version. Claim locks both case and video; a terminal subject cancels the case and a newer review version supersedes it, with one immutable history event, before returning the existing subject-state/version conflict.
 
 Alternative: permanent assignee only. Rejected because abandoned work would require manual repair and concurrent tabs would remain unsafe.
 
@@ -55,6 +59,8 @@ An outbox event is written in the same transaction for later author notification
 3. Enable author notification outbox consumption.
 4. Start with a small lease duration in staging and validate conflict behavior.
 5. Roll back routes first; leased cases expire and remain pending human review.
+
+`cancelled`/`superseded` case states and assignment-history events fit the existing bounded string columns, so this correction does not require a table-shape migration.
 
 ## Open Questions
 

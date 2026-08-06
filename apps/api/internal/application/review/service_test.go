@@ -52,7 +52,7 @@ func (r *reviewServiceRepo) ProcessMachineResult(_ context.Context, result *doma
 		return &duplicate, nil
 	}
 	reviewCase := r.cases[result.VideoID]
-	outcome, err := r.policy.Route(result.Signals)
+	outcome, priority, err := r.policy.RouteWithPriority(result.Signals)
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +63,7 @@ func (r *reviewServiceRepo) ProcessMachineResult(_ context.Context, result *doma
 		reviewCase.Status = domainreview.CaseStatusRejected
 	default:
 		reviewCase.Status = domainreview.CaseStatusPendingHuman
+		reviewCase.Priority = priority
 	}
 	processed := &domainreview.ProcessingResult{
 		Case: reviewCase,

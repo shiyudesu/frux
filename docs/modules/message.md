@@ -6,6 +6,10 @@
 
 评论事实和通知可靠性仍归 interaction：根评论、回复和首次评论点赞在同一事务写入 `interaction_comment_notification_outbox`；Worker 通过窄 `CommentNotificationMessageWriter` 调用 message Application Service。message 不读取互动表，也不拥有互动 Outbox。
 
+人工审核通知可靠性归 review：最终决定事务写入 `review_notification_outbox`；Review Worker
+通过窄 `ReviewNotificationMessageWriter` 创建 `SYSTEM` 消息。message 不读取审核表，也不决定
+批准/拒绝文案或重试状态。
+
 ## 2. 接口设计
 
 | 方法 | 路径 | 作用 | 鉴权/幂等 |
@@ -68,6 +72,7 @@ actor 与 recipient 相同时 interaction 不创建 Outbox，避免自己评论�
 4. 瞬时失败从 1 秒指数退避，最长 1 分钟；非法用户、类型、标题/正文、event/key 长度或讨论目标进入 terminal。
 5. message 通过 `user_id + event_id` 及同值 idempotency key 保证重复领取、Worker 重启和响应不确定时只保存一条消息。
 6. actor 资料读取失败不会阻断投递，结构化目标和正文快照仍可持久化。
+7. 人工审核 Outbox 使用相同的 `FOR UPDATE SKIP LOCKED`、30 秒租约、5 秒写入超时和指数退避；event ID 为稳定决定 ID，message 以 `user_id + event_id` 去重。
 
 迁移不为历史评论合成消息；既有无目标消息保持可读、可分页、可标已读。
 

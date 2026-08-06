@@ -77,35 +77,46 @@ func InitialPolicy(now time.Time) (*Policy, error) {
 }
 
 func (p *Policy) Route(signals []MachineSignal) (string, error) {
+	outcome, _, err := p.RouteWithPriority(signals)
+	return outcome, err
+}
+
+func (p *Policy) RouteWithPriority(signals []MachineSignal) (string, int, error) {
 	if p == nil {
-		return "", ErrInvalidPolicy
+		return "", 0, ErrInvalidPolicy
 	}
 	config, err := normalizePolicy(p.Config)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	rules := make(map[string]LabelRule, len(config.Rules))
 	for _, rule := range config.Rules {
 		rules[rule.Label] = rule
 	}
 	human := false
+	priority := 0
 	for _, signal := range signals {
 		rule, known := rules[signal.Label]
 		if !known || !KnownLabel(signal.Label) {
 			human = true
+			priority = max(priority, humanSignalPriority(signal.Confidence))
 			continue
 		}
 		if rule.RejectThreshold != nil && signal.Confidence >= *rule.RejectThreshold {
-			return OutcomeReject, nil
+			return OutcomeReject, 0, nil
 		}
 		if rule.HumanThreshold != nil && signal.Confidence >= *rule.HumanThreshold {
 			human = true
+			priority = max(priority, humanSignalPriority(signal.Confidence))
 		}
 	}
 	if human {
-		return OutcomeHuman, nil
+		return OutcomeHuman, max(priority, 1), nil
 	}
-	return config.DefaultOutcome, nil
+	if config.DefaultOutcome == OutcomeHuman {
+		return OutcomeHuman, 1, nil
+	}
+	return config.DefaultOutcome, 0, nil
 }
 
 func KnownLabel(label string) bool {
@@ -158,6 +169,10 @@ func cloneFloat(value *float64) *float64 {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func humanSignalPriority(confidence float64) int {
+	return min(100, max(1, int(math.Ceil(confidence*100))))
 }
 
 func floatPtr(value float64) *float64 { return &value }

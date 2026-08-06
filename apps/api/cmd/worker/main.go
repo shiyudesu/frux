@@ -96,6 +96,7 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 
 	recommendationRepo := infrarecommendation.New(gormDB)
 	interactionRepo := infrainteraction.New(gormDB)
+	reviewRepo := infrareview.New(gormDB)
 	messageService := applicationmessage.New(inframessage.New(gormDB))
 	commentNotificationWorker := applicationinteraction.NewCommentNotificationWorker(
 		interactionRepo,
@@ -103,6 +104,14 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 		&commentNotificationMessageWriter{service: messageService},
 	)
 	if err := commentNotificationWorker.Start(ctx); err != nil {
+		return err
+	}
+	reviewNotificationWorker := applicationreview.NewReviewNotificationWorker(
+		reviewRepo,
+		&reviewNotificationMessageWriter{service: messageService},
+		workerReviewObserver{},
+	)
+	if err := reviewNotificationWorker.Start(ctx); err != nil {
 		return err
 	}
 	actionWorker := applicationinteraction.NewActionWorker(
@@ -182,7 +191,7 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
 	mediaPublication := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
 	reviewService := applicationreview.New(
-		infrareview.New(gormDB),
+		reviewRepo,
 		applicationreview.WithObserver(workerReviewObserver{}),
 	)
 	reviewReconciler := applicationreview.NewReconciliationWorker(reviewService)
@@ -220,6 +229,10 @@ func (workerReviewObserver) Observe(stage, result string) {
 	inframetrics.ObserveReview(stage, result)
 }
 
+func (workerReviewObserver) ObserveHumanNotification(result string) {
+	inframetrics.ObserveHumanReviewNotification(result)
+}
+
 type reviewMediaReadyNotifier struct {
 	publication   *applicationvideo.MediaPublicationService
 	videoRepo     *infravideo.Repository
@@ -250,6 +263,21 @@ func (n reviewMediaReadyNotifier) MediaFailed(ctx context.Context, assetID int64
 
 type commentNotificationMessageWriter struct {
 	service *applicationmessage.Service
+}
+
+type reviewNotificationMessageWriter struct {
+	service *applicationmessage.Service
+}
+
+func (w *reviewNotificationMessageWriter) WriteReviewNotification(
+	ctx context.Context,
+	notification applicationreview.ReviewNotificationDelivery,
+) error {
+	_, err := w.service.CreateFromEvent(
+		ctx, notification.RecipientID, "SYSTEM", notification.Title, notification.Content,
+		notification.EventID, notification.EventID,
+	)
+	return err
 }
 
 func (w *commentNotificationMessageWriter) WriteCommentNotification(ctx context.Context, notification applicationinteraction.CommentNotificationDelivery) error {

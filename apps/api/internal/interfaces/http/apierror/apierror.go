@@ -69,10 +69,17 @@ const (
 
 	CodeMessageValidationFailed = "MESSAGE_VALIDATION_FAILED"
 
-	CodeReviewValidationFailed = "REVIEW_VALIDATION_FAILED"
-	CodeReviewCaseNotFound     = "REVIEW_CASE_NOT_FOUND"
-	CodeReviewConflict         = "REVIEW_CONFLICT"
-	CodeReviewUnavailable      = "REVIEW_UNAVAILABLE"
+	CodeReviewValidationFailed            = "REVIEW_VALIDATION_FAILED"
+	CodeReviewCaseNotFound                = "REVIEW_CASE_NOT_FOUND"
+	CodeReviewConflict                    = "REVIEW_CONFLICT"
+	CodeReviewUnavailable                 = "REVIEW_UNAVAILABLE"
+	CodeReviewCaseClaimed                 = "REVIEW_CASE_CLAIMED"
+	CodeReviewLeaseExpired                = "REVIEW_LEASE_EXPIRED"
+	CodeReviewLeaseNotOwned               = "REVIEW_LEASE_NOT_OWNED"
+	CodeReviewCaseVersionConflict         = "REVIEW_CASE_VERSION_CONFLICT"
+	CodeReviewSubjectVersionConflict      = "REVIEW_SUBJECT_VERSION_CONFLICT"
+	CodeReviewDecisionIdempotencyConflict = "REVIEW_DECISION_IDEMPOTENCY_CONFLICT"
+	CodeReviewCursorInvalid               = "REVIEW_CURSOR_INVALID"
 
 	CodeLibraryValidationFailed   = "LIBRARY_VALIDATION_FAILED"
 	CodeLibraryVideoNotFound      = "LIBRARY_VIDEO_NOT_FOUND"

@@ -482,8 +482,7 @@ flowchart TB
   Governance -->|"保护核心接口"| Feed
   Observability -->|"采集服务指标"| Governance
 
-  class Account,Video,Feed,Upload,Recommendation,Interaction,Exposure,Library,Message current;
-  class Review,Admin growth;
+  class Account,Video,Feed,Upload,Recommendation,Interaction,Exposure,Library,Message,Review,Admin current;
   class Governance,Observability platform;
   class AsyncStore data;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
@@ -517,6 +516,37 @@ sequenceDiagram
 机器结果与供应商实现解耦；策略版本和证据 provenance 保存在 PostgreSQL。未知 label 保留但
 保守进入人审。媒体 ready 事件重复安全，Worker reconciliation 会补建 ready pending 视频的遗漏案件。
 
+### 5.2 人工复审链路
+
+```mermaid
+sequenceDiagram
+  participant Reviewer
+  participant API as Admin Review API
+  participant DB as PostgreSQL
+  participant Audit as Admin Audit
+  participant Worker as Review Notification Worker
+  participant Message
+
+  Reviewer->>API: GET signed priority/age queue
+  API->>DB: stable page including DB-time expired leases
+  Reviewer->>API: claim(expected case version)
+  API->>DB: lock case; store reviewer + token hash + DB-time expiry
+  API-->>Reviewer: opaque lease token
+  Reviewer->>API: decision(token, case/review version, idempotency key)
+  API->>DB: lock idempotency, case, video
+  API->>Audit: append validated success fact in same transaction
+  API->>DB: decision + case + video + audit + notification outbox
+  DB-->>API: atomic commit
+  Worker->>DB: lease review notification outbox
+  Worker->>Message: idempotent SYSTEM message
+```
+
+队列固定按 `priority DESC, created_at ASC, id ASC`，签名 cursor 绑定过滤器；查询直接纳入按
+数据库时间过期的租约。pending-human priority 由触发信号确定性映射为 `1..100` 并与路由原子
+提交。claim、renew、release 和 decision 都使用 case version；相关行锁先于数据库时间采样。
+决定要求当前 holder、匹配 video review version、注册 reason 和 payload-bound idempotency；
+旧版本决定重放不再触发媒体/发布副作用。审计失败整体回滚；通知失败只重试 durable Outbox。
+
 ## 6. 说明
 
 - 当前代码以 Go API 承载同步 HTTP，用 Worker 消费互动、发布、曝光预热、嵌入和媒体处理事件；内部按接口层、应用层、领域层、基础设施层组织。
@@ -529,6 +559,7 @@ sequenceDiagram
 - 新互动请求只接受当前已发布公开视频；Redis 在状态/计数事务内为每个行为事实分配单调版本。RabbitMQ 使用 publisher confirm；失败或确认不确定时同步落库，双失败时只条件回滚仍由该版本拥有的 Redis 状态，相同幂等重试会重发原事件。Redis 提交后若计数读取失败，应用使用脱离请求取消且有超时的上下文条件回滚；回滚报错时重新确认投递原事件并以同步回执持久化兜底，并发更高版本不会被旧请求覆盖。事件回执按 `event_id` 去重，行为行优先按 `version` 拒绝延迟旧事件，同版本才用 `(occurred_at, event_id)` 兼容定序；重复和旧事件成功确认且不改变统计。缺失/删除视频和无效载荷终止消费而不无限重入队，所有内容读取仍按当前可见性过滤。
 - 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品、公开合集和隐私允许的喜欢。“短剧”和“我的预约”没有领域模型或接口，明确不在架构范围内。
 - 播放技术遥测与观看行为事实分流：Web 将渲染首帧、播放结果、rebuffer/seek、选源、帧质量和终止错误组成有界版本化批次；API 严格校验并原子写入 `playback_telemetry_batch/event`，立即聚合低基数 Prometheus 指标。批次失败不影响播放，旧 QoS 端点在迁移窗口内继续兼容。
+- 人工审核使用数据库时间租约和 optimistic case/review version；最终决定、视频生命周期、成功审计和作者通知 Outbox 原子提交，Review Worker 再通过 message Application 幂等生成站内通知。
 
 ## 7. 生产媒体交付
 

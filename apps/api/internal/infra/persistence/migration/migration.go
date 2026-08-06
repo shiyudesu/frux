@@ -91,6 +91,10 @@ func AutoMigrate(db *gorm.DB) error {
 			&infrareview.SignalModel{},
 			&infrareview.DecisionModel{},
 			&infrareview.PolicyModel{},
+			&infrareview.AssignmentModel{},
+			&infrareview.HumanDecisionModel{},
+			&infrareview.HumanDecisionIdempotencyModel{},
+			&infrareview.NotificationOutboxModel{},
 			&infrainteraction.ActionModel{},
 			&infrainteraction.ActionEventModel{},
 			&infrainteraction.ActionIdempotencyReceiptModel{},
@@ -166,6 +170,9 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := infrareview.EnsurePolicyIndexes(tx); err != nil {
+			return err
+		}
+		if err := infrareview.EnsureHumanReviewPriorities(tx); err != nil {
 			return err
 		}
 		if err := infrareview.EnsureInitialPolicy(tx); err != nil {

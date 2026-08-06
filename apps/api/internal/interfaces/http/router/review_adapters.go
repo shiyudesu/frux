@@ -2,6 +2,7 @@ package interfaceshttprouter
 
 import (
 	"context"
+	"time"
 
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
@@ -14,6 +15,18 @@ type reviewMetricsAdapter struct{}
 
 func (reviewMetricsAdapter) Observe(stage, result string) {
 	inframetrics.ObserveReview(stage, result)
+}
+
+func (reviewMetricsAdapter) ObserveHuman(operation, result string) {
+	inframetrics.ObserveHumanReview(operation, result)
+}
+
+func (reviewMetricsAdapter) ObserveHumanQueue(available int, oldestAge time.Duration) {
+	inframetrics.ObserveHumanReviewQueue(available, oldestAge)
+}
+
+func (reviewMetricsAdapter) ObserveHumanNotification(result string) {
+	inframetrics.ObserveHumanReviewNotification(result)
 }
 
 type reviewOutcomeApplier struct {

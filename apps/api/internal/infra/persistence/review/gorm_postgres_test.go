@@ -8,13 +8,18 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -27,6 +32,25 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 	if dsn == "" {
 		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
 	}
+	t.Run("backfills pending human priority", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "priority_backfill")
+		model := CaseModel{
+			VideoID: 9001, ReviewVersion: 1, Status: domainreview.CaseStatusPendingHuman,
+			PolicyVersion: 1, Priority: 0, Version: 1, CreatedAt: time.Now().UTC(),
+		}
+		if err := db.Create(&model).Error; err != nil {
+			t.Fatalf("create legacy pending-human case: %v", err)
+		}
+		if err := EnsureHumanReviewPriorities(db); err != nil {
+			t.Fatalf("backfill pending-human priority: %v", err)
+		}
+		if err := db.Where("id = ?", model.ID).Take(&model).Error; err != nil {
+			t.Fatalf("reload pending-human case: %v", err)
+		}
+		if model.Priority != 1 {
+			t.Fatalf("priority = %d, want 1", model.Priority)
+		}
+	})
 	t.Run("duplicate intake and result", func(t *testing.T) {
 		db := openReviewPostgres(t, dsn, "duplicate")
 		insertReviewVideo(t, db, 101, 1)
@@ -158,6 +182,410 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		}
 		assertReviewCounts(t, db, 1, 1, 1)
 	})
+
+	t.Run("human priority is persisted and orders queue", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "human_priority")
+		human := 0.1
+		setReviewPolicy(t, db, domainreview.PolicyConfiguration{
+			DefaultOutcome: domainreview.OutcomeApprove,
+			Rules: []domainreview.LabelRule{{
+				Label: domainreview.LabelHate, HumanThreshold: &human,
+			}},
+		})
+		repo := New(db)
+		for _, item := range []struct {
+			id         int64
+			confidence float64
+		}{
+			{151, 0.25},
+			{152, 0.85},
+		} {
+			insertReviewVideo(t, db, item.id, 1)
+			reviewCase, _, err := repo.CreateOrGetCase(context.Background(), item.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			processed, err := repo.ProcessMachineResult(
+				context.Background(),
+				newPostgresMachineResult(t, reviewCase, fmt.Sprintf("priority-%d", item.id), []domainreview.MachineSignal{{
+					Label: domainreview.LabelHate, Confidence: item.confidence,
+				}}),
+			)
+			if err != nil || processed.Case.Priority == 0 {
+				t.Fatalf("priority result %d = %#v err=%v", item.id, processed, err)
+			}
+		}
+		queue, err := repo.ListHumanQueue(context.Background(), domainreview.HumanQueueFilter{
+			MinPriority: 0, MaxPriority: 100, Limit: 10,
+		})
+		if err != nil || len(queue) != 2 || queue[0].Case.VideoID != 152 ||
+			queue[0].Case.Priority <= queue[1].Case.Priority {
+			t.Fatalf("priority queue = %#v err=%v", queue, err)
+		}
+	})
+
+	t.Run("stable queue concurrent claim and expired recovery", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "human_queue")
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		for _, item := range []struct {
+			id       int64
+			priority int
+			created  time.Time
+		}{
+			{201, 90, now.Add(-time.Hour)},
+			{202, 90, now.Add(-30 * time.Minute)},
+			{203, 10, now.Add(-2 * time.Hour)},
+		} {
+			insertReviewVideo(t, db, item.id, 1)
+			if err := db.Create(&CaseModel{
+				ID: item.id, VideoID: item.id, ReviewVersion: 1, Status: domainreview.CaseStatusPendingHuman,
+				PolicyVersion: 1, Priority: item.priority, Version: 1,
+				CreatedAt: item.created, UpdatedAt: item.created,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		repo := New(db)
+		firstPage, err := repo.ListHumanQueue(context.Background(), domainreview.HumanQueueFilter{
+			MinPriority: 0, MaxPriority: 100, Limit: 2,
+		})
+		if err != nil || len(firstPage) != 2 || firstPage[0].Case.ID != 201 || firstPage[1].Case.ID != 202 {
+			t.Fatalf("queue page = %#v err=%v", firstPage, err)
+		}
+		next, err := repo.ListHumanQueue(context.Background(), domainreview.HumanQueueFilter{
+			MinPriority: 0, MaxPriority: 100, Limit: 2,
+			Cursor: &domainreview.QueueCursor{
+				Priority: firstPage[1].Case.Priority, CreatedAt: firstPage[1].Case.CreatedAt,
+				CaseID: firstPage[1].Case.ID,
+			},
+		})
+		if err != nil || len(next) != 1 || next[0].Case.ID != 203 {
+			t.Fatalf("next queue page = %#v err=%v", next, err)
+		}
+
+		type claimResult struct {
+			reviewer int64
+			err      error
+		}
+		results := make(chan claimResult, 2)
+		var wait sync.WaitGroup
+		for reviewer := int64(1); reviewer <= 2; reviewer++ {
+			wait.Add(1)
+			go func(reviewerID int64) {
+				defer wait.Done()
+				tokenByte := "a"
+				if reviewerID == 2 {
+					tokenByte = "b"
+				}
+				_, claimErr := repo.ClaimHumanCase(
+					context.Background(), 201, reviewerID, strings.Repeat(tokenByte, 64),
+					1,
+					domainreview.DefaultHumanLeaseDuration,
+				)
+				results <- claimResult{reviewer: reviewerID, err: claimErr}
+			}(reviewer)
+		}
+		wait.Wait()
+		close(results)
+		successes := 0
+		for result := range results {
+			if result.err == nil {
+				successes++
+			} else if !errors.Is(result.err, domainreview.ErrReviewCaseClaimed) {
+				t.Fatalf("reviewer %d claim error = %v", result.reviewer, result.err)
+			}
+		}
+		if successes != 1 {
+			t.Fatalf("successful claims = %d", successes)
+		}
+		if err := db.Model(&CaseModel{}).Where("id = ?", 201).
+			Update("lease_expires_at", now.Add(-time.Minute)).Error; err != nil {
+			t.Fatal(err)
+		}
+		expiredPage, err := repo.ListHumanQueue(context.Background(), domainreview.HumanQueueFilter{
+			MinPriority: 0, MaxPriority: 100, Limit: 3,
+		})
+		if err != nil || len(expiredPage) != 3 || expiredPage[0].Case.ID != 201 ||
+			expiredPage[0].Case.AssignedReviewerID != 0 || expiredPage[0].Case.LeaseExpiresAt != nil {
+			t.Fatalf("expired lease queue = %#v err=%v", expiredPage, err)
+		}
+		reclaimed, err := repo.ClaimHumanCase(
+			context.Background(), 201, 9, strings.Repeat("c", 64),
+			expiredPage[0].Case.Version, domainreview.DefaultHumanLeaseDuration,
+		)
+		if err != nil || reclaimed.Version != 4 || reclaimed.AssignedReviewerID != 9 {
+			t.Fatalf("expired lease reclaim = %#v err=%v", reclaimed, err)
+		}
+		var expiredEvents int64
+		if err := db.Model(&AssignmentModel{}).
+			Where("case_id = ? AND event = ?", 201, domainreview.AssignmentEventExpired).
+			Count(&expiredEvents).Error; err != nil || expiredEvents != 1 {
+			t.Fatalf("expired events = %d err=%v", expiredEvents, err)
+		}
+	})
+
+	t.Run("terminal and superseded subjects retire once", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "human_stale_subjects")
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		for _, id := range []int64{221, 222, 223} {
+			insertReviewVideo(t, db, id, 1)
+			if err := db.Create(&CaseModel{
+				ID: id, VideoID: id, ReviewVersion: 1, Status: domainreview.CaseStatusPendingHuman,
+				PolicyVersion: 1, Priority: 50, Version: 1,
+				CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 221).
+			Update("status", domainvideo.StatusDeleted).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 222).
+			Update("review_version", 2).Error; err != nil {
+			t.Fatal(err)
+		}
+		repo := New(db)
+		queue, err := repo.ListHumanQueue(context.Background(), domainreview.HumanQueueFilter{
+			MinPriority: 0, MaxPriority: 100, Limit: 10,
+		})
+		if err != nil || len(queue) != 1 || queue[0].Case.ID != 223 {
+			t.Fatalf("stale subject queue = %#v err=%v", queue, err)
+		}
+		available, _, err := repo.HumanQueueStats(context.Background(), 0, 100)
+		if err != nil || available != 1 {
+			t.Fatalf("stale subject stats = %d err=%v", available, err)
+		}
+
+		tests := []struct {
+			caseID       int64
+			firstErr     error
+			status       string
+			historyEvent string
+		}{
+			{221, domainreview.ErrReviewSubjectState, domainreview.CaseStatusCancelled, domainreview.AssignmentEventCancelled},
+			{222, domainreview.ErrReviewSubjectStale, domainreview.CaseStatusSuperseded, domainreview.AssignmentEventSuperseded},
+		}
+		for _, test := range tests {
+			if _, err := repo.ClaimHumanCase(
+				context.Background(), test.caseID, 9, strings.Repeat("c", 64),
+				1, domainreview.DefaultHumanLeaseDuration,
+			); !errors.Is(err, test.firstErr) {
+				t.Fatalf("first claim for %d error = %v", test.caseID, err)
+			}
+			if _, err := repo.ClaimHumanCase(
+				context.Background(), test.caseID, 9, strings.Repeat("d", 64),
+				2, domainreview.DefaultHumanLeaseDuration,
+			); !errors.Is(err, domainreview.ErrReviewCaseNotHuman) {
+				t.Fatalf("repeat claim for %d error = %v", test.caseID, err)
+			}
+			var caseModel CaseModel
+			if err := db.Where("id = ?", test.caseID).Take(&caseModel).Error; err != nil {
+				t.Fatal(err)
+			}
+			if caseModel.Status != test.status || caseModel.Version != 2 ||
+				caseModel.AssignedReviewerID != 0 || caseModel.LeaseExpiresAt != nil ||
+				caseModel.ClosedAt == nil {
+				t.Fatalf("retired case %d = %#v", test.caseID, caseModel)
+			}
+			var history []AssignmentModel
+			if err := db.Where("case_id = ?", test.caseID).Order("id ASC").Find(&history).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(history) != 1 || history[0].Event != test.historyEvent ||
+				history[0].CaseVersion != 2 {
+				t.Fatalf("retirement history for %d = %#v", test.caseID, history)
+			}
+		}
+	})
+
+	t.Run("lease time is sampled after row locks", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "lease_lock_time")
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		insertReviewVideo(t, db, 251, 1)
+		if err := db.Create(&CaseModel{
+			ID: 251, VideoID: 251, ReviewVersion: 1, Status: domainreview.CaseStatusPendingHuman,
+			PolicyVersion: 1, Priority: 50, Version: 1, AssignedReviewerID: 4,
+			LeaseTokenHash: strings.Repeat("d", 64), LeaseExpiresAt: ptrTime(now.Add(time.Minute)),
+			CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&CaseModel{}).Where("id = ?", 251).
+			Update("lease_expires_at", gorm.Expr("clock_timestamp() + interval '2 seconds'")).Error; err != nil {
+			t.Fatal(err)
+		}
+		blocker := db.Begin()
+		if blocker.Error != nil {
+			t.Fatal(blocker.Error)
+		}
+		if err := blocker.Exec("SELECT id FROM review_case WHERE id = ? FOR UPDATE", 251).Error; err != nil {
+			t.Fatal(err)
+		}
+		repo := New(db)
+		result := make(chan error, 1)
+		go func() {
+			_, err := repo.ClaimHumanCase(
+				context.Background(), 251, 9, strings.Repeat("e", 64),
+				1, domainreview.DefaultHumanLeaseDuration,
+			)
+			result <- err
+		}()
+		time.Sleep(2200 * time.Millisecond)
+		if err := blocker.Rollback().Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-result; err != nil {
+			t.Fatalf("claim after blocked expiry = %v", err)
+		}
+	})
+
+	t.Run("human decision stale version and audit rollback", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "human_decision")
+		insertReviewVideo(t, db, 301, 1)
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		if err := db.Create(&CaseModel{
+			ID: 301, VideoID: 301, ReviewVersion: 1, Status: domainreview.CaseStatusPendingHuman,
+			PolicyVersion: 1, Priority: 50, Version: 1, CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		auditRepo := infraadminaudit.New(db)
+		repo := New(db, WithAuditWriter(auditRepo))
+		tokenHash := strings.Repeat("a", 64)
+		claimed, err := repo.ClaimHumanCase(
+			context.Background(), 301, 7, tokenHash, 1, domainreview.DefaultHumanLeaseDuration,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decision := newPostgresHumanDecision(
+			t, claimed, 7, domainreview.OutcomeApprove, domainreview.ReasonApproveCompliant, "approve-301",
+		)
+		fact := newPostgresReviewAuditFact(t, decision, "approve-301")
+		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 301).
+			Update("review_version", 2).Error; err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.CommitHumanDecision(context.Background(), decision, tokenHash, fact); !errors.Is(err, domainreview.ErrReviewSubjectStale) {
+			t.Fatalf("stale decision error = %v", err)
+		}
+		var decisions int64
+		if err := db.Model(&HumanDecisionModel{}).Count(&decisions).Error; err != nil || decisions != 0 {
+			t.Fatalf("stale decision count = %d err=%v", decisions, err)
+		}
+
+		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 301).
+			Update("review_version", 1).Error; err != nil {
+			t.Fatal(err)
+		}
+		failingRepo := New(db, WithAuditWriter(failingReviewAuditWriter{}))
+		if _, err := failingRepo.CommitHumanDecision(context.Background(), decision, tokenHash, fact); err == nil {
+			t.Fatal("expected audit failure")
+		}
+		for _, model := range []any{
+			&HumanDecisionModel{}, &HumanDecisionIdempotencyModel{}, &NotificationOutboxModel{},
+		} {
+			var count int64
+			if err := db.Model(model).Count(&count).Error; err != nil || count != 0 {
+				t.Fatalf("rollback count for %T = %d err=%v", model, count, err)
+			}
+		}
+		var caseAfter CaseModel
+		if err := db.Where("id = ?", 301).Take(&caseAfter).Error; err != nil {
+			t.Fatal(err)
+		}
+		if caseAfter.Status != domainreview.CaseStatusPendingHuman || caseAfter.AssignedReviewerID != 7 {
+			t.Fatalf("case changed after audit failure = %#v", caseAfter)
+		}
+		committed, err := repo.CommitHumanDecision(context.Background(), decision, tokenHash, fact)
+		if err != nil || committed.Duplicate || committed.Case.Status != domainreview.CaseStatusApproved {
+			t.Fatalf("committed decision = %#v err=%v", committed, err)
+		}
+		replayed, err := repo.CommitHumanDecision(context.Background(), decision, tokenHash, fact)
+		if err != nil || !replayed.Duplicate || replayed.Decision.ID != committed.Decision.ID ||
+			!replayed.ApplySideEffects {
+			t.Fatalf("replayed decision = %#v err=%v", replayed, err)
+		}
+		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 301).
+			Update("review_version", 2).Error; err != nil {
+			t.Fatal(err)
+		}
+		staleReplay, err := repo.CommitHumanDecision(context.Background(), decision, tokenHash, fact)
+		if err != nil || !staleReplay.Duplicate || staleReplay.ApplySideEffects {
+			t.Fatalf("stale replay side effects = %#v err=%v", staleReplay, err)
+		}
+		changed := newPostgresHumanDecision(
+			t, claimed, 7, domainreview.OutcomeApprove, domainreview.ReasonApproveFalsePositive, "approve-301",
+		)
+		if _, err := repo.CommitHumanDecision(context.Background(), changed, tokenHash, fact); !errors.Is(err, domainreview.ErrDecisionIdentityConflict) {
+			t.Fatalf("decision payload conflict = %v", err)
+		}
+		for _, model := range []any{
+			&HumanDecisionModel{}, &HumanDecisionIdempotencyModel{},
+			&NotificationOutboxModel{}, &infraadminaudit.EventModel{},
+		} {
+			var count int64
+			if err := db.Model(model).Count(&count).Error; err != nil || count != 1 {
+				t.Fatalf("committed count for %T = %d err=%v", model, count, err)
+			}
+		}
+		var videoAfter infravideo.VideoModel
+		if err := db.Where("id = ?", 301).Take(&videoAfter).Error; err != nil {
+			t.Fatal(err)
+		}
+		if videoAfter.Status != domainvideo.StatusPublished || videoAfter.PublishedAt == nil {
+			t.Fatalf("video after decision = %#v", videoAfter)
+		}
+	})
+
+	t.Run("decision checks lease after video lock", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "decision_lock_time")
+		insertReviewVideo(t, db, 401, 1)
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		if err := db.Create(&CaseModel{
+			ID: 401, VideoID: 401, ReviewVersion: 1, Status: domainreview.CaseStatusPendingHuman,
+			PolicyVersion: 1, Priority: 50, Version: 1, CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		auditRepo := infraadminaudit.New(db)
+		repo := New(db, WithAuditWriter(auditRepo))
+		tokenHash := strings.Repeat("f", 64)
+		claimed, err := repo.ClaimHumanCase(
+			context.Background(), 401, 7, tokenHash, 1, domainreview.DefaultHumanLeaseDuration,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&CaseModel{}).Where("id = ?", 401).
+			Update("lease_expires_at", gorm.Expr("clock_timestamp() + interval '2 seconds'")).Error; err != nil {
+			t.Fatal(err)
+		}
+		decision := newPostgresHumanDecision(
+			t, claimed, 7, domainreview.OutcomeApprove, domainreview.ReasonApproveCompliant, "approve-401",
+		)
+		fact := newPostgresReviewAuditFact(t, decision, "approve-401")
+		blocker := db.Begin()
+		if blocker.Error != nil {
+			t.Fatal(blocker.Error)
+		}
+		if err := blocker.Exec("SELECT id FROM video WHERE id = ? FOR UPDATE", 401).Error; err != nil {
+			t.Fatal(err)
+		}
+		result := make(chan error, 1)
+		go func() {
+			_, commitErr := repo.CommitHumanDecision(context.Background(), decision, tokenHash, fact)
+			result <- commitErr
+		}()
+		time.Sleep(2200 * time.Millisecond)
+		if err := blocker.Rollback().Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-result; !errors.Is(err, domainreview.ErrReviewLeaseExpired) {
+			t.Fatalf("decision after blocked expiry = %v", err)
+		}
+	})
 }
 
 func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
@@ -186,9 +614,12 @@ func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
 	if err := db.AutoMigrate(
 		&infravideo.VideoModel{}, &infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
 		&CaseModel{}, &ResultModel{}, &SignalModel{}, &DecisionModel{}, &PolicyModel{},
+		&AssignmentModel{}, &HumanDecisionModel{}, &HumanDecisionIdempotencyModel{},
+		&NotificationOutboxModel{}, &infraadminaudit.EventModel{},
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := EnsurePolicyIndexes(db); err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +628,69 @@ func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
 	}
 	return db
 }
+
+type failingReviewAuditWriter struct{}
+
+func (failingReviewAuditWriter) AppendInTransaction(context.Context, *gorm.DB, *domainadminaudit.Fact) error {
+	return errors.New("forced audit failure")
+}
+
+func (failingReviewAuditWriter) RecordCommittedWrite(*domainadminaudit.Fact) {}
+
+func newPostgresHumanDecision(
+	t *testing.T,
+	reviewCase *domainreview.ReviewCase,
+	reviewerID int64,
+	outcome, reasonCode, idempotencyKey string,
+) *domainreview.HumanDecision {
+	t.Helper()
+	decision, err := domainreview.NewHumanDecision(domainreview.HumanDecisionInput{
+		CaseID: reviewCase.ID, ReviewerID: reviewerID, Outcome: outcome, ReasonCode: reasonCode,
+		ReviewVersion: reviewCase.ReviewVersion, ExpectedCaseVersion: reviewCase.Version,
+		IdempotencyKey: idempotencyKey, DecidedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decision
+}
+
+func newPostgresReviewAuditFact(
+	t *testing.T,
+	decision *domainreview.HumanDecision,
+	idempotencyKey string,
+) *domainadminaudit.Fact {
+	t.Helper()
+	keyHash, err := domainadminaudit.DigestIdempotencyKey(idempotencyKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact, err := domainadminaudit.NewFact(domainadminaudit.FactInput{
+		ActorID: decision.ReviewerID, Permission: domainaccount.PermissionReviewDecide,
+		Action: domainadminaudit.ActionReviewDecide, TargetType: domainadminaudit.TargetReviewCase,
+		TargetID: strconv.FormatInt(decision.CaseID, 10), Outcome: domainadminaudit.OutcomeSuccess,
+		RequestID: domainadminaudit.NewRequestID(), IdempotencyKeyHash: keyHash,
+		Detail: map[string]string{
+			"decision": decisionAuditOutcome(decision.Outcome), "http_method": "POST",
+			"reason_code": decision.ReasonCode, "review_version": strconv.Itoa(decision.ReviewVersion),
+			"route": "/api/admin/review/cases/:caseId/decision",
+		},
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fact
+}
+
+func decisionAuditOutcome(outcome string) string {
+	if outcome == domainreview.OutcomeApprove {
+		return "approved"
+	}
+	return "rejected"
+}
+
+func ptrTime(value time.Time) *time.Time { return &value }
 
 func insertReviewVideo(t *testing.T, db *gorm.DB, id int64, reviewVersion int) {
 	t.Helper()

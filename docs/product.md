@@ -25,7 +25,7 @@ Frux 是一个短视频 Feed 系统，目标是用最小可行架构承载完整
 | 分发 | Feed | Timeline、Hot、游标分页、卡片组装 |
 | 分发 | 曝光 | 观看事件、曝光聚合、观看历史投影 |
 | 分发 | 推荐 | 召回、排序、打散、曝光去重 |
-| 治理 | 审核 | 版本化机器审核案件、证据、策略路由；人工复审后续补齐 |
+| 治理 | 审核 | 版本化机器审核、稳定人工队列、租约领取、幂等决定和不可变历史 |
 | 治理 | 后台权限 | 当前账号驱动的 Reviewer、Operator 和兼容 Admin 权限边界 |
 | 治理 | 操作审计 | 不可变特权操作事实、同事务成功审计和稳定查询 |
 | 治理 | 后台运营 | 内容查询、审核分配、配置管理 |
@@ -48,7 +48,7 @@ Frux 是一个短视频 Feed 系统，目标是用最小可行架构承载完整
 | 关系 | 已实现 | 关注、取关、关注列表、粉丝列表 |
 | 消息 | 已实现 | 站内通知、未读/批量已读、评论/回复/评论获赞类型、结构化目标和视频讨论深链 |
 | 搜索 | 已实现 | 匿名视频/用户搜索、相关性排序、query 绑定游标和 typed Web 结果页 |
-| 审核 | 部分实现 | 视频审核状态机和模型无关自动审核已实现；人工复审规划中 |
+| 审核 | 已实现 | 视频审核状态机、模型无关自动审核、人工队列/租约/决定、审计和作者通知 |
 | 后台运营 | 规划中 | 视频查询、审核任务、配置管理 |
 | 播放优化 | 已实现 | 播放参数、预加载建议、旧 QoS、准确首帧/卡顿/错误遥测、Web Feed 接入 |
 | 系统治理 | 规划中 | 限流、降级、死信重试 |
@@ -80,7 +80,7 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 已实现 | 互动 | POST | `/api/videos/{videoId}/comments/{commentId}/replies` | 回复根评论或回复，保持两级展示 |
 | 已实现 | 互动 | GET | `/api/videos/{videoId}/comments` | 匿名可读的热门/最新根评论游标页和回复预览 |
 | 已实现 | 审核 | PUT | `/internal/review/cases/{caseId}/machine-results/{resultId}` | 服务鉴权的幂等机器结果回传 |
-| 规划中 | 审核 | PUT | `/api/review/tasks/{taskId}/decision` | 人工审核通过或驳回 |
+| 已实现 | 审核 | GET/POST/DELETE | `/api/admin/review/cases*` | 人工队列、详情、领取、续租、释放和决定 |
 | 规划中 | 审核 | PATCH | `/api/videos/{videoId}` | 违规内容下架 |
 | 规划中 | 系统治理 | POST | `/internal/rate-limit-decisions` | 限流放行检查 |
 | 规划中 | 监控告警 | POST | `/internal/metric-points` | 核心指标写入 |
@@ -133,8 +133,8 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 已实现 | 操作审计 | GET | `/api/admin/audit-events` | 按有界时间范围、过滤条件和稳定游标查询审计事实 |
 | 已实现 | 审核 | PUT | `/internal/review/cases/{caseId}/machine-results/{resultId}` | 保存有界机器证据并路由通过、拒绝或待人审 |
 | 规划中 | 后台运营 | GET | `/api/admin/videos` | 运营查视频 |
-| 规划中 | 后台运营 | GET | `/api/admin/review/tasks` | 运营查审核任务 |
-| 规划中 | 后台运营 | PUT | `/api/admin/review/tasks/{taskId}/assignee` | 分配审核员 |
+| 已实现 | 后台运营 | GET | `/api/admin/review/cases` | 稳定优先级/年龄人工审核队列 |
+| 已实现 | 后台运营 | POST/DELETE | `/api/admin/review/cases/{caseId}/*` | 租约领取、续租、释放和幂等决定 |
 | 规划中 | 后台运营 | PATCH | `/api/admin/configs/{configKey}` | 更新运营配置 |
 | 已实现 | 播放优化 | GET | `/api/playback-config` | 播放参数下发 |
 | 已实现 | 播放优化 | GET | `/api/preload-videos` | 兼容客户端的发布时间顺序补充资源 |

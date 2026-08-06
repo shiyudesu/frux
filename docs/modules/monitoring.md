@@ -161,3 +161,22 @@ provider、model version、policy version、video、case、result identity 或�
 `retry` 持续增长时先区分数据库/媒体发布失败和 reconciliation 失败；`invalid` 增长表示生产者
 契约或边界不一致；`duplicate` 可随至少一次投递正常增长，但同身份异载荷会记为 conflict。
 任何 provider 不可用都必须让视频保持 pending-review，不能通过降级路径发布。
+
+## 11. Human review observability
+
+人工复审暴露：
+
+- `frux_human_review_queue_available`
+- `frux_human_review_queue_oldest_age_seconds`
+- `frux_human_review_operations_total{operation,result}`
+- `frux_human_review_notifications_total{result}`
+
+operation 仅为 queue、detail、claim、renew、release、lease_expiry、decision；result 仅为
+success、approve、reject、invalid、conflict、retry、recovered、unknown。通知 result 仅为
+delivered、retry、terminal、unknown。不得使用 reviewer、case、video、reason、token 或
+idempotency key 标签。
+
+queue oldest age 持续上升时先检查可领取量、lease expiry recovery 和 reviewer 吞吐；claim
+conflict 上升通常表示并发领取或陈旧页面；decision conflict 按服务日志区分 lease ownership、
+expiry、case version、review version 和 idempotency payload。notification retry 上升不影响已
+提交决定，检查 message 数据库和 Worker；terminal 表示违反封闭消息契约，需要修复生产代码。
