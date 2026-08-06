@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
+	applicationdeadletter "github.com/shiyudesu/frux/internal/application/deadletter"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
@@ -47,6 +48,7 @@ import (
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
+	interfaceshttpdeadletter "github.com/shiyudesu/frux/internal/interfaces/http/deadletter"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpgovernance "github.com/shiyudesu/frux/internal/interfaces/http/governance"
@@ -256,6 +258,18 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			}
 		}
 	}
+	var deadLetterService *applicationdeadletter.Service
+	var deadLetterManager *inframq.DeadLetterManager
+	if rabbitMQ != nil {
+		deadLetterManager = inframq.NewDeadLetterManager(rabbitMQ, cfg.RabbitMQ)
+		deadLetterService = applicationdeadletter.New(
+			deadLetterManager,
+			deadLetterManager,
+			adminAuditRepo,
+			applicationdeadletter.WithObserver(inframetrics.DeadLetterObserver{}),
+		)
+	}
+	deadLetterHandler := interfaceshttpdeadletter.New(deadLetterService)
 	mediaOptions := []applicationmedia.Option{}
 	mediaOptions = append(mediaOptions, applicationmedia.WithURLResolver(mediaURLResolver, signedURLTTL))
 	mediaOptions = append(mediaOptions, applicationmedia.WithMediaAssetAuthorizer(videoRepo))
@@ -556,6 +570,34 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		governancePermission("control"),
 		governanceHandler.Rollback,
 	)
+	admin.GET(
+		"/dead-letter-queues",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo, domainaccount.PermissionGovernanceExecute,
+		),
+		deadLetterHandler.List,
+	)
+	admin.GET(
+		"/dead-letter-queues/:queue/messages",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo, domainaccount.PermissionGovernanceExecute,
+		),
+		deadLetterHandler.Preview,
+	)
+	admin.POST(
+		"/dead-letter-messages/:messageId/replay",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionGovernanceExecute,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionDeadLetterReplay,
+				domainadminaudit.TargetDeadLetterMessage,
+				"message",
+			),
+		),
+		deadLetterHandler.Replay,
+	)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。
 	videos := api.Group("/videos")
@@ -618,6 +660,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 
 	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
 	governanceContext, stopGovernance := context.WithCancel(context.Background())
+	deadLetterContext, stopDeadLetter := context.WithCancel(context.Background())
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
 	if err != nil {
 		return err
@@ -641,9 +684,20 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			log.Printf("playback telemetry cleanup failed: %v", err)
 		},
 	)
+	if deadLetterManager != nil {
+		go func() {
+			if err := deadLetterManager.RunDepthObserver(deadLetterContext, 15*time.Second); err != nil {
+				log.Printf("dead-letter depth observer stopped: %v", err)
+			}
+		}()
+	}
 	h.Engine.OnShutdown = append(h.Engine.OnShutdown, func(context.Context) {
 		stopTelemetryCleaner()
 		stopGovernance()
+		stopDeadLetter()
+		if rabbitMQ != nil {
+			_ = rabbitMQ.Close()
+		}
 	})
 
 	return nil

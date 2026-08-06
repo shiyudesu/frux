@@ -178,3 +178,30 @@ func TestGovernanceAuditSupportsUpdateRollbackAndProtectedReads(t *testing.T) {
 		}
 	}
 }
+
+func TestDeadLetterReplayAuditCapturesIdentityAndFailure(t *testing.T) {
+	base := FactInput{
+		ActorID: 9, Permission: domainaccount.PermissionGovernanceExecute,
+		Action: ActionDeadLetterReplay, TargetType: TargetDeadLetterMessage,
+		TargetID: "action-1", RequestID: NewRequestID(),
+		CreatedAt: time.Date(2026, 8, 6, 15, 0, 0, 0, time.UTC),
+		Detail: map[string]string{
+			"http_method":       "POST",
+			"route":             "/api/admin/dead-letter-messages/:messageId/replay",
+			"reason_code":       "operator_retry",
+			"queue":             "frux.interaction.action_changed.dlq.q2",
+			"original_event_id": "action-1",
+			"replay_id":         "replay-0123456789abcdef0123456789abcdef",
+		},
+	}
+	base.Outcome = OutcomeSuccess
+	if _, err := NewFact(base); err != nil {
+		t.Fatalf("valid replay success audit rejected: %v", err)
+	}
+	base.Outcome = OutcomeFailure
+	base.Detail = cloneDetail(base.Detail)
+	base.Detail["failure_code"] = "publish_timeout"
+	if _, err := NewFact(base); err != nil {
+		t.Fatalf("valid replay failure audit rejected: %v", err)
+	}
+}

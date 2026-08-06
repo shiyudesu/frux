@@ -1,4 +1,10 @@
-## ADDED Requirements
+# message-dead-letter-recovery Specification
+
+## Purpose
+
+Define bounded RabbitMQ failure handling, durable dead-letter topology, protected inspection, confirmed replay, and recovery observability.
+
+## Requirements
 
 ### Requirement: Bounded Consumer Delivery
 Each protected RabbitMQ consumer SHALL classify failures and SHALL stop normal redelivery after its configured delivery limit.
@@ -6,6 +12,10 @@ Each protected RabbitMQ consumer SHALL classify failures and SHALL stop normal r
 #### Scenario: Retryable infrastructure error repeats
 - **WHEN** a message repeatedly fails with a classified retryable infrastructure error
 - **THEN** RabbitMQ redelivers it only up to the configured limit and then routes it to the consumer's dead-letter queue
+
+#### Scenario: Protected consumer channel closes or retries
+- **WHEN** any versioned quorum consumer loses its channel or nacks a retryable message, including the secondary consumer in `dual` mode
+- **THEN** Frux supervises and recreates that consumer with capped backoff instead of hot-looping or silently stopping
 
 #### Scenario: Terminal payload error occurs
 - **WHEN** a message is malformed, unsupported, or references a terminal domain state
@@ -21,6 +31,10 @@ Critical durable workflows SHALL use versioned quorum source queues, configured 
 #### Scenario: Queue type migration is deployed
 - **WHEN** an existing classic queue moves to a quorum topology
 - **THEN** Frux uses a new queue name and controlled binding cutover instead of redeclaring the existing queue with another type
+
+#### Scenario: New-only mode topology is declared
+- **WHEN** a consumer is configured in `new` mode
+- **THEN** topology declaration never binds its legacy queue and removes any pre-existing legacy binding
 
 ### Requirement: Idempotent Redelivery and Replay
 Consumer redelivery and operator replay SHALL preserve the original business event ID so existing idempotency rules prevent duplicate business facts.
@@ -43,9 +57,13 @@ An operator with `governance.execute` SHALL be able to list dead-letter queue su
 ### Requirement: Confirmed Single-Message Replay
 Operator replay SHALL validate the original route, republish one unchanged business payload with a new replay ID, wait for publisher confirmation, and acknowledge the DLQ message only after confirmation.
 
+#### Scenario: Message was published directly to a DLQ
+- **WHEN** a selected message lacks `x-death` provenance for the configured source queue, exchange, and routing key
+- **THEN** Frux rejects replay without publishing it to the source exchange
+
 #### Scenario: Replay publish succeeds
 - **WHEN** RabbitMQ confirms the republished message
-- **THEN** Frux acknowledges the selected dead-letter message and commits a success audit fact containing the queue, original event ID, and replay ID
+- **THEN** Frux commits the preconstructed success audit fact and then acknowledges the selected dead-letter message; arbitrary valid event IDs are represented losslessly when bounded and otherwise by a stable SHA-256 audit reference
 
 #### Scenario: Replay publish fails or times out
 - **WHEN** the broker does not confirm the replay

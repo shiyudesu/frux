@@ -23,6 +23,10 @@ redis:
 
 rabbitmq:
   url: "amqp://guest:guest@rabbitmq:5672/"
+  management_url: "http://rabbitmq:15672"
+  management_username: "guest"
+  management_password: "guest"
+  management_timeout: "2s"
   interaction_exchange: "frux.interaction"
   action_changed_queue: "frux.interaction.action_changed"
   action_changed_routing: "interaction.action_changed"
@@ -36,6 +40,21 @@ rabbitmq:
   media_exchange: "frux.media"
   media_processing_queue: "frux.media.processing"
   media_processing_routing: "media.processing.requested"
+  dead_letter:
+    enabled: true
+    version_suffix: ".q2"
+    exchange_suffix: ".dlx.q2"
+    queue_suffix: ".dlq.q2"
+    delivery_limit: 5
+    source_max_length: 100000
+    dead_letter_max_length: 10000
+    preview_limit: 20
+    replay_timeout: "5s"
+    action_changed_mode: "dual"
+    video_published_mode: "legacy"
+    video_embedding_mode: "legacy"
+    view_event_recorded_mode: "legacy"
+    media_processing_mode: "legacy"
 
 media:
   backend: "s3"

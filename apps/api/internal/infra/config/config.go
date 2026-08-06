@@ -3,6 +3,7 @@ package infraconfig
 import (
 	"errors"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ var ErrInvalidPlaybackConfig = errors.New("invalid playback config")
 var ErrInvalidGovernanceConfig = errors.New("invalid governance config")
 var ErrInvalidInternalToken = errors.New("invalid internal token")
 var ErrInvalidRateLimitConfig = errors.New("invalid rate limit config")
+var ErrInvalidRabbitMQConfig = errors.New("invalid rabbitmq config")
 
 const minInternalTokenLength = 32
 
@@ -82,7 +84,77 @@ func ValidateAPIConfig(cfg *Config) error {
 	if err := normalizeAndValidateInternalConfig(&cfg.Internal); err != nil {
 		return err
 	}
-	return normalizeAndValidateRateLimitConfig(&cfg.RateLimit)
+	if err := normalizeAndValidateRateLimitConfig(&cfg.RateLimit); err != nil {
+		return err
+	}
+	return normalizeAndValidateRabbitMQConfig(&cfg.RabbitMQ)
+}
+
+func normalizeAndValidateRabbitMQConfig(cfg *RabbitMQConfig) error {
+	if cfg == nil {
+		return ErrInvalidRabbitMQConfig
+	}
+	cfg.URL = strings.TrimSpace(cfg.URL)
+	if cfg.URL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(cfg.URL)
+	if err != nil || (parsed.Scheme != "amqp" && parsed.Scheme != "amqps") || parsed.Host == "" {
+		return ErrInvalidRabbitMQConfig
+	}
+	cfg.ManagementURL = strings.TrimRight(strings.TrimSpace(cfg.ManagementURL), "/")
+	cfg.ManagementUsername = strings.TrimSpace(cfg.ManagementUsername)
+	cfg.ManagementPassword = strings.TrimSpace(cfg.ManagementPassword)
+	cfg.ManagementTimeout = defaultDuration(cfg.ManagementTimeout, "2s")
+	if _, err := time.ParseDuration(cfg.ManagementTimeout); err != nil {
+		return ErrInvalidRabbitMQConfig
+	}
+	dead := &cfg.DeadLetter
+	dead.VersionSuffix = defaultValue(dead.VersionSuffix, ".q2")
+	dead.ExchangeSuffix = defaultValue(dead.ExchangeSuffix, ".dlx.q2")
+	dead.QueueSuffix = defaultValue(dead.QueueSuffix, ".dlq.q2")
+	dead.ReplayTimeout = defaultDuration(dead.ReplayTimeout, "5s")
+	if dead.DeliveryLimit == 0 {
+		dead.DeliveryLimit = 5
+	}
+	if dead.SourceMaxLength == 0 {
+		dead.SourceMaxLength = 100_000
+	}
+	if dead.DeadLetterMaxLength == 0 {
+		dead.DeadLetterMaxLength = 10_000
+	}
+	if dead.PreviewLimit == 0 {
+		dead.PreviewLimit = 20
+	}
+	if !dead.Enabled {
+		return nil
+	}
+	if dead.DeliveryLimit < 1 || dead.DeliveryLimit > 100 ||
+		dead.SourceMaxLength < 1 || dead.DeadLetterMaxLength < 1 ||
+		dead.PreviewLimit < 1 || dead.PreviewLimit > 100 {
+		return ErrInvalidRabbitMQConfig
+	}
+	if _, err := time.ParseDuration(dead.ReplayTimeout); err != nil {
+		return ErrInvalidRabbitMQConfig
+	}
+	if cfg.ManagementURL != "" {
+		management, err := url.Parse(cfg.ManagementURL)
+		if err != nil || (management.Scheme != "http" && management.Scheme != "https") ||
+			management.Host == "" || cfg.ManagementUsername == "" || cfg.ManagementPassword == "" {
+			return ErrInvalidRabbitMQConfig
+		}
+	}
+	for _, mode := range []string{
+		dead.ActionChangedMode, dead.VideoPublishedMode, dead.VideoEmbeddingMode,
+		dead.ViewEventRecordedMode, dead.MediaProcessingMode,
+	} {
+		switch strings.ToLower(strings.TrimSpace(mode)) {
+		case "", "legacy", "dual", "new":
+		default:
+			return ErrInvalidRabbitMQConfig
+		}
+	}
+	return nil
 }
 
 func normalizeAndValidateRateLimitConfig(cfg *RateLimitConfig) error {
@@ -244,6 +316,14 @@ func normalizeAndValidateMediaConfig(cfg *MediaConfig) error {
 }
 
 func defaultDuration(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func defaultValue(value string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback

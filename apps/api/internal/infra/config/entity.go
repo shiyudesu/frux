@@ -98,18 +98,40 @@ type RedisConfig struct {
 
 // RabbitMQConfig 保存 RabbitMQ 连接和队列配置。
 type RabbitMQConfig struct {
-	URL                      string `yaml:"url"`
-	InteractionExchange      string `yaml:"interaction_exchange"`
-	ActionChangedQueue       string `yaml:"action_changed_queue"`
-	ActionChangedRouting     string `yaml:"action_changed_routing"`
-	VideoExchange            string `yaml:"video_exchange"`
-	VideoPublishedQueue      string `yaml:"video_published_queue"`
-	VideoEmbeddingQueue      string `yaml:"video_embedding_queue"`
-	VideoPublishedRouting    string `yaml:"video_published_routing"`
-	ExposureExchange         string `yaml:"exposure_exchange"`
-	ViewEventRecordedQueue   string `yaml:"view_event_recorded_queue"`
-	ViewEventRecordedRouting string `yaml:"view_event_recorded_routing"`
-	MediaExchange            string `yaml:"media_exchange"`
-	MediaProcessingQueue     string `yaml:"media_processing_queue"`
-	MediaProcessingRouting   string `yaml:"media_processing_routing"`
+	URL                      string                   `yaml:"url"`
+	ManagementURL            string                   `yaml:"management_url"`
+	ManagementUsername       string                   `yaml:"management_username"`
+	ManagementPassword       string                   `yaml:"management_password"`
+	ManagementTimeout        string                   `yaml:"management_timeout"`
+	InteractionExchange      string                   `yaml:"interaction_exchange"`
+	ActionChangedQueue       string                   `yaml:"action_changed_queue"`
+	ActionChangedRouting     string                   `yaml:"action_changed_routing"`
+	VideoExchange            string                   `yaml:"video_exchange"`
+	VideoPublishedQueue      string                   `yaml:"video_published_queue"`
+	VideoEmbeddingQueue      string                   `yaml:"video_embedding_queue"`
+	VideoPublishedRouting    string                   `yaml:"video_published_routing"`
+	ExposureExchange         string                   `yaml:"exposure_exchange"`
+	ViewEventRecordedQueue   string                   `yaml:"view_event_recorded_queue"`
+	ViewEventRecordedRouting string                   `yaml:"view_event_recorded_routing"`
+	MediaExchange            string                   `yaml:"media_exchange"`
+	MediaProcessingQueue     string                   `yaml:"media_processing_queue"`
+	MediaProcessingRouting   string                   `yaml:"media_processing_routing"`
+	DeadLetter               RabbitMQDeadLetterConfig `yaml:"dead_letter"`
+}
+
+type RabbitMQDeadLetterConfig struct {
+	Enabled               bool   `yaml:"enabled"`
+	VersionSuffix         string `yaml:"version_suffix"`
+	ExchangeSuffix        string `yaml:"exchange_suffix"`
+	QueueSuffix           string `yaml:"queue_suffix"`
+	DeliveryLimit         int64  `yaml:"delivery_limit"`
+	SourceMaxLength       int64  `yaml:"source_max_length"`
+	DeadLetterMaxLength   int64  `yaml:"dead_letter_max_length"`
+	PreviewLimit          int    `yaml:"preview_limit"`
+	ReplayTimeout         string `yaml:"replay_timeout"`
+	ActionChangedMode     string `yaml:"action_changed_mode"`
+	VideoPublishedMode    string `yaml:"video_published_mode"`
+	VideoEmbeddingMode    string `yaml:"video_embedding_mode"`
+	ViewEventRecordedMode string `yaml:"view_event_recorded_mode"`
+	MediaProcessingMode   string `yaml:"media_processing_mode"`
 }

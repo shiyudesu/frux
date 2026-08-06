@@ -33,6 +33,22 @@ API 凭据需要 Put/Head/Get，Worker 另需 List/Delete；浏览器只获得�
 `governance.poll_timeout` 轮询 PostgreSQL；默认分别为 5 秒和 2 秒。timeout 必须不大于
 interval。发布时应同时确认两个进程的 `/metrics` 中 active revision 和 snapshot age 正常。
 
+RabbitMQ 死信恢复要求 RabbitMQ 3.13+ Management 镜像，并配置 `rabbitmq.management_url`、
+服务端 Management 凭据、timeout 和 `rabbitmq.dead_letter`。生产凭据必须由 Secret 注入，
+不得使用 Compose 的本地 guest 配置。Quorum Source/DLQ 需要足够磁盘和节点副本；容量上限、
+Delivery Limit 和 Replay timeout 必须在发布前压测。
+
+当前 `action_changed_mode=dual` 是首个幂等试点。上线步骤：
+
+1. 先以 `legacy` 部署 `.q2`、DLX 和 DLQ，确认声明幂等且没有修改旧 Classic Queue 类型。
+2. 改为 `dual`，同时观察旧/新 Queue、重复 Event ID、retry exhaustion 和 DLQ backlog。
+3. 旧 Queue 的 ready/unacked 连续 15 分钟为零后改为 `new`；旧 Queue 至少保留一个观察窗口。
+4. 逐个迁移 video fanout、embedding、view event 和 media processing，不同时切换多个 Consumer。
+5. 回滚先改回 `dual`，再在旧 Consumer 健康后改为 `legacy`；保留新 DLQ 供调查。
+
+Prometheus 加载 `apps/monitoring/alerts/rabbitmq_dead_letter.yml`，Grafana 自动加载
+`frux-rabbitmq-dead-letter.json`。API 每 15 秒通过 Management API 更新 DLQ depth。
+
 ## 灰度与回滚
 
 1. 先部署新增表、配置和本地适配器，旧视频自动标记 `legacy_ready`，响应字段保持兼容。

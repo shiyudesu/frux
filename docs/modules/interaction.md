@@ -171,8 +171,14 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | 实时计数 Hash | `video:stat:counter:v1:{video_id}` |
 | Feed 计数 JSON | `video:stat:v1:{video_id}` |
 | Exchange | `frux.interaction` |
-| Queue | `frux.interaction.action_changed` |
+| Legacy Queue | `frux.interaction.action_changed` |
+| Quorum pilot Queue | `frux.interaction.action_changed.q2` |
+| DLQ | `frux.interaction.action_changed.dlq.q2` |
 | Routing key | `interaction.action_changed` |
+
+当前使用 `dual` 试点：相同 Event ID 会同时进入旧 Queue 和 Quorum Queue，Worker 的
+`interaction_action_event.event_id` receipt 吸收重复。旧 Queue ready/unacked 连续归零并完成
+观察后，配置切到 `new` 移除旧 Binding。
 
 ### 3.4 两级评论模型和通用响应
 

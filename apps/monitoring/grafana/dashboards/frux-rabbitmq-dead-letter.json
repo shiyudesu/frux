@@ -1,0 +1,38 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Dead-letter queue depth",
+      "targets": [{"expr": "frux_mq_dead_letter_depth", "legendFormat": "{{consumer}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Retry exhaustion rate",
+      "targets": [{"expr": "rate(frux_mq_retry_exhausted_total[5m])", "legendFormat": "{{consumer}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Replay outcomes",
+      "targets": [{"expr": "rate(frux_mq_replay_total[5m])", "legendFormat": "{{result}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Routing failures",
+      "targets": [{"expr": "rate(frux_mq_routing_failures_total[5m])", "legendFormat": "{{consumer}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["frux", "rabbitmq", "dead-letter"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Frux RabbitMQ Dead-letter Recovery",
+  "uid": "frux-rabbitmq-dlq",
+  "version": 1
+}

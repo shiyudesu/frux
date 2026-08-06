@@ -127,6 +127,12 @@ flowchart LR
 group 才通过 infrastructure adapter 执行单次 Redis Lua。Redis 失败按 policy 使用更严格
 local fallback 或 fail closed，Handler 不拥有私有限流器。
 
+RabbitMQ 恢复同样是基础设施与控制面的组合边界：业务 Consumer 返回 terminal/retryable 分类，
+Broker 的 versioned Quorum Source 用 Delivery Limit 将毒消息送入 per-consumer DLQ。API 通过
+Management Adapter 提供脱敏摘要/Preview；Replay Service 验证 allowlist 路由，保持原 Event ID
+和 Payload、增加 Replay ID，等待 Publisher Confirm 并提交 Audit Fact 后才 Ack DLQ。PostgreSQL
+不保存 Payload Queue。
+
 ## 3. 核心请求链路
 
 这张图展示从注册、登录、上传、发布到刷 Feed 的 MVP 主链路。

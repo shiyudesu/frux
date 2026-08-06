@@ -79,6 +79,7 @@ func TestNormalizeAndValidateRateLimitConfig(t *testing.T) {
 	if err := normalizeAndValidateRateLimitConfig(&cfg); err != nil {
 		t.Fatalf("normalize rate limit config: %v", err)
 	}
+
 	if cfg.MaxEntries != 10_000 || cfg.IdleTTL != "10m" || cfg.RedisTimeout != "75ms" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
@@ -89,6 +90,29 @@ func TestNormalizeAndValidateRateLimitConfig(t *testing.T) {
 	cfg = RateLimitConfig{MaxEntries: 99, IdleTTL: "10m", RedisTimeout: "75ms"}
 	if err := normalizeAndValidateRateLimitConfig(&cfg); !errors.Is(err, ErrInvalidRateLimitConfig) {
 		t.Fatalf("expected invalid capacity, got %v", err)
+	}
+}
+
+func TestNormalizeAndValidateRabbitMQDeadLetterConfig(t *testing.T) {
+	cfg := RabbitMQConfig{
+		URL:                "amqp://guest:guest@localhost:5672/",
+		ManagementURL:      "http://localhost:15672",
+		ManagementUsername: "guest", ManagementPassword: "guest",
+		DeadLetter: RabbitMQDeadLetterConfig{
+			Enabled: true, ActionChangedMode: "dual",
+		},
+	}
+	if err := normalizeAndValidateRabbitMQConfig(&cfg); err != nil {
+		t.Fatalf("normalize RabbitMQ config: %v", err)
+	}
+	if cfg.DeadLetter.DeliveryLimit != 5 ||
+		cfg.DeadLetter.VersionSuffix != ".q2" ||
+		cfg.DeadLetter.ReplayTimeout != "5s" {
+		t.Fatalf("unexpected RabbitMQ defaults: %+v", cfg.DeadLetter)
+	}
+	cfg.DeadLetter.ActionChangedMode = "replace-in-place"
+	if err := normalizeAndValidateRabbitMQConfig(&cfg); !errors.Is(err, ErrInvalidRabbitMQConfig) {
+		t.Fatalf("expected invalid migration mode, got %v", err)
 	}
 }
 

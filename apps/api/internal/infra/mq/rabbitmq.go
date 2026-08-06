@@ -1,15 +1,15 @@
 package inframq
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
-	"context"
-	"encoding/json"
-	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -443,11 +443,34 @@ func (r *RabbitMQ) resetViewEventPublisher() {
 }
 
 func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(context.Context, *applicationinteraction.ActionChangedEvent) error) error {
-	deliveries, err := r.consumeActionDeliveries(ctx)
+	for _, queue := range r.consumerQueues(ConsumerActionChanged) {
+		if r.isProtectedQueue(queue) {
+			if err := r.consumeProtectedQueue(
+				ctx, ConsumerActionChanged, queue,
+				func(delivery amqp.Delivery) bool {
+					return r.handleActionDelivery(ctx, queue, delivery, handler)
+				},
+			); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := r.consumeLegacyActionQueue(ctx, queue, handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *RabbitMQ) consumeLegacyActionQueue(
+	ctx context.Context,
+	queue string,
+	handler func(context.Context, *applicationinteraction.ActionChangedEvent) error,
+) error {
+	deliveries, err := r.consumeActionDeliveries(ctx, queue)
 	if err != nil {
 		return err
 	}
-
 	go superviseActionDeliveries(
 		ctx,
 		deliveries,
@@ -455,10 +478,16 @@ func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(contex
 			r.actionConsumerMu.Lock()
 			r.resetActionConsumerLocked()
 			r.actionConsumerMu.Unlock()
-			return r.consumeActionDeliveries(ctx)
+			return r.consumeActionDeliveries(ctx, queue)
 		},
-		func(delivery amqp.Delivery) {
-			r.handleActionDelivery(ctx, delivery, handler)
+		func(delivery amqp.Delivery) bool {
+			reconnect := r.handleActionDelivery(ctx, queue, delivery, handler)
+			if reconnect {
+				r.actionConsumerMu.Lock()
+				r.resetActionConsumerLocked()
+				r.actionConsumerMu.Unlock()
+			}
+			return reconnect
 		},
 		viewEventConsumerRetryDelay,
 	)
@@ -466,14 +495,34 @@ func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(contex
 }
 
 func (r *RabbitMQ) ConsumeVideoPublished(ctx context.Context, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
-	return r.consumeVideoPublishedQueue(ctx, r.config.VideoPublishedQueue, handler)
+	return r.consumeVideoPublishedQueues(ctx, ConsumerVideoPublished, handler)
 }
 
 func (r *RabbitMQ) ConsumeVideoPublishedForEmbedding(ctx context.Context, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
-	return r.consumeVideoPublishedQueue(ctx, r.config.VideoEmbeddingQueue, handler)
+	return r.consumeVideoPublishedQueues(ctx, ConsumerVideoEmbedding, handler)
 }
 
-func (r *RabbitMQ) consumeVideoPublishedQueue(ctx context.Context, queue string, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
+func (r *RabbitMQ) consumeVideoPublishedQueues(ctx context.Context, consumer string, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
+	for _, queue := range r.consumerQueues(consumer) {
+		if r.isProtectedQueue(queue) {
+			if err := r.consumeProtectedQueue(
+				ctx, consumer, queue,
+				func(delivery amqp.Delivery) bool {
+					return r.handleVideoPublishedDelivery(ctx, consumer, queue, delivery, handler)
+				},
+			); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := r.consumeVideoPublishedQueue(ctx, consumer, queue, handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *RabbitMQ) consumeVideoPublishedQueue(ctx context.Context, consumer, queue string, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
 	deliveries, err := r.consumerChannel.ConsumeWithContext(
 		ctx,
 		queue,
@@ -490,31 +539,71 @@ func (r *RabbitMQ) consumeVideoPublishedQueue(ctx context.Context, queue string,
 
 	go func() {
 		for delivery := range deliveries {
-			start := time.Now()
-			var event applicationvideo.PublishedEvent
-			if err := json.Unmarshal(delivery.Body, &event); err != nil {
-				inframetrics.ObserveWorkerJob("mq_video_published_decode", time.Since(start), err)
-				_ = delivery.Nack(false, false)
-				continue
-			}
-			if err := handler(ctx, &event); err != nil {
-				inframetrics.ObserveWorkerJob("mq_video_published_consume", time.Since(start), err)
-				_ = delivery.Nack(false, true)
-				continue
-			}
-			inframetrics.ObserveWorkerJob("mq_video_published_consume", time.Since(start), nil)
-			_ = delivery.Ack(false)
+			r.handleVideoPublishedDelivery(ctx, consumer, queue, delivery, handler)
 		}
 	}()
 	return nil
 }
 
+func (r *RabbitMQ) handleVideoPublishedDelivery(
+	ctx context.Context,
+	consumer, queue string,
+	delivery amqp.Delivery,
+	handler func(context.Context, *applicationvideo.PublishedEvent) error,
+) bool {
+	start := time.Now()
+	var event applicationvideo.PublishedEvent
+	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+		inframetrics.ObserveWorkerJob("mq_video_published_decode", time.Since(start), err)
+		r.rejectDelivery(consumer, queue, delivery, false)
+		return false
+	}
+	if event.EventID == "" || event.VideoID <= 0 || event.AuthorID <= 0 || event.PublishedAt.IsZero() {
+		err := errors.New("invalid video published event")
+		inframetrics.ObserveWorkerJob("mq_video_published_decode", time.Since(start), err)
+		r.rejectDelivery(consumer, queue, delivery, false)
+		return false
+	}
+	if err := handler(ctx, &event); err != nil {
+		inframetrics.ObserveWorkerJob("mq_video_published_consume", time.Since(start), err)
+		retry := shouldRetryConsumerError(err)
+		r.rejectDelivery(consumer, queue, delivery, retry)
+		return shouldReconnectProtectedDelivery(queue, retry, r)
+	}
+	inframetrics.ObserveWorkerJob("mq_video_published_consume", time.Since(start), nil)
+	_ = delivery.Ack(false)
+	return false
+}
+
 func (r *RabbitMQ) ConsumeViewEventRecorded(ctx context.Context, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) error {
-	deliveries, err := r.consumeViewEventDeliveries(ctx)
+	for _, queue := range r.consumerQueues(ConsumerViewEventRecorded) {
+		if r.isProtectedQueue(queue) {
+			if err := r.consumeProtectedQueue(
+				ctx, ConsumerViewEventRecorded, queue,
+				func(delivery amqp.Delivery) bool {
+					return r.handleViewEventDelivery(ctx, queue, delivery, handler)
+				},
+			); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := r.consumeLegacyViewEventQueue(ctx, queue, handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *RabbitMQ) consumeLegacyViewEventQueue(
+	ctx context.Context,
+	queue string,
+	handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error,
+) error {
+	deliveries, err := r.consumeViewEventDeliveries(ctx, queue)
 	if err != nil {
 		return err
 	}
-
 	go superviseViewEventDeliveries(
 		ctx,
 		deliveries,
@@ -522,10 +611,16 @@ func (r *RabbitMQ) ConsumeViewEventRecorded(ctx context.Context, handler func(co
 			r.viewEventConsumerMu.Lock()
 			r.resetViewEventConsumerLocked()
 			r.viewEventConsumerMu.Unlock()
-			return r.consumeViewEventDeliveries(ctx)
+			return r.consumeViewEventDeliveries(ctx, queue)
 		},
-		func(delivery amqp.Delivery) {
-			r.handleViewEventDelivery(ctx, delivery, handler)
+		func(delivery amqp.Delivery) bool {
+			reconnect := r.handleViewEventDelivery(ctx, queue, delivery, handler)
+			if reconnect {
+				r.viewEventConsumerMu.Lock()
+				r.resetViewEventConsumerLocked()
+				r.viewEventConsumerMu.Unlock()
+			}
+			return reconnect
 		},
 		viewEventConsumerRetryDelay,
 	)
@@ -533,34 +628,64 @@ func (r *RabbitMQ) ConsumeViewEventRecorded(ctx context.Context, handler func(co
 }
 
 func (r *RabbitMQ) ConsumeMediaProcessingRequested(ctx context.Context, handler func(context.Context, *applicationmedia.ProcessingRequestedEvent) error) error {
-	deliveries, err := r.mediaConsumerChannel.ConsumeWithContext(
-		ctx, r.config.MediaProcessingQueue, "", false, false, false, false, nil,
-	)
-	if err != nil {
-		return err
-	}
-	go func() {
-		for delivery := range deliveries {
-			start := time.Now()
-			var event applicationmedia.ProcessingRequestedEvent
-			if err := json.Unmarshal(delivery.Body, &event); err != nil {
-				inframetrics.ObserveWorkerJob("mq_media_processing_decode", time.Since(start), err)
-				_ = delivery.Nack(false, false)
-				continue
+	for _, queue := range r.consumerQueues(ConsumerMediaProcessing) {
+		if r.isProtectedQueue(queue) {
+			if err := r.consumeProtectedQueue(
+				ctx, ConsumerMediaProcessing, queue,
+				func(delivery amqp.Delivery) bool {
+					return r.handleMediaProcessingDelivery(ctx, queue, delivery, handler)
+				},
+			); err != nil {
+				return err
 			}
-			if err := handler(ctx, &event); err != nil {
-				inframetrics.ObserveWorkerJob("mq_media_processing_consume", time.Since(start), err)
-				_ = delivery.Nack(false, true)
-				continue
-			}
-			inframetrics.ObserveWorkerJob("mq_media_processing_consume", time.Since(start), nil)
-			_ = delivery.Ack(false)
+			continue
 		}
-	}()
+		deliveries, err := r.mediaConsumerChannel.ConsumeWithContext(
+			ctx, queue, "", false, false, false, false, nil,
+		)
+		if err != nil {
+			return err
+		}
+		go func(queue string, deliveries <-chan amqp.Delivery) {
+			for delivery := range deliveries {
+				r.handleMediaProcessingDelivery(ctx, queue, delivery, handler)
+			}
+		}(queue, deliveries)
+	}
 	return nil
 }
 
-func (r *RabbitMQ) consumeViewEventDeliveries(ctx context.Context) (<-chan amqp.Delivery, error) {
+func (r *RabbitMQ) handleMediaProcessingDelivery(
+	ctx context.Context,
+	queue string,
+	delivery amqp.Delivery,
+	handler func(context.Context, *applicationmedia.ProcessingRequestedEvent) error,
+) bool {
+	start := time.Now()
+	var event applicationmedia.ProcessingRequestedEvent
+	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+		inframetrics.ObserveWorkerJob("mq_media_processing_decode", time.Since(start), err)
+		r.rejectDelivery(ConsumerMediaProcessing, queue, delivery, false)
+		return false
+	}
+	if event.EventID == "" || event.AssetID <= 0 || strings.TrimSpace(event.ProfileVersion) == "" {
+		err := errors.New("invalid media processing event")
+		inframetrics.ObserveWorkerJob("mq_media_processing_decode", time.Since(start), err)
+		r.rejectDelivery(ConsumerMediaProcessing, queue, delivery, false)
+		return false
+	}
+	if err := handler(ctx, &event); err != nil {
+		inframetrics.ObserveWorkerJob("mq_media_processing_consume", time.Since(start), err)
+		retry := shouldRetryConsumerError(err)
+		r.rejectDelivery(ConsumerMediaProcessing, queue, delivery, retry)
+		return shouldReconnectProtectedDelivery(queue, retry, r)
+	}
+	inframetrics.ObserveWorkerJob("mq_media_processing_consume", time.Since(start), nil)
+	_ = delivery.Ack(false)
+	return false
+}
+
+func (r *RabbitMQ) consumeViewEventDeliveries(ctx context.Context, queue string) (<-chan amqp.Delivery, error) {
 	r.viewEventConsumerMu.Lock()
 	defer r.viewEventConsumerMu.Unlock()
 	if err := r.ensureViewEventConsumerLocked(); err != nil {
@@ -569,7 +694,7 @@ func (r *RabbitMQ) consumeViewEventDeliveries(ctx context.Context) (<-chan amqp.
 
 	deliveries, err := r.viewEventConsumerChannel.ConsumeWithContext(
 		ctx,
-		r.config.ViewEventRecordedQueue,
+		queue,
 		"",
 		false,
 		false,
@@ -584,14 +709,14 @@ func (r *RabbitMQ) consumeViewEventDeliveries(ctx context.Context) (<-chan amqp.
 	return deliveries, nil
 }
 
-func (r *RabbitMQ) consumeActionDeliveries(ctx context.Context) (<-chan amqp.Delivery, error) {
+func (r *RabbitMQ) consumeActionDeliveries(ctx context.Context, queue string) (<-chan amqp.Delivery, error) {
 	r.actionConsumerMu.Lock()
 	defer r.actionConsumerMu.Unlock()
 	if err := r.ensureActionConsumerLocked(); err != nil {
 		return nil, err
 	}
 	deliveries, err := r.actionConsumerChannel.ConsumeWithContext(
-		ctx, r.config.ActionChangedQueue, "", false, false, false, false, nil,
+		ctx, queue, "", false, false, false, false, nil,
 	)
 	if err != nil {
 		r.resetActionConsumerLocked()
@@ -627,16 +752,6 @@ func (r *RabbitMQ) ensureActionConsumerLocked() error {
 		r.resetActionConsumerLocked()
 		return err
 	}
-	if _, err := channel.QueueDeclare(r.config.ActionChangedQueue, true, false, false, false, nil); err != nil {
-		_ = channel.Close()
-		r.resetActionConsumerLocked()
-		return err
-	}
-	if err := channel.QueueBind(r.config.ActionChangedQueue, r.config.ActionChangedRouting, r.config.InteractionExchange, false, nil); err != nil {
-		_ = channel.Close()
-		r.resetActionConsumerLocked()
-		return err
-	}
 	r.actionConsumerChannel = channel
 	return nil
 }
@@ -652,30 +767,23 @@ func (r *RabbitMQ) resetActionConsumerLocked() {
 	}
 }
 
-func (r *RabbitMQ) handleActionDelivery(ctx context.Context, delivery amqp.Delivery, handler func(context.Context, *applicationinteraction.ActionChangedEvent) error) {
+func (r *RabbitMQ) handleActionDelivery(ctx context.Context, queue string, delivery amqp.Delivery, handler func(context.Context, *applicationinteraction.ActionChangedEvent) error) bool {
 	start := time.Now()
 	var event applicationinteraction.ActionChangedEvent
 	if err := json.Unmarshal(delivery.Body, &event); err != nil {
 		inframetrics.ObserveWorkerJob("mq_action_changed_decode", time.Since(start), err)
-		_ = delivery.Nack(false, false)
-		return
+		r.rejectDelivery(ConsumerActionChanged, queue, delivery, false)
+		return false
 	}
 	if err := handler(ctx, &event); err != nil {
 		inframetrics.ObserveWorkerJob("mq_action_changed_consume", time.Since(start), err)
 		requeue := shouldRequeueActionDelivery(err)
-		_ = delivery.Nack(false, requeue)
-		if requeue {
-			// A failed durable handoff is infrastructure-shaped, not a poison
-			// payload. Close this consumer channel so the supervisor backs off
-			// and recreates it instead of spinning on an immediate requeue.
-			r.actionConsumerMu.Lock()
-			r.resetActionConsumerLocked()
-			r.actionConsumerMu.Unlock()
-		}
-		return
+		r.rejectDelivery(ConsumerActionChanged, queue, delivery, requeue)
+		return requeue
 	}
 	inframetrics.ObserveWorkerJob("mq_action_changed_consume", time.Since(start), nil)
 	_ = delivery.Ack(false)
+	return false
 }
 
 // shouldRequeueActionDelivery keeps infrastructure failures visible to the
@@ -713,22 +821,6 @@ func (r *RabbitMQ) ensureViewEventConsumerLocked() error {
 		r.resetViewEventConsumerLocked()
 		return err
 	}
-	if _, err := channel.QueueDeclare(r.config.ViewEventRecordedQueue, true, false, false, false, nil); err != nil {
-		_ = channel.Close()
-		r.resetViewEventConsumerLocked()
-		return err
-	}
-	if err := channel.QueueBind(
-		r.config.ViewEventRecordedQueue,
-		r.config.ViewEventRecordedRouting,
-		r.config.ExposureExchange,
-		false,
-		nil,
-	); err != nil {
-		_ = channel.Close()
-		r.resetViewEventConsumerLocked()
-		return err
-	}
 	r.viewEventConsumerChannel = channel
 	return nil
 }
@@ -744,28 +836,36 @@ func (r *RabbitMQ) resetViewEventConsumerLocked() {
 	}
 }
 
-func (r *RabbitMQ) handleViewEventDelivery(ctx context.Context, delivery amqp.Delivery, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) {
+func (r *RabbitMQ) handleViewEventDelivery(ctx context.Context, queue string, delivery amqp.Delivery, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) bool {
 	start := time.Now()
 	var event applicationexposure.ViewEventRecordedEvent
 	if err := json.Unmarshal(delivery.Body, &event); err != nil {
 		inframetrics.ObserveWorkerJob("mq_view_event_decode", time.Since(start), err)
-		_ = delivery.Nack(false, false)
-		return
+		r.rejectDelivery(ConsumerViewEventRecorded, queue, delivery, false)
+		return false
+	}
+	if event.EventID == "" || event.UserID <= 0 || event.VideoID <= 0 || event.EventType == "" {
+		err := errors.New("invalid view event")
+		inframetrics.ObserveWorkerJob("mq_view_event_decode", time.Since(start), err)
+		r.rejectDelivery(ConsumerViewEventRecorded, queue, delivery, false)
+		return false
 	}
 	if err := handler(ctx, &event); err != nil {
 		inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), err)
-		_ = delivery.Nack(false, true)
-		return
+		retry := shouldRetryConsumerError(err)
+		r.rejectDelivery(ConsumerViewEventRecorded, queue, delivery, retry)
+		return retry
 	}
 	inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), nil)
 	_ = delivery.Ack(false)
+	return false
 }
 
 func superviseViewEventDeliveries(
 	ctx context.Context,
 	deliveries <-chan amqp.Delivery,
 	reconsume func(context.Context) (<-chan amqp.Delivery, error),
-	handle func(amqp.Delivery),
+	handle func(amqp.Delivery) bool,
 	retryDelay time.Duration,
 ) {
 	superviseDeliveries(ctx, deliveries, reconsume, handle, retryDelay, "mq_view_event_reconsume")
@@ -775,10 +875,11 @@ func superviseDeliveries(
 	ctx context.Context,
 	deliveries <-chan amqp.Delivery,
 	reconsume func(context.Context) (<-chan amqp.Delivery, error),
-	handle func(amqp.Delivery),
+	handle func(amqp.Delivery) bool,
 	retryDelay time.Duration,
 	job string,
 ) {
+	delay := retryDelay
 	for {
 		for {
 			select {
@@ -788,25 +889,25 @@ func superviseDeliveries(
 				if !ok {
 					goto reconnect
 				}
-				handle(delivery)
+				if handle(delivery) {
+					goto reconnect
+				}
 			}
 		}
 
 	reconnect:
 		for {
-			timer := time.NewTimer(retryDelay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !waitConsumerRetry(ctx, delay) {
 				return
-			case <-timer.C:
 			}
 			next, err := reconsume(ctx)
-			inframetrics.ObserveWorkerJob(job, 0, err)
+			observeConsumerReconnect(job, err)
 			if err != nil {
+				delay = boundedConsumerRetryDelay(delay)
 				continue
 			}
 			deliveries = next
+			delay = retryDelay
 			break
 		}
 	}
@@ -816,7 +917,7 @@ func superviseActionDeliveries(
 	ctx context.Context,
 	deliveries <-chan amqp.Delivery,
 	reconsume func(context.Context) (<-chan amqp.Delivery, error),
-	handle func(amqp.Delivery),
+	handle func(amqp.Delivery) bool,
 	retryDelay time.Duration,
 ) {
 	superviseDeliveries(ctx, deliveries, reconsume, handle, retryDelay, "mq_action_changed_reconsume")
@@ -844,14 +945,16 @@ func (r *RabbitMQ) ensureTopology() error {
 	); err != nil {
 		return err
 	}
-	if err := r.publishChannel.QueueBind(
-		r.config.ActionChangedQueue,
-		r.config.ActionChangedRouting,
-		r.config.InteractionExchange,
-		false,
-		nil,
-	); err != nil {
-		return err
+	if r.shouldBindLegacyQueue(ConsumerActionChanged) {
+		if err := r.publishChannel.QueueBind(
+			r.config.ActionChangedQueue,
+			r.config.ActionChangedRouting,
+			r.config.InteractionExchange,
+			false,
+			nil,
+		); err != nil {
+			return err
+		}
 	}
 	// Action profile projection is leased from the accepted-action outbox.
 	// Retire the legacy duplicate binding so unavailable embeddings cannot
@@ -883,14 +986,16 @@ func (r *RabbitMQ) ensureTopology() error {
 	); err != nil {
 		return err
 	}
-	if err := r.publishChannel.QueueBind(
-		r.config.VideoPublishedQueue,
-		r.config.VideoPublishedRouting,
-		r.config.VideoExchange,
-		false,
-		nil,
-	); err != nil {
-		return err
+	if r.shouldBindLegacyQueue(ConsumerVideoPublished) {
+		if err := r.publishChannel.QueueBind(
+			r.config.VideoPublishedQueue,
+			r.config.VideoPublishedRouting,
+			r.config.VideoExchange,
+			false,
+			nil,
+		); err != nil {
+			return err
+		}
 	}
 	if _, err := r.publishChannel.QueueDeclare(
 		r.config.VideoEmbeddingQueue,
@@ -902,14 +1007,16 @@ func (r *RabbitMQ) ensureTopology() error {
 	); err != nil {
 		return err
 	}
-	if err := r.publishChannel.QueueBind(
-		r.config.VideoEmbeddingQueue,
-		r.config.VideoPublishedRouting,
-		r.config.VideoExchange,
-		false,
-		nil,
-	); err != nil {
-		return err
+	if r.shouldBindLegacyQueue(ConsumerVideoEmbedding) {
+		if err := r.publishChannel.QueueBind(
+			r.config.VideoEmbeddingQueue,
+			r.config.VideoPublishedRouting,
+			r.config.VideoExchange,
+			false,
+			nil,
+		); err != nil {
+			return err
+		}
 	}
 	if err := r.publishChannel.ExchangeDeclare(
 		r.config.ExposureExchange,
@@ -932,14 +1039,16 @@ func (r *RabbitMQ) ensureTopology() error {
 	); err != nil {
 		return err
 	}
-	if err := r.publishChannel.QueueBind(
-		r.config.ViewEventRecordedQueue,
-		r.config.ViewEventRecordedRouting,
-		r.config.ExposureExchange,
-		false,
-		nil,
-	); err != nil {
-		return err
+	if r.shouldBindLegacyQueue(ConsumerViewEventRecorded) {
+		if err := r.publishChannel.QueueBind(
+			r.config.ViewEventRecordedQueue,
+			r.config.ViewEventRecordedRouting,
+			r.config.ExposureExchange,
+			false,
+			nil,
+		); err != nil {
+			return err
+		}
 	}
 	if err := r.publishChannel.ExchangeDeclare(
 		r.config.MediaExchange, "topic", true, false, false, false, nil,
@@ -951,10 +1060,15 @@ func (r *RabbitMQ) ensureTopology() error {
 	); err != nil {
 		return err
 	}
-	return r.publishChannel.QueueBind(
-		r.config.MediaProcessingQueue, r.config.MediaProcessingRouting,
-		r.config.MediaExchange, false, nil,
-	)
+	if r.shouldBindLegacyQueue(ConsumerMediaProcessing) {
+		if err := r.publishChannel.QueueBind(
+			r.config.MediaProcessingQueue, r.config.MediaProcessingRouting,
+			r.config.MediaExchange, false, nil,
+		); err != nil {
+			return err
+		}
+	}
+	return r.ensureDeadLetterTopology()
 }
 
 func normalizeRabbitMQConfig(cfg infraconfig.RabbitMQConfig) infraconfig.RabbitMQConfig {
@@ -1008,5 +1122,6 @@ func normalizeRabbitMQConfig(cfg infraconfig.RabbitMQConfig) infraconfig.RabbitM
 	if cfg.MediaProcessingRouting == "" {
 		cfg.MediaProcessingRouting = defaultMediaProcessingRouting
 	}
+	normalizeDeadLetterConfig(&cfg)
 	return cfg
 }

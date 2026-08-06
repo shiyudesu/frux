@@ -348,6 +348,10 @@ Handler
 
 按消费者逐个迁移，不一次性修改所有 Queue。
 
+实现状态：已完成基础拓扑、错误分类、检查/重放 API、审计和监控；当前以
+`action_changed` 的强 Event ID 幂等作为 `dual` 试点，其余 Consumer 保持 `legacy`，
+按 `docs/modules/rabbitmq-dead-letter-recovery.md` 的 Drain 门槛逐个切换。
+
 实施顺序：
 
 ```text

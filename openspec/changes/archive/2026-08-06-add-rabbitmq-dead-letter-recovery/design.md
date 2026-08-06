@@ -26,6 +26,9 @@ Critical consumers move to new queue names declared as quorum queues with delive
 ### Classify errors before acknowledgement
 
 Malformed, unsupported, or terminal domain messages reject without requeue. Retryable infrastructure failures nack for broker redelivery until the delivery limit moves them to the DLQ. Consumers remain idempotent by stable event ID.
+Every versioned quorum consumer owns a supervised channel, including the secondary
+consumer in `dual` mode. Retryable failures close that channel and reconsume with
+capped backoff so requeue cannot become a hot loop.
 
 ### Inspect through a broker adapter
 
@@ -35,7 +38,14 @@ Alternative: consume DLQs into a `governance_dead_letter` table. Rejected becaus
 
 ### Replay with publish-confirm-before-ack
 
-Replay reads one selected dead-letter envelope, validates the original exchange/routing key and bounded headers, republishes the unchanged business payload with original event ID plus a new replay ID, waits for publisher confirmation, and only then acknowledges the DLQ message. Failure leaves the message dead-lettered.
+Replay reads one selected dead-letter envelope and requires broker `x-death`
+provenance matching the configured source queue, exchange, and `routing-keys`;
+direct DLQ publications are rejected. It validates bounded headers, prepares a
+valid immutable audit fact before publishing, republishes the unchanged business
+payload with original event ID plus a new replay ID, waits for publisher
+confirmation, appends the prepared fact, and only then acknowledges the DLQ
+message. Event IDs that cannot be represented directly in bounded audit fields
+use a stable SHA-256 reference. Publish failure leaves the message dead-lettered.
 
 ### Cut over queue topology explicitly
 

@@ -49,6 +49,11 @@ const (
 	CodeGovernanceRevisionNotFound = "GOVERNANCE_REVISION_NOT_FOUND"
 	CodeGovernanceUnavailable      = "GOVERNANCE_UNAVAILABLE"
 
+	CodeDeadLetterValidationFailed = "DEAD_LETTER_VALIDATION_FAILED"
+	CodeDeadLetterMessageNotFound  = "DEAD_LETTER_MESSAGE_NOT_FOUND"
+	CodeDeadLetterMessageConflict  = "DEAD_LETTER_MESSAGE_CONFLICT"
+	CodeDeadLetterUnavailable      = "DEAD_LETTER_UNAVAILABLE"
+
 	CodeFeedValidationFailed             = "FEED_VALIDATION_FAILED"
 	CodeFeedRecommendationContextInvalid = "FEED_RECOMMENDATION_CONTEXT_INVALID"
 	CodeFeedCursorInvalid                = "FEED_CURSOR_INVALID"

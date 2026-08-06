@@ -56,6 +56,7 @@ type Outcome string
 const (
 	OutcomeSuccess Outcome = "success"
 	OutcomeDenied  Outcome = "denied"
+	OutcomeFailure Outcome = "failure"
 )
 
 var allowedDetailsByAction = map[Action]map[string]struct{}{
@@ -76,7 +77,8 @@ var allowedDetailsByAction = map[Action]map[string]struct{}{
 		"http_method", "new_revision", "operation", "previous_revision", "reason_code", "route",
 	),
 	ActionDeadLetterReplay: detailKeys(
-		"http_method", "reason_code", "route",
+		"failure_code", "http_method", "original_event_id", "queue", "reason_code",
+		"replay_id", "route",
 	),
 }
 
@@ -139,12 +141,13 @@ var schemasByAction = map[Action]actionSchema{
 		successReasons: detailKeys("governance_changed"),
 	},
 	ActionDeadLetterReplay: {
-		permission:     domainaccount.PermissionGovernanceExecute,
-		targetType:     TargetDeadLetterMessage,
-		route:          "/api/admin/dead-letter-messages/:messageId/replay",
-		method:         "POST",
-		successKeys:    detailKeys("http_method", "reason_code", "route"),
-		successReasons: detailKeys("replay_requested"),
+		permission: domainaccount.PermissionGovernanceExecute,
+		targetType: TargetDeadLetterMessage,
+		route:      "/api/admin/dead-letter-messages/:messageId/replay",
+		method:     "POST",
+		successKeys: detailKeys(
+			"http_method", "original_event_id", "queue", "reason_code", "replay_id", "route",
+		),
 	},
 }
 
@@ -159,6 +162,7 @@ var validTargetTypes = map[TargetType]struct{}{
 
 var detailNumberPattern = regexp.MustCompile(`^[0-9]+$`)
 var detailCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var detailIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 var requestIDPattern = regexp.MustCompile(`^audit-[a-f0-9]{32}$`)
 var idempotencyKeyHashPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var requestIDFallbackCounter atomic.Uint64
@@ -308,7 +312,7 @@ func ValidTargetType(targetType TargetType) bool {
 }
 
 func ValidOutcome(outcome Outcome) bool {
-	return outcome == OutcomeSuccess || outcome == OutcomeDenied
+	return outcome == OutcomeSuccess || outcome == OutcomeDenied || outcome == OutcomeFailure
 }
 
 func (f *Fact) ID() int64                                 { return f.id }
@@ -392,6 +396,12 @@ func validDetailValue(action Action, key, value string) bool {
 		return ok
 	case "reason_code":
 		return len(value) <= 64 && detailCodePattern.MatchString(value)
+	case "failure_code":
+		return action == ActionDeadLetterReplay &&
+			len(value) <= 64 && detailCodePattern.MatchString(value)
+	case "queue", "original_event_id", "replay_id":
+		return action == ActionDeadLetterReplay &&
+			len(value) <= MaxDetailValueLength && detailIdentifierPattern.MatchString(value)
 	default:
 		return false
 	}
@@ -412,6 +422,21 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 		}
 		_, ok := deniedReasonCodes[detail["reason_code"]]
 		return ok
+	}
+	if action == ActionDeadLetterReplay {
+		expected := schema.successKeys
+		if outcome == OutcomeFailure {
+			expected = detailKeys(
+				"failure_code", "http_method", "original_event_id", "queue",
+				"reason_code", "replay_id", "route",
+			)
+		}
+		return sameDetailKeys(detail, expected) &&
+			detail["http_method"] == schema.method &&
+			detail["route"] == schema.route
+	}
+	if outcome != OutcomeSuccess {
+		return false
 	}
 	if !sameDetailKeys(detail, schema.successKeys) {
 		return false
@@ -460,8 +485,6 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 		previous, previousErr := strconv.ParseUint(detail["previous_revision"], 10, 64)
 		next, nextErr := strconv.ParseUint(detail["new_revision"], 10, 64)
 		return previousErr == nil && nextErr == nil && next > previous
-	case ActionDeadLetterReplay:
-		return true
 	default:
 		return false
 	}

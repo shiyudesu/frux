@@ -185,6 +185,9 @@ GORM Repository 规则：
 - 跨表聚合计数写入和事实变化放在同一事务；提供基于事实表的 reconciliation 函数作为迁移和修复入口。
 - 在线实例可能并发写聚合时，reconciliation 不得绝对覆盖统计行；应基于同一语句快照计算“事实值 - 快照聚合值”差量，再叠加到获得行锁后的当前值。
 - 由业务模块拥有的 Transactional Outbox 与业务事实同事务提交。通用 Worker 模式为：有界批次、`FOR UPDATE SKIP LOCKED`、稳定 lease owner、租约超时、指数退避、terminal 分类、稳定 event ID 下游去重和受监督 shutdown；不得让 message 或 RabbitMQ 成为互动 HTTP 事务的提交前依赖。
+- RabbitMQ Consumer 必须在 Ack/Nack 前分类：格式错误、无效必填字段和 terminal domain error 使用 reject/no-requeue；基础设施错误才 requeue。受保护 Consumer 使用新名称 Quorum Queue、`x-delivery-limit`、`overflow=reject-publish` 和有界 DLQ；Queue Type 不得原地修改。所有新 Quorum Consumer（包括 `dual` 次 Consumer）必须使用独立受监督 Channel 和最大 30 秒的有界退避。关键流程使用 at-least-once dead-lettering，允许由数据库任务恢复的唤醒队列可使用 at-most-once DLX。
+- Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
+- DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。
 - 运行时降级控制使用 `domain/governance` 封闭注册表；定义必须包含 typed normal/failure
   default、process scope 和 max staleness。持久化使用 immutable revision +
@@ -221,6 +224,10 @@ Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
 公开读取需要 viewer 状态时使用 optional-auth middleware：无 Token 或无效 Token 继续匿名读取，有效 access JWT 只把 user/role 写入 `RequestContext.Keys`。根评论、回复和 thread context 使用该模式返回匿名公共数据，并仅在有效 viewer 下补充 `liked`、`can_delete`；创建、点赞和删除仍使用强制鉴权。optional-auth 不得放宽父视频 `published + public + media-ready` 校验。
 
 所有 `/api/admin` 路由必须先使用强制 JWT 鉴权建立用户 ID，再通过参数化 Admin Permission Middleware 读取当前 `account.status/role` 并检查路由声明的单项权限。JWT role claim 不能作为后台授权事实；停用、降权、普通和未知角色默认拒绝。权限中间件把 `AdminPrincipal` 写入 `RequestContext.Keys`，后台 Handler 只能通过共享 helper 读取主体用于归因，不得自行比较角色字符串。当前封闭权限集合和角色映射位于 `domain/account`，后续审核、审计、视频运营和治理模块复用该边界，但继续拥有各自数据与事务。
+
+死信摘要、Preview 和单消息 Replay 均要求 `governance.execute`。Replay 的成功/失败 Audit Fact
+必须包含 Queue、原 Event ID、Replay ID、reason code 和封闭 failure code；不得保存原 Payload、
+任意 Header 或 RabbitMQ 凭据。
 
 后台审计查询必须要求 `audit.read`，强制提交不超过 31 天的时间范围，并使用绑定全部过滤条件的 `(created_at, id)` 编码游标。HTTP 响应只返回 Domain 已验证的 action-specific detail；Handler 不接受任意详情结构，也不提供审计更新或删除入口。
 

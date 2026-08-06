@@ -21,7 +21,7 @@ func ObserveAdminAuditWrite(outcome, result string) {
 
 func adminAuditOutcomeLabel(outcome string) string {
 	switch outcome {
-	case "success", "denied":
+	case "success", "denied", "failure":
 		return outcome
 	default:
 		return "unknown"
