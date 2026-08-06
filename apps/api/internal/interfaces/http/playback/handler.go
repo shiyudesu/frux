@@ -11,14 +11,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 )
 
 type Handler struct {
 	service                  *applicationplayback.Service
-	telemetryLimiter         *telemetryRateLimiter
 	recordTelemetryRejection func(int)
 }
 
@@ -26,20 +24,11 @@ type Option func(*Handler)
 
 // New 注入播放优化应用服务。
 func New(service *applicationplayback.Service, options ...Option) *Handler {
-	handler := &Handler{
-		service:          service,
-		telemetryLimiter: newTelemetryRateLimiter(defaultTelemetryBatchesPerMinute, time.Minute, defaultTelemetryRateLimitEntries),
-	}
+	handler := &Handler{service: service}
 	for _, option := range options {
 		option(handler)
 	}
 	return handler
-}
-
-func WithTelemetryRateLimit(batchesPerMinute int) Option {
-	return func(handler *Handler) {
-		handler.telemetryLimiter = newTelemetryRateLimiter(batchesPerMinute, time.Minute, defaultTelemetryRateLimitEntries)
-	}
 }
 
 func WithTelemetryRejectionRecorder(record func(int)) Option {
@@ -105,12 +94,6 @@ func (h *Handler) CreateTelemetryBatch(ctx context.Context, c *app.RequestContex
 		interfaceshttpapierror.WriteInvalidAccessToken(c)
 		return
 	}
-	if h.telemetryLimiter != nil && !h.telemetryLimiter.Allow(userID) {
-		h.recordRejectedTelemetry(0)
-		interfaceshttpapierror.Write(c, http.StatusTooManyRequests, interfaceshttpapierror.CodePlaybackTelemetryRateLimited, "telemetry rate limit exceeded")
-		return
-	}
-
 	var req createTelemetryBatchRequest
 	if err := interfaceshttpbinding.BindStrictJSON(c, &req, domainplayback.MaxTelemetryPayloadBytes); err != nil {
 		h.recordRejectedTelemetry(0)

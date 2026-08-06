@@ -19,3 +19,19 @@ func NewRedisClient(cfg infraconfig.RedisConfig) *redis.Client {
 		PoolTimeout:  200 * time.Millisecond,
 	})
 }
+
+// NewRateLimitRedisClient creates an isolated client for mutating limiter
+// scripts. go-redis uses -1 in Options to configure zero command retries.
+func NewRateLimitRedisClient(cfg infraconfig.RedisConfig) *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:                  cfg.Addr,
+		Password:              cfg.Password,
+		DB:                    cfg.DB,
+		DialTimeout:           200 * time.Millisecond,
+		ReadTimeout:           100 * time.Millisecond,
+		WriteTimeout:          100 * time.Millisecond,
+		PoolTimeout:           200 * time.Millisecond,
+		MaxRetries:            -1,
+		ContextTimeoutEnabled: true,
+	})
+}

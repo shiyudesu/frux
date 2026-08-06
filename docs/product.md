@@ -51,8 +51,8 @@ Frux 是一个短视频 Feed 系统，目标是用最小可行架构承载完整
 | 审核 | 已实现 | 视频审核状态机、模型无关自动审核、人工队列/租约/决定、审计和作者通知 |
 | 后台运营 | 部分实现 | typed 懒加载内容运营工作台、审核队列/详情/租约/决定和视频查询/下架/恢复；配置管理仍规划中 |
 | 播放优化 | 已实现 | 播放参数、预加载建议、旧 QoS、准确首帧/卡顿/错误遥测、Web Feed 接入 |
-| 系统治理 | 部分实现 | 已实现版本化运行时降级控制；限流和死信重试仍规划中 |
-| 监控告警 | 部分实现 | 已实现播放、推荐、审核和降级控制 Prometheus 指标与告警；业务指标写入/看板仍规划中 |
+| 系统治理 | 部分实现 | 已实现版本化运行时降级控制和 typed 分层请求限流；死信重试仍规划中 |
+| 监控告警 | 部分实现 | 已实现播放、推荐、审核、降级控制和限流 Prometheus 指标/告警/Grafana；业务指标写入仍规划中 |
 
 ## 4. P0 首发闭环
 
@@ -83,7 +83,7 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 已实现 | 审核 | GET/POST/DELETE | `/api/admin/review/cases*` | 人工队列、详情、领取、续租、释放和决定 |
 | 已实现 | 后台运营 | POST | `/api/admin/videos/{videoId}/enforcement` | 原因化、版本检查、审计下架 |
 | 已实现 | 后台运营 | POST | `/api/admin/videos/{videoId}/restoration` | 恢复已批准的下架视频 |
-| 规划中 | 系统治理 | POST | `/internal/rate-limit-decisions` | 限流放行检查 |
+| 已实现 | 系统治理 | Middleware | registered endpoint groups | local-first token bucket、可选 Redis 原子协调和显式 fallback/fail-closed |
 | 规划中 | 监控告警 | POST | `/internal/metric-points` | 核心指标写入 |
 
 ## 5. P1 体验和运营能力

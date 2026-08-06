@@ -40,7 +40,7 @@ flowchart LR
   Client -->|"调用公开 API"| API
   API -->|"读写业务事实、投影和聚合"| PostgreSQL
   API -->|"保存和读取本地文件"| Uploads
-  API -->|"缓存 Feed、互动状态与计数"| Redis
+  API -->|"缓存 Feed、互动状态与计数；原子协调部分限流"| Redis
   API -->|"投递互动、发布和曝光事件"| MQ
   API -.->|"迁移媒体文件"| ObjectStorage
 
@@ -121,6 +121,11 @@ flowchart LR
   class PostgreSQL,Uploads store;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
+
+请求限流是 Router 组合的横切边界：JWT middleware 先建立 server-derived user identity，
+随后 registered rate-limit middleware 执行 bounded local bucket；只有声明为 distributed 的
+group 才通过 infrastructure adapter 执行单次 Redis Lua。Redis 失败按 policy 使用更严格
+local fallback 或 fail closed，Handler 不拥有私有限流器。
 
 ## 3. 核心请求链路
 

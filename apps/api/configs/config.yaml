@@ -69,3 +69,11 @@ playback:
 governance:
   poll_interval: "5s"
   poll_timeout: "2s"
+
+rate_limit:
+  max_entries: 10000
+  idle_ttl: "10m"
+  redis_timeout: "75ms"
+  trusted_proxies:
+    - "127.0.0.1/32"
+    - "::1/128"

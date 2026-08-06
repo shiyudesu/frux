@@ -196,3 +196,22 @@ request、任意动态 key 或 revision 作为标签。revision 是 gauge value�
 `frux_governance_active_revision{process,key}`，再检查数据库连接、poll timeout 和非法持久化
 值。snapshot 超过 key 的 max staleness 后会使用 failure default，因此先确认可选能力已安全
 关闭，再恢复控制面；不要直接修改历史 revision。
+
+## 13. Rate-limit investigation
+
+分层限流只暴露
+`frux_rate_limit_decisions_total{endpoint_group,layer,result}`。endpoint group 仅为
+`playback_telemetry`、`public_search`、`upload_session`；layer 仅为 local、distributed、
+fallback；result 仅为 allow、reject、fallback、saturation、backend_error。identity、IP、
+user、Redis key 和 route parameter 均不得进入标签。
+
+告警位于 `apps/monitoring/alerts/rate_limit.yml`：
+
+1. rejection spike：先按 endpoint group 和 layer 判断是 local burst 还是 distributed quota；
+2. Redis fallback：检查 API 到 Redis 的连接、deadline 和 governance distributed control；
+3. local saturation：检查异常 identity 扩散、trusted proxy 配置和 `max_entries`，不得先移除
+   map bound。
+
+`public_search` Redis 故障时仍由更严格 local fallback 保护；`upload_session` 明确 fail
+closed。Grafana `Frux Layered Rate Limits` 看板展示三类信号。恢复 Redis 后确认
+backend_error/fallback 停止增长，再观察一个完整告警窗口。

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
+	applicationratelimit "github.com/shiyudesu/frux/internal/application/ratelimit"
 	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
@@ -387,7 +388,58 @@ func TestPlaybackAPIValidation(t *testing.T) {
 	), http.StatusBadRequest, interfaceshttpapierror.CodeInvalidRequest, "invalid request")
 }
 
+func TestPlaybackTelemetrySharedRateLimitCompatibility(t *testing.T) {
+	now := time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC)
+	router, jwtManager := newPlaybackRouterWithTelemetryLimitAndClock(t, 2, func() time.Time { return now })
+	token := signTestToken(t, jwtManager, 42)
+	for index, batchID := range []string{"quota-batch-1", "quota-batch-2"} {
+		response := performPlaybackJSONRequest(
+			router, http.MethodPost, "/api/playback-telemetry-batches",
+			telemetryBatchBody(t, 1, batchID, []string{batchID + "-event"}), token, "",
+		)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("request %d status=%d", index+1, response.Code)
+		}
+	}
+	rejected := performPlaybackJSONRequest(
+		router, http.MethodPost, "/api/playback-telemetry-batches",
+		telemetryBatchBody(t, 1, "quota-batch-3", []string{"quota-event-3"}), token, "",
+	)
+	assertAPIError(t, rejected, http.StatusTooManyRequests, interfaceshttpapierror.CodeRateLimited, "rate limit exceeded")
+	if rejected.Header().Get("Retry-After") == "" ||
+		rejected.Header().Get("RateLimit-Policy") != string(applicationratelimit.PolicyPlaybackTelemetry) {
+		t.Fatalf("missing rate-limit metadata: %v", rejected.Header())
+	}
+	now = now.Add(30 * time.Second)
+	midWindow := performPlaybackJSONRequest(
+		router, http.MethodPost, "/api/playback-telemetry-batches",
+		telemetryBatchBody(t, 1, "quota-batch-mid-window", []string{"quota-event-mid-window"}), token, "",
+	)
+	assertAPIError(t, midWindow, http.StatusTooManyRequests, interfaceshttpapierror.CodeRateLimited, "rate limit exceeded")
+
+	now = now.Add(30 * time.Second)
+	nextWindow := performPlaybackJSONRequest(
+		router, http.MethodPost, "/api/playback-telemetry-batches",
+		telemetryBatchBody(t, 1, "quota-batch-next-window", []string{"quota-event-next-window"}), token, "",
+	)
+	if nextWindow.Code != http.StatusCreated {
+		t.Fatalf("next-window status=%d body=%s", nextWindow.Code, nextWindow.Body.String())
+	}
+}
+
 func newPlaybackRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
+	return newPlaybackRouterWithTelemetryLimit(t, 60)
+}
+
+func newPlaybackRouterWithTelemetryLimit(t *testing.T, telemetryLimit int) (*server.Hertz, *infrajwt.Manager) {
+	return newPlaybackRouterWithTelemetryLimitAndClock(t, telemetryLimit, time.Now)
+}
+
+func newPlaybackRouterWithTelemetryLimitAndClock(
+	t *testing.T,
+	telemetryLimit int,
+	now func() time.Time,
+) (*server.Hertz, *infrajwt.Manager) {
 	t.Helper()
 
 	repo := newMemoryPlaybackRepo()
@@ -400,11 +452,32 @@ func newPlaybackRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
 
 	router := server.New()
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
+	registry, err := applicationratelimit.DefaultRegistry(telemetryLimit, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("rate limit registry: %v", err)
+	}
+	rateLimitService := applicationratelimit.NewService(
+		registry,
+		applicationratelimit.NewLocalLimiter(
+			100, time.Minute, applicationratelimit.WithLocalLimiterClock(now),
+		),
+		nil, nil, nil, time.Minute,
+	)
+	identityResolver, err := interfaceshttpmiddleware.NewRateLimitIdentityResolver(nil)
+	if err != nil {
+		t.Fatalf("identity resolver: %v", err)
+	}
+	telemetryRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService, applicationratelimit.PolicyPlaybackTelemetry, identityResolver,
+	)
+	if err != nil {
+		t.Fatalf("telemetry rate limit middleware: %v", err)
+	}
 	api := router.Group("/api", authMiddleware)
 	api.GET("/playback-config", handler.GetConfig)
 	api.GET("/preload-videos", handler.ListPreloadVideos)
 	api.POST("/playback-qos-reports", handler.CreateQoSReport)
-	api.POST("/playback-telemetry-batches", handler.CreateTelemetryBatch)
+	api.POST("/playback-telemetry-batches", telemetryRateLimit, handler.CreateTelemetryBatch)
 	router.POST("/internal/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(testInternalToken), handler.CreateInternalQoSReport)
 
 	return router, jwtManager

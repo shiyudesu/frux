@@ -20,11 +20,15 @@ Playback telemetry has a bounded in-process fixed-window limiter, but other endp
 
 ### Use two enforcement layers
 
-Every protected request first passes a bounded in-memory token bucket keyed by normalized IP, user, or endpoint group. Policies that require cross-instance coordination then execute one Redis Lua token-bucket operation.
+Every protected request first passes a bounded in-memory limiter keyed by normalized IP, user, or endpoint group. New policies use token buckets, while playback telemetry keeps its legacy fixed 60-second window. Policies that require cross-instance coordination then execute one Redis Lua token-bucket operation.
 
 ### Register policies in typed configuration
 
 Policies define endpoint group, identity dimension, capacity, refill rate, distributed requirement, fallback mode, and retry metadata. Routes reference policy names; browsers cannot supply descriptors.
+
+### Bound and do not retry Redis mutations
+
+Distributed policies use a dedicated go-redis client that honors the policy context deadline and disables command retries. One request can therefore execute the mutating Lua operation at most once; ambiguous network failures use the policy fallback instead of retrying the mutation.
 
 ### Use explicit Redis failure modes
 
@@ -32,7 +36,7 @@ Public reads and telemetry fall back to the local bucket. Expensive authenticate
 
 ### Bound memory and normalize client identity
 
-The local store caps entries and expires idle buckets. IP identity uses the existing trusted proxy boundary; untrusted forwarding headers are ignored. Authenticated policies prefer user ID over IP.
+The local store caps entries and indexes idle expiry in a heap. A saturated miss reclaims at most the expired heap head needed for admission, avoiding a full-map scan while keeping strict capacity. IP identity uses the existing trusted proxy boundary; untrusted forwarding headers are ignored. Authenticated policies prefer user ID over IP.
 
 ### Integrate degradation controls narrowly
 

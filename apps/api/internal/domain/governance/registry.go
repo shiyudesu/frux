@@ -9,7 +9,11 @@ import (
 
 type Key string
 
-const FeedPreloadEnabled Key = "feed.preload.enabled"
+const (
+	FeedPreloadEnabled          Key = "feed.preload.enabled"
+	RateLimitDistributedEnabled Key = "rate_limit.distributed.enabled"
+	RateLimitEmergencyEnabled   Key = "rate_limit.emergency.enabled"
+)
 
 type Process string
 
@@ -86,6 +90,26 @@ func DefaultRegistry() *Registry {
 			Default:        BooleanValue(true),
 			FailureDefault: BooleanValue(false),
 			Processes:      []Process{ProcessAPI, ProcessWorker},
+			MaxStaleness:   2 * time.Minute,
+		},
+		{
+			Key:            RateLimitDistributedEnabled,
+			Owner:          "platform",
+			Description:    "Enable Redis coordination for registered distributed rate-limit policies.",
+			ValueType:      ValueTypeBoolean,
+			Default:        BooleanValue(true),
+			FailureDefault: BooleanValue(false),
+			Processes:      []Process{ProcessAPI},
+			MaxStaleness:   2 * time.Minute,
+		},
+		{
+			Key:            RateLimitEmergencyEnabled,
+			Owner:          "platform",
+			Description:    "Apply code-registered emergency rate-limit profiles.",
+			ValueType:      ValueTypeBoolean,
+			Default:        BooleanValue(false),
+			FailureDefault: BooleanValue(false),
+			Processes:      []Process{ProcessAPI},
 			MaxStaleness:   2 * time.Minute,
 		},
 	})

@@ -2,6 +2,7 @@ package infraconfig
 
 import (
 	"errors"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ var ErrInvalidMediaConfig = errors.New("invalid media config")
 var ErrInvalidPlaybackConfig = errors.New("invalid playback config")
 var ErrInvalidGovernanceConfig = errors.New("invalid governance config")
 var ErrInvalidInternalToken = errors.New("invalid internal token")
+var ErrInvalidRateLimitConfig = errors.New("invalid rate limit config")
 
 const minInternalTokenLength = 32
 
@@ -47,6 +49,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := normalizeAndValidateGovernanceConfig(&cfg.Governance); err != nil {
 		return nil, err
 	}
+	if err := normalizeAndValidateRateLimitConfig(&cfg.RateLimit); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -74,7 +79,48 @@ func ValidateAPIConfig(cfg *Config) error {
 	if cfg == nil {
 		return ErrInvalidInternalToken
 	}
-	return normalizeAndValidateInternalConfig(&cfg.Internal)
+	if err := normalizeAndValidateInternalConfig(&cfg.Internal); err != nil {
+		return err
+	}
+	return normalizeAndValidateRateLimitConfig(&cfg.RateLimit)
+}
+
+func normalizeAndValidateRateLimitConfig(cfg *RateLimitConfig) error {
+	if cfg == nil {
+		return ErrInvalidRateLimitConfig
+	}
+	if cfg.MaxEntries == 0 {
+		cfg.MaxEntries = 10_000
+	}
+	cfg.IdleTTL = defaultDuration(cfg.IdleTTL, "10m")
+	cfg.RedisTimeout = defaultDuration(cfg.RedisTimeout, "75ms")
+	if cfg.MaxEntries < 100 || cfg.MaxEntries > 1_000_000 {
+		return ErrInvalidRateLimitConfig
+	}
+	idleTTL, err := time.ParseDuration(cfg.IdleTTL)
+	if err != nil || idleTTL < time.Minute || idleTTL > 24*time.Hour {
+		return ErrInvalidRateLimitConfig
+	}
+	timeout, err := time.ParseDuration(cfg.RedisTimeout)
+	if err != nil || timeout < 10*time.Millisecond || timeout > 500*time.Millisecond {
+		return ErrInvalidRateLimitConfig
+	}
+	normalized := make([]string, 0, len(cfg.TrustedProxies))
+	seen := make(map[string]struct{}, len(cfg.TrustedProxies))
+	for _, raw := range cfg.TrustedProxies {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return ErrInvalidRateLimitConfig
+		}
+		value := prefix.Masked().String()
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	cfg.TrustedProxies = normalized
+	return nil
 }
 
 func normalizeAndValidateInternalConfig(cfg *InternalConfig) error {

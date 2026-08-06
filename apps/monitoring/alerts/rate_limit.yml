@@ -1,0 +1,58 @@
+groups:
+  - name: frux-rate-limits
+    interval: 30s
+    rules:
+      - alert: FruxRateLimitRejectionSpike
+        expr: |
+          (
+            sum by (endpoint_group) (
+              increase(frux_rate_limit_decisions_total{result="reject"}[5m])
+            )
+            /
+            clamp_min(
+              sum by (endpoint_group) (
+                increase(frux_rate_limit_decisions_total{result=~"allow|reject"}[5m])
+              ),
+              1
+            )
+          ) > 0.20
+          and on (endpoint_group)
+          sum by (endpoint_group) (
+            increase(frux_rate_limit_decisions_total{result=~"allow|reject"}[5m])
+          ) >= 50
+        for: 5m
+        labels:
+          severity: warning
+          service: frux-api
+        annotations:
+          summary: Rate-limit rejection ratio is elevated
+          description: "Rejections exceeded 20% for endpoint_group={{ $labels.endpoint_group }} with at least 50 decisions in five minutes."
+          runbook: docs/modules/monitoring.md#rate-limit-investigation
+
+      - alert: FruxRateLimitRedisFallback
+        expr: |
+          sum by (endpoint_group) (
+            increase(frux_rate_limit_decisions_total{result=~"fallback|backend_error"}[5m])
+          ) >= 10
+        for: 2m
+        labels:
+          severity: warning
+          service: frux-api
+        annotations:
+          summary: Distributed rate limiting is falling back
+          description: "Redis coordination fallback or backend errors are recurring for endpoint_group={{ $labels.endpoint_group }}."
+          runbook: docs/modules/monitoring.md#rate-limit-investigation
+
+      - alert: FruxRateLimitLocalSaturation
+        expr: |
+          sum by (endpoint_group) (
+            increase(frux_rate_limit_decisions_total{result="saturation"}[5m])
+          ) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: frux-api
+        annotations:
+          summary: Local rate-limit identity map is saturated
+          description: "The bounded local limiter rejected new identities for endpoint_group={{ $labels.endpoint_group }}."
+          runbook: docs/modules/monitoring.md#rate-limit-investigation

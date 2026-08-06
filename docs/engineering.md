@@ -193,6 +193,14 @@ GORM Repository 规则：
   完整 snapshot 后用原子指针替换；Application 热路径只能依赖 `Bool(key)` 等窄 reader，不得
   查询数据库、Redis 或治理 HTTP。新 control 必须同时增加 registry、低基数 metric label、
   normal/missing/expired/stale/process-scope 测试和模块文档。
+- 请求限流使用 `application/ratelimit` typed registry；路由只能引用注册 policy，未知名必须
+  启动失败。每次请求先执行 bounded local token bucket，entry map 必须有 capacity 和 idle
+  expiry，满载时保守拒绝。distributed policy 只允许一次带短 deadline 的 Redis Lua 原子操作，
+  并显式声明 stricter local fallback 或 fail closed；Redis 故障不得变为无限流量。
+- user quota identity 只能来自 JWT middleware 的 server context；IP quota 只有在 socket peer
+  命中配置的 trusted proxy CIDR 时才消费 forwarded header。governance 只能选择代码注册的
+  distributed 开关或 emergency profile，不得写入任意 rate。指标标签只使用 registered
+  endpoint group、local/distributed/fallback layer 和封闭 result。
 
 ## 8. Interfaces 规则
 

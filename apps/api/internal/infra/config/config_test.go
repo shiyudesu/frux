@@ -74,6 +74,24 @@ func TestNormalizeAndValidateGovernanceConfig(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidateRateLimitConfig(t *testing.T) {
+	var cfg RateLimitConfig
+	if err := normalizeAndValidateRateLimitConfig(&cfg); err != nil {
+		t.Fatalf("normalize rate limit config: %v", err)
+	}
+	if cfg.MaxEntries != 10_000 || cfg.IdleTTL != "10m" || cfg.RedisTimeout != "75ms" {
+		t.Fatalf("unexpected defaults: %+v", cfg)
+	}
+	cfg.TrustedProxies = []string{"not-a-prefix"}
+	if err := normalizeAndValidateRateLimitConfig(&cfg); !errors.Is(err, ErrInvalidRateLimitConfig) {
+		t.Fatalf("expected invalid trusted proxy, got %v", err)
+	}
+	cfg = RateLimitConfig{MaxEntries: 99, IdleTTL: "10m", RedisTimeout: "75ms"}
+	if err := normalizeAndValidateRateLimitConfig(&cfg); !errors.Is(err, ErrInvalidRateLimitConfig) {
+		t.Fatalf("expected invalid capacity, got %v", err)
+	}
+}
+
 func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
 	validToken := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
 	tests := []struct {

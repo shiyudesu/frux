@@ -7,9 +7,10 @@ import (
 )
 
 type Envelope struct {
-	Code    string `json:"code"`
-	Error   string `json:"error"`
-	Message string `json:"message,omitempty"`
+	Code              string `json:"code"`
+	Error             string `json:"error"`
+	Message           string `json:"message,omitempty"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
 }
 
 const (
@@ -22,6 +23,7 @@ const (
 	CodeNotFound               = "NOT_FOUND"
 	CodeConflict               = "CONFLICT"
 	CodeRateLimited            = "RATE_LIMITED"
+	CodeRateLimitUnavailable   = "RATE_LIMIT_UNAVAILABLE"
 	CodeServiceUnavailable     = "SERVICE_UNAVAILABLE"
 	CodeInternal               = "INTERNAL_ERROR"
 
@@ -131,6 +133,20 @@ func Abort(c *app.RequestContext, status int, code, legacy string) {
 
 func AbortWithMessage(c *app.RequestContext, status int, code, legacy, message string) {
 	c.AbortWithStatusJSON(status, Envelope{Code: code, Error: legacy, Message: message})
+}
+
+func AbortRateLimited(c *app.RequestContext, retryAfterSeconds int) {
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, Envelope{
+		Code: CodeRateLimited, Error: "rate limit exceeded",
+		RetryAfterSeconds: retryAfterSeconds,
+	})
+}
+
+func AbortRateLimitUnavailable(c *app.RequestContext, retryAfterSeconds int) {
+	c.AbortWithStatusJSON(http.StatusServiceUnavailable, Envelope{
+		Code: CodeRateLimitUnavailable, Error: "rate limit service unavailable",
+		RetryAfterSeconds: retryAfterSeconds,
+	})
 }
 
 func WriteInvalidRequest(c *app.RequestContext) {

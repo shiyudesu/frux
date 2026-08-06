@@ -11,11 +11,19 @@ type Config struct {
 	Media      MediaConfig      `yaml:"media"`
 	Playback   PlaybackConfig   `yaml:"playback"`
 	Governance GovernanceConfig `yaml:"governance"`
+	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
 }
 
 type GovernanceConfig struct {
 	PollInterval string `yaml:"poll_interval"`
 	PollTimeout  string `yaml:"poll_timeout"`
+}
+
+type RateLimitConfig struct {
+	MaxEntries     int      `yaml:"max_entries"`
+	IdleTTL        string   `yaml:"idle_ttl"`
+	RedisTimeout   string   `yaml:"redis_timeout"`
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 type MediaConfig struct {

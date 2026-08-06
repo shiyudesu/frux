@@ -121,7 +121,9 @@ func processLabel(process domaingovernance.Process) string {
 
 func controlKeyLabel(key domaingovernance.Key) string {
 	switch key {
-	case domaingovernance.FeedPreloadEnabled:
+	case domaingovernance.FeedPreloadEnabled,
+		domaingovernance.RateLimitDistributedEnabled,
+		domaingovernance.RateLimitEmergencyEnabled:
 		return string(key)
 	default:
 		return "unknown"

@@ -6,7 +6,8 @@
 API 与 Worker 只在后台轮询并原子替换本地快照，业务热路径不访问 PostgreSQL、Redis 或治理
 HTTP API。
 
-限流和死信恢复仍属于后续能力，本模块当前只实现降级控制。
+限流已通过代码注册的分层请求保护实现；死信恢复仍属于后续能力。治理控制只选择限流代码中
+预声明的 distributed 开关和 emergency profile，不允许注入任意限额。
 
 ## 2. 注册控制
 
@@ -21,6 +22,10 @@ HTTP API。
 `true`，failure default 为 `false`，最大陈旧时间为 2 分钟。它只关闭兼容
 `/api/preload-videos` 返回和 Worker Feed cache preheat，不改变发布 fanout、Feed 正确性或耐久
 业务事实。
+
+API 还注册 `rate_limit.distributed.enabled` 和 `rate_limit.emergency.enabled`。前者关闭时
+distributed policy 使用其声明的非无限 fallback；后者启用时只切换 typed policy 中的
+emergency profile。两个键都不能承载 operator-defined rate。
 
 未知键不能经 API 创建；进程读取不支持的键时使用该键的 failure default 并记录有界指标。
 

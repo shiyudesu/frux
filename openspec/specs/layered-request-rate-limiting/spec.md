@@ -1,4 +1,10 @@
-## ADDED Requirements
+# layered-request-rate-limiting Specification
+
+## Purpose
+
+Define bounded, registered, local-first request rate limiting with optional deadline-aware distributed coordination, explicit failure behavior, and compatibility for playback telemetry.
+
+## Requirements
 
 ### Requirement: Registered Rate-Limit Policies
 Protected endpoint groups SHALL reference validated registered policies defining identity dimension, local capacity, refill rate, distributed coordination, fallback mode, and retry metadata.
@@ -22,8 +28,16 @@ Every protected request SHALL pass a bounded in-process token bucket before any 
 - **WHEN** a new untrusted identity arrives while no expired entry can be reclaimed
 - **THEN** Frux rejects or conservatively limits the identity without growing memory beyond the configured bound
 
+#### Scenario: Saturated map contains expired identities
+- **WHEN** a new identity arrives at capacity
+- **THEN** Frux uses bounded indexed expiry reclamation rather than scanning the full entry map under the global lock
+
 ### Requirement: Bounded Distributed Coordination
 Policies requiring cross-instance quotas SHALL use one atomic Redis operation with a bounded deadline and an explicit non-unlimited fallback.
+
+#### Scenario: Redis response is delayed or ambiguous
+- **WHEN** the policy context deadline expires during the mutating Lua operation
+- **THEN** the Redis client stops on that deadline and does not retry the mutation for the request
 
 #### Scenario: Redis grants distributed capacity
 - **WHEN** the local guard passes and distributed tokens remain
@@ -56,8 +70,23 @@ Rate-limited requests SHALL return HTTP 429 with stable error code and retry met
 - **THEN** the response identifies the stable rate-limit condition without exposing internal keys or Redis data
 
 ### Requirement: Playback Limiter Compatibility
-Playback telemetry SHALL migrate to the shared limiter without increasing its effective configured batch quota.
+Playback telemetry SHALL migrate to the shared limiter while preserving the legacy maximum N batches in each fixed 60-second window.
 
 #### Scenario: Existing telemetry user reaches the configured limit
 - **WHEN** the user submits the same number of batches previously accepted by the dedicated limiter
 - **THEN** the shared policy accepts those batches and rejects the next one consistently
+
+#### Scenario: Time advances within a telemetry window
+- **WHEN** a user exhausts the telemetry quota and less than 60 seconds pass
+- **THEN** no capacity refills before the fixed-window reset boundary
+
+### Requirement: Predeclared Emergency Profiles
+Runtime degradation controls SHALL only select code-predeclared rate-limit profiles or disable distributed coordination through registered controls, and SHALL NOT inject arbitrary rates or bypass bounded local enforcement.
+
+#### Scenario: Emergency rate limiting is enabled
+- **WHEN** the registered emergency control is active
+- **THEN** each protected endpoint group uses its predeclared emergency profile while retaining local-first enforcement
+
+#### Scenario: Distributed coordination is disabled
+- **WHEN** the registered distributed-coordination control is inactive
+- **THEN** each distributed policy follows its declared fallback behavior rather than becoming unlimited

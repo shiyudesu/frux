@@ -138,6 +138,9 @@ services:
         condition: service_healthy
     ports:
       - "5173:80"
+    networks:
+      default:
+        ipv4_address: 172.31.250.10
 
   prometheus:
     image: prom/prometheus:v3.1.0
@@ -182,3 +185,9 @@ volumes:
   minio_data:
   prometheus_data:
   grafana_data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24

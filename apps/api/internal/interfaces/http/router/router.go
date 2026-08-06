@@ -13,6 +13,7 @@ import (
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
+	applicationratelimit "github.com/shiyudesu/frux/internal/application/ratelimit"
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	applicationrelation "github.com/shiyudesu/frux/internal/application/relation"
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
@@ -152,10 +153,14 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videoOptions := []applicationvideo.Option{}
 	interactionOptions := []applicationinteraction.Option{}
 	var feedCache *infracache.FeedCache
+	var distributedRateLimiter applicationratelimit.DistributedLimiter
 	var rabbitMQ *inframq.RabbitMQ
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
 		feedCache = infracache.NewFeedCache(redisClient)
+		distributedRateLimiter = infracache.NewRedisRateLimiter(
+			infracache.NewRateLimitRedisClient(cfg.Redis),
+		)
 		snapshotSigner, signerErr := applicationrecommendation.NewHMACSnapshotCursorSigner(cfg.JWT.Secret)
 		if signerErr != nil {
 			return signerErr
@@ -168,6 +173,29 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
 		videoOptions = append(videoOptions, applicationvideo.WithVideoCacheInvalidator(feedCache))
 	}
+	rateLimitIdleTTL, err := time.ParseDuration(cfg.RateLimit.IdleTTL)
+	if err != nil {
+		return err
+	}
+	rateLimitRedisTimeout, err := time.ParseDuration(cfg.RateLimit.RedisTimeout)
+	if err != nil {
+		return err
+	}
+	rateLimitRegistry, err := applicationratelimit.DefaultRegistry(
+		cfg.Playback.Telemetry.MaxBatchesPerMinute,
+		rateLimitRedisTimeout,
+	)
+	if err != nil {
+		return err
+	}
+	rateLimitService := applicationratelimit.NewService(
+		rateLimitRegistry,
+		applicationratelimit.NewLocalLimiter(cfg.RateLimit.MaxEntries, rateLimitIdleTTL),
+		distributedRateLimiter,
+		rateLimitControls{runtime: governanceRuntime},
+		inframetrics.RateLimitObserver{},
+		rateLimitIdleTTL,
+	)
 	recommendationService := applicationrecommendation.New(recommendationRepo, recommendationOptions...)
 	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
 	feedOptions = append(feedOptions, applicationfeed.WithRecommender(recommendationService))
@@ -186,7 +214,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	)
 	playbackHandler := interfaceshttpplayback.New(
 		playbackService,
-		interfaceshttpplayback.WithTelemetryRateLimit(cfg.Playback.Telemetry.MaxBatchesPerMinute),
 		interfaceshttpplayback.WithTelemetryRejectionRecorder(playbackMetricsAdapter{}.RecordTelemetryRejection),
 	)
 	telemetryRetention, err := time.ParseDuration(cfg.Playback.Telemetry.Retention)
@@ -311,6 +338,33 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	uploadHandler := interfaceshttpupload.New(cfg.Media.LocalRoot, interfaceshttpupload.WithOwnershipRecorder(videoManagementService))
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
+	rateLimitIdentity, err := interfaceshttpmiddleware.NewRateLimitIdentityResolver(cfg.RateLimit.TrustedProxies)
+	if err != nil {
+		return err
+	}
+	publicSearchRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService, applicationratelimit.PolicyPublicSearch, rateLimitIdentity,
+	)
+	if err != nil {
+		return err
+	}
+	uploadSessionRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService, applicationratelimit.PolicyUploadSession, rateLimitIdentity,
+	)
+	if err != nil {
+		return err
+	}
+	playbackTelemetryRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService,
+		applicationratelimit.PolicyPlaybackTelemetry,
+		rateLimitIdentity,
+		interfaceshttpmiddleware.WithRateLimitRejectHook(func() {
+			playbackMetricsAdapter{}.RecordTelemetryRejection(0)
+		}),
+	)
+	if err != nil {
+		return err
+	}
 	assetHandler, err := interfaceshttpupload.NewAssetHandler(cfg.Media.LocalRoot, "/uploads", videoManagementService)
 	if err != nil {
 		return err
@@ -519,14 +573,14 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videos.GET("/:videoId/comments", optionalAuthMiddleware, interactionHandler.ListComments)
 
 	search := api.Group("/search")
-	search.GET("/videos", searchHandler.Videos)
-	search.GET("/users", searchHandler.Users)
+	search.GET("/videos", publicSearchRateLimit, searchHandler.Videos)
+	search.GET("/users", publicSearchRateLimit, searchHandler.Users)
 
 	uploads := api.Group("/uploads", authMiddleware)
 	uploads.POST("", uploadHandler.Create)
 	uploadSessions := api.Group("/upload-sessions", authMiddleware)
-	uploadSessions.POST("", uploadSessionHandler.Create)
-	uploadSessions.POST("/:sessionId/complete", uploadSessionHandler.Complete)
+	uploadSessions.POST("", uploadSessionRateLimit, uploadSessionHandler.Create)
+	uploadSessions.POST("/:sessionId/complete", uploadSessionRateLimit, uploadSessionHandler.Complete)
 	api.GET("/media-assets/:assetId/access", authMiddleware, uploadSessionHandler.Access)
 
 	// Feed 暴露为条目集合，客户端通过游标和 limit 控制分页。
@@ -546,7 +600,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	api.GET("/playback-config", authMiddleware, playbackHandler.GetConfig)
 	api.GET("/preload-videos", authMiddleware, playbackHandler.ListPreloadVideos)
 	api.POST("/playback-qos-reports", authMiddleware, playbackHandler.CreateQoSReport)
-	api.POST("/playback-telemetry-batches", authMiddleware, playbackHandler.CreateTelemetryBatch)
+	api.POST("/playback-telemetry-batches", authMiddleware, playbackTelemetryRateLimit, playbackHandler.CreateTelemetryBatch)
 
 	if cfg.Internal.Enabled {
 		internal := h.Group("/internal")
@@ -601,6 +655,18 @@ func validateAPIConfig(cfg *infraconfig.Config) error {
 
 type MessageWriter struct {
 	service *applicationmessage.Service
+}
+
+type rateLimitControls struct {
+	runtime *applicationgovernance.Runtime
+}
+
+func (c rateLimitControls) DistributedEnabled() bool {
+	return c.runtime != nil && c.runtime.Bool(domaingovernance.RateLimitDistributedEnabled)
+}
+
+func (c rateLimitControls) EmergencyEnabled() bool {
+	return c.runtime != nil && c.runtime.Bool(domaingovernance.RateLimitEmergencyEnabled)
 }
 
 func NewMessageWriter(service *applicationmessage.Service) *MessageWriter {

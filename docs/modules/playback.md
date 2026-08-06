@@ -73,6 +73,7 @@
 | 连续播放兼容 | 默认保持单视频循环；开启连续播放后关闭 loop，结束时推进到下一 Feed 项 |
 | QoS 上报写流水 | 首帧、卡顿、观看时长写入日志 |
 | 遥测批次有界 | schema v1 每批最多 50 个事件、64 KiB；事件 offset 单调，批次和事件 ID 稳定重试 |
+| 遥测共享限流 | `playback_telemetry` 按服务端 user ID 使用共享 local fixed-window 算法；严格保持每 60 秒最多 `max_batches_per_minute` 批且窗口中途不 refill |
 | 遥测与行为分离 | 技术质量事件不替代曝光、进度、完播和跳过等行为事实 |
 | 首帧准确测量 | 优先 `requestVideoFrameCallback`，否则依次使用 advancing-time 和 `playing` fallback |
 | 卡顿分类 | 只在期望播放期间统计 rebuffer；暂停和 seek 不计普通卡顿 |
@@ -101,6 +102,7 @@
 | 上报遥测批次 | 返回 event_count、accepted_count 和 duplicate_count |
 | 重放相同 batch/event | 不重复写入或聚合；同 ID 异载荷返回 409 |
 | 版本、数量和体积超限 | 整批返回 400，不进行无界或部分处理 |
+| 遥测限额耗尽 | 前 `max_batches_per_minute` 个初始批次可通过，下一批返回稳定 429 和 retry metadata |
 | 敏感/未知字段 | 严格 JSON 解码拒绝 URL、token、cookie、metadata 等未声明字段 |
 | 首帧和卡顿 | 精确/fallback 首帧、seek 排除、暂停关闭和页面退出均产生正确事件 |
 | 配置缺失 | 返回默认配置 |
