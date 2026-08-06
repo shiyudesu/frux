@@ -11,12 +11,18 @@ import (
 )
 
 const (
-	defaultAccessTTL = 15 * time.Minute
-	TokenTypeAccess  = "access"
+	defaultAccessTTL      = 15 * time.Minute
+	defaultAdminAccessTTL = 30 * time.Minute
+	maxAdminAccessTTL     = 8 * time.Hour
+	TokenTypeAccess       = "access"
+	TokenTypeAdminAccess  = "admin_access"
+	AudienceConsumer      = "frux-consumer"
+	AudienceAdmin         = "frux-admin"
 )
 
 var ErrEmptyJWTSecret = errors.New("jwt secret is required")
 var ErrParseAccessTTL = errors.New("parse jwt access_ttl failed")
+var ErrParseAdminAccessTTL = errors.New("parse jwt admin_access_ttl failed")
 var ErrEmptyToken = errors.New("token is empty")
 var ErrParseJWTToken = errors.New("parse jwt token failed")
 var ErrInvalidTokenType = errors.New("token type invalid")
@@ -34,12 +40,14 @@ type Claims struct {
 	JWTID     string `json:"jti"`
 	IssuedAt  int64  `json:"iat"`
 	ExpiresAt int64  `json:"exp"`
+	Audience  string `json:"aud"`
 }
 
 // Manager 统一负责 JWT 签发和校验，secret 与过期时间从配置加载。
 type Manager struct {
-	secret    []byte
-	accessTTL time.Duration
+	secret         []byte
+	accessTTL      time.Duration
+	adminAccessTTL time.Duration
 }
 
 // tokenClaims 是真正写入 JWT 的声明，嵌入 RegisteredClaims 获得 exp、iat、jti 等标准字段。
@@ -51,7 +59,7 @@ type tokenClaims struct {
 }
 
 // NewManager 初始化 JWT 管理器，并解析 access token 的有效期。
-func NewManager(secret, accessTTL string) (*Manager, error) {
+func NewManager(secret, accessTTL string, adminAccessTTL ...string) (*Manager, error) {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
 		return nil, ErrEmptyJWTSecret
@@ -61,10 +69,17 @@ func NewManager(secret, accessTTL string) (*Manager, error) {
 	if err != nil {
 		return nil, ErrParseAccessTTL
 	}
+	rawAdminTTL := ""
+	if len(adminAccessTTL) > 0 {
+		rawAdminTTL = adminAccessTTL[0]
+	}
+	adminDuration, err := parseTTL(rawAdminTTL, defaultAdminAccessTTL)
+	if err != nil || adminDuration > maxAdminAccessTTL {
+		return nil, ErrParseAdminAccessTTL
+	}
 
 	return &Manager{
-		secret:    []byte(secret),
-		accessTTL: accessDuration,
+		secret: []byte(secret), accessTTL: accessDuration, adminAccessTTL: adminDuration,
 	}, nil
 }
 
@@ -73,27 +88,58 @@ func (m *Manager) AccessTTL() time.Duration {
 	return m.accessTTL
 }
 
-// SignAccessToken 签发访问 token，当前系统使用 HS256 对称签名。
-func (m *Manager) SignAccessToken(userID int64, role string) (string, error) {
-	return m.signToken(userID, role, TokenTypeAccess, m.accessTTL)
+func (m *Manager) AdminAccessTTL() time.Duration {
+	return m.adminAccessTTL
 }
 
-// ParseAndValidateToken 解析 token，并校验签名算法、过期时间和 token 类型。
-func (m *Manager) ParseAndValidateToken(token, expectedType string) (*Claims, error) {
+// SignAccessToken 签发访问 token，当前系统使用 HS256 对称签名。
+func (m *Manager) SignAccessToken(userID int64, role string) (string, error) {
+	return m.signToken(userID, role, TokenTypeAccess, AudienceConsumer, m.accessTTL)
+}
+
+func (m *Manager) SignAdminAccessToken(userID int64, role string) (string, error) {
+	return m.signToken(userID, role, TokenTypeAdminAccess, AudienceAdmin, m.adminAccessTTL)
+}
+
+// ParseAndValidateToken 解析 token，并校验签名算法、过期时间、token 类型和 audience。
+func (m *Manager) ParseAndValidateToken(token, expectedType, expectedAudience string) (*Claims, error) {
+	return m.parseAndValidateToken(token, expectedType, expectedAudience, false)
+}
+
+func (m *Manager) ParseAndValidateConsumerToken(token string) (*Claims, error) {
+	claims, err := m.parseAndValidateToken(
+		token, TokenTypeAccess, AudienceConsumer, false,
+	)
+	if err == nil {
+		return claims, nil
+	}
+	return m.parseAndValidateToken(token, TokenTypeAccess, "", true)
+}
+
+func (m *Manager) parseAndValidateToken(
+	token, expectedType, expectedAudience string,
+	requireMissingAudience bool,
+) (*Claims, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil, ErrEmptyToken
 	}
 
 	parsedClaims := &tokenClaims{}
+	options := []jwtlib.ParserOption{
+		jwtlib.WithValidMethods([]string{jwtlib.SigningMethodHS256.Alg()}),
+		jwtlib.WithExpirationRequired(),
+	}
+	if expectedAudience != "" {
+		options = append(options, jwtlib.WithAudience(expectedAudience))
+	}
 	_, err := jwtlib.ParseWithClaims(
 		token,
 		parsedClaims,
 		func(token *jwtlib.Token) (any, error) {
 			return m.secret, nil
 		},
-		// 限定签名算法可以避免算法降级类攻击。
-		jwtlib.WithValidMethods([]string{jwtlib.SigningMethodHS256.Alg()}),
+		options...,
 	)
 	if err != nil {
 		return nil, ErrParseJWTToken
@@ -105,6 +151,13 @@ func (m *Manager) ParseAndValidateToken(token, expectedType string) (*Claims, er
 	if parsedClaims.UserID <= 0 {
 		return nil, ErrInvalidTokenUserID
 	}
+	if requireMissingAudience && len(parsedClaims.Audience) != 0 {
+		return nil, ErrParseJWTToken
+	}
+	audience := ""
+	if len(parsedClaims.Audience) > 0 {
+		audience = parsedClaims.Audience[0]
+	}
 
 	return &Claims{
 		UserID:    parsedClaims.UserID,
@@ -113,11 +166,12 @@ func (m *Manager) ParseAndValidateToken(token, expectedType string) (*Claims, er
 		JWTID:     parsedClaims.ID,
 		IssuedAt:  claimTimeUnix(parsedClaims.IssuedAt),
 		ExpiresAt: claimTimeUnix(parsedClaims.ExpiresAt),
+		Audience:  audience,
 	}, nil
 }
 
 // signToken 组装标准声明和业务声明，并用密钥完成签名。
-func (m *Manager) signToken(userID int64, role, tokenType string, ttl time.Duration) (string, error) {
+func (m *Manager) signToken(userID int64, role, tokenType, audience string, ttl time.Duration) (string, error) {
 	if userID <= 0 {
 		return "", ErrInvalidUserID
 	}
@@ -141,6 +195,7 @@ func (m *Manager) signToken(userID int64, role, tokenType string, ttl time.Durat
 			IssuedAt:  jwtlib.NewNumericDate(now),
 			ExpiresAt: jwtlib.NewNumericDate(now.Add(ttl)),
 			ID:        jti,
+			Audience:  jwtlib.ClaimStrings{audience},
 		},
 	}
 

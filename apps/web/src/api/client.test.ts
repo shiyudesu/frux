@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  ADMIN_AUTH_INVALID_EVENT,
   NetworkError,
   UserFacingError,
   apiErrorMessage,
@@ -92,5 +93,32 @@ describe("typed API errors", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
     await expect(apiRequest("/api/feed-items")).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it("announces authoritative admin authentication failures only for protected admin APIs", async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ADMIN_AUTH_INVALID_ACCESS_TOKEN",
+      error: "invalid admin access token"
+    }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    })));
+
+    await expect(apiRequest("/api/admin/me", {
+      token: "rejected-token"
+    })).rejects.toBeInstanceOf(ApiError);
+    expect(dispatchEvent).toHaveBeenCalledTimes(1);
+    const event = dispatchEvent.mock.calls[0][0] as CustomEvent<{ token: string }>;
+    expect(event.type).toBe(ADMIN_AUTH_INVALID_EVENT);
+    expect(event.detail.token).toBe("rejected-token");
+
+    dispatchEvent.mockClear();
+    await expect(apiRequest("/api/admin/auth/login", {
+      method: "POST",
+      body: { account: "x", password: "y" }
+    })).rejects.toBeInstanceOf(ApiError);
+    expect(dispatchEvent).not.toHaveBeenCalled();
   });
 });

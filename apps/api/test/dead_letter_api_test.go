@@ -122,7 +122,7 @@ func TestDeadLetterAdminAPIFlow(t *testing.T) {
 		11: domainaccount.RestoreAdminPrincipal(11, domainaccount.StatusNormal, domainaccount.RoleReviewer),
 	}}
 	router := server.New(server.WithDisablePrintRoute(true))
-	admin := router.Group("/api/admin", interfaceshttpmiddleware.NewJWTAuth(jwtManager))
+	admin := router.Group("/api/admin", interfaceshttpmiddleware.NewAdminJWTAuth(jwtManager))
 	requireGovernance := interfaceshttpmiddleware.NewRequireAdminPermission(
 		principals, domainaccount.PermissionGovernanceExecute,
 	)

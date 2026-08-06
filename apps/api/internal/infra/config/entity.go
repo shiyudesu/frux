@@ -68,8 +68,9 @@ type PlaybackTelemetryConfig struct {
 
 // JWTConfig 保存 JWT 签名密钥和访问 token 有效期。
 type JWTConfig struct {
-	Secret    string `yaml:"secret"`
-	AccessTTL string `yaml:"access_ttl"`
+	Secret         string `yaml:"secret"`
+	AccessTTL      string `yaml:"access_ttl"`
+	AdminAccessTTL string `yaml:"admin_access_ttl"`
 }
 
 // InternalConfig 保存内部接口服务鉴权配置。

@@ -113,7 +113,7 @@ func TestGovernanceAdminAPIFlow(t *testing.T) {
 	router := server.New(server.WithDisablePrintRoute(true))
 	admin := router.Group(
 		"/api/admin",
-		interfaceshttpmiddleware.NewJWTAuth(jwtManager),
+		interfaceshttpmiddleware.NewAdminJWTAuth(jwtManager),
 	)
 	requireGovernance := interfaceshttpmiddleware.NewRequireAdminPermission(
 		principals, domainaccount.PermissionGovernanceExecute,
@@ -213,7 +213,7 @@ func TestGovernanceAPIAuditFailureDoesNotActivateRevision(t *testing.T) {
 		10: domainaccount.RestoreAdminPrincipal(10, domainaccount.StatusNormal, domainaccount.RoleOperator),
 	}}
 	router := server.New(server.WithDisablePrintRoute(true))
-	admin := router.Group("/api/admin", interfaceshttpmiddleware.NewJWTAuth(jwtManager))
+	admin := router.Group("/api/admin", interfaceshttpmiddleware.NewAdminJWTAuth(jwtManager))
 	admin.PATCH(
 		"/governance/controls/:key",
 		interfaceshttpmiddleware.NewRequireAdminPermission(

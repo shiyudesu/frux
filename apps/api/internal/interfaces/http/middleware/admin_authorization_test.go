@@ -70,7 +70,7 @@ func TestRequireAdminPermissionUsesCurrentAccountState(t *testing.T) {
 	handlerCalls := make(map[int64]int)
 	h.GET(
 		"/admin",
-		NewJWTAuth(jwtManager),
+		NewAdminJWTAuth(jwtManager),
 		NewRequireAdminPermission(reader, domainaccount.PermissionReviewRead),
 		func(_ context.Context, c *app.RequestContext) {
 			principal, ok := AdminPrincipalFromContext(c)
@@ -100,7 +100,7 @@ func TestRequireAdminPermissionUsesCurrentAccountState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			token, err := jwtManager.SignAccessToken(tt.userID, tt.claimedRole)
+			token, err := jwtManager.SignAdminAccessToken(tt.userID, tt.claimedRole)
 			if err != nil {
 				t.Fatalf("sign access token: %v", err)
 			}
@@ -144,7 +144,7 @@ func TestRequireAdminPermissionPreservesAuthenticationAndReaderErrors(t *testing
 	h := server.New(server.WithDisablePrintRoute(true))
 	h.GET(
 		"/admin",
-		NewJWTAuth(jwtManager),
+		NewAdminJWTAuth(jwtManager),
 		NewRequireAdminPermission(reader, domainaccount.PermissionReviewRead),
 		func(_ context.Context, c *app.RequestContext) {
 			c.Status(http.StatusNoContent)
@@ -159,11 +159,11 @@ func TestRequireAdminPermissionPreservesAuthenticationAndReaderErrors(t *testing
 	if err := json.Unmarshal(unauthenticated.Body.Bytes(), &unauthenticatedBody); err != nil {
 		t.Fatalf("decode unauthenticated response: %v", err)
 	}
-	if unauthenticatedBody.Code != interfaceshttpapierror.CodeInvalidAccessToken {
+	if unauthenticatedBody.Code != interfaceshttpapierror.CodeAdminAuthInvalidAccessToken {
 		t.Fatalf("unauthenticated code = %q", unauthenticatedBody.Code)
 	}
 
-	token, err := jwtManager.SignAccessToken(7, domainaccount.RoleAdmin)
+	token, err := jwtManager.SignAdminAccessToken(7, domainaccount.RoleAdmin)
 	if err != nil {
 		t.Fatalf("sign access token: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestRequireAdminPermissionDoesNotBlockForbiddenResponseOnDeniedAudit(t *tes
 	if err != nil {
 		t.Fatalf("new jwt manager: %v", err)
 	}
-	token, err := jwtManager.SignAccessToken(8, domainaccount.RoleAdmin)
+	token, err := jwtManager.SignAdminAccessToken(8, domainaccount.RoleAdmin)
 	if err != nil {
 		t.Fatalf("sign access token: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestRequireAdminPermissionDoesNotBlockForbiddenResponseOnDeniedAudit(t *tes
 	h := server.New(server.WithDisablePrintRoute(true))
 	h.GET(
 		"/admin",
-		NewJWTAuth(jwtManager),
+		NewAdminJWTAuth(jwtManager),
 		NewRequireAdminPermission(
 			reader,
 			domainaccount.PermissionAuditRead,

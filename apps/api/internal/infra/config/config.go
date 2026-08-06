@@ -21,8 +21,10 @@ var ErrInvalidGovernanceConfig = errors.New("invalid governance config")
 var ErrInvalidInternalToken = errors.New("invalid internal token")
 var ErrInvalidRateLimitConfig = errors.New("invalid rate limit config")
 var ErrInvalidRabbitMQConfig = errors.New("invalid rabbitmq config")
+var ErrInvalidJWTConfig = errors.New("invalid jwt config")
 
 const minInternalTokenLength = 32
+const maxAdminAccessTTL = 8 * time.Hour
 
 // LoadConfig 读取 YAML 配置文件，并反序列化为应用启动配置。
 func LoadConfig(path string) (*Config, error) {
@@ -40,6 +42,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, ErrUnmarshalConfigFailed
 	}
 	if err := ValidateAPIConfig(cfg); err != nil {
+		return nil, err
+	}
+	if err := normalizeAndValidateJWTConfig(&cfg.JWT); err != nil {
 		return nil, err
 	}
 	if err := normalizeAndValidateMediaConfig(&cfg.Media); err != nil {
@@ -88,6 +93,27 @@ func ValidateAPIConfig(cfg *Config) error {
 		return err
 	}
 	return normalizeAndValidateRabbitMQConfig(&cfg.RabbitMQ)
+}
+
+func normalizeAndValidateJWTConfig(cfg *JWTConfig) error {
+	if cfg == nil {
+		return ErrInvalidJWTConfig
+	}
+	cfg.Secret = strings.TrimSpace(cfg.Secret)
+	cfg.AccessTTL = defaultDuration(cfg.AccessTTL, "15m")
+	cfg.AdminAccessTTL = defaultDuration(cfg.AdminAccessTTL, "30m")
+	if cfg.Secret == "" {
+		return ErrInvalidJWTConfig
+	}
+	accessTTL, err := time.ParseDuration(cfg.AccessTTL)
+	if err != nil || accessTTL <= 0 {
+		return ErrInvalidJWTConfig
+	}
+	adminTTL, err := time.ParseDuration(cfg.AdminAccessTTL)
+	if err != nil || adminTTL < 5*time.Minute || adminTTL > maxAdminAccessTTL {
+		return ErrInvalidJWTConfig
+	}
+	return nil
 }
 
 func normalizeAndValidateRabbitMQConfig(cfg *RabbitMQConfig) error {

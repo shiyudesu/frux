@@ -346,6 +346,31 @@ export interface AdminPrincipal {
   permissions: AdminPermission[];
 }
 
+export interface AdminLoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_in_seconds: number;
+  principal: AdminPrincipal;
+}
+
+export function isAdminPrincipal(value: unknown): value is AdminPrincipal {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<AdminPrincipal>;
+  return Number.isSafeInteger(candidate.user_id) && Number(candidate.user_id) > 0 &&
+    typeof candidate.role === "string" &&
+    Array.isArray(candidate.permissions) &&
+    candidate.permissions.every(isAdminPermission);
+}
+
+function isAdminPermission(value: unknown): value is AdminPermission {
+  return value === "review.read" ||
+    value === "review.decide" ||
+    value === "content.enforce" ||
+    value === "config.publish" ||
+    value === "governance.execute" ||
+    value === "audit.read";
+}
+
 export interface ReviewCase {
   id: number;
   video_id: number;

@@ -47,6 +47,7 @@ func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
 	if err := normalizeAndValidatePlaybackConfig(&cfg); err != nil {
 		t.Fatalf("normalize playback config: %v", err)
 	}
+
 	if cfg.Telemetry.Retention != "168h" ||
 		cfg.Telemetry.CleanupInterval != "1h" ||
 		cfg.Telemetry.CleanupBatchSize != 1000 ||
@@ -57,6 +58,24 @@ func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
 	cfg.Telemetry.CleanupInterval = "200h"
 	if err := normalizeAndValidatePlaybackConfig(&cfg); !errors.Is(err, ErrInvalidPlaybackConfig) {
 		t.Fatalf("expected invalid cleanup interval, got %v", err)
+	}
+}
+
+func TestNormalizeAndValidateJWTConfigBoundsAdminTTL(t *testing.T) {
+	cfg := JWTConfig{Secret: "secret", AccessTTL: "15m"}
+	if err := normalizeAndValidateJWTConfig(&cfg); err != nil {
+		t.Fatalf("default admin TTL: %v", err)
+	}
+	if cfg.AdminAccessTTL != "30m" {
+		t.Fatalf("admin TTL = %q", cfg.AdminAccessTTL)
+	}
+	cfg.AdminAccessTTL = "9h"
+	if err := normalizeAndValidateJWTConfig(&cfg); !errors.Is(err, ErrInvalidJWTConfig) {
+		t.Fatalf("oversized admin TTL error = %v", err)
+	}
+	cfg.AdminAccessTTL = "1m"
+	if err := normalizeAndValidateJWTConfig(&cfg); !errors.Is(err, ErrInvalidJWTConfig) {
+		t.Fatalf("short admin TTL error = %v", err)
 	}
 }
 

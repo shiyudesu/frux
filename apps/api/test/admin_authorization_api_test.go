@@ -42,7 +42,7 @@ func TestAdminAuthorizationAPIFlow(t *testing.T) {
 	handler := interfaceshttpadmin.New()
 	router := server.New(server.WithDisablePrintRoute(true))
 	api := router.Group("/api")
-	admin := api.Group("/admin", interfaceshttpmiddleware.NewJWTAuth(jwtManager))
+	admin := api.Group("/admin", interfaceshttpmiddleware.NewAdminJWTAuth(jwtManager))
 	admin.GET(
 		"/me",
 		interfaceshttpmiddleware.NewRequireAdminPermission(reader, domainaccount.PermissionReviewRead),
@@ -69,7 +69,7 @@ func TestAdminAuthorizationAPIFlow(t *testing.T) {
 	}
 
 	unauthenticated := performAdminAuthorizationRequest(router, "")
-	requireAdminAuthorizationError(t, unauthenticated, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken)
+	requireAdminAuthorizationError(t, unauthenticated, http.StatusUnauthorized, interfaceshttpapierror.CodeAdminAuthInvalidAccessToken)
 
 	userToken := signAdminAuthorizationToken(t, jwtManager, 2, domainaccount.RoleAdmin)
 	forbidden := performAdminAuthorizationRequest(router, userToken)
@@ -97,7 +97,7 @@ func TestAdminAuthorizationAPIFlow(t *testing.T) {
 
 func signAdminAuthorizationToken(t *testing.T, manager *infrajwt.Manager, userID int64, role string) string {
 	t.Helper()
-	token, err := manager.SignAccessToken(userID, role)
+	token, err := manager.SignAdminAccessToken(userID, role)
 	if err != nil {
 		t.Fatalf("sign access token: %v", err)
 	}

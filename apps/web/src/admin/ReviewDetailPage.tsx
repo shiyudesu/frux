@@ -10,8 +10,8 @@ import {
 } from "../api/review";
 import { ApiError, apiErrorMessage } from "../api/client";
 import { useNavigate } from "../router";
-import { useSession } from "../session";
 import type { ReviewCaseDetail, ReviewLeaseResponse, ReviewPreviewAccess } from "../types";
+import { useAdminSession } from "./adminSession";
 import {
   forgetReviewLease,
   getReviewLease,
@@ -22,7 +22,7 @@ type DetailState = "loading" | "ready" | "error" | "forbidden";
 type PreviewState = "loading" | "ready" | "unavailable";
 
 export function ReviewDetailPage({ reviewID }: { reviewID: number }) {
-  const { token, adminPrincipal } = useSession();
+  const { token, principal } = useAdminSession();
   const navigate = useNavigate();
   const [detail, setDetail] = useState<ReviewCaseDetail | null>(null);
   const [detailRevision, setDetailRevision] = useState(0);
@@ -48,8 +48,8 @@ export function ReviewDetailPage({ reviewID }: { reviewID: number }) {
   const resumeAttempt = useRef("");
   const leaseMutation = useRef(false);
   const previewGeneration = useRef(0);
-  const canDecide = adminPrincipal?.permissions.includes("review.decide") || false;
-  const currentReviewerID = adminPrincipal?.user_id || 0;
+  const canDecide = principal?.permissions.includes("review.decide") || false;
+  const currentReviewerID = principal?.user_id || 0;
 
   const load = useCallback(async () => {
     previewGeneration.current++;

@@ -22,6 +22,7 @@ const (
 	PolicyPlaybackTelemetry PolicyName = "playback_telemetry"
 	PolicyPublicSearch      PolicyName = "public_search"
 	PolicyUploadSession     PolicyName = "upload_session"
+	PolicyAdminLogin        PolicyName = "admin_login"
 
 	IdentityIP   IdentityDimension = "ip"
 	IdentityUser IdentityDimension = "user"
@@ -144,6 +145,21 @@ func DefaultRegistry(playbackBatchesPerMinute int, distributedTimeout time.Durat
 			Emergency: Profile{
 				Local:       Quota{Capacity: 5, RefillPerSecond: 1.0 / 12},
 				Distributed: Quota{Capacity: 8, RefillPerSecond: 2.0 / 15},
+			},
+		},
+		{
+			Name: PolicyAdminLogin, EndpointGroup: string(PolicyAdminLogin),
+			Identity: IdentityIP, Distributed: DistributedRedis, Fallback: FallbackLocal,
+			DistributedTimeout: distributedTimeout, RetryAfterMinimum: time.Second,
+			Normal: Profile{
+				Local:       Quota{Capacity: 10, RefillPerSecond: 10.0 / 60},
+				Distributed: Quota{Capacity: 20, RefillPerSecond: 20.0 / 60},
+				Fallback:    Quota{Capacity: 5, RefillPerSecond: 5.0 / 60},
+			},
+			Emergency: Profile{
+				Local:       Quota{Capacity: 3, RefillPerSecond: 3.0 / 60},
+				Distributed: Quota{Capacity: 5, RefillPerSecond: 5.0 / 60},
+				Fallback:    Quota{Capacity: 2, RefillPerSecond: 2.0 / 60},
 			},
 		},
 	})

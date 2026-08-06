@@ -19,6 +19,7 @@ func TestJWTAuthPropagatesIdentityAndAbortsUnauthorized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new jwt manager: %v", err)
 	}
+
 	token, err := jwtManager.SignAccessToken(42, "admin")
 	if err != nil {
 		t.Fatalf("sign access token: %v", err)
@@ -95,5 +96,42 @@ func TestJWTAuthPropagatesIdentityAndAbortsUnauthorized(t *testing.T) {
 				t.Fatalf("unexpected unauthorized body: %+v raw=%s", body, unauthorized.Body.String())
 			}
 		})
+	}
+}
+
+func TestAdminJWTAuthRejectsConsumerPurpose(t *testing.T) {
+	jwtManager, err := infrajwt.NewManager("test-secret", "15m", "30m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, _ := jwtManager.SignAccessToken(42, "admin")
+	admin, _ := jwtManager.SignAdminAccessToken(42, "admin")
+	h := server.New(server.WithDisablePrintRoute(true))
+	h.GET("/admin", NewAdminJWTAuth(jwtManager), func(_ context.Context, c *app.RequestContext) {
+		c.Status(http.StatusNoContent)
+	})
+	authorized := ut.PerformRequest(
+		h.Engine, http.MethodGet, "/admin", nil,
+		ut.Header{Key: "Authorization", Value: "Bearer " + admin},
+	)
+	if authorized.Code != http.StatusNoContent {
+		t.Fatalf("admin status=%d body=%s", authorized.Code, authorized.Body.String())
+	}
+	for _, token := range []string{"", consumer, "invalid"} {
+		headers := []ut.Header{}
+		if token != "" {
+			headers = append(headers, ut.Header{Key: "Authorization", Value: "Bearer " + token})
+		}
+		response := ut.PerformRequest(h.Engine, http.MethodGet, "/admin", nil, headers...)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("token %q status=%d body=%s", token, response.Code, response.Body.String())
+		}
+		var body interfaceshttpapierror.Envelope
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Code != interfaceshttpapierror.CodeAdminAuthInvalidAccessToken {
+			t.Fatalf("code=%q", body.Code)
+		}
 	}
 }

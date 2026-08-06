@@ -38,11 +38,11 @@ Alternative considered: a separate admin account table. Rejected for this phase 
 
 ### Admin routes require the expected token type and audience
 
-JWT verification gains an expected token-purpose API. Consumer middleware accepts only `access` with the consumer audience; admin middleware accepts only `admin_access` with `frux-admin`. A valid token of the wrong type is an authentication failure, not a permission failure.
+JWT verification gains an expected token-purpose API and requires `exp`. Consumer middleware accepts `access` with the consumer audience; during cutover it also accepts an otherwise valid, audience-less legacy `access` token until that token's existing expiration. Admin middleware accepts only `admin_access` with `frux-admin`. A valid token of the wrong type is an authentication failure, not a permission failure.
 
 After admin-token verification, the existing current-account resolver loads status and role and applies the closed permission registry for each request. This retains immediate demotion and disable behavior.
 
-The admin login route sits outside the protected admin middleware group but uses the existing layered login rate-limiting capability. Every other `/api/admin/*` route, including `/api/admin/me`, requires an admin token.
+The admin login route sits outside the protected admin middleware group but uses an IP-keyed refillable local/Redis layered rate-limit policy. Unknown accounts execute a fixed dummy bcrypt comparison so the generic failure path does not skip the dominant password-check cost. Every other `/api/admin/*` route, including `/api/admin/me`, requires an admin token.
 
 Alternative considered: accept both token types during steady state. Rejected because it would preserve the mixed boundary this change exists to remove.
 
@@ -52,7 +52,7 @@ The Web client introduces `AdminSessionProvider`, loaded only for admin routes. 
 
 `sessionStorage` is chosen over `localStorage` to reduce persistence of a privileged bearer token. It survives reload in the current tab, allows consumer/admin coexistence, and intentionally requires a new login in a separate tab or after the browser session ends.
 
-Admin logout clears the admin token, principal, permissions, and cached admin data only. Consumer logout does not mutate the admin key, and admin logout does not mutate consumer state.
+Admin logout clears the admin token, principal, permissions, and cached admin data only. Consumer logout does not mutate the admin key, and admin logout does not mutate consumer state. Admin API 401 events carry the rejected token identity, so a delayed response from an old request cannot clear a newer login.
 
 Alternative considered: an HttpOnly admin cookie. Deferred because it would require a CSRF token/origin-verification design for every admin mutation; the bearer-token architecture already exists and can be isolated with lower migration risk.
 
@@ -85,10 +85,10 @@ There is no refresh token or server session table. Admin token lifetime is confi
 
 ## Migration Plan
 
-1. Add JWT purpose/audience validation and the admin login service/API without changing existing admin middleware.
+1. Add JWT purpose/audience/expiration validation and the admin login service/API without changing existing admin middleware.
 2. Add AdminSessionProvider and `/admin/login` behind the new API.
 3. Switch `/api/admin/*` middleware to require `admin_access`; deploy the Web change in the same release.
-4. Clear any legacy admin principal cached in the consumer session and document that operators must log in again.
+4. Clear any legacy admin principal cached in the consumer session and document that operators must log in again. Audience-less consumer access tokens remain accepted only until their existing bounded expiry.
 5. Rollback may temporarily restore dual token acceptance only as an emergency compatibility gate; it must default off and be removed after cutover.
 
 ## Open Questions

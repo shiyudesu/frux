@@ -8,6 +8,7 @@
 
 | 状态 | 方法 | 接口路径 | 作用 | 所需权限 |
 | --- | --- | --- | --- | --- |
+| 已实现 | POST | `/api/admin/auth/login` | 校验现有账号的后台资格并签发独立 Admin Token | IP 分层限流 |
 | 已实现 | GET | `/api/admin/me` | 返回当前持久化后台角色和权限集合 | `review.read` |
 | 已实现 | GET | `/api/admin/audit-events` | 查询不可变后台操作事实 | `audit.read` |
 | 已实现 | GET | `/api/admin/videos` | 按生命周期、作者、ID、关键词和有界创建时间查询视频 | `content.enforce` |
@@ -36,8 +37,10 @@
 ## 4. 授权链路
 
 ```text
-Access JWT
-   ↓ 只验证身份并取得 user_id
+Admin Access JWT
+token_type=admin_access
+aud=frux-admin
+   ↓ 只验证 purpose、audience、有效期并取得 user_id
 读取 account.status + account.role
    ↓
 封闭角色权限映射
@@ -47,10 +50,11 @@ Access JWT
 Resolved Admin Principal → Handler
 ```
 
-- `/api/admin` 路由先执行强制 JWT 鉴权，再执行参数化权限中间件。
+- `/api/admin/auth/login` 是唯一不要求 Admin Token 的后台接口，不提供注册；未知账号、错误密码、停用和无权限角色返回相同 401。
+- 其余 `/api/admin` 路由先要求 `admin_access` + `frux-admin`，再执行参数化权限中间件；普通用户 `access` Token 稳定返回 `401 ADMIN_AUTH_INVALID_ACCESS_TOKEN`。
 - 后台权限始终读取当前账号；JWT 中的旧角色 claim 不保留权限，也不阻止数据库中的合法升权生效。
 - 停用账号、普通用户、缺失账号和未知角色统一返回 `403 ADMIN_PERMISSION_DENIED`，不暴露满足条件所需的更高角色。
-- 当前账号读取失败返回 `503 ADMIN_AUTHORIZATION_UNAVAILABLE`；缺少或无效 access token 继续返回既有 `401 AUTH_INVALID_ACCESS_TOKEN`。
+- 当前账号读取失败返回 `503 ADMIN_AUTHORIZATION_UNAVAILABLE`；缺少、过期或 purpose/audience 错误的后台 Token 返回 `401 ADMIN_AUTH_INVALID_ACCESS_TOKEN`。
 - 中间件把已解析主体写入请求上下文，Handler 使用共享 helper 做归因，不重复比较角色字符串。
 - 配置了审计元数据的后台路由会最佳努力记录拒绝尝试；审计写入失败不能把原始 403 伪装为成功或其他错误。
 
@@ -73,6 +77,8 @@ Resolved Admin Principal → Handler
 | Admin Token 对应账号已停用 | 立即返回 403 |
 | 兼容 `admin` 账号访问 | 获得全部初始注册权限 |
 | 缺少或无效 Token | 保持既有 401 响应 |
+| 普通用户 Token 调用后台 | 返回 `401 ADMIN_AUTH_INVALID_ACCESS_TOKEN`，Handler 和权限读取不执行 |
+| 后台 Token 调用用户 API | 返回 `401 AUTH_INVALID_ACCESS_TOKEN` |
 | 两名 Reviewer 并发领取 | 只有一人获得 opaque lease token，另一人收到稳定 409 |
 | 当前 Reviewer 刷新详情 | resume 轮换 token、旧 token 失效，任务继续出现在“我正在审核” |
 | 非持有人或过期租约决定 | 返回稳定冲突，不写案件、视频、审计或通知 |
@@ -80,8 +86,10 @@ Resolved Admin Principal → Handler
 
 ## 7. 前端接入点
 
-Web 使用现有 History API typed router 懒加载 `/admin/reviews`、`/admin/reviews/{reviewId}` 和
-`/admin/videos`。审核任务页提供“待我处理 / 我正在审核 / 最近完成”，详情页使用短期保护预览、
-自动延长占用、刷新恢复和主动放回，不向审核员暴露 lease token。Admin Shell 通过 `/api/admin/me`
-获取服务端确认的封闭权限集合，只展示获准目的地；直接 URL 仍请求拥有领域的后台 API，并稳定呈现
-登录、权限验证、403 和服务不可用状态，不会把客户端导航隐藏当作安全边界。
+Web 使用现有 History API typed router 懒加载 `/admin/login`、`/admin/reviews`、
+`/admin/reviews/{reviewId}` 和 `/admin/videos`。`AdminSessionProvider` 使用版本化
+`sessionStorage` 键保存 Admin Token/主体，和用户端 localStorage 会话完全独立；任一后台 API 的
+匹配 Token 401 只清理 Admin Session，并返回后台登录页。审核任务页提供“待我处理 / 我正在审核 /
+最近完成”，详情页使用短期保护预览、自动延长占用、刷新恢复和主动放回，不向审核员暴露 lease token。
+Admin Shell 通过 `/api/admin/me` 获取服务端确认的封闭权限集合，只展示获准目的地；直接 URL 仍请求
+拥有领域的后台 API，并稳定呈现登录、权限验证、403 和服务不可用状态。

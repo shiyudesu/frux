@@ -17,6 +17,7 @@ export type Route =
   | "/upload"
   | "/messages"
   | "/not-found"
+  | "/admin/login"
   | "/admin/reviews"
   | "/admin/videos"
   | `/admin/reviews/${number}`
@@ -42,7 +43,21 @@ export interface SearchRoute {
   tab: SearchTab;
 }
 
-export type NavigationTarget = Route | VideoDiscussionNavigation | SearchNavigation;
+export type AdminProtectedRoute =
+  | "/admin/reviews"
+  | "/admin/videos"
+  | `/admin/reviews/${number}`;
+
+export interface AdminLoginNavigation {
+  route: "/admin/login";
+  returnTo?: AdminProtectedRoute;
+}
+
+export type NavigationTarget =
+  | Route
+  | VideoDiscussionNavigation
+  | SearchNavigation
+  | AdminLoginNavigation;
 
 export interface VideoDiscussionRoute {
   videoID: number;
@@ -53,6 +68,10 @@ export interface VideoDiscussionRoute {
 
 export interface AdminReviewRoute {
   reviewID: number;
+}
+
+export interface AdminLoginRoute {
+  returnTo: AdminProtectedRoute;
 }
 
 export function normalizeRoute(pathname: string): Route {
@@ -90,6 +109,8 @@ export function normalizeRoute(pathname: string): Route {
       return "/messages";
     case "/not-found":
       return "/not-found";
+    case "/admin/login":
+      return "/admin/login";
     case "/admin/reviews":
       return "/admin/reviews";
     case "/admin/videos":
@@ -97,6 +118,17 @@ export function normalizeRoute(pathname: string): Route {
     default:
       return "/timeline";
   }
+}
+
+export function adminLoginFromLocation(route: Route, search: string): AdminLoginRoute | null {
+  if (route !== "/admin/login") return null;
+  const rawReturn = new URLSearchParams(search).get("return") || "";
+  return { returnTo: validAdminReturnRoute(rawReturn) || "/admin/reviews" };
+}
+
+export function adminLoginPath(target: AdminLoginNavigation): string {
+  if (!target.returnTo) return "/admin/login";
+  return `/admin/login?return=${encodeURIComponent(target.returnTo)}`;
 }
 
 export function adminReviewFromRoute(route: Route): AdminReviewRoute | null {
@@ -185,6 +217,8 @@ export function RouterProvider({ children }: { children: ReactNode }) {
       ? target
       : target.route === "/search"
         ? searchPath(target)
+        : target.route === "/admin/login"
+          ? adminLoginPath(target)
         : videoDiscussionPath(target);
     const url = new URL(authoredPath, window.location.origin);
     const nextPath = normalizeRoute(url.pathname);
@@ -221,6 +255,19 @@ export function useVideoDiscussionRoute(): VideoDiscussionRoute | null {
 export function useSearchRoute(): SearchRoute | null {
   const { route, search } = useRouterValue();
   return useMemo(() => searchFromLocation(route, search), [route, search]);
+}
+
+export function useAdminLoginRoute(): AdminLoginRoute | null {
+  const { route, search } = useRouterValue();
+  return useMemo(() => adminLoginFromLocation(route, search), [route, search]);
+}
+
+function validAdminReturnRoute(value: string): AdminProtectedRoute | null {
+  if (value === "/admin/reviews" || value === "/admin/videos") return value;
+  if (/^\/admin\/reviews\/[1-9]\d*$/.test(value)) {
+    return value as `/admin/reviews/${number}`;
+  }
+  return null;
 }
 
 function positiveInteger(value: string): number {

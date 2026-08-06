@@ -6,15 +6,12 @@
 // 导致依赖 session 对象的 effect 额外重跑。
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ApiError, isUnauthorized } from "./api/client";
-import { fetchAdminPrincipal } from "./api/admin";
+import { isUnauthorized } from "./api/client";
 import { fetchUnreadStat } from "./api/messages";
 import { ASSET_ACTIVE_COOKIE_NAME, TOKEN_KEY, USER_KEY } from "./constants";
 import { useRoute } from "./router";
 import { parseStoredUser } from "./types";
-import type { AdminPrincipal, SessionUser } from "./types";
-
-export type AdminSessionState = "idle" | "loading" | "ready" | "forbidden" | "error";
+import type { SessionUser } from "./types";
 
 export interface Session {
   token: string;
@@ -22,9 +19,6 @@ export interface Session {
   setAuth: (nextToken: string, nextUser: SessionUser | null) => void;
   updateUser: (expectedToken: string, nextUser: SessionUser) => void;
   clearAuth: () => void;
-  adminPrincipal: AdminPrincipal | null;
-  adminState: AdminSessionState;
-  refreshAdminPrincipal: () => Promise<AdminPrincipal | null>;
 }
 
 export interface UnreadState {
@@ -41,15 +35,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(() => parseStoredUser(localStorage.getItem(USER_KEY)));
   const tokenRef = useRef(token);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [adminPrincipal, setAdminPrincipal] = useState<AdminPrincipal | null>(null);
-  const [adminState, setAdminState] = useState<AdminSessionState>("idle");
 
   const setAuth = useCallback((nextToken: string, nextUser: SessionUser | null) => {
     tokenRef.current = nextToken;
     setToken(nextToken);
     setUser(nextUser);
-    setAdminPrincipal(null);
-    setAdminState("idle");
     if (nextToken) {
       localStorage.setItem(TOKEN_KEY, nextToken);
       setAssetAccessActive(true);
@@ -71,8 +61,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setAssetAccessActive(false);
     setToken("");
     setUser(null);
-    setAdminPrincipal(null);
-    setAdminState("idle");
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
   }, []);
@@ -80,33 +68,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setAssetAccessActive(Boolean(tokenRef.current && user));
   }, []);
-
-  const refreshAdminPrincipal = useCallback(async (): Promise<AdminPrincipal | null> => {
-    if (!token || !user) {
-      setAdminPrincipal(null);
-      setAdminState("idle");
-      return null;
-    }
-    setAdminState("loading");
-    try {
-      const principal = await fetchAdminPrincipal(token);
-      if (tokenRef.current !== token) return null;
-      setAdminPrincipal(principal);
-      setAdminState("ready");
-      return principal;
-    } catch (error: unknown) {
-      if (tokenRef.current !== token) return null;
-      setAdminPrincipal(null);
-      setAdminState(error instanceof ApiError && error.status === 403 ? "forbidden" : "error");
-      return null;
-    }
-  }, [token, user]);
-
-  useEffect(() => {
-    if (route.startsWith("/admin/")) {
-      void refreshAdminPrincipal();
-    }
-  }, [refreshAdminPrincipal, route]);
 
   const refreshUnreadCount = useCallback((): Promise<number> => {
     if (!token || !user) {
@@ -133,13 +94,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const session = useMemo<Session>(
     () => ({
-      token, user, setAuth, updateUser, clearAuth,
-      adminPrincipal, adminState, refreshAdminPrincipal
+      token, user, setAuth, updateUser, clearAuth
     }),
-    [
-      adminPrincipal, adminState, clearAuth, refreshAdminPrincipal,
-      setAuth, token, updateUser, user
-    ]
+    [clearAuth, setAuth, token, updateUser, user]
   );
 
   const unread = useMemo<UnreadState>(() => ({ unreadCount, refreshUnreadCount }), [unreadCount, refreshUnreadCount]);

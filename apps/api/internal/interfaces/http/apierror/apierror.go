@@ -32,16 +32,19 @@ const (
 	CodeAuthInvalidCredentials  = "AUTH_INVALID_CREDENTIALS"
 	CodeAccountNotFound         = "ACCOUNT_NOT_FOUND"
 
-	CodeAdminPermissionDenied         = "ADMIN_PERMISSION_DENIED"
-	CodeAdminAuthorizationUnavailable = "ADMIN_AUTHORIZATION_UNAVAILABLE"
-	CodeAdminAuditQueryInvalid        = "ADMIN_AUDIT_QUERY_INVALID"
-	CodeAdminAuditCursorInvalid       = "ADMIN_AUDIT_CURSOR_INVALID"
-	CodeAdminAuditUnavailable         = "ADMIN_AUDIT_UNAVAILABLE"
-	CodeAdminVideoValidationFailed    = "ADMIN_VIDEO_VALIDATION_FAILED"
-	CodeAdminVideoCursorInvalid       = "ADMIN_VIDEO_CURSOR_INVALID"
-	CodeAdminVideoVersionConflict     = "ADMIN_VIDEO_VERSION_CONFLICT"
-	CodeAdminVideoStateConflict       = "ADMIN_VIDEO_STATE_CONFLICT"
-	CodeAdminVideoUnavailable         = "ADMIN_VIDEO_UNAVAILABLE"
+	CodeAdminPermissionDenied          = "ADMIN_PERMISSION_DENIED"
+	CodeAdminAuthorizationUnavailable  = "ADMIN_AUTHORIZATION_UNAVAILABLE"
+	CodeAdminAuthInvalidCredentials    = "ADMIN_AUTH_INVALID_CREDENTIALS"
+	CodeAdminAuthInvalidAccessToken    = "ADMIN_AUTH_INVALID_ACCESS_TOKEN"
+	CodeAdminAuthenticationUnavailable = "ADMIN_AUTHENTICATION_UNAVAILABLE"
+	CodeAdminAuditQueryInvalid         = "ADMIN_AUDIT_QUERY_INVALID"
+	CodeAdminAuditCursorInvalid        = "ADMIN_AUDIT_CURSOR_INVALID"
+	CodeAdminAuditUnavailable          = "ADMIN_AUDIT_UNAVAILABLE"
+	CodeAdminVideoValidationFailed     = "ADMIN_VIDEO_VALIDATION_FAILED"
+	CodeAdminVideoCursorInvalid        = "ADMIN_VIDEO_CURSOR_INVALID"
+	CodeAdminVideoVersionConflict      = "ADMIN_VIDEO_VERSION_CONFLICT"
+	CodeAdminVideoStateConflict        = "ADMIN_VIDEO_STATE_CONFLICT"
+	CodeAdminVideoUnavailable          = "ADMIN_VIDEO_UNAVAILABLE"
 
 	CodeGovernanceValidationFailed = "GOVERNANCE_VALIDATION_FAILED"
 	CodeGovernanceControlUnknown   = "GOVERNANCE_CONTROL_UNKNOWN"
@@ -169,6 +172,10 @@ func AbortInvalidAccessToken(c *app.RequestContext) {
 
 func AbortInvalidAccessTokenWithMessage(c *app.RequestContext, message string) {
 	AbortWithMessage(c, http.StatusUnauthorized, CodeInvalidAccessToken, "invalid access token", message)
+}
+
+func AbortInvalidAdminAccessToken(c *app.RequestContext) {
+	Abort(c, http.StatusUnauthorized, CodeAdminAuthInvalidAccessToken, "invalid admin access token")
 }
 
 func WriteInternal(c *app.RequestContext, legacy string, err error) {

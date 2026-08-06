@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
+	applicationadminauth "github.com/shiyudesu/frux/internal/application/adminauth"
 	applicationdeadletter "github.com/shiyudesu/frux/internal/application/deadletter"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
@@ -48,6 +49,7 @@ import (
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
+	interfaceshttpadminauth "github.com/shiyudesu/frux/internal/interfaces/http/adminauth"
 	interfaceshttpdeadletter "github.com/shiyudesu/frux/internal/interfaces/http/deadletter"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
@@ -95,7 +97,9 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 
 	// JWT Manager 同时被账号服务用于签发 token，也被鉴权中间件用于校验 token。
-	jwtManager, err := infrajwt.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTL)
+	jwtManager, err := infrajwt.NewManager(
+		cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.AdminAccessTTL,
+	)
 	if err != nil {
 		return err
 	}
@@ -104,6 +108,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	accountRepo := infraaccount.New(gormDB)
 	accountService := applicationaccount.New(accountRepo, jwtManager, applicationaccount.WithProfileSettingRepository(accountRepo))
 	accountHandler := interfaceshttpaccount.New(accountService)
+	adminAuthService := applicationadminauth.New(accountRepo, jwtManager)
+	adminAuthHandler := interfaceshttpadminauth.New(adminAuthService)
 	adminAuditMetrics := adminAuditMetricsAdapter{}
 	adminAuditRepo := infraadminaudit.New(gormDB, infraadminaudit.WithWriteObserver(adminAuditMetrics))
 	adminAuditService := applicationadminaudit.New(
@@ -370,6 +376,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	relationHandler := interfaceshttprelation.New(relationService)
 	uploadHandler := interfaceshttpupload.New(cfg.Media.LocalRoot, interfaceshttpupload.WithOwnershipRecorder(videoManagementService))
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
+	adminAuthMiddleware := interfaceshttpmiddleware.NewAdminJWTAuth(jwtManager)
 	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
 	rateLimitIdentity, err := interfaceshttpmiddleware.NewRateLimitIdentityResolver(cfg.RateLimit.TrustedProxies)
 	if err != nil {
@@ -377,6 +384,12 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 	publicSearchRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
 		rateLimitService, applicationratelimit.PolicyPublicSearch, rateLimitIdentity,
+	)
+	if err != nil {
+		return err
+	}
+	adminLoginRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService, applicationratelimit.PolicyAdminLogin, rateLimitIdentity,
 	)
 	if err != nil {
 		return err
@@ -462,7 +475,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	users.GET("/:userId/video-collections", videoHandler.ListPublicCollections)
 	users.GET("/:userId/liked-videos", libraryHandler.ListPublicLiked)
 
-	admin := api.Group("/admin", authMiddleware)
+	api.POST("/admin/auth/login", adminLoginRateLimit, adminAuthHandler.Login)
+	admin := api.Group("/admin", adminAuthMiddleware)
 	admin.GET(
 		"/me",
 		interfaceshttpmiddleware.NewRequireAdminPermission(accountRepo, domainaccount.PermissionReviewRead),

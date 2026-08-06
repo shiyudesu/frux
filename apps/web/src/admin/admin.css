@@ -75,6 +75,16 @@
   color: #8f94a5;
 }
 
+.admin-principal .admin-logout {
+  min-height: 30px;
+  margin-top: 8px;
+  padding: 0 10px;
+  color: #d8dbe4;
+  border: 1px solid #3a3e4b;
+  border-radius: 7px;
+  background: #20232d;
+}
+
 .admin-main {
   min-width: 0;
   height: 100dvh;
@@ -299,6 +309,66 @@
   gap: 14px;
   color: #dce0ea;
   text-align: center;
+}
+
+.admin-login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  color: #f6f7fb;
+  background: #0d0f15;
+}
+
+.admin-login-card {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 24px;
+  padding: 30px;
+  border: 1px solid #2a2d38;
+  border-radius: 14px;
+  background: #171a23;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 35%);
+}
+
+.admin-login-card h1 {
+  margin: 6px 0;
+  font-size: 30px;
+}
+
+.admin-login-card p {
+  margin: 0;
+  color: #9398a8;
+}
+
+.admin-login-card form {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-login-card label {
+  display: grid;
+  gap: 7px;
+  color: #aeb2c0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-login-card input {
+  min-height: 42px;
+  padding: 0 12px;
+  color: #f6f7fb;
+  border: 1px solid #373b48;
+  border-radius: 8px;
+  background: #101219;
+}
+
+.admin-login-card button {
+  min-height: 42px;
+  color: #11131a;
+  border-radius: 8px;
+  background: #25f4ee;
+  font-weight: 800;
 }
 
 .admin-entry-state {

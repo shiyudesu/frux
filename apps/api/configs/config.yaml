@@ -2,6 +2,7 @@ port: 8080
 jwt:
   secret: "replace-with-strong-secret"
   access_ttl: "15m"
+  admin_access_ttl: "30m"
 
 internal:
   enabled: true

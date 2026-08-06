@@ -38,12 +38,34 @@ func NewJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 		}
 
 		token := strings.TrimSpace(parts[1])
-		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
+		claims, err := jwtManager.ParseAndValidateConsumerToken(token)
 		if err != nil {
 			interfaceshttpapierror.AbortInvalidAccessToken(c)
 			return
 		}
 
+		c.Set(ContextUserIDKey, claims.UserID)
+		c.Set(ContextRoleKey, claims.Role)
+		c.Next(ctx)
+	}
+}
+
+func NewAdminJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
+	return func(ctx context.Context, c *app.RequestContext) {
+		header := strings.TrimSpace(string(c.GetHeader("Authorization")))
+		parts := strings.SplitN(header, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
+			interfaceshttpapierror.AbortInvalidAdminAccessToken(c)
+			return
+		}
+		token := strings.TrimSpace(parts[1])
+		claims, err := jwtManager.ParseAndValidateToken(
+			token, infrajwt.TokenTypeAdminAccess, infrajwt.AudienceAdmin,
+		)
+		if err != nil {
+			interfaceshttpapierror.AbortInvalidAdminAccessToken(c)
+			return
+		}
 		c.Set(ContextUserIDKey, claims.UserID)
 		c.Set(ContextRoleKey, claims.Role)
 		c.Next(ctx)
@@ -85,7 +107,7 @@ func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 			return
 		}
 
-		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
+		claims, err := jwtManager.ParseAndValidateConsumerToken(token)
 		if err == nil {
 			c.Set(ContextUserIDKey, claims.UserID)
 			c.Set(ContextRoleKey, claims.Role)

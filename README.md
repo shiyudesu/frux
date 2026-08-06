@@ -110,10 +110,17 @@ docker exec frux-postgres \
   -c "UPDATE account SET role='admin' WHERE account='ops';"
 ```
 
-重新登录后访问：
+角色更新后不要复用普通用户登录态，直接访问独立后台登录页：
+
+```text
+http://127.0.0.1:5173/admin/login
+```
+
+后台使用独立 `admin_access` Token 和当前标签页的 `sessionStorage`，不会覆盖普通用户登录。登录成功后访问：
 
 | 页面 | 地址 |
 | --- | --- |
+| 后台登录 | `http://127.0.0.1:5173/admin/login` |
 | 审核任务 | `http://127.0.0.1:5173/admin/reviews` |
 | 视频运营 | `http://127.0.0.1:5173/admin/videos` |
 | RabbitMQ 队列与 DLQ | `http://127.0.0.1:15672` |

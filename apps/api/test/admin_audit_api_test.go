@@ -112,7 +112,7 @@ func TestAdminAuditAPIFlow(t *testing.T) {
 	handler := interfaceshttpadmin.New(interfaceshttpadmin.WithAuditQueryService(auditService))
 	router := server.New(server.WithDisablePrintRoute(true))
 	api := router.Group("/api")
-	admin := api.Group("/admin", interfaceshttpmiddleware.NewJWTAuth(jwtManager))
+	admin := api.Group("/admin", interfaceshttpmiddleware.NewAdminJWTAuth(jwtManager))
 	admin.GET(
 		"/audit-events",
 		interfaceshttpmiddleware.NewRequireAdminPermission(

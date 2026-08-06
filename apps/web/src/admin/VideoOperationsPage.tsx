@@ -5,7 +5,7 @@ import {
   takeDownAdminVideo
 } from "../api/videoAdmin";
 import { ApiError, apiErrorMessage } from "../api/client";
-import { useSession } from "../session";
+import { useAdminSession } from "./adminSession";
 import type {
   AdminEnforcementRequest,
   AdminVideo,
@@ -29,7 +29,7 @@ export const defaultAdminVideoFilters = (now = new Date()): AdminVideoSearchFilt
 type VideoPageState = "loading" | "ready" | "empty" | "error" | "forbidden";
 
 export function VideoOperationsPage() {
-  const { token } = useSession();
+  const { token } = useAdminSession();
   const [draftFilters, setDraftFilters] = useState<AdminVideoSearchFilters>(defaultAdminVideoFilters);
   const [appliedFilters, setAppliedFilters] = useState<AdminVideoSearchFilters>(defaultAdminVideoFilters);
   const [items, setItems] = useState<AdminVideo[]>([]);

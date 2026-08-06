@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { claimReviewCase, fetchReviewQueue } from "../api/review";
 import { ApiError, apiErrorMessage } from "../api/client";
 import { useNavigate } from "../router";
-import { useSession } from "../session";
 import type { ReviewQueueItem, ReviewQueueScope } from "../types";
+import { useAdminSession } from "./adminSession";
 import { rememberReviewLease } from "./reviewLeaseMemory";
 
 type QueueState = "loading" | "ready" | "empty" | "error" | "forbidden";
@@ -40,7 +40,7 @@ function initialSnapshots(): Record<ReviewQueueScope, QueueSnapshot> {
 }
 
 export function ReviewQueuePage() {
-  const { token, adminPrincipal } = useSession();
+  const { token, principal } = useAdminSession();
   const navigate = useNavigate();
   const [scope, setScope] = useState<ReviewQueueScope>("available");
   const [snapshots, setSnapshots] = useState(initialSnapshots);
@@ -50,7 +50,7 @@ export function ReviewQueuePage() {
   const generations = useRef<Record<ReviewQueueScope, number>>({
     available: 0, mine: 0, recent: 0
   });
-  const canDecide = adminPrincipal?.permissions.includes("review.decide") || false;
+  const canDecide = principal?.permissions.includes("review.decide") || false;
   const active = snapshots[scope];
 
   const updateSnapshot = useCallback((
@@ -96,14 +96,20 @@ export function ReviewQueuePage() {
       });
     } catch (error: unknown) {
       if (generations.current[target] !== requestGeneration) return;
+      if (error instanceof ApiError && error.status === 403) {
+        const forbidden = {
+          ...emptySnapshot(),
+          state: "forbidden" as const,
+          message: apiErrorMessage(error, "服务端拒绝了审核任务访问")
+        };
+        setSnapshots({
+          available: { ...forbidden },
+          mine: { ...forbidden },
+          recent: { ...forbidden }
+        });
+        return;
+      }
       updateSnapshot(target, (current) => {
-        if (error instanceof ApiError && error.status === 403) {
-          return {
-            ...emptySnapshot(),
-            state: "forbidden",
-            message: apiErrorMessage(error, "服务端拒绝了审核任务访问")
-          };
-        }
         return {
           ...current,
           state: append && current.items.length > 0 ? "ready" : "error",

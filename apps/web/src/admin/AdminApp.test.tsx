@@ -2,8 +2,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchAdminPrincipal } from "../api/admin";
-import { ApiError } from "../api/client";
+import { fetchAdminPrincipal, loginAdmin } from "../api/admin";
+import { ADMIN_AUTH_INVALID_EVENT, ApiError } from "../api/client";
 import { fetchUnreadStat } from "../api/messages";
 import {
   claimReviewCase,
@@ -25,10 +25,11 @@ import { RouterProvider } from "../router";
 import { SessionProvider } from "../session";
 import type { ReviewCaseDetail } from "../types";
 import AdminApp from "./AdminApp";
+import { ADMIN_SESSION_KEY } from "./adminSession";
 import { forgetReviewLease } from "./reviewLeaseMemory";
 import { defaultAdminVideoFilters } from "./VideoOperationsPage";
 
-vi.mock("../api/admin", () => ({ fetchAdminPrincipal: vi.fn() }));
+vi.mock("../api/admin", () => ({ fetchAdminPrincipal: vi.fn(), loginAdmin: vi.fn() }));
 vi.mock("../api/messages", () => ({ fetchUnreadStat: vi.fn() }));
 vi.mock("../api/review", () => ({
   claimReviewCase: vi.fn(),
@@ -60,6 +61,16 @@ describe("admin content operations workspace", () => {
     localStorage.setItem(USER_KEY, JSON.stringify({
       ...emptyProfile, id: 7, nickname: "Reviewer", role: "reviewer"
     }));
+    sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
+      version: 1,
+      token: "admin-token",
+      principal: {
+        user_id: 7,
+        role: "reviewer",
+        permissions: ["review.read", "review.decide"]
+      },
+      expires_at: Date.now() + 30 * 60 * 1000
+    }));
     vi.mocked(fetchUnreadStat).mockResolvedValue({ unread_count: 0 });
     vi.mocked(fetchReviewQueue).mockResolvedValue({
       items: [], next_cursor: "", has_more: false, scope: "available"
@@ -75,6 +86,7 @@ describe("admin content operations workspace", () => {
     act(() => root.unmount());
     container.remove();
     localStorage.clear();
+    sessionStorage.clear();
     forgetReviewLease(1);
     forgetReviewLease(2);
     forgetReviewLease(3);
@@ -89,6 +101,93 @@ describe("admin content operations workspace", () => {
     await renderAdmin();
     expect(container.textContent).toContain("审核任务");
     expect(container.textContent).not.toContain("视频运营");
+  });
+
+  it("routes direct admin navigation to the dedicated login without reusing consumer auth", async () => {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/admin/reviews");
+      await renderAdmin();
+      expect(window.location.pathname).toBe("/admin/login");
+      expect(new URLSearchParams(window.location.search).get("return")).toBe("/admin/reviews");
+      expect(container.textContent).toContain("登录运营后台");
+      expect([...container.querySelectorAll("button")]
+        .some((item) => item.textContent?.trim() === "注册")).toBe(false);
+      expect(loginAdmin).not.toHaveBeenCalled();
+  });
+
+  it("discards malformed persisted admin state", async () => {
+      sessionStorage.setItem(ADMIN_SESSION_KEY, '{"version":1,"token":42}');
+      window.history.replaceState({}, "", "/admin/videos");
+      await renderAdmin();
+      expect(window.location.pathname).toBe("/admin/login");
+      expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toBeNull();
+  });
+
+  it("keeps consumer and admin sessions isolated through login and logout", async () => {
+      sessionStorage.clear();
+      vi.mocked(loginAdmin).mockResolvedValue({
+        access_token: "dedicated-admin-token",
+        token_type: "Bearer",
+        expires_in_seconds: 1800,
+        principal: {
+          user_id: 7,
+          role: "reviewer",
+          permissions: ["review.read", "review.decide"]
+        }
+      });
+      window.history.replaceState({}, "", "/admin/login?return=%2Fadmin%2Freviews");
+      await renderAdmin();
+      const account = required<HTMLInputElement>('input[autocomplete="username"]');
+        const password = required<HTMLInputElement>('input[autocomplete="current-password"]');
+        await act(async () => {
+        setInputValue(account, "reviewer");
+        setInputValue(password, "Password123!");
+        await flush();
+      });
+      await clickButton("登录后台");
+      expect(loginAdmin).toHaveBeenCalledWith("reviewer", "Password123!");
+      expect(window.location.pathname).toBe("/admin/reviews");
+      expect(localStorage.getItem(TOKEN_KEY)).toBe("admin-token");
+      expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toContain("dedicated-admin-token");
+      await clickButton("退出后台");
+      expect(window.location.pathname).toBe("/admin/login");
+      expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toBeNull();
+      expect(localStorage.getItem(TOKEN_KEY)).toBe("admin-token");
+  });
+
+  it("clears only the admin session after an authoritative 401 event", async () => {
+      vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+        user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+      });
+      window.history.replaceState({}, "", "/admin/reviews");
+      await renderAdmin();
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent(ADMIN_AUTH_INVALID_EVENT, {
+          detail: { token: "old-admin-token" }
+        }));
+        await flush();
+      });
+      expect(window.location.pathname).toBe("/admin/reviews");
+      expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toContain("admin-token");
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent(ADMIN_AUTH_INVALID_EVENT, {
+          detail: { token: "admin-token" }
+        }));
+        await flush();
+      });
+      expect(window.location.pathname).toBe("/admin/login");
+      expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toBeNull();
+      expect(localStorage.getItem(TOKEN_KEY)).toBe("admin-token");
+  });
+
+  it("renders authorization service failure without exposing admin data", async () => {
+      vi.mocked(fetchAdminPrincipal).mockRejectedValue(
+        new ApiError("unavailable", 503, "ADMIN_AUTHORIZATION_UNAVAILABLE")
+      );
+      window.history.replaceState({}, "", "/admin/reviews");
+      await renderAdmin();
+      expect(container.textContent).toContain("后台会话暂时无法验证");
+      expect(container.querySelector("table")).toBeNull();
   });
 
   it("preserves evidence and disables decisions after lease expiry", async () => {
@@ -183,6 +282,8 @@ describe("admin content operations workspace", () => {
     expect(container.textContent).toContain("服务端拒绝了审核任务访问");
     expect(container.querySelector("table")).toBeNull();
     expect(container.textContent).not.toContain("Cached subject");
+    await clickButton("我正在审核");
+    expect(container.querySelector("table")).toBeNull();
   });
 
   it("keeps queue scope states isolated", async () => {
@@ -467,6 +568,12 @@ describe("admin content operations workspace", () => {
     const element = container.querySelector<T>(selector);
     if (!element) throw new Error(`missing element: ${selector}`);
     return element;
+  }
+
+  function setInputValue(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 });
 

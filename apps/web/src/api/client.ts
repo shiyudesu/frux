@@ -18,6 +18,8 @@ export class ApiError extends Error {
   }
 }
 
+export const ADMIN_AUTH_INVALID_EVENT = "frux:admin-auth-invalid";
+
 /** 只有显式使用该类型创建的前端文案才允许展示给用户。 */
 export class UserFacingError extends Error {
   constructor(message: string) {
@@ -85,6 +87,9 @@ const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   INTERACTION_IDEMPOTENCY_CONFLICT: "操作状态已变化，请刷新后重试",
   RELATION_IDEMPOTENCY_CONFLICT: "操作状态已变化，请刷新后重试",
   VIDEO_IDEMPOTENCY_CONFLICT: "操作状态已变化，请刷新后重试",
+  ADMIN_AUTH_INVALID_CREDENTIALS: "管理员账号或密码错误",
+  ADMIN_AUTH_INVALID_ACCESS_TOKEN: "后台登录状态已失效，请重新登录",
+  ADMIN_AUTHENTICATION_UNAVAILABLE: "后台登录服务暂时不可用，请稍后重试",
   ADMIN_PERMISSION_DENIED: "当前账号没有所需运营权限",
   ADMIN_AUTHORIZATION_UNAVAILABLE: "运营权限暂时无法验证，请稍后重试",
   ADMIN_VIDEO_VALIDATION_FAILED: "视频运营参数有误，请检查后重试",
@@ -182,6 +187,14 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
       if (data.code) code = data.code;
     } catch {
       message = response.statusText || message;
+    }
+    if (response.status === 401 &&
+      path.startsWith("/api/admin/") &&
+      path !== "/api/admin/auth/login" &&
+      typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(ADMIN_AUTH_INVALID_EVENT, {
+        detail: { token: options.token || "" }
+      }));
     }
     throw new ApiError(message, response.status, code);
   }

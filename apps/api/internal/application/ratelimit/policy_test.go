@@ -31,6 +31,7 @@ func TestDefaultRegistryPreservesPlaybackBurstQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default registry: %v", err)
 	}
+
 	policy, err := registry.Require(PolicyPlaybackTelemetry)
 	if err != nil {
 		t.Fatalf("require playback policy: %v", err)
@@ -39,5 +40,28 @@ func TestDefaultRegistryPreservesPlaybackBurstQuota(t *testing.T) {
 		policy.Normal.Local.Algorithm != AlgorithmFixedWindow ||
 		policy.Normal.Local.Window != time.Minute {
 		t.Fatalf("unexpected playback quota: %+v", policy.Normal.Local)
+	}
+}
+
+func TestDefaultRegistryUsesRefillableAdminLoginQuotas(t *testing.T) {
+	registry, err := DefaultRegistry(60, 75*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := registry.Require(PolicyAdminLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, quota := range []Quota{
+		policy.Normal.Local,
+		policy.Normal.Distributed,
+		policy.Normal.Fallback,
+		policy.Emergency.Local,
+		policy.Emergency.Distributed,
+		policy.Emergency.Fallback,
+	} {
+		if quota.Algorithm == AlgorithmFixedWindow || quota.RefillPerSecond <= 0 {
+			t.Fatalf("admin login quota is not refillable: %+v", quota)
+		}
 	}
 }
