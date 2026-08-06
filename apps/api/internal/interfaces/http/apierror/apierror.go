@@ -69,6 +69,11 @@ const (
 
 	CodeMessageValidationFailed = "MESSAGE_VALIDATION_FAILED"
 
+	CodeReviewValidationFailed = "REVIEW_VALIDATION_FAILED"
+	CodeReviewCaseNotFound     = "REVIEW_CASE_NOT_FOUND"
+	CodeReviewConflict         = "REVIEW_CONFLICT"
+	CodeReviewUnavailable      = "REVIEW_UNAVAILABLE"
+
 	CodeLibraryValidationFailed   = "LIBRARY_VALIDATION_FAILED"
 	CodeLibraryVideoNotFound      = "LIBRARY_VIDEO_NOT_FOUND"
 	CodeLibraryLikedVideosPrivate = "LIBRARY_LIKED_VIDEOS_PRIVATE"

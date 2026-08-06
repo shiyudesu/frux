@@ -150,3 +150,14 @@ play/complete 和反馈率；任何错误或降级恶化、snapshot hit 明显�
 恶化时停止扩量并回滚到 v1。请求日志保存用于离线归因，不作为 Prometheus 标签；日志落库失败
 应记录有界 failure metric 但不能影响 Feed 响应。snapshot 的 `hit/miss` 只表示读取结果；
 `write_success/write_failure` 单独表示写入，避免以写入量污染命中率。
+
+## 10. Automated review observability
+
+自动审核使用 `frux_review_events_total{stage,result}`。stage 仅允许 `intake`、
+`provider_result`、`routing`、`reconciliation`；result 仅允许 created、existing、accepted、
+approve、reject、human、duplicate、invalid、conflict、retry、success 或 unknown。不得把
+provider、model version、policy version、video、case、result identity 或证据引用放入标签。
+
+`retry` 持续增长时先区分数据库/媒体发布失败和 reconciliation 失败；`invalid` 增长表示生产者
+契约或边界不一致；`duplicate` 可随至少一次投递正常增长，但同身份异载荷会记为 conflict。
+任何 provider 不可用都必须让视频保持 pending-review，不能通过降级路径发布。

@@ -417,6 +417,7 @@ func videoResponseFromDomain(video *domainvideo.Video) videoResponse {
 		MediaAssetID:    video.MediaAssetID,
 		CoverAssetID:    video.CoverAssetID,
 		MediaStatus:     video.MediaStatus,
+		ReviewVersion:   video.ReviewVersion,
 		MediaErrorCode:  video.MediaErrorCode,
 		PlaybackSources: video.PlaybackSources,
 	}

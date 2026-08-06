@@ -1,0 +1,33 @@
+package domainreview
+
+import "errors"
+
+var (
+	ErrInvalidCaseID           = errors.New("review case id must be positive")
+	ErrInvalidVideoID          = errors.New("review video id must be positive")
+	ErrInvalidReviewVersion    = errors.New("review version must be positive")
+	ErrInvalidPolicyVersion    = errors.New("review policy version must be positive")
+	ErrInvalidCaseStatus       = errors.New("invalid review case status")
+	ErrInvalidDecisionOutcome  = errors.New("invalid review decision outcome")
+	ErrInvalidResultIdentity   = errors.New("invalid review result identity")
+	ErrResultIdentityConflict  = errors.New("review result identity conflict")
+	ErrInvalidProvider         = errors.New("invalid review provider")
+	ErrInvalidModelVersion     = errors.New("invalid review model version")
+	ErrInvalidSignal           = errors.New("invalid review signal")
+	ErrInvalidConfidence       = errors.New("review confidence must be between zero and one")
+	ErrTooManySignals          = errors.New("too many review signals")
+	ErrTooManyEvidenceRefs     = errors.New("too many review evidence references")
+	ErrEvidenceRefTooLong      = errors.New("review evidence reference is too long")
+	ErrEvidenceTooLarge        = errors.New("review evidence is too large")
+	ErrInvalidPolicy           = errors.New("invalid review policy")
+	ErrUnknownPolicyLabel      = errors.New("unknown review policy label")
+	ErrDuplicatePolicyLabel    = errors.New("duplicate review policy label")
+	ErrInvalidPolicyThreshold  = errors.New("invalid review policy threshold")
+	ErrReviewCaseNotFound      = errors.New("review case not found")
+	ErrReviewCaseNotOpen       = errors.New("review case is not open")
+	ErrReviewCaseAlreadyExists = errors.New("review case already exists")
+	ErrReviewPolicyNotFound    = errors.New("review policy not found")
+	ErrReviewSubjectNotReady   = errors.New("review subject is not ready")
+	ErrReviewSubjectStale      = errors.New("review subject version is stale")
+	ErrReviewSubjectState      = errors.New("review subject state does not allow review")
+)

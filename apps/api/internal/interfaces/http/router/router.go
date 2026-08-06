@@ -14,6 +14,7 @@ import (
 	applicationplayback "github.com/shiyudesu/frux/internal/application/playback"
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	applicationrelation "github.com/shiyudesu/frux/internal/application/relation"
+	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
@@ -37,6 +38,7 @@ import (
 	infraplayback "github.com/shiyudesu/frux/internal/infra/persistence/playback"
 	infrarecommendation "github.com/shiyudesu/frux/internal/infra/persistence/recommendation"
 	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
+	infrareview "github.com/shiyudesu/frux/internal/infra/persistence/review"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
@@ -49,6 +51,7 @@ import (
 	interfaceshttpplayback "github.com/shiyudesu/frux/internal/interfaces/http/playback"
 	interfaceshttprecommendation "github.com/shiyudesu/frux/internal/interfaces/http/recommendation"
 	interfaceshttprelation "github.com/shiyudesu/frux/internal/interfaces/http/relation"
+	interfaceshttpreview "github.com/shiyudesu/frux/internal/interfaces/http/review"
 	interfaceshttpsearch "github.com/shiyudesu/frux/internal/interfaces/http/search"
 	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 	interfaceshttpvideo "github.com/shiyudesu/frux/internal/interfaces/http/video"
@@ -221,6 +224,21 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
 	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
 	mediaPublicationService := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
+	reviewRepo := infrareview.New(gormDB)
+	reviewObserver := reviewMetricsAdapter{}
+	var reviewPublisher applicationvideo.PublishedEventPublisher
+	if rabbitMQ != nil {
+		reviewPublisher = rabbitMQ
+	}
+	reviewService := applicationreview.New(
+		reviewRepo,
+		applicationreview.WithObserver(reviewObserver),
+		applicationreview.WithOutcomeApplier(reviewOutcomeApplier{
+			videoReader: videoRepo, mediaPublication: mediaPublicationService,
+			publisher: reviewPublisher, cacheInvalidator: feedCache,
+		}),
+	)
+	reviewHandler := interfaceshttpreview.New(reviewService, reviewObserver)
 	videoManagementOptions := []applicationvideo.ManagementOption{
 		applicationvideo.WithManagementMediaCleanup(mediaCleanupService),
 		applicationvideo.WithManagementMediaPublisher(mediaPublicationService),
@@ -236,6 +254,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videoOptions = append(videoOptions, applicationvideo.WithMediaAssets(mediaRepo))
 	videoOptions = append(videoOptions, applicationvideo.WithMediaDelivery(mediaCatalog))
 	videoOptions = append(videoOptions, applicationvideo.WithMediaCleanup(mediaCleanupService))
+	videoOptions = append(videoOptions, applicationvideo.WithReviewIntake(videoReviewIntakeAdapter{service: reviewService}))
 	videoService := applicationvideo.New(videoRepo, videoOptions...)
 	videoHandler := interfaceshttpvideo.New(videoService, videoManagementService)
 	searchService := applicationsearch.New(videoRepo, accountRepo)
@@ -399,6 +418,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		internal.POST("/exposures", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), recommendationHandler.SaveExposures)
 		internal.POST("/messages", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), messageHandler.Create)
 		internal.POST("/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), playbackHandler.CreateInternalQoSReport)
+		internal.PUT("/review/cases/:caseId/machine-results/:resultId", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), reviewHandler.PutMachineResult)
 	}
 
 	infrahttphertz.RegisterTrailingSlashRedirects(h)

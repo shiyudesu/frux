@@ -105,6 +105,9 @@ func TestNewVideosStartPendingReviewWithoutPublicationTime(t *testing.T) {
 		if video.Status != StatusPendingReview || video.PublishedAt != nil || video.IsPubliclyReadable() {
 			t.Fatalf("unexpected new video lifecycle: %+v", video)
 		}
+		if video.ReviewVersion != 1 || !video.HasCurrentReviewVersion(1) || video.HasCurrentReviewVersion(0) {
+			t.Fatalf("unexpected review version: %+v", video)
+		}
 	}
 }
 

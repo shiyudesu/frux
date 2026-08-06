@@ -32,6 +32,7 @@ type videoWithStatModel struct {
 	CoverAssetID   *int64
 	MediaStatus    string
 	MediaErrorCode string
+	ReviewVersion  int
 	Status         int
 	Visibility     string
 	LikeCount      int
@@ -103,6 +104,7 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 			CoverAssetID:   positiveInt64Ptr(video.CoverAssetID),
 			MediaStatus:    video.MediaStatus,
 			MediaErrorCode: video.MediaErrorCode,
+			ReviewVersion:  video.ReviewVersion,
 			Status:         video.Status,
 			Visibility:     video.Visibility,
 			PublishedAt:    video.PublishedAt,
@@ -502,7 +504,7 @@ func restoreVideoWithSources(model videoWithStatModel, sources []domainmedia.Pla
 	if model.CoverAssetID != nil {
 		coverAssetID = *model.CoverAssetID
 	}
-	return domainvideo.RestoreVideoWithMedia(
+	return domainvideo.RestoreVideoWithReviewVersion(
 		model.ID,
 		model.AuthorID,
 		model.Title,
@@ -523,12 +525,13 @@ func restoreVideoWithSources(model videoWithStatModel, sources []domainmedia.Pla
 		model.MediaErrorCode,
 		sources,
 		coverAssetID,
+		model.ReviewVersion,
 	)
 }
 
 // videoWithStatSelect 统一视频详情查询字段，避免多个查询写重复 SQL 字段列表。
 func videoWithStatSelect() string {
-	return "v.id, v.author_id, v.title, v.description, v.media_url, v.cover_url, v.media_asset_id, v.cover_asset_id, v.media_status, v.media_error_code, v.status, v.visibility, COALESCE(vs.like_count, 0) AS like_count, COALESCE(vs.comment_count, 0) AS comment_count, COALESCE(vs.favorite_count, 0) AS favorite_count, v.published_at, v.idempotency_key, v.created_at, v.updated_at"
+	return "v.id, v.author_id, v.title, v.description, v.media_url, v.cover_url, v.media_asset_id, v.cover_asset_id, v.media_status, v.media_error_code, v.review_version, v.status, v.visibility, COALESCE(vs.like_count, 0) AS like_count, COALESCE(vs.comment_count, 0) AS comment_count, COALESCE(vs.favorite_count, 0) AS favorite_count, v.published_at, v.idempotency_key, v.created_at, v.updated_at"
 }
 
 // idempotencyKeyPtr 将空幂等键存为 NULL，配合唯一索引允许普通创建多次执行。

@@ -21,6 +21,7 @@ type Service struct {
 	mediaAssets      MediaAssetReader
 	mediaDelivery    MediaDeliveryResolver
 	mediaCleanup     MediaCleanupScheduler
+	reviewIntake     ReviewIntake
 }
 
 type PublishedEventPublisher interface {
@@ -47,6 +48,10 @@ type MediaDeliveryResolver interface {
 
 type MediaCleanupScheduler interface {
 	ScheduleMediaCleanup(ctx context.Context, mediaAssetID, coverAssetID int64) error
+}
+
+type ReviewIntake interface {
+	EnsureReviewCase(ctx context.Context, videoID int64) error
 }
 
 type Option func(*Service)
@@ -98,6 +103,12 @@ func WithMediaDelivery(resolver MediaDeliveryResolver) Option {
 func WithMediaCleanup(scheduler MediaCleanupScheduler) Option {
 	return func(s *Service) {
 		s.mediaCleanup = scheduler
+	}
+}
+
+func WithReviewIntake(intake ReviewIntake) Option {
+	return func(s *Service) {
+		s.reviewIntake = intake
 	}
 }
 
@@ -175,6 +186,7 @@ func (s *Service) ensureReadyAssetPublication(ctx context.Context, video *domain
 	if err != nil {
 		return nil, ErrLoadVideoFailed
 	}
+	s.ensureReviewCase(ctx, updated)
 	return &CreateResult{Video: updated, Created: created}, nil
 }
 
@@ -189,6 +201,7 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, de
 		// 客户端重试同一次创建请求时，先通过作者和幂等键找回原视频。
 		existing, err := s.repo.FindByAuthorAndIdempotencyKey(ctx, authorID, idempotencyKey)
 		if err == nil {
+			s.ensureReviewCase(ctx, existing)
 			return &CreateResult{Video: existing, Created: false}, nil
 		}
 		if !errors.Is(err, domainvideo.ErrVideoNotFound) {
@@ -218,7 +231,16 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, de
 		}
 		return nil, ErrSaveVideoFailed
 	}
+	s.ensureReviewCase(ctx, video)
 	return &CreateResult{Video: video, Created: true}, nil
+}
+
+func (s *Service) ensureReviewCase(ctx context.Context, video *domainvideo.Video) {
+	if s.reviewIntake == nil || video == nil || video.Status != domainvideo.StatusPendingReview ||
+		!domainmedia.IsPublicReadyStatus(video.MediaStatus) {
+		return
+	}
+	_ = s.reviewIntake.EnsureReviewCase(ctx, video.ID)
 }
 
 func (s *Service) publishCreatedVideo(ctx context.Context, video *domainvideo.Video) error {

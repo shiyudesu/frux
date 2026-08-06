@@ -57,6 +57,7 @@
 | `cover_asset_id` | BIGINT | NULLABLE | 生产封面资产 |
 | `media_status` | VARCHAR(24) | NOT NULL | `legacy_ready` / `processing` / `ready` / `failed` |
 | `media_error_code` | VARCHAR(64) | NOT NULL | 处理失败代码 |
+| `review_version` | INTEGER | NOT NULL, DEFAULT 1, CHECK > 0 | 当前审核主体版本 |
 | `status` | SMALLINT | NOT NULL, DEFAULT 5 | 1 草稿 / 2 已发布 / 3 下架 / 4 删除 / 5 待审核 / 6 已拒绝 |
 | `visibility` | VARCHAR(16) | NOT NULL, DEFAULT `public` | `public` / `private`，独立于生命周期 |
 | `published_at` | TIMESTAMPTZ | NULLABLE | 发布时间 |
@@ -117,6 +118,8 @@
 | 规则 | 说明 |
 | --- | --- |
 | 创建进入待审 | 生产媒体和兼容 URL 创建均返回 `status=5`、`published_at=null` |
+| 审核版本 | 新视频从 `review_version=1` 开始；自动审核案件与结果必须匹配当前正整数版本 |
+| 媒体就绪触发审核 | legacy-ready 创建和生产媒体 ready 通知都会幂等创建当前版本案件；周期 reconciliation 修复遗漏 |
 | 审核转换 | 待审可幂等批准为已发布或拒绝；批准首次设置 `published_at` |
 | 处罚与恢复 | 已发布可下架；下架恢复时保留原始 `published_at`；删除状态为终态 |
 | 历史视频默认公开 | 迁移将空可见性补为 `public` |

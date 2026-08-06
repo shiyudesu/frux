@@ -14,8 +14,10 @@ import (
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
@@ -31,6 +33,7 @@ import (
 	migration "github.com/shiyudesu/frux/internal/infra/persistence/migration"
 	infrarecommendation "github.com/shiyudesu/frux/internal/infra/persistence/recommendation"
 	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
+	infrareview "github.com/shiyudesu/frux/internal/infra/persistence/review"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 
 	gormpostgres "gorm.io/driver/postgres"
@@ -178,6 +181,15 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	mediaCatalog := inframedia.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
 	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
 	mediaPublication := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
+	reviewService := applicationreview.New(
+		infrareview.New(gormDB),
+		applicationreview.WithObserver(workerReviewObserver{}),
+	)
+	reviewReconciler := applicationreview.NewReconciliationWorker(reviewService)
+	if err := reviewReconciler.RunOnce(ctx); err != nil {
+		log.Printf("initial review reconciliation failed: %v", err)
+	}
+	reviewReconciler.Start(ctx)
 	mediaCleanup := applicationmedia.NewCleanupService(
 		mediaRepo, mediaStore, cfg.Media.Backend, cleanupDelay, cfg.Media.Processing.MaxAttempts,
 	)
@@ -195,9 +207,45 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	}
 	mediaWorker := applicationmedia.NewMediaProcessingWorker(
 		mediaRepo, mediaProcessor, rabbitMQ, leaseTTL, cfg.Media.Processing.WorkerConcurrency,
-		applicationmedia.WithMediaStateNotifier(mediaPublication),
+		applicationmedia.WithMediaStateNotifier(reviewMediaReadyNotifier{
+			publication: mediaPublication, videoRepo: videoRepo, reviewService: reviewService,
+		}),
 	)
 	return mediaWorker.Start(ctx)
+}
+
+type workerReviewObserver struct{}
+
+func (workerReviewObserver) Observe(stage, result string) {
+	inframetrics.ObserveReview(stage, result)
+}
+
+type reviewMediaReadyNotifier struct {
+	publication   *applicationvideo.MediaPublicationService
+	videoRepo     *infravideo.Repository
+	reviewService *applicationreview.Service
+}
+
+func (n reviewMediaReadyNotifier) MediaReady(ctx context.Context, assetID int64) error {
+	if err := n.publication.MediaReady(ctx, assetID); err != nil {
+		return err
+	}
+	videos, err := n.videoRepo.ListByMediaAssetID(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	for _, video := range videos {
+		if video != nil && video.Status == domainvideo.StatusPendingReview {
+			if _, _, err := n.reviewService.EnsureCase(ctx, video.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (n reviewMediaReadyNotifier) MediaFailed(ctx context.Context, assetID int64, errorCode string) error {
+	return n.publication.MediaFailed(ctx, assetID, errorCode)
 }
 
 type commentNotificationMessageWriter struct {

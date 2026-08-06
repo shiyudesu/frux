@@ -16,6 +16,7 @@ import (
 	infraplayback "github.com/shiyudesu/frux/internal/infra/persistence/playback"
 	infrarecommendation "github.com/shiyudesu/frux/internal/infra/persistence/recommendation"
 	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
+	infrareview "github.com/shiyudesu/frux/internal/infra/persistence/review"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 
 	"gorm.io/gorm"
@@ -85,6 +86,11 @@ func AutoMigrate(db *gorm.DB) error {
 			&infrarecommendation.RequestLogModel{},
 			&infrarecommendation.ServedCandidateEvidenceModel{},
 			&infrarecommendation.OutcomeModel{},
+			&infrareview.CaseModel{},
+			&infrareview.ResultModel{},
+			&infrareview.SignalModel{},
+			&infrareview.DecisionModel{},
+			&infrareview.PolicyModel{},
 			&infrainteraction.ActionModel{},
 			&infrainteraction.ActionEventModel{},
 			&infrainteraction.ActionIdempotencyReceiptModel{},
@@ -157,6 +163,12 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := infrarecommendation.EnsureInitialPolicies(tx); err != nil {
+			return err
+		}
+		if err := infrareview.EnsurePolicyIndexes(tx); err != nil {
+			return err
+		}
+		if err := infrareview.EnsureInitialPolicy(tx); err != nil {
 			return err
 		}
 		return infrafeed.EnsureTimelineIndex(tx)

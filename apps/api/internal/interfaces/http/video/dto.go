@@ -61,6 +61,7 @@ type videoResponse struct {
 	MediaAssetID    int64                        `json:"media_asset_id,omitempty"`
 	CoverAssetID    int64                        `json:"cover_asset_id,omitempty"`
 	MediaStatus     string                       `json:"media_status"`
+	ReviewVersion   int                          `json:"review_version"`
 	MediaErrorCode  string                       `json:"media_error_code,omitempty"`
 	PlaybackSources []domainmedia.PlaybackSource `json:"playback_sources,omitempty"`
 }

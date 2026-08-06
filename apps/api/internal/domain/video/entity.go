@@ -43,6 +43,7 @@ type Video struct {
 	CoverAssetID    int64
 	MediaStatus     string
 	MediaErrorCode  string
+	ReviewVersion   int
 	PlaybackSources []domainmedia.PlaybackSource
 }
 
@@ -81,7 +82,7 @@ func NewProcessing(authorID int64, title, description string, mediaAssetID, cove
 		AuthorID: authorID, Title: title, Description: description,
 		Status: StatusPendingReview, Visibility: VisibilityPublic,
 		IdempotencyKey: idempotencyKey, MediaAssetID: mediaAssetID, CoverAssetID: coverAssetID,
-		MediaStatus: domainmedia.MediaStatusProcessing,
+		MediaStatus: domainmedia.MediaStatusProcessing, ReviewVersion: 1,
 	}, nil
 }
 
@@ -127,6 +128,7 @@ func NewPublished(authorID int64, title, description, mediaURL, coverURL, idempo
 		Visibility:     VisibilityPublic,
 		IdempotencyKey: idempotencyKey,
 		MediaStatus:    domainmedia.MediaStatusLegacyReady,
+		ReviewVersion:  1,
 	}, nil
 }
 
@@ -197,6 +199,37 @@ func RestoreVideoWithMedia(
 	playbackSources []domainmedia.PlaybackSource,
 	coverAssetID int64,
 ) *Video {
+	return RestoreVideoWithReviewVersion(
+		id, authorID, title, description, mediaURL, coverURL, status, visibility,
+		likeCount, commentCount, favoriteCount, publishedAt, createdAt, updatedAt,
+		idempotencyKey, mediaAssetID, mediaStatus, mediaErrorCode, playbackSources,
+		coverAssetID, 1,
+	)
+}
+
+func RestoreVideoWithReviewVersion(
+	id int64,
+	authorID int64,
+	title string,
+	description string,
+	mediaURL string,
+	coverURL string,
+	status int,
+	visibility string,
+	likeCount int,
+	commentCount int,
+	favoriteCount int,
+	publishedAt *time.Time,
+	createdAt time.Time,
+	updatedAt time.Time,
+	idempotencyKey string,
+	mediaAssetID int64,
+	mediaStatus string,
+	mediaErrorCode string,
+	playbackSources []domainmedia.PlaybackSource,
+	coverAssetID int64,
+	reviewVersion int,
+) *Video {
 	title = strings.TrimSpace(title)
 	description = strings.TrimSpace(description)
 	mediaURL = strings.TrimSpace(mediaURL)
@@ -214,6 +247,9 @@ func RestoreVideoWithMedia(
 	mediaStatus = strings.ToLower(strings.TrimSpace(mediaStatus))
 	if !domainmedia.ValidMediaStatus(mediaStatus) {
 		mediaStatus = domainmedia.MediaStatusLegacyReady
+	}
+	if reviewVersion <= 0 {
+		reviewVersion = 1
 	}
 
 	return &Video{
@@ -236,8 +272,13 @@ func RestoreVideoWithMedia(
 		CoverAssetID:    coverAssetID,
 		MediaStatus:     mediaStatus,
 		MediaErrorCode:  strings.TrimSpace(mediaErrorCode),
+		ReviewVersion:   reviewVersion,
 		PlaybackSources: domainmedia.SortPlaybackSources(playbackSources),
 	}
+}
+
+func (v *Video) HasCurrentReviewVersion(version int) bool {
+	return v != nil && v.ReviewVersion > 0 && version == v.ReviewVersion
 }
 
 func (v *Video) SetVisibilityBy(authorID int64, visibility string) error {

@@ -489,6 +489,34 @@ flowchart TB
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
+### 5.1 自动审核链路
+
+```mermaid
+sequenceDiagram
+  participant Media as Media Worker / legacy create
+  participant Review as Review Service
+  participant DB as PostgreSQL
+  participant Producer as Moderation Producer
+  participant Delivery as Media Publication
+
+  Media->>Review: ready pending video
+  Review->>DB: lock video + create-or-get (video_id, review_version)
+  Producer->>Review: internal-token bounded machine result
+  Review->>DB: lock result identity, case, video
+  Review->>DB: insert immutable signals + decision
+  alt reject
+    Review->>DB: close case + reject video atomically
+  else human
+    Review->>DB: pending_human; video remains pending
+  else approve
+    Review->>DB: close case + publish lifecycle atomically
+    Review->>Delivery: promote ready media / publish event
+  end
+```
+
+机器结果与供应商实现解耦；策略版本和证据 provenance 保存在 PostgreSQL。未知 label 保留但
+保守进入人审。媒体 ready 事件重复安全，Worker reconciliation 会补建 ready pending 视频的遗漏案件。
+
 ## 6. 说明
 
 - 当前代码以 Go API 承载同步 HTTP，用 Worker 消费互动、发布、曝光预热、嵌入和媒体处理事件；内部按接口层、应用层、领域层、基础设施层组织。

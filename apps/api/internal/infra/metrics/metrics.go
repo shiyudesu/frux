@@ -181,6 +181,10 @@ var (
 		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_invalid_attributions_total", Help: "Rejected recommendation attributions by bounded outcome type."},
 		[]string{"outcome"},
 	)
+	ReviewEventsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "review_events_total", Help: "Automated review events by bounded stage and result."},
+		[]string{"stage", "result"},
+	)
 
 	ViewEventOutboxDispatchTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -273,6 +277,7 @@ func init() {
 		RecommendationActivePolicyVersion,
 		RecommendationOutcomesTotal,
 		RecommendationInvalidAttributionsTotal,
+		ReviewEventsTotal,
 		MediaObjectOperationsTotal,
 		MediaObjectOperationDuration,
 		MediaProcessingResultsTotal,
@@ -280,6 +285,29 @@ func init() {
 		MediaReconciliationIssuesTotal,
 		MediaCleanupBacklog,
 	)
+}
+
+func ObserveReview(stage, result string) {
+	ReviewEventsTotal.WithLabelValues(reviewStageLabel(stage), reviewResultLabel(result)).Inc()
+}
+
+func reviewStageLabel(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "intake", "provider_result", "routing", "reconciliation":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func reviewResultLabel(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "created", "existing", "accepted", "approve", "reject", "human",
+		"duplicate", "invalid", "conflict", "retry", "success":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
 }
 
 func ObserveRecommendationRecall(provider string, count int) {

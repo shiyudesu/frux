@@ -1,0 +1,70 @@
+package infrareview
+
+import "time"
+
+type CaseModel struct {
+	ID            int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	VideoID       int64      `gorm:"column:video_id;not null;uniqueIndex:uk_review_case_video_version,priority:1;index:idx_review_case_status_created,priority:2"`
+	ReviewVersion int        `gorm:"column:review_version;not null;uniqueIndex:uk_review_case_video_version,priority:2"`
+	Status        string     `gorm:"column:status;size:32;not null;index:idx_review_case_status_created,priority:1"`
+	PolicyVersion int        `gorm:"column:policy_version;not null"`
+	CreatedAt     time.Time  `gorm:"column:created_at;not null;autoCreateTime;index:idx_review_case_status_created,priority:3"`
+	UpdatedAt     time.Time  `gorm:"column:updated_at;not null;autoUpdateTime"`
+	ClosedAt      *time.Time `gorm:"column:closed_at"`
+}
+
+func (CaseModel) TableName() string { return "review_case" }
+
+type ResultModel struct {
+	ID            int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	CaseID        int64     `gorm:"column:case_id;not null;index:idx_review_result_case"`
+	VideoID       int64     `gorm:"column:video_id;not null"`
+	ReviewVersion int       `gorm:"column:review_version;not null"`
+	Provider      string    `gorm:"column:provider;size:64;not null;uniqueIndex:uk_review_result_provider_identity,priority:1"`
+	ResultID      string    `gorm:"column:result_id;size:128;not null;uniqueIndex:uk_review_result_provider_identity,priority:2"`
+	PayloadHash   string    `gorm:"column:payload_hash;size:64;not null"`
+	ModelVersion  string    `gorm:"column:model_version;size:128;not null"`
+	PolicyVersion int       `gorm:"column:policy_version;not null"`
+	Outcome       string    `gorm:"column:outcome;size:16;not null"`
+	DecisionID    int64     `gorm:"column:decision_id;not null;default:0"`
+	CreatedAt     time.Time `gorm:"column:created_at;not null;autoCreateTime"`
+}
+
+func (ResultModel) TableName() string { return "review_machine_result" }
+
+type SignalModel struct {
+	ID               int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	CaseID           int64     `gorm:"column:case_id;not null;index:idx_review_signal_case_created,priority:1"`
+	ResultReceiptID  int64     `gorm:"column:result_receipt_id;not null;index:idx_review_signal_result"`
+	Label            string    `gorm:"column:label;size:64;not null"`
+	Confidence       float64   `gorm:"column:confidence;type:double precision;not null"`
+	EvidenceRefsJSON string    `gorm:"column:evidence_refs_json;type:jsonb;not null"`
+	Provider         string    `gorm:"column:provider;size:64;not null"`
+	ModelVersion     string    `gorm:"column:model_version;size:128;not null"`
+	PolicyVersion    int       `gorm:"column:policy_version;not null"`
+	CreatedAt        time.Time `gorm:"column:created_at;not null;autoCreateTime;index:idx_review_signal_case_created,priority:2"`
+}
+
+func (SignalModel) TableName() string { return "review_signal" }
+
+type DecisionModel struct {
+	ID              int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	CaseID          int64     `gorm:"column:case_id;not null;index:idx_review_decision_case_created,priority:1"`
+	ResultReceiptID int64     `gorm:"column:result_receipt_id;not null;uniqueIndex:uk_review_decision_result"`
+	Outcome         string    `gorm:"column:outcome;size:16;not null"`
+	PolicyVersion   int       `gorm:"column:policy_version;not null"`
+	CreatedAt       time.Time `gorm:"column:created_at;not null;autoCreateTime;index:idx_review_decision_case_created,priority:2"`
+}
+
+func (DecisionModel) TableName() string { return "review_decision" }
+
+type PolicyModel struct {
+	ID         int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	Version    int       `gorm:"column:version;not null;uniqueIndex:uk_review_policy_version"`
+	Enabled    bool      `gorm:"column:enabled;not null;default:false;index:idx_review_policy_enabled_version,priority:1"`
+	ConfigJSON string    `gorm:"column:config_json;type:jsonb;not null"`
+	CreatedAt  time.Time `gorm:"column:created_at;not null;autoCreateTime"`
+	UpdatedAt  time.Time `gorm:"column:updated_at;not null;autoUpdateTime;index:idx_review_policy_enabled_version,priority:2"`
+}
+
+func (PolicyModel) TableName() string { return "review_policy" }

@@ -445,7 +445,7 @@ openspec validate --all --strict
 - API 测试覆盖成功和失败路径。
 - 模块文档和产品状态更新。
 
-## 16. 上下文推荐工程约束
+## 16. 推荐与自动审核工程约束
 
 - 推荐 context 只使用 `domain/recommendation.RecommendationContext`；HTTP 必须严格绑定并拒绝
   超限/未知字段，客户端不提供身份、关系、曝光或任意 metadata。
@@ -460,3 +460,13 @@ openspec validate --all --strict
 - 推荐 API-flow 测试覆盖 context、认证、Provider 降级、策略、snapshot、反馈和 outcome；
   定向并发基准命令为
   `cd apps/api && go test ./internal/application/recommendation -run '^$' -bench '^BenchmarkRecommendBoundedPool$' -benchtime=5s`。
+- 自动审核以 `(video_id, review_version)` 唯一建案，视频 review version 必须为正数。机器结果
+  仅通过 internal-token PUT 接口写入，使用严格有界 JSON；`(provider, result_id)` 身份重放
+  必须比较规范化载荷哈希，同身份异载荷冲突。
+- review signal、decision 和 policy provenance 是不可变事实。策略配置必须恢复为 Domain typed
+  policy 后才能路由，优先级固定为 reject > human > approve；未知 label 保留证据但至少进入人审。
+  自动通过/拒绝的 result、signal、decision、case 和 video 转换必须在同一 PostgreSQL 事务及
+  行锁内提交，外部媒体提升或保护在提交后幂等执行。
+- 初始 review policy 只按版本 conflict-do-nothing 插入，不覆盖运营启停；ready pending 视频的
+  丢失 intake 由有界 reconciliation 修复。Prometheus 标签不得包含 provider、model、policy、
+  video、case 或 result identity。

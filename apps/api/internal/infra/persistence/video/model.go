@@ -14,6 +14,7 @@ type VideoModel struct {
 	CoverAssetID   *int64     `gorm:"column:cover_asset_id;index:idx_video_cover_asset;uniqueIndex:uk_video_cover_asset"`
 	MediaStatus    string     `gorm:"column:media_status;size:24;not null;default:legacy_ready;index:idx_video_public_timeline,priority:3"`
 	MediaErrorCode string     `gorm:"column:media_error_code;size:64;not null;default:''"`
+	ReviewVersion  int        `gorm:"column:review_version;not null;default:1;check:chk_video_review_version,review_version > 0"`
 	Status         int        `gorm:"column:status;type:smallint;not null;default:5;check:chk_video_status,status IN (1,2,3,4,5,6);index:idx_video_author_status,priority:2;index:idx_video_status_published,priority:1;index:idx_video_timeline,priority:1;index:idx_video_public_timeline,priority:1"`
 	Visibility     string     `gorm:"column:visibility;size:16;not null;default:public;index:idx_video_public_timeline,priority:2;index:idx_video_author_visibility_created,priority:2"`
 	PublishedAt    *time.Time `gorm:"column:published_at;index:idx_video_status_published,priority:2;index:idx_video_timeline,priority:2;index:idx_video_public_timeline,priority:4"`
