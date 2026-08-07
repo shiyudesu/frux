@@ -1,9 +1,14 @@
 import { memo, useCallback, useEffect, useRef } from "react";
-import { image } from "../constants";
 import { COMMENT_CONTENT_LIMIT, type CommentsController } from "../hooks/useComments";
 import type { Comment, SessionUser } from "../types";
 import type { PublicProfileInput } from "../utils";
-import { formatMetric, formatRelativeTime, profileFromComment, profileFromReplyTarget } from "../utils";
+import {
+  formatMetric,
+  formatRelativeTime,
+  profileFromComment,
+  profileFromReplyTarget,
+  publicUserAvatar
+} from "../utils";
 import { Icon } from "./Icon";
 import { CommentMessage } from "./StatusMessages";
 
@@ -163,7 +168,7 @@ export function ThreadedComments({
           void controller.submitComment();
         }}
       >
-        <img src={user.avatar_url || image.currentUser} alt="" />
+        <img src={publicUserAvatar(user.avatar_url)} alt="" />
         <div className="comment-composer">
           {controller.replyTarget && (
             <div className="comment-reply-context">
@@ -352,7 +357,7 @@ const CommentCard = memo(function CommentCard({
         <span className="comment-tombstone-icon"><Icon name="comment" size={18} /></span>
       ) : (
         <button className="comment-user-button" type="button" onClick={() => onOpenUser(profileFromComment(comment))}>
-          <img src={comment.user_avatar_url || image.currentUser} alt="" />
+          <img src={publicUserAvatar(comment.user_avatar_url)} alt="" />
         </button>
       )}
       <div className="comment-body">
@@ -363,6 +368,9 @@ const CommentCard = memo(function CommentCard({
             <button type="button" onClick={() => onOpenUser(profileFromComment(comment))}>
               {comment.user_nickname || `用户_${comment.user_id}`}
             </button>
+          )}
+          {!tombstone && comment.is_video_author && (
+            <span className="comment-author-marker">作者</span>
           )}
           <span>{formatRelativeTime(comment.created_at)}</span>
         </div>
@@ -385,6 +393,9 @@ const CommentCard = memo(function CommentCard({
           </p>
         )}
         <div className="comment-actions">
+          {!tombstone && comment.liked_by_video_author && (
+            <span className="comment-author-liked">作者赞过</span>
+          )}
           <button
             aria-label={comment.liked ? "取消点赞评论" : "点赞评论"}
             aria-pressed={comment.liked}

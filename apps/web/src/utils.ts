@@ -23,6 +23,10 @@ export function requiresAuthFeed(scene: string): boolean {
   return scene === "following" || scene === "recommend";
 }
 
+export function publicUserAvatar(avatarURL?: string | null): string {
+  return avatarURL?.trim() || image.currentUser;
+}
+
 export function createFeedRequestID(scene: string): string {
   const random = Math.random().toString(36).slice(2, 8);
   return `web-${scene}-${Date.now()}-${random}`;
@@ -85,7 +89,7 @@ export function mapFeedItem(item: FeedItem, feedScene = "timeline", requestID = 
     liked: Boolean(item.liked),
     favorited: Boolean(item.favorited),
     author: item.author_nickname || `创作者_${item.author_id}`,
-    avatar_url: item.author_avatar_url || image.creator,
+    avatar_url: publicUserAvatar(item.author_avatar_url),
     description: item.description || "",
     feed_scene: feedScene,
     request_id: requestID,
@@ -224,7 +228,9 @@ export function normalizePublicProfile(profile: PublicProfileInput | null | unde
     id,
     account: profile.account,
     nickname: profile.nickname || profile.author || profile.user_nickname || `用户_${id}`,
-    avatar_url: profile.avatar_url || profile.user_avatar_url || profile.author_avatar_url || image.currentUser,
+    avatar_url: publicUserAvatar(
+      profile.avatar_url || profile.user_avatar_url || profile.author_avatar_url
+    ),
     bio: profile.bio || profile.description || "",
     work_count: valueOrUndefined(profile.work_count ?? profile.workCount),
     gender: profile.gender,
@@ -247,7 +253,7 @@ export function profileFromFeedItem(item: FeedVideo): PublicProfileInput {
   return {
     id: item.author_id,
     nickname: item.author,
-    avatar_url: item.avatar_url,
+    avatar_url: publicUserAvatar(item.avatar_url),
     // 后端 DTO 没有 author_bio 字段，迁移前这里恒为 ""，行为等价
     bio: ""
   };
@@ -256,8 +262,9 @@ export function profileFromFeedItem(item: FeedVideo): PublicProfileInput {
 export function profileFromComment(comment: Comment): PublicProfileInput {
   return {
     id: comment.user_id,
+    ...(comment.user_account ? { account: comment.user_account } : {}),
     nickname: comment.user_nickname || `用户_${comment.user_id}`,
-    avatar_url: comment.user_avatar_url || image.currentUser,
+    avatar_url: publicUserAvatar(comment.user_avatar_url),
     bio: ""
   };
 }
@@ -265,8 +272,9 @@ export function profileFromComment(comment: Comment): PublicProfileInput {
 export function profileFromReplyTarget(comment: Comment): PublicProfileInput {
   return {
     id: comment.reply_to_user_id,
+    ...(comment.reply_to_user_account ? { account: comment.reply_to_user_account } : {}),
     nickname: comment.reply_to_user_nickname || `用户_${comment.reply_to_user_id}`,
-    avatar_url: comment.reply_to_user_avatar_url || image.currentUser,
+    avatar_url: publicUserAvatar(comment.reply_to_user_avatar_url),
     bio: ""
   };
 }

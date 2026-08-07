@@ -652,11 +652,13 @@ export interface Comment {
   id: number;
   video_id: number;
   user_id: number;
+  user_account: string;
   user_nickname: string;
   user_avatar_url: string;
   root_comment_id: number;
   reply_to_comment_id: number;
   reply_to_user_id: number;
+  reply_to_user_account: string;
   reply_to_user_nickname: string;
   reply_to_user_avatar_url: string;
   content: string;
@@ -667,6 +669,8 @@ export interface Comment {
   like_count: number;
   liked: boolean;
   can_delete: boolean;
+  is_video_author: boolean;
+  liked_by_video_author: boolean;
   hot_score: number;
   created_at: string;
   comment_count?: number;
@@ -696,6 +700,7 @@ export interface CommentLikeResponse {
   root_comment_id: number;
   liked: boolean;
   like_count: number;
+  liked_by_video_author: boolean;
 }
 
 export interface DeleteCommentResponse {

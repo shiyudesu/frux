@@ -108,12 +108,13 @@ func (CommentLikeModel) TableName() string {
 }
 
 type CommentLikeIdempotencyReceiptModel struct {
-	UserID         int64     `gorm:"column:user_id;primaryKey;autoIncrement:false"`
-	IdempotencyKey string    `gorm:"column:idempotency_key;size:128;primaryKey"`
-	CommentID      int64     `gorm:"column:comment_id;not null"`
-	Active         bool      `gorm:"column:active;not null"`
-	LikeCount      int       `gorm:"column:like_count;not null;default:0"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null;autoCreateTime"`
+	UserID             int64     `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	IdempotencyKey     string    `gorm:"column:idempotency_key;size:128;primaryKey"`
+	CommentID          int64     `gorm:"column:comment_id;not null"`
+	Active             bool      `gorm:"column:active;not null"`
+	LikeCount          int       `gorm:"column:like_count;not null;default:0"`
+	LikedByVideoAuthor *bool     `gorm:"column:liked_by_video_author"`
+	CreatedAt          time.Time `gorm:"column:created_at;not null;autoCreateTime"`
 }
 
 func (CommentLikeIdempotencyReceiptModel) TableName() string {

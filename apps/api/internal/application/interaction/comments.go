@@ -1,11 +1,11 @@
 package applicationinteraction
 
 import (
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"strings"
 	"time"
 )
@@ -30,10 +30,11 @@ type ThreadContextResult struct {
 }
 
 type CommentLikeResult struct {
-	CommentID     int64
-	RootCommentID int64
-	Liked         bool
-	LikeCount     int
+	CommentID          int64
+	RootCommentID      int64
+	Liked              bool
+	LikeCount          int
+	LikedByVideoAuthor bool
 }
 
 type replyCursorPayload struct {
@@ -173,10 +174,11 @@ func (s *Service) setCommentLike(ctx context.Context, commentID int64, userID in
 		return nil, ErrUpdateInteractionFailed
 	}
 	return &CommentLikeResult{
-		CommentID:     result.CommentID,
-		RootCommentID: result.RootCommentID,
-		Liked:         result.Liked,
-		LikeCount:     result.LikeCount,
+		CommentID:          result.CommentID,
+		RootCommentID:      result.RootCommentID,
+		Liked:              result.Liked,
+		LikeCount:          result.LikeCount,
+		LikedByVideoAuthor: result.LikedByVideoAuthor,
 	}, nil
 }
 

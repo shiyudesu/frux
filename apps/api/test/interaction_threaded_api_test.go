@@ -36,12 +36,17 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 	if reply2.RootCommentID != root.ID || reply2.ReplyToCommentID != reply1.ID || reply2.ReplyToUserID != reply1.UserID {
 		t.Fatalf("reply-to-reply was not flattened with its direct target: %+v", reply2)
 	}
+	if !reply2.IsVideoAuthor || reply2.UserAccount != memoryInteractionAccount(42) ||
+		reply2.ReplyToUserAccount != memoryInteractionAccount(reply1.UserID) {
+		t.Fatalf("video author reply identity markers are incorrect: %+v", reply2)
+	}
 
 	likeResponse := performVideoJSONRequest(router, http.MethodPut, "/api/comments/1/like", "", videoAuthorToken, "comment-like-1")
 	requireStatus(t, likeResponse, http.StatusOK)
 	var liked interactionCommentLikeAPIResponse
 	decodeJSON(t, likeResponse, &liked)
-	if !liked.Liked || liked.LikeCount != 1 || liked.RootCommentID != root.ID {
+	if !liked.Liked || liked.LikeCount != 1 || liked.RootCommentID != root.ID ||
+		!liked.LikedByVideoAuthor {
 		t.Fatalf("unexpected comment like response: %+v", liked)
 	}
 	replayLike := performVideoJSONRequest(router, http.MethodPut, "/api/comments/1/like", "", videoAuthorToken, "comment-like-1")
@@ -58,6 +63,8 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 		len(hotPage.Items[0].ReplyPreviews) != domaininteraction.ReplyPreviewLimit ||
 		hotPage.Items[0].ReplyPreviews[0].ID != reply1.ID ||
 		hotPage.Items[0].HotScore != 23 || !hotPage.Items[0].Liked || !hotPage.Items[0].CanDelete ||
+		hotPage.Items[0].UserAccount != memoryInteractionAccount(root.UserID) ||
+		!hotPage.Items[0].LikedByVideoAuthor ||
 		!hotPage.HasMore || hotPage.NextCursor == "" {
 		t.Fatalf("unexpected hydrated hot page: %+v", hotPage)
 	}
@@ -75,7 +82,8 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 	requireStatus(t, anonymousResponse, http.StatusOK)
 	var anonymousPage interactionCommentListAPIResponse
 	decodeJSON(t, anonymousResponse, &anonymousPage)
-	if anonymousPage.Items[0].Liked || anonymousPage.Items[0].CanDelete {
+	if anonymousPage.Items[0].Liked || anonymousPage.Items[0].CanDelete ||
+		!anonymousPage.Items[0].LikedByVideoAuthor {
 		t.Fatalf("anonymous viewer received private state: %+v", anonymousPage.Items[0])
 	}
 	rootAuthorResponse := performJSONRequest(router, http.MethodGet, "/api/videos/1001/comments?sort=hot&limit=1", "", rootAuthorToken)
@@ -156,8 +164,19 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 	requireStatus(t, unlikeResponse, http.StatusOK)
 	var unliked interactionCommentLikeAPIResponse
 	decodeJSON(t, unlikeResponse, &unliked)
-	if unliked.Liked || unliked.LikeCount != 0 {
+	if unliked.Liked || unliked.LikeCount != 0 || unliked.LikedByVideoAuthor {
 		t.Fatalf("unexpected comment unlike response: %+v", unliked)
+	}
+	replayOriginalLikeAfterUnlike := performVideoJSONRequest(
+		router, http.MethodPut, "/api/comments/1/like", "",
+		videoAuthorToken, "comment-like-1",
+	)
+	requireStatus(t, replayOriginalLikeAfterUnlike, http.StatusOK)
+	var replayedOriginalLike interactionCommentLikeAPIResponse
+	decodeJSON(t, replayOriginalLikeAfterUnlike, &replayedOriginalLike)
+	if !replayedOriginalLike.Liked || replayedOriginalLike.LikeCount != 1 ||
+		!replayedOriginalLike.LikedByVideoAuthor {
+		t.Fatalf("original like replay changed its response: %+v", replayedOriginalLike)
 	}
 	replayUnlike := performVideoJSONRequest(router, http.MethodDelete, "/api/comments/1/like", "", videoAuthorToken, "comment-unlike-1")
 	requireStatus(t, replayUnlike, http.StatusOK)
@@ -178,6 +197,12 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 	requireStatus(t, tombstoneResponse, http.StatusOK)
 	var tombstonePage interactionCommentListAPIResponse
 	decodeJSON(t, tombstoneResponse, &tombstonePage)
+	for _, item := range tombstonePage.Items {
+		if item.ID == root.ID && (item.UserID != 0 || item.UserAccount != "" ||
+			item.IsVideoAuthor || item.LikedByVideoAuthor) {
+			t.Fatalf("tombstone leaked identity markers: %+v", item)
+		}
+	}
 	if tombstonePage.Items[0].ID != root.ID || tombstonePage.Items[0].UserID != 0 ||
 		tombstonePage.Items[0].Content != "" || !tombstonePage.Items[0].Deleted {
 		t.Fatalf("self-deleted root did not project as a safe tombstone: %+v", tombstonePage.Items[0])

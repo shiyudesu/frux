@@ -1,7 +1,6 @@
-import { image } from "../constants";
 import type { FeedVideo } from "../types";
 import type { PublicProfileInput } from "../utils";
-import { formatMetric, profileFromFeedItem } from "../utils";
+import { formatMetric, profileFromFeedItem, publicUserAvatar } from "../utils";
 
 interface VideoDetailsProps {
   item: FeedVideo | null;
@@ -13,7 +12,7 @@ export function VideoDetails({ item, onOpenUser }: VideoDetailsProps) {
   return (
     <div className="details-content">
       <button className="details-author" type="button" onClick={() => onOpenUser(profileFromFeedItem(item))}>
-        <img src={item.avatar_url || image.creator} alt="" />
+        <img src={publicUserAvatar(item.avatar_url)} alt="" />
         <span>
           <strong>@{item.author}</strong>
           <small>查看作者主页</small>

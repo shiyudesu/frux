@@ -1,15 +1,15 @@
 package infrainteraction
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
-	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -21,11 +21,13 @@ type threadedCommentRow struct {
 	ID                   int64
 	VideoID              int64
 	UserID               int64
+	UserAccount          string
 	UserNickname         string
 	UserAvatarURL        string
 	RootCommentID        *int64
 	ReplyToCommentID     *int64
 	ReplyToUserID        *int64
+	ReplyToUserAccount   string
 	ReplyToUserNickname  string
 	ReplyToUserAvatarURL string
 	Content              string
@@ -33,6 +35,8 @@ type threadedCommentRow struct {
 	ReplyCount           int
 	LikeCount            int
 	HotScore             int64
+	IsVideoAuthor        bool
+	LikedByVideoAuthor   bool
 	RequestFingerprint   string
 	IdempotencyKey       *string
 	CreatedAt            time.Time
@@ -407,7 +411,8 @@ func (r *Repository) SetCommentLike(ctx context.Context, commentID int64, userID
 			}
 			return err
 		}
-		if _, err := lockPublishedVideo(tx, identity.VideoID); err != nil {
+		video, err := lockPublishedVideo(tx, identity.VideoID)
+		if err != nil {
 			return err
 		}
 		var comment CommentModel
@@ -438,6 +443,18 @@ func (r *Repository) SetCommentLike(ctx context.Context, commentID int64, userID
 				}
 				result = domaininteraction.CommentLikeResult{
 					CommentID: commentID, RootCommentID: rootID, Liked: active, LikeCount: receipt.LikeCount,
+				}
+				switch {
+				case receipt.LikedByVideoAuthor != nil:
+					result.LikedByVideoAuthor = *receipt.LikedByVideoAuthor
+				case userID == video.AuthorID:
+					result.LikedByVideoAuthor = receipt.Active
+				default:
+					likedByAuthor, err := commentLikedByUser(tx, video.AuthorID, commentID)
+					if err != nil {
+						return err
+					}
+					result.LikedByVideoAuthor = likedByAuthor
 				}
 				return nil
 			}
@@ -507,10 +524,16 @@ func (r *Repository) SetCommentLike(ctx context.Context, commentID int64, userID
 		result = domaininteraction.CommentLikeResult{
 			CommentID: comment.ID, RootCommentID: rootID, Liked: active, LikeCount: comment.LikeCount,
 		}
+		likedByAuthor, err := commentLikedByUser(tx, video.AuthorID, comment.ID)
+		if err != nil {
+			return err
+		}
+		result.LikedByVideoAuthor = likedByAuthor
 		if idempotencyKey != "" {
 			if err := tx.Create(&CommentLikeIdempotencyReceiptModel{
 				UserID: userID, IdempotencyKey: idempotencyKey, CommentID: commentID,
 				Active: active, LikeCount: comment.LikeCount,
+				LikedByVideoAuthor: commentBoolPtr(result.LikedByVideoAuthor),
 			}).Error; err != nil {
 				return err
 			}
@@ -791,6 +814,7 @@ func requireVisibleVideoQuery(query *gorm.DB, alias string) *gorm.DB {
 func (r *Repository) commentRows(db *gorm.DB) *gorm.DB {
 	return db.Table("interaction_comment AS c").
 		Select(threadedCommentSelect()).
+		Joins("JOIN video AS comment_video ON comment_video.id = c.video_id").
 		Joins("LEFT JOIN account AS author ON author.id = c.user_id").
 		Joins("LEFT JOIN interaction_comment AS target ON target.id = c.reply_to_comment_id").
 		Joins("LEFT JOIN account AS target_author ON target_author.id = target.user_id")
@@ -798,12 +822,21 @@ func (r *Repository) commentRows(db *gorm.DB) *gorm.DB {
 
 func threadedCommentSelect() string {
 	return `c.id, c.video_id, c.user_id,
+		author.account AS user_account,
 		author.nickname AS user_nickname, author.avatar_url AS user_avatar_url,
 		c.root_comment_id, c.reply_to_comment_id,
 		CASE WHEN target.status = 1 THEN target.user_id END AS reply_to_user_id,
+		CASE WHEN target.status = 1 THEN target_author.account ELSE '' END AS reply_to_user_account,
 		CASE WHEN target.status = 1 THEN target_author.nickname ELSE '' END AS reply_to_user_nickname,
 		CASE WHEN target.status = 1 THEN target_author.avatar_url ELSE '' END AS reply_to_user_avatar_url,
 		c.content, c.status, c.reply_count, c.like_count, c.hot_score,
+		(c.user_id = comment_video.author_id) AS is_video_author,
+		EXISTS (
+			SELECT 1 FROM interaction_comment_like AS video_author_like
+			WHERE video_author_like.comment_id = c.id
+			  AND video_author_like.user_id = comment_video.author_id
+			  AND video_author_like.status = 1
+		) AS liked_by_video_author,
 		c.request_fingerprint, c.idempotency_key, c.created_at, c.updated_at`
 }
 
@@ -907,7 +940,7 @@ func restoreThreadedComments(rows []threadedCommentRow) []*domaininteraction.Com
 }
 
 func restoreThreadedComment(row threadedCommentRow) *domaininteraction.Comment {
-	return domaininteraction.RestoreThreadedComment(
+	comment := domaininteraction.RestoreThreadedComment(
 		row.ID, row.VideoID, row.UserID, row.UserNickname, row.UserAvatarURL,
 		nullableInt64Value(row.RootCommentID), nullableInt64Value(row.ReplyToCommentID),
 		nullableInt64Value(row.ReplyToUserID), row.ReplyToUserNickname, row.ReplyToUserAvatarURL,
@@ -915,6 +948,11 @@ func restoreThreadedComment(row threadedCommentRow) *domaininteraction.Comment {
 		row.RequestFingerprint, idempotencyKeyValue(row.IdempotencyKey), false, false,
 		row.CreatedAt, row.UpdatedAt,
 	)
+	comment.UserAccount = strings.TrimSpace(row.UserAccount)
+	comment.ReplyToUserAccount = strings.TrimSpace(row.ReplyToUserAccount)
+	comment.IsVideoAuthor = row.IsVideoAuthor
+	comment.LikedByVideoAuthor = row.LikedByVideoAuthor
+	return comment
 }
 
 func restoreThreadedCommentModel(model CommentModel) *domaininteraction.Comment {
@@ -925,6 +963,23 @@ func restoreThreadedCommentModel(model CommentModel) *domaininteraction.Comment 
 		model.HotScore, model.RequestFingerprint, idempotencyKeyValue(model.IdempotencyKey),
 		false, false, model.CreatedAt, model.UpdatedAt,
 	)
+}
+
+func commentLikedByUser(
+	tx *gorm.DB,
+	userID int64,
+	commentID int64,
+) (bool, error) {
+	var count int64
+	err := tx.Model(&CommentLikeModel{}).
+		Where("user_id = ? AND comment_id = ? AND status = ?",
+			userID, commentID, domaininteraction.ActionStatusActive).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func commentBoolPtr(value bool) *bool {
+	return &value
 }
 
 func nullableInt64Value(value *int64) int64 {

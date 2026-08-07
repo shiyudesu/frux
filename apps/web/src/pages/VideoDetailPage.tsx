@@ -11,7 +11,7 @@ import { usePlayerPreferences } from "../hooks/usePlayerPreferences";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
 import type { FeedVideo, PublicUserProfile, Video } from "../types";
-import { openPublicProfile } from "../utils";
+import { openPublicProfile, publicUserAvatar } from "../utils";
 
 interface VideoDetailPageProps {
   videoID: number;
@@ -161,7 +161,7 @@ function mapVideoDetail(video: Video, profile: PublicUserProfile | null): FeedVi
     liked: false,
     favorited: false,
     author: profile?.nickname || `创作者_${video.author_id}`,
-    avatar_url: profile?.avatar_url || image.creator,
+    avatar_url: publicUserAvatar(profile?.avatar_url),
     description: video.description || "",
     feed_scene: "video_detail",
     request_id: `video-detail-${video.id}`,

@@ -49,14 +49,17 @@ func (r *memoryInteractionRepo) CreateThreadedComment(_ context.Context, input *
 	r.nextCommentID++
 	comment.RootCommentID = rootID
 	comment.RequestFingerprint = fingerprint
+	comment.UserAccount = memoryInteractionAccount(comment.UserID)
 	comment.UserNickname = memoryInteractionNickname(comment.UserID)
 	comment.UserAvatarURL = memoryInteractionAvatar(comment.UserID)
+	comment.IsVideoAuthor = comment.UserID == r.videos[comment.VideoID].AuthorID
 	comment.CanDelete = true
 	comment.CreatedAt = now
 	comment.UpdatedAt = now
 	if comment.ReplyToCommentID > 0 {
 		target := r.comments[comment.ReplyToCommentID]
 		comment.ReplyToUserID = target.UserID
+		comment.ReplyToUserAccount = target.UserAccount
 		comment.ReplyToUserNickname = target.UserNickname
 		comment.ReplyToUserAvatarURL = target.UserAvatarURL
 	}
@@ -214,6 +217,7 @@ func (r *memoryInteractionRepo) SetCommentLike(_ context.Context, commentID int6
 			return &domaininteraction.CommentLikeResult{
 				CommentID: commentID, RootCommentID: comment.EffectiveRootCommentID(),
 				Liked: active, LikeCount: receipt.LikeCount,
+				LikedByVideoAuthor: receipt.LikedByVideoAuthor,
 			}, nil
 		}
 	}
@@ -230,13 +234,16 @@ func (r *memoryInteractionRepo) SetCommentLike(_ context.Context, commentID int6
 		}
 	}
 	if idempotencyKey != "" {
+		likedByVideoAuthor := r.commentLikes[int64String(r.videos[comment.VideoID].AuthorID)+":"+int64String(commentID)]
 		r.commentLikeIdem[int64String(userID)+":"+idempotencyKey] = memoryCommentLikeReceipt{
 			CommentID: commentID, Active: active, LikeCount: comment.LikeCount,
+			LikedByVideoAuthor: likedByVideoAuthor,
 		}
 	}
 	return &domaininteraction.CommentLikeResult{
 		CommentID: commentID, RootCommentID: comment.EffectiveRootCommentID(),
 		Liked: active, LikeCount: comment.LikeCount,
+		LikedByVideoAuthor: r.commentLikes[int64String(r.videos[comment.VideoID].AuthorID)+":"+int64String(commentID)],
 	}, nil
 }
 
@@ -354,6 +361,8 @@ func (r *memoryInteractionRepo) applyMemoryViewer(comment *domaininteraction.Com
 	comment.CanDelete = viewer.UserID > 0 &&
 		(comment.UserID == viewer.UserID || videoAuthorID == viewer.UserID || viewer.Role == domainaccount.RoleAdmin)
 	comment.Liked = viewer.UserID > 0 && r.commentLikes[int64String(viewer.UserID)+":"+int64String(comment.ID)]
+	comment.IsVideoAuthor = comment.UserID == videoAuthorID
+	comment.LikedByVideoAuthor = r.commentLikes[int64String(videoAuthorID)+":"+int64String(comment.ID)]
 }
 
 func memoryRootAfterCursor(comment *domaininteraction.Comment, cursor *domaininteraction.CommentCursor, sortMode string) bool {

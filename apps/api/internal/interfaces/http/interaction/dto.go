@@ -21,11 +21,13 @@ type commentResponse struct {
 	ID                   int64             `json:"id"`
 	VideoID              int64             `json:"video_id"`
 	UserID               int64             `json:"user_id,omitempty"`
+	UserAccount          string            `json:"user_account,omitempty"`
 	UserNickname         string            `json:"user_nickname"`
 	UserAvatarURL        string            `json:"user_avatar_url"`
 	RootCommentID        int64             `json:"root_comment_id"`
 	ReplyToCommentID     int64             `json:"reply_to_comment_id"`
 	ReplyToUserID        int64             `json:"reply_to_user_id"`
+	ReplyToUserAccount   string            `json:"reply_to_user_account,omitempty"`
 	ReplyToUserNickname  string            `json:"reply_to_user_nickname,omitempty"`
 	ReplyToUserAvatarURL string            `json:"reply_to_user_avatar_url,omitempty"`
 	Content              string            `json:"content"`
@@ -36,6 +38,8 @@ type commentResponse struct {
 	LikeCount            int               `json:"like_count"`
 	Liked                bool              `json:"liked"`
 	CanDelete            bool              `json:"can_delete"`
+	IsVideoAuthor        bool              `json:"is_video_author"`
+	LikedByVideoAuthor   bool              `json:"liked_by_video_author"`
 	HotScore             int64             `json:"hot_score"`
 	CreatedAt            time.Time         `json:"created_at"`
 	CommentCount         int               `json:"comment_count,omitempty"`
@@ -68,10 +72,11 @@ type threadContextResponse struct {
 }
 
 type commentLikeResponse struct {
-	CommentID     int64 `json:"comment_id"`
-	RootCommentID int64 `json:"root_comment_id"`
-	Liked         bool  `json:"liked"`
-	LikeCount     int   `json:"like_count"`
+	CommentID          int64 `json:"comment_id"`
+	RootCommentID      int64 `json:"root_comment_id"`
+	Liked              bool  `json:"liked"`
+	LikeCount          int   `json:"like_count"`
+	LikedByVideoAuthor bool  `json:"liked_by_video_author"`
 }
 
 // deleteCommentResponse 是删除评论后的状态响应。

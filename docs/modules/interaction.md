@@ -192,14 +192,16 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | 字段 | 说明 |
 | --- | --- |
 | `id`, `video_id` | 评论和父视频 ID |
-| `user_*` | 作者展示信息；根评论墓碑中清空 |
+| `user_id`, `user_account`, `user_nickname`, `user_avatar_url` | 来自统一 account 事实源的作者公开身份；根评论墓碑中清空 |
 | `root_comment_id` | 根评论为 `0`/省略，回复为所属根 ID |
-| `reply_to_comment_id`, `reply_to_user_*` | 直接回复目标 |
+| `reply_to_comment_id`, `reply_to_user_id/account/nickname/avatar_url` | 仍可见的直接回复目标身份 |
 | `content`, `created_at` | 正文和创建时间 |
 | `status`, `deleted` | 软状态和删除投影 |
 | `reply_count`, `reply_previews` | 活跃回复总数和最多 3 条预览 |
 | `like_count`, `liked` | 评论获赞数和当前 viewer 状态 |
 | `can_delete` | 服务端按评论作者、视频作者或管理员身份计算 |
+| `is_video_author` | 评论者是否为父视频作者 |
+| `liked_by_video_author` | 父视频作者当前是否点赞该评论，独立于 viewer 的 `liked` |
 | `hot_score` | 根评论物化热度；回复为 0 |
 | `comment_count` | 创建响应中的视频最新评论总数 |
 
@@ -239,7 +241,7 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | `cursor` | 空 | 上一页 opaque 游标 |
 | `limit` | 20 | 最大 100 |
 
-响应包含 `items`、`next_cursor`、`has_more`、视频 `comment_count` 和实际 `sort`。根列表只返回正常根评论，以及仍有活跃回复的作者自删根墓碑。每个根最多批量水合 3 条按时间正序的活跃回复预览；作者、直接目标、viewer 点赞和权限均采用有界批量查询，不随根数量产生 N+1。
+响应包含 `items`、`next_cursor`、`has_more`、视频 `comment_count` 和实际 `sort`。根列表只返回正常根评论，以及仍有活跃回复的作者自删根墓碑。每个根最多批量水合 3 条按时间正序的活跃回复预览；canonical account、直接目标、视频作者身份、作者点赞、viewer 点赞和权限均采用共享 set-based 查询，不随根数量产生 N+1。
 
 | 模式 | 排序元组 | 游标内容 |
 | --- | --- | --- |
@@ -262,7 +264,7 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 
 #### PUT/DELETE `/api/comments/{commentId}/like`
 
-仅登录用户可调用，父视频和目标评论必须仍可公开互动。`Idempotency-Key` 最长 128 字符，在 `user_id + key` 范围绑定 `comment_id + active`。响应包含 `comment_id`、`root_comment_id`、`liked`、`like_count`。
+仅登录用户可调用，父视频和目标评论必须仍可公开互动。`Idempotency-Key` 最长 128 字符，在 `user_id + key` 范围绑定 `comment_id + active`。响应包含 `comment_id`、`root_comment_id`、`liked`、`like_count`、`liked_by_video_author`。
 
 真实状态转换才增减 `like_count`；重复设置同一状态成功且计数不变。同键改绑其他评论或相反状态返回 409。根评论获赞会在同一事务重算根热度；回复获赞只更新回复自身计数。首次点赞他人评论创建稳定的 `COMMENT_LIKE` Outbox 事件，取消再点赞不会重复通知。
 
@@ -427,6 +429,8 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 5. 根点赞、回复创建/删除和整串治理在同一事务更新相关计数与根热度，所有计数下限为 0。
 6. 回复点赞可见但不向上影响根热度。
 7. 应用层同时同步评论数缓存，并按实际视频评论增量更新现有视频热榜分数。
+8. `is_video_author` 由不可变 `video.author_id` 与评论 `user_id` 比较；`liked_by_video_author` 由视频作者的 active comment-like 事实派生，不写入评论表。
+9. 评论身份始终从当前 account 行投影公开 account、昵称和头像；评论模块不维护独立账号或头像副本。
 
 ### 6.3 可见性和删除
 
@@ -434,7 +438,7 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 - 不可读视频统一按 404 处理，缓存或消息深链不能绕过数据库可见性校验。
 - viewer 的 `liked` 和 `can_delete` 由服务端计算；匿名值为 false。
 - 已有评论的授权删除不依赖父视频仍公开，便于作者和治理人员处理私密、下架或删除视频上的历史评论。
-- 根作者墓碑公开投影会清除作者 ID、昵称、头像、正文、点赞状态、删除权限和公开点赞数，但保留活跃回复。
+- 根作者墓碑公开投影会清除作者 ID/account/昵称/头像、正文、点赞状态、删除权限、两种作者标识和公开点赞数，但保留活跃回复。
 
 ### 6.4 耐久通知 Outbox
 
@@ -481,8 +485,8 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | 范围 | 已覆盖行为 |
 | --- | --- |
 | Domain/Application | Unicode 1000 code-point 边界、payload 指纹、回复根解析、回复回复扁平化、sort 游标、热度增量和所有删除模式 |
-| API flow | 兼容根创建、热门/最新页、跨 sort 拒绝、回复页、3 条预览、可选 viewer、评论点赞、权限、幂等冲突、隐藏视频 |
-| PostgreSQL | schema/backfill/index、稳定排序、有界水合查询数、点赞/回复/视频计数、并发差量 reconciliation、治理级联、重复迁移 |
+| API flow | 兼容根创建、热门/最新页、跨 sort 拒绝、回复页、3 条预览、canonical account、作者/作者赞过、可选 viewer、评论点赞、权限、幂等冲突、隐藏视频 |
+| PostgreSQL | schema/backfill/index、稳定排序、有界身份/标识水合查询数、作者点赞/取消点赞、点赞/回复/视频计数、并发差量 reconciliation、治理级联、重复迁移 |
 | Message/Outbox | 根/回复/评论点赞事件、自通知抑制、瞬时重试、稳定去重、结构化目标、terminal 错误和 legacy 消息 |
 | Frontend state/API | 分页合并去重、sort 切换、展开、草稿隔离、创建重放、乐观点赞回滚、删除、登录态切换和直接 thread context |
 | Components/router | 桌面面板、移动 sheet、墓碑、治理确认、回复目标、字符限制、焦点恢复、typed 路由、高亮和不可用讨论 |
@@ -495,7 +499,7 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | Feed 视频操作栏 | 调用视频点赞/收藏状态接口，使用返回计数刷新按钮 |
 | 个人主页喜欢/收藏 Tab | library 聚合有效行为索引并补齐视频卡片 |
 | Feed 详情/评论面板 | Web 默认热门，可切最新；根分页、3 条回复预览、展开/收起和回复继续加载 |
-| 评论卡片 | 根/回复点赞采用局部乐观更新，确认或回滚只重绘目标卡片并保持其他线程、滚动、展开、草稿和焦点状态；直接回复标签、服务端权限删除；治理整串前确认，作者自删根显示墓碑 |
+| 评论卡片 | 使用统一 account 身份和头像 fallback；视频作者评论显示“作者”，作者点赞显示“作者赞过”；根/回复点赞采用局部乐观更新，确认或回滚只重绘目标卡片并保持其他线程、滚动、展开、草稿和焦点状态；直接回复标签、服务端权限删除；治理整串前确认，作者自删根显示墓碑 |
 | 评论 Composer | 多行输入、每视频草稿、回复目标/取消、Unicode 计数、提交/错误独立状态 |
 | 视频讨论页 | typed `/videos/{videoId}?comment={rootId}&highlight={targetId}`，复用视频和评论组件 |
 | 消息深链 | 直接加载 thread context、展开根、滚动并短暂高亮目标；不可用时显示安全状态 |

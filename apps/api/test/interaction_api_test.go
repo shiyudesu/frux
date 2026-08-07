@@ -36,11 +36,13 @@ type interactionCommentAPIResponse struct {
 	ID                  int64                           `json:"id"`
 	VideoID             int64                           `json:"video_id"`
 	UserID              int64                           `json:"user_id"`
+	UserAccount         string                          `json:"user_account"`
 	UserNickname        string                          `json:"user_nickname"`
 	UserAvatarURL       string                          `json:"user_avatar_url"`
 	RootCommentID       int64                           `json:"root_comment_id"`
 	ReplyToCommentID    int64                           `json:"reply_to_comment_id"`
 	ReplyToUserID       int64                           `json:"reply_to_user_id"`
+	ReplyToUserAccount  string                          `json:"reply_to_user_account"`
 	ReplyToUserNickname string                          `json:"reply_to_user_nickname"`
 	Content             string                          `json:"content"`
 	Status              int                             `json:"status"`
@@ -50,6 +52,8 @@ type interactionCommentAPIResponse struct {
 	LikeCount           int                             `json:"like_count"`
 	Liked               bool                            `json:"liked"`
 	CanDelete           bool                            `json:"can_delete"`
+	IsVideoAuthor       bool                            `json:"is_video_author"`
+	LikedByVideoAuthor  bool                            `json:"liked_by_video_author"`
 	HotScore            int64                           `json:"hot_score"`
 	CreatedAt           time.Time                       `json:"created_at"`
 	CommentCount        int                             `json:"comment_count"`
@@ -81,10 +85,11 @@ type interactionThreadContextAPIResponse struct {
 }
 
 type interactionCommentLikeAPIResponse struct {
-	CommentID     int64 `json:"comment_id"`
-	RootCommentID int64 `json:"root_comment_id"`
-	Liked         bool  `json:"liked"`
-	LikeCount     int   `json:"like_count"`
+	CommentID          int64 `json:"comment_id"`
+	RootCommentID      int64 `json:"root_comment_id"`
+	Liked              bool  `json:"liked"`
+	LikeCount          int   `json:"like_count"`
+	LikedByVideoAuthor bool  `json:"liked_by_video_author"`
 }
 
 type interactionDeleteCommentAPIResponse struct {
@@ -140,9 +145,10 @@ type memoryInteractionRepo struct {
 }
 
 type memoryCommentLikeReceipt struct {
-	CommentID int64
-	Active    bool
-	LikeCount int
+	CommentID          int64
+	Active             bool
+	LikeCount          int
+	LikedByVideoAuthor bool
 }
 
 type memoryHotScoreRecorder struct {
@@ -1600,6 +1606,10 @@ func memoryInteractionNickname(userID int64) string {
 		return "user-77"
 	}
 	return "user"
+}
+
+func memoryInteractionAccount(userID int64) string {
+	return "account-" + int64String(userID)
 }
 
 // memoryInteractionAvatar 为测试评论补齐用户头像。

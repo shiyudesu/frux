@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Comment, DeleteCommentResponse } from "../types";
 import {
   applyCommentLikeRollback,
+  applyConfirmedCommentLike,
   applyCommentViewerTransition,
   applyCreatedComment,
   applyDeletedComment,
@@ -90,10 +91,35 @@ describe("threaded comment state", () => {
         }
       }
     });
+
     expect(store.entities[1]).toMatchObject({ liked: false, can_delete: false });
     expect(store.videos[8]?.roots.hot).toMatchObject({ ids: [], state: "idle" });
     expect(store.videos[8]?.draft).toBe("");
     expect(store.videos[8]?.replyTargetID).toBe(0);
+  });
+
+  it("applies the confirmed video-author like marker only to the target comment", () => {
+    const first = comment(1);
+    const second = comment(2, { liked_by_video_author: true });
+    const store: CommentsStore = {
+      ...createCommentsStore(),
+      entities: { 1: first, 2: second },
+      videos: { 8: createVideoCommentsState() }
+    };
+    const updated = applyConfirmedCommentLike(store, 8, 1, {
+      comment_id: 1,
+      root_comment_id: 1,
+      liked: true,
+      like_count: 1,
+      liked_by_video_author: true
+    });
+    expect(updated.entities[1]).toMatchObject({
+      liked: true,
+      like_count: 1,
+      liked_by_video_author: true
+    });
+    expect(updated.entities[2]).toBe(second);
+    expect(updated.videos[8]?.likes[1]).toEqual({ busy: false, error: "" });
   });
 
   it("invalidates request identities across authentication generations", () => {
@@ -204,6 +230,109 @@ describe("threaded comment state", () => {
     expect(moderatedStore.entities[2]).toBeUndefined();
   });
 
+  it("scrubs tombstoned root identity from retained direct replies", () => {
+    const reply = comment(2, {
+      root_comment_id: 1,
+      reply_to_comment_id: 1,
+      reply_to_user_id: 7,
+      reply_to_user_account: "deleted-author",
+      reply_to_user_nickname: "被删除作者",
+      reply_to_user_avatar_url: "/deleted.jpg"
+    });
+    const root = comment(1, {
+      user_account: "deleted-author",
+      is_video_author: true,
+      liked_by_video_author: true,
+      reply_count: 1,
+      reply_previews: [reply]
+    });
+    const store: CommentsStore = {
+      entities: { 1: root, 2: reply },
+      videos: {
+        8: {
+          ...createVideoCommentsState(),
+          replyTargetID: 1,
+          roots: {
+            hot: { ids: [1], nextCursor: "", hasMore: false, state: "ready", error: "" },
+            latest: { ids: [1], nextCursor: "", hasMore: false, state: "ready", error: "" }
+          },
+          replies: {
+            1: { ids: [2], nextCursor: "", hasMore: false, state: "ready", error: "" }
+          }
+        }
+      }
+    };
+    const updated = applyDeletedComment(
+      store, 8, root, deletion({ tombstone: true, status: 2, root_reply_count: 1 })
+    );
+    expect(updated.entities[1]).toMatchObject({
+      user_id: 0,
+      user_account: "",
+      is_video_author: false,
+      liked_by_video_author: false
+    });
+    expect(updated.entities[1]?.reply_previews[0]).toMatchObject({
+      reply_to_user_id: 0,
+      reply_to_user_account: "",
+      reply_to_user_nickname: "",
+      reply_to_user_avatar_url: ""
+    });
+    expect(updated.entities[2]).toMatchObject({
+      reply_to_user_id: 0,
+      reply_to_user_account: "",
+      reply_to_user_nickname: "",
+      reply_to_user_avatar_url: ""
+    });
+    expect(updated.videos[8]?.replyTargetID).toBe(0);
+  });
+
+  it("scrubs a deleted reply identity from descendant replies and previews", () => {
+    const deletedReply = comment(2, { root_comment_id: 1, reply_to_comment_id: 1 });
+    const descendant = comment(3, {
+      root_comment_id: 1,
+      reply_to_comment_id: 2,
+      reply_to_user_id: 8,
+      reply_to_user_account: "deleted-reply",
+      reply_to_user_nickname: "被删回复者",
+      reply_to_user_avatar_url: "/deleted-reply.jpg"
+    });
+    const root = comment(1, {
+      reply_count: 2,
+      reply_previews: [deletedReply, descendant]
+    });
+    const store: CommentsStore = {
+      entities: { 1: root, 2: deletedReply, 3: descendant },
+      videos: {
+        8: {
+          ...createVideoCommentsState(),
+          roots: {
+            hot: { ids: [1], nextCursor: "", hasMore: false, state: "ready", error: "" },
+            latest: { ids: [1], nextCursor: "", hasMore: false, state: "ready", error: "" }
+          },
+          replies: {
+            1: { ids: [2, 3], nextCursor: "", hasMore: false, state: "ready", error: "" }
+          }
+        }
+      }
+    };
+    const updated = applyDeletedComment(
+      store, 8, deletedReply, deletion({ comment_id: 2, root_reply_count: 1 })
+    );
+    expect(updated.entities[2]).toBeUndefined();
+    expect(updated.entities[3]).toMatchObject({
+      reply_to_user_id: 0,
+      reply_to_user_account: "",
+      reply_to_user_nickname: "",
+      reply_to_user_avatar_url: ""
+    });
+    expect(updated.entities[1]?.reply_previews.find((item) => item.id === 3)).toMatchObject({
+      reply_to_user_id: 0,
+      reply_to_user_account: "",
+      reply_to_user_nickname: "",
+      reply_to_user_avatar_url: ""
+    });
+  });
+
   it("counts Unicode code points rather than UTF-8 bytes", () => {
     expect(unicodeLength("评论🙂")).toBe(3);
   });
@@ -214,11 +343,13 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     id,
     video_id: 8,
     user_id: 2,
+    user_account: "user",
     user_nickname: "用户",
     user_avatar_url: "",
     root_comment_id: 0,
     reply_to_comment_id: 0,
     reply_to_user_id: 0,
+    reply_to_user_account: "",
     reply_to_user_nickname: "",
     reply_to_user_avatar_url: "",
     content: "内容",
@@ -229,6 +360,8 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     like_count: 0,
     liked: false,
     can_delete: true,
+    is_video_author: false,
+    liked_by_video_author: false,
     hot_score: 0,
     created_at: "2026-08-03T00:00:00Z",
     ...patch

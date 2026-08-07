@@ -672,6 +672,16 @@ video.stage-media {
   font-size: 11px;
 }
 
+.comment-meta .comment-author-marker {
+  padding: 1px 5px;
+  color: var(--frux-bg);
+  border-radius: 4px;
+  background: var(--frux-primary);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
 .comment-item p {
   margin: 5px 0 0;
   color: var(--frux-text);
@@ -831,6 +841,16 @@ video.stage-media {
   align-items: center;
   gap: 4px;
   margin-top: 5px;
+}
+
+.comment-author-liked {
+  padding: 2px 6px;
+  color: var(--frux-primary);
+  border: 1px solid rgba(37, 244, 238, 0.35);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .comment-actions button,

@@ -14,6 +14,7 @@ import { useNavigate } from "../router";
 import { useSession } from "../session";
 import type {
   Comment,
+  CommentLikeResponse,
   CommentSort,
   CommentThreadContextResponse,
   DeleteCommentResponse
@@ -584,20 +585,9 @@ export function useComments({
     try {
       const result = await setCommentLike(session.token, commentID, liked);
       if (viewerGenerationRef.current !== operationViewerGeneration) return;
-      updateStore((current) => ({
-        ...updateVideo(current, videoID, (state) => ({
-          ...state,
-          likes: { ...state.likes, [commentID]: emptyOperation() }
-        })),
-        entities: {
-          ...current.entities,
-          [commentID]: {
-            ...current.entities[commentID],
-            liked: result.liked,
-            like_count: result.like_count
-          }
-        }
-      }));
+      updateStore((current) => applyConfirmedCommentLike(
+        current, videoID, commentID, result
+      ));
     } catch (error) {
       if (viewerGenerationRef.current !== operationViewerGeneration) return;
       if (isUnauthorized(error)) {
@@ -726,9 +716,11 @@ export type CommentsController = ReturnType<typeof useComments>;
 function normalizeComment(comment: Comment): Comment {
   return {
     ...comment,
+    user_account: comment.user_account || "",
     root_comment_id: Number(comment.root_comment_id || 0),
     reply_to_comment_id: Number(comment.reply_to_comment_id || 0),
     reply_to_user_id: Number(comment.reply_to_user_id || 0),
+    reply_to_user_account: comment.reply_to_user_account || "",
     reply_to_user_nickname: comment.reply_to_user_nickname || "",
     reply_to_user_avatar_url: comment.reply_to_user_avatar_url || "",
     reply_count: Number(comment.reply_count || 0),
@@ -736,6 +728,8 @@ function normalizeComment(comment: Comment): Comment {
     like_count: Number(comment.like_count || 0),
     liked: Boolean(comment.liked),
     can_delete: Boolean(comment.can_delete),
+    is_video_author: Boolean(comment.is_video_author),
+    liked_by_video_author: Boolean(comment.liked_by_video_author),
     hot_score: Number(comment.hot_score || 0)
   };
 }
@@ -836,26 +830,59 @@ export function applyDeletedComment(
     : [comment.id];
   const removed = new Set(removeIDs);
   const entities = { ...store.entities };
+  const scrubReplyTarget = (item: Comment, targetID: number): Comment => item.reply_to_comment_id === targetID
+    ? {
+        ...item,
+        reply_to_user_id: 0,
+        reply_to_user_account: "",
+        reply_to_user_nickname: "",
+        reply_to_user_avatar_url: ""
+      }
+    : item;
   if (result.tombstone && comment.id === rootID) {
+    const currentRoot = entities[rootID] || comment;
     entities[rootID] = {
-      ...comment,
+      ...currentRoot,
       user_id: 0,
+      user_account: "",
       user_nickname: "",
       user_avatar_url: "",
+      reply_to_user_id: 0,
+      reply_to_user_account: "",
+      reply_to_user_nickname: "",
+      reply_to_user_avatar_url: "",
       content: "",
       status: result.status,
       deleted: true,
       can_delete: false,
       liked: false,
+      is_video_author: false,
+      liked_by_video_author: false,
       like_count: 0,
+      reply_previews: currentRoot.reply_previews.map((item) => scrubReplyTarget(item, rootID)),
       reply_count: result.root_reply_count
     };
     removed.delete(rootID);
   }
+  for (const [id, item] of Object.entries(entities)) {
+    const numericID = Number(id);
+    const scrubbed = scrubReplyTarget(item, comment.id);
+    entities[numericID] = scrubbed.reply_previews.length > 0
+      ? {
+          ...scrubbed,
+          reply_previews: scrubbed.reply_previews.map(
+            (preview) => scrubReplyTarget(preview, comment.id)
+          )
+        }
+      : scrubbed;
+  }
   for (const id of removed) delete entities[id];
   const next = updateVideo({ ...store, entities }, videoID, (state) => ({
     ...state,
-    replyTargetID: removed.has(state.replyTargetID) ? 0 : state.replyTargetID,
+    replyTargetID: removed.has(state.replyTargetID) ||
+      (result.tombstone && state.replyTargetID === rootID)
+      ? 0
+      : state.replyTargetID,
     focusUnavailable: removed.has(state.focusedTargetID) || result.thread_hidden ? true : state.focusUnavailable,
     expandedRootIDs: result.thread_hidden
       ? state.expandedRootIDs.filter((id) => id !== rootID)
@@ -946,6 +973,31 @@ export function applyOptimisticCommentLike(
         ...comment,
         liked,
         like_count: Math.max(0, comment.like_count + (liked === comment.liked ? 0 : liked ? 1 : -1))
+      }
+    }
+  };
+}
+
+export function applyConfirmedCommentLike(
+  store: CommentsStore,
+  videoID: number,
+  commentID: number,
+  result: CommentLikeResponse
+): CommentsStore {
+  const comment = store.entities[commentID];
+  if (!comment) return store;
+  return {
+    ...updateVideo(store, videoID, (state) => ({
+      ...state,
+      likes: { ...state.likes, [commentID]: emptyOperation() }
+    })),
+    entities: {
+      ...store.entities,
+      [commentID]: {
+        ...comment,
+        liked: result.liked,
+        like_count: result.like_count,
+        liked_by_video_author: result.liked_by_video_author
       }
     }
   };

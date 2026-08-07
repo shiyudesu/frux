@@ -117,11 +117,13 @@ type Comment struct {
 	ID                   int64
 	VideoID              int64
 	UserID               int64
+	UserAccount          string
 	UserNickname         string
 	UserAvatarURL        string
 	RootCommentID        int64
 	ReplyToCommentID     int64
 	ReplyToUserID        int64
+	ReplyToUserAccount   string
 	ReplyToUserNickname  string
 	ReplyToUserAvatarURL string
 	Content              string
@@ -133,6 +135,8 @@ type Comment struct {
 	IdempotencyKey       string
 	Liked                bool
 	CanDelete            bool
+	IsVideoAuthor        bool
+	LikedByVideoAuthor   bool
 	ReplyPreviews        []*Comment
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
@@ -187,10 +191,11 @@ type CommentThreadContext struct {
 }
 
 type CommentLikeResult struct {
-	CommentID     int64
-	RootCommentID int64
-	Liked         bool
-	LikeCount     int
+	CommentID          int64
+	RootCommentID      int64
+	Liked              bool
+	LikeCount          int
+	LikedByVideoAuthor bool
 }
 
 type CommentMutationResult struct {
@@ -524,11 +529,14 @@ func (c *Comment) ApplyPublicProjection() {
 		return
 	}
 	c.UserID = 0
+	c.UserAccount = ""
 	c.UserNickname = ""
 	c.UserAvatarURL = ""
 	c.Content = ""
 	c.Liked = false
 	c.CanDelete = false
+	c.IsVideoAuthor = false
+	c.LikedByVideoAuthor = false
 	c.LikeCount = 0
 }
 

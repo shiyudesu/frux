@@ -2,10 +2,11 @@
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { emptyProfile } from "../constants";
+import { emptyProfile, image } from "../constants";
 import type { CommentsController } from "../hooks/useComments";
 import type { Comment, FeedVideo } from "../types";
 import { FeedDetailsPanel } from "./FeedDetailsPanel";
+import { VideoDetails } from "./VideoDetails";
 import {
   mergeVisibleReplyIDs,
   requiresModeratorConfirmation,
@@ -172,6 +173,7 @@ describe("threaded comment components", () => {
       reply_to_user_avatar_url: "/target-avatar.png",
       content: "回复内容"
     });
+
     const rootComment = comment(1, {
       reply_count: 1,
       reply_previews: [reply]
@@ -196,6 +198,61 @@ describe("threaded comment components", () => {
       avatar_url: "/target-avatar.png",
       bio: ""
     });
+  });
+
+  it("renders video-author and author-liked markers with canonical identity", () => {
+    const onOpenUser = vi.fn();
+    const author = comment(1, {
+      user_account: "creator_account",
+      user_nickname: "视频作者",
+      is_video_author: true,
+      liked_by_video_author: true
+    });
+    render(
+      <ThreadedComments
+        controller={controller({ roots: [author], entities: { 1: author } })}
+        authenticated
+        canModerateThreads={false}
+        user={emptyProfile}
+        onOpenUser={onOpenUser}
+      />
+    );
+    expect(container.textContent).toContain("作者");
+    expect(container.textContent).toContain("作者赞过");
+    click(buttonByText("视频作者"));
+    expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({
+      id: 2,
+      account: "creator_account",
+      nickname: "视频作者"
+    }));
+  });
+
+  it("uses one avatar fallback for the same video and comment author", () => {
+    const authorComment = comment(1, {
+      user_id: 2,
+      user_account: "creator",
+      user_avatar_url: "",
+      is_video_author: true
+    });
+    render(
+      <>
+        <VideoDetails item={video()} onOpenUser={() => {}} />
+        <ThreadedComments
+          controller={controller({
+            roots: [authorComment],
+            entities: { 1: authorComment }
+          })}
+          authenticated
+          canModerateThreads={false}
+          user={emptyProfile}
+          onOpenUser={() => {}}
+        />
+      </>
+    );
+    const authorImage = required<HTMLImageElement>(".details-author img");
+    const commentImage = required<HTMLImageElement>(".comment-user-button img");
+    expect(authorImage.src).toBe(image.currentUser);
+    expect(commentImage.src).toBe(image.currentUser);
   });
 
   it("counts Unicode code points and blocks over-limit submission behaviorally", () => {
@@ -502,11 +559,13 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     id,
     video_id: 3,
     user_id: 2,
+    user_account: "user",
     user_nickname: "用户",
     user_avatar_url: "",
     root_comment_id: 0,
     reply_to_comment_id: 0,
     reply_to_user_id: 0,
+    reply_to_user_account: "",
     reply_to_user_nickname: "",
     reply_to_user_avatar_url: "",
     content: "评论内容",
@@ -517,6 +576,8 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     like_count: 2,
     liked: false,
     can_delete: false,
+    is_video_author: false,
+    liked_by_video_author: false,
     hot_score: 0,
     created_at: "2026-08-03T00:00:00Z",
     ...patch

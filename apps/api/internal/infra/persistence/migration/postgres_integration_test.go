@@ -1838,8 +1838,11 @@ func TestPostgreSQLThreadedCommentPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load tombstone thread: %v", err)
 	}
-	if tombstoneThread.Root.UserID != 0 || tombstoneThread.Root.Content != "" ||
+	if tombstoneThread.Root.UserID != 0 || tombstoneThread.Root.UserAccount != "" ||
+		tombstoneThread.Root.Content != "" || tombstoneThread.Root.IsVideoAuthor ||
+		tombstoneThread.Root.LikedByVideoAuthor ||
 		tombstoneThread.Target.ReplyToUserID != 0 ||
+		tombstoneThread.Target.ReplyToUserAccount != "" ||
 		tombstoneThread.Target.ReplyToUserNickname != "" ||
 		tombstoneThread.Target.ReplyToUserAvatarURL != "" {
 		t.Fatalf("tombstone identity leaked through thread metadata: %+v", tombstoneThread)
@@ -2123,6 +2126,7 @@ func TestPostgreSQLThreadedCommentOrderingHydrationAndCascadeModeration(t *testi
 			})
 		}
 	}
+	replies[1].UserID = users[0].ID
 	if err := db.Create(&replies).Error; err != nil {
 		t.Fatalf("seed ordered replies: %v", err)
 	}
@@ -2171,6 +2175,14 @@ func TestPostgreSQLThreadedCommentOrderingHydrationAndCascadeModeration(t *testi
 		hot.Items[0].ReplyPreviews[0].Content != "reply-0-0" ||
 		hot.Items[0].ReplyPreviews[2].Content != "reply-0-2" {
 		t.Fatalf("reply previews were not capped and ordered: %+v", hot.Items[0].ReplyPreviews)
+	}
+	if hot.Items[0].UserAccount != users[1].Account ||
+		hot.Items[0].IsVideoAuthor ||
+		!hot.Items[0].LikedByVideoAuthor ||
+		!hot.Items[0].ReplyPreviews[1].IsVideoAuthor ||
+		hot.Items[0].ReplyPreviews[1].UserAccount != users[0].Account ||
+		hot.Items[0].ReplyPreviews[1].ReplyToUserAccount == "" {
+		t.Fatalf("canonical identity or author markers missing: %+v", hot.Items[0])
 	}
 	hotNext, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
 		VideoID: video.ID, Sort: domaininteraction.CommentSortHot, Limit: 2,
@@ -2263,6 +2275,38 @@ func TestPostgreSQLThreadedCommentOrderingHydrationAndCascadeModeration(t *testi
 		if len(root.ReplyPreviews) > domaininteraction.ReplyPreviewLimit {
 			t.Fatalf("root %d returned %d previews", root.ID, len(root.ReplyPreviews))
 		}
+	}
+	if err := db.Create(&infrainteraction.CommentLikeIdempotencyReceiptModel{
+		UserID: users[0].ID, IdempotencyKey: "legacy-author-like",
+		CommentID: roots[0].ID, Active: true, LikeCount: 1,
+		LikedByVideoAuthor: nil,
+	}).Error; err != nil {
+		t.Fatalf("seed legacy author-like receipt: %v", err)
+	}
+	unlikedByAuthor, err := repo.SetCommentLike(
+		ctx, roots[0].ID, users[0].ID, false, "author-unlike",
+	)
+	if err != nil || unlikedByAuthor.LikedByVideoAuthor {
+		t.Fatalf("author unlike marker = %+v err=%v", unlikedByAuthor, err)
+	}
+	legacyReplay, err := repo.SetCommentLike(
+		ctx, roots[0].ID, users[0].ID, true, "legacy-author-like",
+	)
+	if err != nil || !legacyReplay.LikedByVideoAuthor ||
+		!legacyReplay.Liked || legacyReplay.LikeCount != 1 {
+		t.Fatalf("legacy author receipt replay = %+v err=%v", legacyReplay, err)
+	}
+	likedByOrdinaryViewer, err := repo.SetCommentLike(
+		ctx, roots[1].ID, users[2].ID, true, "ordinary-like",
+	)
+	if err != nil || likedByOrdinaryViewer.LikedByVideoAuthor {
+		t.Fatalf("ordinary viewer changed author marker = %+v err=%v", likedByOrdinaryViewer, err)
+	}
+	likedAgain, err := repo.SetCommentLike(
+		ctx, roots[0].ID, users[0].ID, true, "author-relike",
+	)
+	if err != nil || !likedAgain.LikedByVideoAuthor {
+		t.Fatalf("author relike marker = %+v err=%v", likedAgain, err)
 	}
 
 	moderationVideo, err := domainvideo.NewPublished(

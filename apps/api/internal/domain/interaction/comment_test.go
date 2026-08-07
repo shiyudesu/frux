@@ -56,9 +56,14 @@ func TestCommentTombstoneProjection(t *testing.T) {
 	if !comment.EligibleForPublicProjection() {
 		t.Fatal("self-deleted root with active replies should remain as a tombstone")
 	}
+	comment.UserAccount = "author-account"
+	comment.IsVideoAuthor = true
+	comment.LikedByVideoAuthor = true
 	comment.ApplyPublicProjection()
-	if comment.UserID != 0 || comment.UserNickname != "" || comment.Content != "" ||
-		comment.Liked || comment.CanDelete || comment.LikeCount != 0 {
+	if comment.UserID != 0 || comment.UserAccount != "" ||
+		comment.UserNickname != "" || comment.Content != "" ||
+		comment.Liked || comment.CanDelete || comment.IsVideoAuthor ||
+		comment.LikedByVideoAuthor || comment.LikeCount != 0 {
 		t.Fatalf("tombstone leaked hidden fields: %+v", comment)
 	}
 

@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { apiErrorMessage } from "../api/client";
-import { image } from "../constants";
 import type { RecommendationFeedbackType } from "../types";
 import type { FeedVideo } from "../types";
 import type { PublicProfileInput } from "../utils";
-import { formatMetric, profileFromFeedItem } from "../utils";
+import { formatMetric, profileFromFeedItem, publicUserAvatar } from "../utils";
 import { ActionButton } from "./ActionButton";
 
 interface FeedActionRailProps {
@@ -92,7 +91,7 @@ export function FeedActionRail({
               onClick={() => onOpenAuthor(profileFromFeedItem(item))}
               aria-label={`查看 ${item.author} 的主页`}
             >
-              <img src={item.avatar_url || image.creator} alt="" />
+              <img src={publicUserAvatar(item.avatar_url)} alt="" />
             </button>
             <button
               aria-label={ownVideo ? "本人作品" : following ? "取消关注" : "关注作者"}

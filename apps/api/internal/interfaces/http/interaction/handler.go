@@ -236,6 +236,7 @@ func (h *Handler) setCommentLike(ctx context.Context, c *app.RequestContext, act
 	c.JSON(http.StatusOK, commentLikeResponse{
 		CommentID: result.CommentID, RootCommentID: result.RootCommentID,
 		Liked: result.Liked, LikeCount: result.LikeCount,
+		LikedByVideoAuthor: result.LikedByVideoAuthor,
 	})
 }
 
@@ -404,13 +405,16 @@ func commentResponseFromDomain(comment *domaininteraction.Comment) commentRespon
 	}
 	return commentResponse{
 		ID: comment.ID, VideoID: comment.VideoID, UserID: comment.UserID,
+		UserAccount:  comment.UserAccount,
 		UserNickname: comment.UserNickname, UserAvatarURL: comment.UserAvatarURL,
 		RootCommentID: comment.RootCommentID, ReplyToCommentID: comment.ReplyToCommentID,
-		ReplyToUserID: comment.ReplyToUserID, ReplyToUserNickname: comment.ReplyToUserNickname,
+		ReplyToUserID: comment.ReplyToUserID, ReplyToUserAccount: comment.ReplyToUserAccount,
+		ReplyToUserNickname:  comment.ReplyToUserNickname,
 		ReplyToUserAvatarURL: comment.ReplyToUserAvatarURL,
 		Content:              comment.Content, Status: comment.Status, Deleted: comment.Deleted(),
 		ReplyCount: comment.ReplyCount, ReplyPreviews: commentResponsesFromDomain(comment.ReplyPreviews),
 		LikeCount: comment.LikeCount, Liked: comment.Liked, CanDelete: comment.CanDelete,
+		IsVideoAuthor: comment.IsVideoAuthor, LikedByVideoAuthor: comment.LikedByVideoAuthor,
 		HotScore: comment.HotScore, CreatedAt: comment.CreatedAt,
 	}
 }
