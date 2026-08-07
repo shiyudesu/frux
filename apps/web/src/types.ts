@@ -331,6 +331,11 @@ export interface CompleteUploadSessionResponse {
   replayed?: boolean;
 }
 
+export interface ProtectedAssetAccess {
+  url: string;
+  expires_at: string;
+}
+
 // ---------- 后台内容运营 ----------
 
 export type AdminPermission =

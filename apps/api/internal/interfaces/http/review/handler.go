@@ -83,6 +83,7 @@ func (h *Handler) GetHumanPreview(ctx context.Context, c *app.RequestContext) {
 		writeHumanReviewError(c, err)
 		return
 	}
+	c.Response.Header.Set("Cache-Control", "private, no-store")
 	c.JSON(http.StatusOK, humanPreviewResponse{
 		MediaURL: access.MediaURL, CoverURL: access.CoverURL,
 		ExpiresAt: access.ExpiresAt, ServerTime: access.ServerTime,

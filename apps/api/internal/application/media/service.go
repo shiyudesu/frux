@@ -89,6 +89,10 @@ type MediaAssetAuthorizer interface {
 	AuthorizeMediaAsset(ctx context.Context, assetID, ownerID int64) (referenced, allowed bool, err error)
 }
 
+type protectedVariantReader interface {
+	ListReadyVariants(ctx context.Context, assetID int64) ([]*domainmedia.MediaVariant, error)
+}
+
 func New(repo Repository, store domainmedia.MediaObjectStore, backend string, sessionTTL time.Duration, profileVersion string, maxAttempts int, options ...Option) *Service {
 	service := &Service{
 		repo: repo, store: store, backend: strings.ToLower(strings.TrimSpace(backend)),
@@ -338,11 +342,42 @@ func (s *Service) GetProtectedAssetAccess(ctx context.Context, ownerID, assetID 
 			return nil, domainmedia.ErrMediaAssetPermissionDenied
 		}
 	}
-	resolvedURL, expiresAt, err := s.urlResolver.ProtectedURL(ctx, asset.ObjectKey, s.signedURLTTL)
+	objectKey := asset.ObjectKey
+	if asset.State == domainmedia.AssetStateReady {
+		if variants, ok := s.repo.(protectedVariantReader); ok {
+			ready, err := variants.ListReadyVariants(ctx, asset.ID)
+			if err != nil {
+				return nil, err
+			}
+			if previewKey := protectedPreviewVariantKey(asset.Kind, ready); previewKey != "" {
+				objectKey = previewKey
+			}
+		}
+	}
+	resolvedURL, expiresAt, err := s.urlResolver.ProtectedURL(ctx, objectKey, s.signedURLTTL)
 	if err != nil {
 		return nil, err
 	}
 	return &ProtectedAssetAccess{URL: resolvedURL, ExpiresAt: expiresAt}, nil
+}
+
+func protectedPreviewVariantKey(
+	assetKind string,
+	variants []*domainmedia.MediaVariant,
+) string {
+	role := domainmedia.VariantRoleBaseline
+	if assetKind == domainmedia.AssetKindCover {
+		role = domainmedia.VariantRoleCover
+	}
+	for _, variant := range variants {
+		if variant != nil &&
+			variant.State == domainmedia.VariantStateReady &&
+			variant.Role == role &&
+			strings.TrimSpace(variant.ObjectKey) != "" {
+			return variant.ObjectKey
+		}
+	}
+	return ""
 }
 
 func validateUploadIntent(input CreateUploadSessionInput) error {

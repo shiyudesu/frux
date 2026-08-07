@@ -409,6 +409,9 @@ func TestHumanReviewAdminAPIFlow(t *testing.T) {
 		!strings.Contains(preview.Body.String(), `"server_time"`) {
 		t.Fatalf("preview status=%d body=%s", preview.Code, preview.Body.String())
 	}
+	if preview.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("review preview response was cacheable: %q", preview.Header().Get("Cache-Control"))
+	}
 	resumed := performHumanReviewJSON(
 		t, router, http.MethodPost, "/api/admin/review/cases/1/lease/resume",
 		`{"expected_case_version":2}`, "",

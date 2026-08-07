@@ -147,6 +147,10 @@
 | 生产上传 | Web 创建上传会话后直传 S3 兼容存储，完成接口严格校验 owner、对象键、大小、类型、SHA-256 和过期时间；本地模式继续使用 `/api/uploads` |
 | 上传会话重放 | 同一 owner 和 `Idempotency-Key` 的相同 fingerprint 返回原 session 或已完成 asset，不受本次请求新生成的候选 session ID 影响；同键异载荷返回冲突 |
 | 发布前校验 | Web 在创建上传会话前校验标题必填、标题 128 UTF-8 字节和简介 512 UTF-8 字节边界，避免文件已上传后才发现作品参数无效 |
+| 上传前本地预览 | Web 为选择的视频和封面创建独立临时 object URL，视频使用 controls/muted/playsInline 和封面 poster；替换文件或离开页面立即 revoke，不创建上传会话 |
+| 创作者保护预览 | 本人作品页可打开待审、处理中、拒绝、私密和下架的非删除作品；缺少公共 URL 时按 asset ID 获取短期 owner access，不改变生命周期、可见性或公共缓存 |
+| 保护预览选源 | ready 视频资产优先签发受保护 baseline MP4，ready 封面优先签发受保护 cover variant；没有对应 ready variant 时回退原始上传对象，并允许客户端提示浏览器兼容限制 |
+| 保护凭据禁止缓存 | owner/reviewer access JSON 与对象响应均为 private/no-store；短期 URL 只保存在当前组件内存，不进入列表响应、路由或 Web Storage |
 | 双门门禁 | 审核通过和 H.264/AAC faststart 基线就绪相互独立；两者同时满足前只对作者展示真实处理/审核状态 |
 | 生命周期通知 | 创建提交事实；审核拒绝/批准、终态媒体失败、首次公开、下架和恢复各使用稳定 event ID；瞬时上传进度、处理重试和转人工审核不写消息中心 |
 | 首次发布唯一性 | 同一 `video_id + review_version` 最多一个 `video-published` 事实；审核、媒体 ready、可见性、恢复和 reconciliation 共享该身份 |
@@ -193,6 +197,8 @@
 | 上传非法媒体 | 返回 400 并清理失败文件 |
 | 直传对象不匹配 | owner、对象键、大小、类型或校验和不匹配时返回冲突且不创建资产 |
 | 上传后作品参数失败再重试 | 重用原幂等键时直接返回已完成视频/封面资产，不重复上传对象，也不因新候选 session ID 返回 500 |
+| 待审作品点击查看 | 本人 WorkViewer 并发获取 media/cover 短期访问；ready baseline 可播放，只有封面或浏览器不支持原始编码时展示真实处理提示和重试 |
+| 非本人请求保护资产 | 返回权限错误且不签发对象 URL |
 | 视频仍在处理 | 作者列表返回 `media_status=processing`，公共详情、Feed、推荐和预加载均不返回 |
 | 基线完成 | `media_url` 投影到基线，`playback_sources` 按基线、MP4 清晰度、DASH manifest 稳定排序 |
 | 首次发布投递失败 | 视频事实保持提交；Outbox 重试且同一 event 不重复创建消息 |

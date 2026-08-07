@@ -29,7 +29,10 @@ export function fetchReviewQueue(token: string, query: ReviewQueueQuery = {}): P
 }
 
 export function fetchReviewPreview(token: string, reviewID: number): Promise<ReviewPreviewAccess> {
-  return apiRequest<ReviewPreviewAccess>(`/api/admin/review/cases/${reviewID}/preview-access`, { token });
+  return apiRequest<ReviewPreviewAccess>(
+    `/api/admin/review/cases/${reviewID}/preview-access`,
+    { token, cache: "no-store" }
+  );
 }
 
 export function fetchReviewCase(token: string, reviewID: number): Promise<ReviewCaseDetail> {

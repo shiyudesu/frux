@@ -1,6 +1,7 @@
 import type {
   ApiErrorBody,
   CompleteUploadSessionResponse,
+  ProtectedAssetAccess,
   UploadResponse,
   UploadSessionRequest,
   UploadSessionResponse
@@ -12,6 +13,16 @@ export type UploadKind = "video" | "cover";
 export type MediaUploadResult =
   | { mode: "direct"; assetID: number }
   | { mode: "multipart"; url: string };
+
+export function fetchProtectedAssetAccess(
+  token: string,
+  assetID: number
+): Promise<ProtectedAssetAccess> {
+  return apiRequest<ProtectedAssetAccess>(
+    `/api/media-assets/${encodeURIComponent(String(assetID))}/access`,
+    { token, cache: "no-store" }
+  );
+}
 
 export async function uploadMediaFile(
   file: File,

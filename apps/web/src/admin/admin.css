@@ -442,6 +442,26 @@
   object-fit: contain;
 }
 
+.admin-cover-inspection {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.admin-cover-inspection h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.admin-cover-inspection img {
+  width: min(100%, 360px);
+  max-height: 220px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  object-fit: contain;
+  background: #111;
+}
+
 .admin-media-empty {
   display: grid;
   aspect-ratio: 9 / 16;

@@ -110,7 +110,7 @@ Ready public variants and covers SHALL use versioned exposure URLs with Range, H
 - **THEN** operators purge legacy `media/*` entries that were previously advertised with year-long immutable caching
 
 ### Requirement: Protected Media Delivery
-Originals, private outputs, and incomplete assets SHALL remain owner-protected and SHALL NOT inherit public immutable caching.
+Originals, private outputs, incomplete assets, and non-public creator previews SHALL remain owner-protected and SHALL NOT inherit public immutable caching. Owner asset access SHALL prefer a ready protected baseline or cover variant when available and SHALL otherwise fall back to the protected original.
 
 #### Scenario: Non-owner requests a private output
 - **WHEN** a user without current read permission requests a private or original asset
@@ -118,7 +118,23 @@ Originals, private outputs, and incomplete assets SHALL remain owner-protected a
 
 #### Scenario: Owner requests a protected output
 - **WHEN** the immutable owner has current permission
-- **THEN** Frux provides an authorized response or short-lived signed URL without exposing reusable credentials
+- **THEN** Frux provides an authorized short-lived response without exposing reusable credentials or changing public eligibility
+
+#### Scenario: Owner requests a ready video asset
+- **WHEN** a protected browser baseline is ready for the owned asset
+- **THEN** the access response resolves the baseline rather than the original source
+
+#### Scenario: Owner requests a ready cover asset
+- **WHEN** a protected ready cover variant exists
+- **THEN** the access response resolves that cover variant
+
+#### Scenario: Owner requests an incomplete asset
+- **WHEN** no matching ready preview variant exists and the protected original remains available
+- **THEN** Frux returns short-lived original access and the client handles possible browser incompatibility truthfully
+
+#### Scenario: Protected preview response is cached
+- **WHEN** a browser receives owner-protected preview access
+- **THEN** the response and underlying object use private no-store behavior rather than public caching
 
 ### Requirement: Reviewer-Protected Media Delivery
 Frux SHALL provide authorized review readers with short-lived access to the protected media and cover for the current review subject without changing public media eligibility or disclosing reusable storage credentials.

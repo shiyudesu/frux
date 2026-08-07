@@ -149,8 +149,9 @@ func (p reviewPreviewProvider) ResolveHumanPreview(
 	coverURL, coverExpiry, coverErr := p.resolve(
 		ctx, subject.CoverAssetID, subject.CoverURL, domainmedia.VariantRoleCover, expiry,
 	)
-	if coverErr != nil && subject.CoverAssetID > 0 {
-		return nil, domainreview.ErrReviewPreviewUnavailable
+	if coverErr != nil {
+		coverURL = ""
+		coverExpiry = time.Time{}
 	}
 	expiresAt := mediaExpiry
 	if !coverExpiry.IsZero() && (expiresAt.IsZero() || coverExpiry.Before(expiresAt)) {

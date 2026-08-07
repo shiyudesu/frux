@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -115,6 +116,73 @@ func TestUploadSessionPostgreSQLIdempotentReplayIgnoresNewGeneratedID(t *testing
 	}
 }
 
+func TestProtectedAssetAccessUsesPostgreSQLReadyVariant(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set")
+	}
+	db := openMediaPostgres(t, dsn)
+	repository := New(db)
+	asset := AssetModel{
+		OwnerID: 7, Kind: domainmedia.AssetKindVideo,
+		StorageBackend: domainmedia.StorageBackendS3,
+		ObjectKey:      "uploads/7/source.mov", ContentType: "video/quicktime",
+		SizeBytes: 100, ChecksumSHA256: strings.Repeat("a", 64),
+		State: domainmedia.AssetStateReady,
+	}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&VariantModel{
+		AssetID: asset.ID, ProfileVersion: "v1",
+		SourceType: domainmedia.SourceTypeMP4, Format: "mp4",
+		ObjectKey: "processed/7/baseline.mp4",
+		Role:      domainmedia.VariantRoleBaseline, SortOrder: 10,
+		State:          domainmedia.VariantStateReady,
+		ChecksumSHA256: strings.Repeat("b", 64), SizeBytes: 80,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resolver := &postgresProtectedResolver{}
+	service := applicationmedia.New(
+		repository, nil, domainmedia.StorageBackendS3,
+		time.Minute, "v1", 3,
+		applicationmedia.WithURLResolver(resolver, 5*time.Minute),
+	)
+	access, err := service.GetProtectedAssetAccess(
+		context.Background(), 7, asset.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolver.objectKey != "processed/7/baseline.mp4" ||
+		access.URL != "https://protected.example/processed/7/baseline.mp4" {
+		t.Fatalf("protected access=%#v key=%q", access, resolver.objectKey)
+	}
+	if _, err := service.GetProtectedAssetAccess(
+		context.Background(), 8, asset.ID,
+	); !errors.Is(err, domainmedia.ErrMediaAssetPermissionDenied) {
+		t.Fatalf("non-owner access error = %v", err)
+	}
+}
+
+type postgresProtectedResolver struct {
+	objectKey string
+}
+
+func (*postgresProtectedResolver) PublicURL(string) (string, error) {
+	return "", domainmedia.ErrPresignUnsupported
+}
+
+func (r *postgresProtectedResolver) ProtectedURL(
+	_ context.Context,
+	objectKey string,
+	expiry time.Duration,
+) (string, time.Time, error) {
+	r.objectKey = objectKey
+	return "https://protected.example/" + objectKey, time.Now().UTC().Add(expiry), nil
+}
+
 func openMediaPostgres(t *testing.T, dsn string) *gorm.DB {
 	t.Helper()
 	admin, err := sql.Open("pgx", dsn)
@@ -148,7 +216,9 @@ func openMediaPostgres(t *testing.T, dsn string) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&CleanupTaskModel{}, &UploadSessionModel{}); err != nil {
+	if err := db.AutoMigrate(
+		&CleanupTaskModel{}, &UploadSessionModel{}, &AssetModel{}, &VariantModel{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	return db

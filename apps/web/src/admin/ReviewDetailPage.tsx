@@ -408,6 +408,12 @@ export function ReviewDetailPage({ reviewID }: { reviewID: number }) {
               : preview?.cover_url
                 ? <img src={preview.cover_url} alt="" />
                 : <div className="admin-media-empty">{previewMessage || "视频预览不可用"}</div>}
+          <div className="admin-cover-inspection">
+            <h3>视频封面</h3>
+            {previewState === "ready" && preview?.cover_url
+              ? <img src={preview.cover_url} alt="当前审核视频封面" />
+              : <div className="admin-media-empty">封面预览不可用</div>}
+          </div>
           <h3>{detail.subject.title}</h3>
           <p>{detail.subject.description || "无简介"}</p>
           {previewState === "unavailable" && (

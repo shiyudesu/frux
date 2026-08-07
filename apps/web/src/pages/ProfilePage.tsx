@@ -568,7 +568,13 @@ export function ProfilePage() {
           onToggleFollow={(userID) => void toggleRelationFollow(userID)}
         />
       )}
-      {selectedWork && <WorkViewer video={selectedWork} onClose={() => setSelectedWork(null)} />}
+      {selectedWork && (
+        <WorkViewer
+          video={selectedWork}
+          token={token}
+          onClose={() => setSelectedWork(null)}
+        />
+      )}
       {libraryQueue && (
         <CollectionQueueViewer
           source={libraryQueue.source}

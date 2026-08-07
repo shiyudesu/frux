@@ -77,7 +77,7 @@ describe("admin content operations workspace", () => {
     });
     vi.mocked(fetchReviewPreview).mockResolvedValue({
       media_url: "https://preview.example.test/video.mp4",
-      cover_url: "",
+      cover_url: "https://preview.example.test/cover.jpg",
       expires_at: "2099-01-01T00:00:00Z"
     });
   });
@@ -435,6 +435,20 @@ describe("admin content operations workspace", () => {
     expect(container.textContent).toContain("视频预览暂时不可用");
     expect(container.textContent).toContain("测试证据");
     expect(container.textContent).toContain("manual-seed");
+  });
+
+  it("shows the protected cover separately from the review video", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read"]
+    });
+    vi.mocked(fetchReviewCase).mockResolvedValue(reviewDetail());
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    const cover = container.querySelector<HTMLImageElement>(
+      'img[alt="当前审核视频封面"]'
+    );
+    expect(cover?.src).toContain("https://preview.example.test/cover.jpg");
+    expect(container.textContent).toContain("视频封面");
   });
 
   it("distinguishes production, recovery, and legacy evidence provenance", async () => {

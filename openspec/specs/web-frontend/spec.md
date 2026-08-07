@@ -147,6 +147,28 @@ The hand-written Web router SHALL include typed admin review-list, review-detail
 The migration SHALL NOT change any user-visible behavior: routes, feed scenes, interactions (like/favorite/follow/comment), uploads, messages, and profile editing SHALL work exactly as before.
 
 #### Scenario: Smoke test of all pages
-
 - **WHEN** a developer manually exercises login, all four feed scenes, comments, messages, profile editing, upload, and work viewing after the migration
 - **THEN** every flow behaves identically to the pre-migration frontend
+
+### Requirement: Local Pre-Upload Video Preview
+The Web upload page SHALL preview the selected local video and cover before creating upload sessions, and SHALL manage local object URLs without retaining files after replacement or unmount.
+
+#### Scenario: User selects a video
+- **WHEN** a supported local video file is selected
+- **THEN** the upload page displays an in-page video player with controls and no network upload is required
+
+#### Scenario: User also selects a cover
+- **WHEN** both video and cover files are selected
+- **THEN** the selected cover is used as the local video poster and remains independently visible in the preview metadata
+
+#### Scenario: Selected file changes
+- **WHEN** the user replaces the video or cover file
+- **THEN** the prior object URL is revoked and the preview uses only the newly selected file
+
+#### Scenario: Upload page unmounts
+- **WHEN** the user leaves the upload page
+- **THEN** all local video and cover object URLs created by the page are revoked
+
+#### Scenario: Browser cannot preview the selected video
+- **WHEN** the local file cannot be decoded by the browser
+- **THEN** the page reports a local preview limitation without clearing the selection or starting an upload

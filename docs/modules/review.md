@@ -88,6 +88,7 @@ mode 和 provider config version 在任务创建时固定，最终 mode 进入 r
 - 队列及其统计只包含视频仍为 pending-review 且 `video.review_version = case.review_version` 的案件。claim 同时锁定案件和视频；视频已终态时把案件置为 `cancelled`，版本已推进时置为 `superseded`，只写一次对应历史并返回既有冲突，不创建租约。
 - claim、resume、renew、release 和 decision 都校验 case version。resume 只允许当前持有人在未过期时调用，轮换 256-bit opaque token、立即作废旧 token，并记录 resumed 历史。数据库只保存 token 的 SHA-256，所有有效期判断使用 PostgreSQL `clock_timestamp()`。
 - 审核预览先校验当前 case/video review version 和非删除状态，再为生产对象签发最长 5 分钟的保护 URL；本地对象使用 HMAC 过期 URL。该链路不写回公共 `media_url`，不改变视频公开资格。
+- 审核详情除受保护视频播放器外，单独展示“视频封面”检查区；视频和封面共享同一 preview access、刷新与失效边界。封面缺失或解析失败只显示封面不可用，不应清除仍有效的视频证据。
 - 决定仅允许 approve/reject。批准 reason 为 `content_compliant`、`false_positive`；拒绝 reason 为注册审核分类或 `other_policy_violation`，后者必须填写最多 1000 Unicode 字符的 note。
 - decision 要求当前 reviewer、未过期 token、匹配 case/review version 和必填 `Idempotency-Key`。同键同规范化 payload 返回原结果；异 payload 返回稳定 409。
 - 人工决定、案件关闭、视频生命周期、内容统计、成功审计事实、通知 Outbox 和幂等回执在同一事务提交；审计插入失败全部回滚。

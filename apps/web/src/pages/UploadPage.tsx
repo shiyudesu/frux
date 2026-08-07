@@ -22,7 +22,9 @@ export function UploadPage() {
   });
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [videoPreview, setVideoPreview] = useState("");
   const [coverPreview, setCoverPreview] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
@@ -38,6 +40,17 @@ export function UploadPage() {
     setCoverPreview(objectURL);
     return () => URL.revokeObjectURL(objectURL);
   }, [coverFile]);
+
+  useEffect(() => {
+    setPreviewError("");
+    if (!videoFile) {
+      setVideoPreview("");
+      return;
+    }
+    const objectURL = URL.createObjectURL(videoFile);
+    setVideoPreview(objectURL);
+    return () => URL.revokeObjectURL(objectURL);
+  }, [videoFile]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -198,11 +211,33 @@ export function UploadPage() {
 
           <aside className="upload-preview">
             <div className="preview-frame">
-              {coverPreview ? <img src={coverPreview} alt="" /> : <Icon name="film" size={44} />}
+              {videoPreview ? (
+                <video
+                  src={videoPreview}
+                  poster={coverPreview || undefined}
+                  controls
+                  muted
+                  playsInline
+                  preload="metadata"
+                  onCanPlay={() => setPreviewError("")}
+                  onError={() => setPreviewError("浏览器无法预览该本地视频，但仍可保留文件并尝试上传。")}
+                />
+              ) : coverPreview ? (
+                <img src={coverPreview} alt="" />
+              ) : (
+                <Icon name="film" size={44} />
+              )}
             </div>
             <div>
               <h2>{form.title || "视频预览"}</h2>
               <p>{form.description || (videoFile ? videoFile.name : "选择本地视频和封面后会提交到后端视频接口。")}</p>
+              {coverPreview && (
+                <span className="upload-cover-preview">
+                  <img src={coverPreview} alt="" />
+                  已选封面
+                </span>
+              )}
+              {previewError && <p className="form-message">{previewError}</p>}
             </div>
           </aside>
         </div>

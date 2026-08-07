@@ -97,11 +97,44 @@ func TestReviewPreviewProviderSignsLegacyLocalAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve local preview: %v", err)
 	}
-
 	if access.MediaURL != "/review-media/video/source.mp4" ||
 		access.CoverURL != "/review-media/cover/source.jpg" ||
 		fmt.Sprint(signer.keys) != "[video/source.mp4 cover/source.jpg]" {
 		t.Fatalf("local preview = %#v keys=%v", access, signer.keys)
+	}
+}
+
+func TestReviewPreviewProviderKeepsVideoWhenCoverFails(t *testing.T) {
+	resolver := &reviewPreviewResolverStub{}
+	provider := reviewPreviewProvider{
+		repository: reviewPreviewRepositoryStub{
+			assets: map[int64]*domainmedia.MediaAsset{
+				1: {
+					ID: 1, Kind: domainmedia.AssetKindVideo,
+					StorageBackend: domainmedia.StorageBackendS3,
+					ObjectKey:      "uploads/1/source.mp4", State: domainmedia.AssetStateReady,
+				},
+			},
+			variants: map[int64][]*domainmedia.MediaVariant{
+				1: {{
+					AssetID: 1, Role: domainmedia.VariantRoleBaseline,
+					ObjectKey: "processed/1/baseline.mp4",
+					State:     domainmedia.VariantStateReady,
+				}},
+			},
+		},
+		resolver: resolver,
+	}
+	access, err := provider.ResolveHumanPreview(
+		context.Background(),
+		domainreview.ReviewSubject{MediaAssetID: 1, CoverAssetID: 999},
+		5*time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("cover failure rejected valid media: %v", err)
+	}
+	if access.MediaURL == "" || access.CoverURL != "" {
+		t.Fatalf("preview access = %#v", access)
 	}
 }
 

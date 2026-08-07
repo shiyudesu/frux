@@ -126,6 +126,10 @@ func TestProtectedMediaAssetAccessIsOwnerBoundAndExpires(t *testing.T) {
 		StorageBackend: domainmedia.StorageBackendS3, ObjectKey: "uploads/42/source.mp4",
 		State: domainmedia.AssetStateReady,
 	}
+	repo.variants[501] = []*domainmedia.MediaVariant{{
+		ID: 601, AssetID: 501, Role: domainmedia.VariantRoleBaseline,
+		State: domainmedia.VariantStateReady, ObjectKey: "processed/501/baseline.mp4",
+	}}
 	store := &uploadSessionStore{}
 	resolver, err := inframedia.NewURLResolver("https://cdn.example.test", store)
 	if err != nil {
@@ -138,12 +142,16 @@ func TestProtectedMediaAssetAccessIsOwnerBoundAndExpires(t *testing.T) {
 	owner := newUploadSessionRouter(service, 42)
 	response := performUploadSessionJSON(owner, http.MethodGet, "/api/media-assets/501/access", "")
 	requireStatus(t, response, http.StatusOK)
+	if response.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("protected asset response was cacheable: %q", response.Header().Get("Cache-Control"))
+	}
 	var payload struct {
 		URL       string    `json:"url"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 	decodeJSON(t, response, &payload)
-	if payload.URL == "" || payload.ExpiresAt.Before(time.Now().UTC().Add(4*time.Minute)) {
+	if payload.URL != "https://signed.example.test/processed/501/baseline.mp4" ||
+		payload.ExpiresAt.Before(time.Now().UTC().Add(4*time.Minute)) {
 		t.Fatalf("unexpected protected asset access: %+v", payload)
 	}
 
@@ -156,6 +164,44 @@ func TestProtectedMediaAssetAccessIsOwnerBoundAndExpires(t *testing.T) {
 		applicationmedia.WithMediaAssetAuthorizer(mediaAssetAuthorizerStub{referenced: true, allowed: false}),
 	)
 	assertAPIError(t, performUploadSessionJSON(newUploadSessionRouter(deniedService, 42), http.MethodGet, "/api/media-assets/501/access", ""), http.StatusForbidden, interfaceshttpapierror.CodeUploadAssetPermissionDenied, domainmedia.ErrMediaAssetPermissionDenied.Error())
+
+	repo.assets[502] = &domainmedia.MediaAsset{
+		ID: 502, OwnerID: 42, Kind: domainmedia.AssetKindCover,
+		StorageBackend: domainmedia.StorageBackendS3, ObjectKey: "uploads/42/cover.png",
+		State: domainmedia.AssetStateReady,
+	}
+	repo.variants[502] = []*domainmedia.MediaVariant{{
+		ID: 602, AssetID: 502, Role: domainmedia.VariantRoleCover,
+		State: domainmedia.VariantStateReady, ObjectKey: "processed/502/cover.jpg",
+	}}
+	coverResponse := performUploadSessionJSON(
+		owner, http.MethodGet, "/api/media-assets/502/access", "",
+	)
+	requireStatus(t, coverResponse, http.StatusOK)
+	var coverPayload struct {
+		URL string `json:"url"`
+	}
+	decodeJSON(t, coverResponse, &coverPayload)
+	if coverPayload.URL != "https://signed.example.test/processed/502/cover.jpg" {
+		t.Fatalf("unexpected protected cover access: %+v", coverPayload)
+	}
+
+	repo.assets[503] = &domainmedia.MediaAsset{
+		ID: 503, OwnerID: 42, Kind: domainmedia.AssetKindVideo,
+		StorageBackend: domainmedia.StorageBackendS3, ObjectKey: "uploads/42/processing.mov",
+		State: domainmedia.AssetStateProcessing,
+	}
+	processingResponse := performUploadSessionJSON(
+		owner, http.MethodGet, "/api/media-assets/503/access", "",
+	)
+	requireStatus(t, processingResponse, http.StatusOK)
+	var processingPayload struct {
+		URL string `json:"url"`
+	}
+	decodeJSON(t, processingResponse, &processingPayload)
+	if processingPayload.URL != "https://signed.example.test/uploads/42/processing.mov" {
+		t.Fatalf("processing asset did not fall back to original: %+v", processingPayload)
+	}
 }
 
 type mediaAssetAuthorizerStub struct {
@@ -170,12 +216,25 @@ func (s mediaAssetAuthorizerStub) AuthorizeMediaAsset(context.Context, int64, in
 type uploadSessionRepository struct {
 	sessions map[string]*domainmedia.UploadSession
 	assets   map[int64]*domainmedia.MediaAsset
+	variants map[int64][]*domainmedia.MediaVariant
 	job      *domainmedia.MediaProcessingJob
 	nextID   int64
 }
 
 func newUploadSessionRepository() *uploadSessionRepository {
-	return &uploadSessionRepository{sessions: map[string]*domainmedia.UploadSession{}, assets: map[int64]*domainmedia.MediaAsset{}, nextID: 100}
+	return &uploadSessionRepository{
+		sessions: map[string]*domainmedia.UploadSession{},
+		assets:   map[int64]*domainmedia.MediaAsset{},
+		variants: map[int64][]*domainmedia.MediaVariant{},
+		nextID:   100,
+	}
+}
+
+func (r *uploadSessionRepository) ListReadyVariants(
+	_ context.Context,
+	assetID int64,
+) ([]*domainmedia.MediaVariant, error) {
+	return r.variants[assetID], nil
 }
 
 func (r *uploadSessionRepository) CreateUploadSession(_ context.Context, session *domainmedia.UploadSession) (*domainmedia.UploadSession, bool, error) {

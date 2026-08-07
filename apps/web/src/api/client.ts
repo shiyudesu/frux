@@ -155,6 +155,7 @@ export interface ApiRequestOptions {
   headers?: Record<string, string>;
   body?: unknown;
   keepalive?: boolean;
+  cache?: RequestCache;
 }
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
@@ -172,7 +173,8 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
       method: options.method || "GET",
       headers,
       body,
-      keepalive: options.keepalive
+      keepalive: options.keepalive,
+      cache: options.cache
     });
   } catch {
     throw new NetworkError();

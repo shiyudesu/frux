@@ -153,6 +153,7 @@ func (h *SessionHandler) Access(ctx context.Context, c *app.RequestContext) {
 		writeUploadSessionError(c, err)
 		return
 	}
+	c.Response.Header.Set("Cache-Control", "private, no-store")
 	c.JSON(http.StatusOK, protectedAssetAccessResponse{URL: access.URL, ExpiresAt: access.ExpiresAt})
 }
 

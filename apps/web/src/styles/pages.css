@@ -853,6 +853,56 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
+.upload-preview .preview-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.upload-cover-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--frux-text-muted);
+  font-size: 12px;
+}
+
+.upload-cover-preview img {
+  width: 52px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.work-viewer-state {
+  display: grid;
+  width: 100%;
+  min-height: 280px;
+  place-items: center;
+  color: var(--frux-muted-strong);
+}
+
+.work-viewer-message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  color: var(--frux-muted-strong);
+  font-size: 13px;
+}
+
+.work-viewer-message.warning {
+  color: var(--frux-warning);
+}
+
+.work-viewer-message button {
+  color: var(--frux-text-strong);
+  text-decoration: underline;
+}
+
 .preview-frame {
   display: flex;
   min-height: 380px;
