@@ -145,6 +145,8 @@
 | 发布 URL 规则 | `http/https` 远程 URL 可用；本地媒体只接受属于作者的 `/uploads/video/*`，本地封面只接受属于作者的 `/uploads/cover/*`；`file`、`avatar`、类型互换和无所有权路径均拒绝 |
 | 公开视频可读 | 视频详情、公开作者作品、Feed、推荐、预加载和公开合集只返回 `status=2 AND visibility=public AND media_status IN (legacy_ready, ready)` |
 | 生产上传 | Web 创建上传会话后直传 S3 兼容存储，完成接口严格校验 owner、对象键、大小、类型、SHA-256 和过期时间；本地模式继续使用 `/api/uploads` |
+| 上传会话重放 | 同一 owner 和 `Idempotency-Key` 的相同 fingerprint 返回原 session 或已完成 asset，不受本次请求新生成的候选 session ID 影响；同键异载荷返回冲突 |
+| 发布前校验 | Web 在创建上传会话前校验标题必填、标题 128 UTF-8 字节和简介 512 UTF-8 字节边界，避免文件已上传后才发现作品参数无效 |
 | 双门门禁 | 审核通过和 H.264/AAC faststart 基线就绪相互独立；两者同时满足前只对作者展示真实处理/审核状态 |
 | 生命周期通知 | 创建提交事实；审核拒绝/批准、终态媒体失败、首次公开、下架和恢复各使用稳定 event ID；瞬时上传进度、处理重试和转人工审核不写消息中心 |
 | 首次发布唯一性 | 同一 `video_id + review_version` 最多一个 `video-published` 事实；审核、媒体 ready、可见性、恢复和 reconciliation 共享该身份 |
@@ -190,6 +192,7 @@
 | 历史资产回填 | 唯一作者引用的保护 URL 获得该作者所有权并继续按公开视频/本人规则读取 |
 | 上传非法媒体 | 返回 400 并清理失败文件 |
 | 直传对象不匹配 | owner、对象键、大小、类型或校验和不匹配时返回冲突且不创建资产 |
+| 上传后作品参数失败再重试 | 重用原幂等键时直接返回已完成视频/封面资产，不重复上传对象，也不因新候选 session ID 返回 500 |
 | 视频仍在处理 | 作者列表返回 `media_status=processing`，公共详情、Feed、推荐和预加载均不返回 |
 | 基线完成 | `media_url` 投影到基线，`playback_sources` 按基线、MP4 清晰度、DASH manifest 稳定排序 |
 | 首次发布投递失败 | 视频事实保持提交；Outbox 重试且同一 event 不重复创建消息 |
