@@ -3,6 +3,9 @@ package test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -74,6 +77,126 @@ func TestMediaUploadSessionAPIFlow(t *testing.T) {
 	decodeJSON(t, replay, &completed)
 	if !completed.Replayed {
 		t.Fatal("expected completion replay")
+	}
+
+	replayedCreate := performUploadSessionJSON(router, http.MethodPost, "/api/upload-sessions",
+		`{"kind":"video","filename":"clip.mp4","content_type":"video/mp4","size_bytes":128,"checksum_sha256":"`+checksum+`"}`,
+		ut.Header{Key: "Idempotency-Key", Value: "upload-1"},
+	)
+	requireStatus(t, replayedCreate, http.StatusOK)
+	var replayedSession struct {
+		CompletedAssetID int64 `json:"completed_asset_id"`
+		Replayed         bool  `json:"replayed"`
+	}
+	decodeJSON(t, replayedCreate, &replayedSession)
+	if replayedSession.CompletedAssetID != completed.Asset.ID || !replayedSession.Replayed {
+		t.Fatalf("unexpected completed session replay: %+v", replayedSession)
+	}
+}
+
+func TestMediaUploadSessionRejectsUnsupportedOrOversizedFilesBeforeCreation(t *testing.T) {
+	repo := newUploadSessionRepository()
+	store := &uploadSessionStore{}
+	service := applicationmedia.New(
+		repo, store, domainmedia.StorageBackendS3, 15*time.Minute, "v1", 5,
+		applicationmedia.WithIDGenerator(func() (string, error) { return "unused-session", nil }),
+	)
+	router := newUploadSessionRouter(service, 42)
+	checksum := strings.Repeat("d", 64)
+
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{
+			name: "unsupported cover extension",
+			body: `{"kind":"cover","filename":"cover.gif","content_type":"image/gif","size_bytes":128,"checksum_sha256":"` + checksum + `"}`,
+			code: interfaceshttpapierror.CodeUploadFileTypeInvalid,
+		},
+		{
+			name: "cover MIME does not match supported type",
+			body: `{"kind":"cover","filename":"cover.jpg","content_type":"image/gif","size_bytes":128,"checksum_sha256":"` + checksum + `"}`,
+			code: interfaceshttpapierror.CodeUploadFileTypeInvalid,
+		},
+		{
+			name: "oversized cover",
+			body: `{"kind":"cover","filename":"cover.png","content_type":"image/png","size_bytes":20971521,"checksum_sha256":"` + checksum + `"}`,
+			code: interfaceshttpapierror.CodeUploadCoverTooLarge,
+		},
+		{
+			name: "oversized video",
+			body: `{"kind":"video","filename":"clip.mp4","content_type":"video/mp4","size_bytes":536870913,"checksum_sha256":"` + checksum + `"}`,
+			code: interfaceshttpapierror.CodeUploadVideoTooLarge,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := performUploadSessionJSON(
+				router, http.MethodPost, "/api/upload-sessions", tt.body,
+				ut.Header{Key: "Idempotency-Key", Value: "invalid-" + strings.ReplaceAll(tt.name, " ", "-")},
+			)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+			}
+			var body interfaceshttpapierror.Envelope
+			decodeJSON(t, response, &body)
+			if body.Code != tt.code {
+				t.Fatalf("code = %q want %q body=%s", body.Code, tt.code, response.Body.String())
+			}
+		})
+	}
+	if len(repo.sessions) != 0 {
+		t.Fatalf("invalid requests created sessions: %+v", repo.sessions)
+	}
+}
+
+func TestMediaUploadSessionReplaysLegacyCompletedFormat(t *testing.T) {
+	now := time.Date(2026, 8, 7, 14, 30, 0, 0, time.UTC)
+	repo := newUploadSessionRepository()
+	store := &uploadSessionStore{}
+	checksum := strings.Repeat("e", 64)
+	idempotencyKey := "legacy-cover-upload"
+	fingerprint := uploadSessionFingerprint(
+		42, domainmedia.AssetKindCover, "cover.gif", "image/gif", 128, checksum,
+	)
+	session, err := domainmedia.NewUploadSession(
+		"legacy-cover-session", 42, domainmedia.AssetKindCover, domainmedia.StorageBackendS3,
+		"uploads/42/legacy-cover-session/cover/source.gif", "image/gif", 128, checksum,
+		idempotencyKey, fingerprint, now.Add(15*time.Minute), now,
+	)
+	if err != nil {
+		t.Fatalf("create legacy session: %v", err)
+	}
+	session.State = domainmedia.UploadSessionStateCompleted
+	session.CompletedAssetID = 901
+	session.CompletedAt = &now
+	repo.sessions[session.ID] = session
+	repo.assets[901] = &domainmedia.MediaAsset{
+		ID: 901, OwnerID: 42, Kind: domainmedia.AssetKindCover,
+		StorageBackend: domainmedia.StorageBackendS3, ObjectKey: session.ObjectKey,
+		ContentType: "image/gif", SizeBytes: 128, ChecksumSHA256: checksum,
+		State: domainmedia.AssetStateReady,
+	}
+	service := applicationmedia.New(
+		repo, store, domainmedia.StorageBackendS3, 15*time.Minute, "v1", 5,
+		applicationmedia.WithNow(func() time.Time { return now }),
+	)
+	router := newUploadSessionRouter(service, 42)
+
+	response := performUploadSessionJSON(router, http.MethodPost, "/api/upload-sessions",
+		`{"kind":"cover","filename":"cover.gif","content_type":"image/gif","size_bytes":128,"checksum_sha256":"`+checksum+`"}`,
+		ut.Header{Key: "Idempotency-Key", Value: idempotencyKey},
+	)
+	requireStatus(t, response, http.StatusOK)
+	var payload struct {
+		CompletedAssetID int64 `json:"completed_asset_id"`
+		Replayed         bool  `json:"replayed"`
+	}
+	decodeJSON(t, response, &payload)
+	if payload.CompletedAssetID != 901 || !payload.Replayed {
+		t.Fatalf("unexpected legacy replay: %+v", payload)
 	}
 }
 
@@ -237,6 +360,32 @@ func (r *uploadSessionRepository) ListReadyVariants(
 	return r.variants[assetID], nil
 }
 
+func uploadSessionFingerprint(
+	ownerID int64,
+	kind string,
+	filename string,
+	contentType string,
+	sizeBytes int64,
+	checksum string,
+) string {
+	payload, err := json.Marshal(struct {
+		OwnerID        int64  `json:"owner_id"`
+		Kind           string `json:"kind"`
+		Filename       string `json:"filename"`
+		ContentType    string `json:"content_type"`
+		SizeBytes      int64  `json:"size_bytes"`
+		ChecksumSHA256 string `json:"checksum_sha256"`
+	}{
+		OwnerID: ownerID, Kind: kind, Filename: filename, ContentType: contentType,
+		SizeBytes: sizeBytes, ChecksumSHA256: checksum,
+	})
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
 func (r *uploadSessionRepository) CreateUploadSession(_ context.Context, session *domainmedia.UploadSession) (*domainmedia.UploadSession, bool, error) {
 	for _, existing := range r.sessions {
 		if session.IdempotencyKey != "" && existing.OwnerID == session.OwnerID && existing.IdempotencyKey == session.IdempotencyKey {
@@ -252,6 +401,20 @@ func (r *uploadSessionRepository) CreateUploadSession(_ context.Context, session
 	copy.UpdatedAt = copy.CreatedAt
 	r.sessions[copy.ID] = &copy
 	return &copy, true, nil
+}
+
+func (r *uploadSessionRepository) FindUploadSessionByOwnerAndIdempotencyKey(
+	_ context.Context,
+	ownerID int64,
+	idempotencyKey string,
+) (*domainmedia.UploadSession, error) {
+	for _, session := range r.sessions {
+		if session.OwnerID == ownerID && session.IdempotencyKey == idempotencyKey {
+			copy := *session
+			return &copy, nil
+		}
+	}
+	return nil, domainmedia.ErrUploadSessionNotFound
 }
 
 func (r *uploadSessionRepository) FindUploadSession(_ context.Context, sessionID string) (*domainmedia.UploadSession, error) {

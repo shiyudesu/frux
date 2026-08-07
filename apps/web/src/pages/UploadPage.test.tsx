@@ -3,7 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createVideo } from "../api/account";
+import { NetworkError } from "../api/client";
 import { uploadMediaFile } from "../api/upload";
+import type { MediaUploadResult } from "../api/upload";
+import type { Video } from "../types";
 import { UploadPage } from "./UploadPage";
 
 vi.mock("../api/account", () => ({
@@ -113,6 +116,119 @@ describe("upload page validation", () => {
     expect(container.textContent).toContain("浏览器无法预览该本地视频");
   });
 
+  it("submits normally after the user corrects a missing cover", async () => {
+    vi.mocked(uploadMediaFile).mockImplementation(async (_file, kind) =>
+      kind === "video" ? directUpload(101) : directUpload(202)
+    );
+    vi.mocked(createVideo).mockResolvedValue(createdVideo());
+
+    await act(async () => root.render(<UploadPage />));
+    await setTitle(container, "missing cover retry");
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    await selectFile(inputs[0], new File(["video"], "preview.mp4", { type: "video/mp4" }));
+
+    await submit(container);
+    expect(container.textContent).toContain("请选择封面文件");
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+
+    await selectFile(inputs[1], new File(["cover"], "cover.jpg", { type: "image/jpeg" }));
+    await submit(container);
+
+    expect(uploadMediaFile).toHaveBeenCalledTimes(2);
+    expect(createVideo).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an oversized cover before either upload starts", async () => {
+    await act(async () => root.render(<UploadPage />));
+    await setTitle(container, "oversized cover");
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    await selectFile(inputs[0], new File(["video"], "preview.mp4", { type: "video/mp4" }));
+    const cover = new File(["cover"], "cover.png", { type: "image/png" });
+    Object.defineProperty(cover, "size", {
+      configurable: true,
+      value: 20 * 1024 * 1024 + 1
+    });
+    await selectFile(inputs[1], cover);
+
+    await submit(container);
+
+    expect(container.textContent).toContain("封面不能超过 20 MB");
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+    expect(createVideo).not.toHaveBeenCalled();
+  });
+
+  it("reuses a completed video while retrying only the failed cover", async () => {
+    let coverAttempts = 0;
+    vi.mocked(uploadMediaFile).mockImplementation(async (_file, kind) => {
+      if (kind === "video") return directUpload(101);
+      coverAttempts++;
+      if (coverAttempts === 1) throw new NetworkError();
+      return directUpload(202);
+    });
+    vi.mocked(createVideo).mockResolvedValue(createdVideo());
+
+    await act(async () => root.render(<UploadPage />));
+    await setTitle(container, "partial retry");
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    await selectFile(inputs[0], new File(["video"], "preview.mp4", { type: "video/mp4" }));
+    await selectFile(inputs[1], new File(["cover"], "cover.jpg", { type: "image/jpeg" }));
+
+    await submit(container);
+    expect(container.textContent).toContain("网络连接失败");
+    await submit(container);
+
+    const uploadKinds = vi.mocked(uploadMediaFile).mock.calls.map((call) => call[1]);
+    expect(uploadKinds).toEqual(["video", "cover", "cover"]);
+    expect(createVideo).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the completed video when the failed cover is replaced", async () => {
+    const coverAttemptIDs: string[] = [];
+    vi.mocked(uploadMediaFile).mockImplementation(async (_file, kind, _token, attemptID) => {
+      if (kind === "video") return directUpload(101);
+      coverAttemptIDs.push(attemptID);
+      if (coverAttemptIDs.length === 1) throw new NetworkError();
+      return directUpload(202);
+    });
+    vi.mocked(createVideo).mockResolvedValue(createdVideo());
+
+    await act(async () => root.render(<UploadPage />));
+    await setTitle(container, "replace failed cover");
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    await selectFile(inputs[0], new File(["video"], "preview.mp4", { type: "video/mp4" }));
+    await selectFile(inputs[1], new File(["bad"], "first.jpg", { type: "image/jpeg" }));
+    await submit(container);
+
+    await selectFile(inputs[1], new File(["good"], "second.jpg", { type: "image/jpeg" }));
+    await submit(container);
+
+    const uploadKinds = vi.mocked(uploadMediaFile).mock.calls.map((call) => call[1]);
+    expect(uploadKinds).toEqual(["video", "cover", "cover"]);
+    expect(coverAttemptIDs[1]).not.toBe(coverAttemptIDs[0]);
+  });
+
+  it("reuses both uploaded assets and the creation key after a transient create failure", async () => {
+    vi.mocked(uploadMediaFile).mockImplementation(async (_file, kind) =>
+      kind === "video" ? directUpload(101) : directUpload(202)
+    );
+    vi.mocked(createVideo)
+      .mockRejectedValueOnce(new NetworkError())
+      .mockResolvedValueOnce(createdVideo());
+
+    await act(async () => root.render(<UploadPage />));
+    await setTitle(container, "create retry");
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    await selectFile(inputs[0], new File(["video"], "preview.mp4", { type: "video/mp4" }));
+    await selectFile(inputs[1], new File(["cover"], "cover.jpg", { type: "image/jpeg" }));
+
+    await submit(container);
+    await submit(container);
+
+    expect(uploadMediaFile).toHaveBeenCalledTimes(2);
+    expect(createVideo).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(createVideo).mock.calls[1][2]).toBe(vi.mocked(createVideo).mock.calls[0][2]);
+  });
+
   it("revokes replaced and unmounted local preview URLs", async () => {
     await act(async () => root.render(<UploadPage />));
     const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
@@ -134,4 +250,42 @@ async function selectFile(input: HTMLInputElement, file: File) {
     value: [file]
   });
   await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+}
+
+async function setTitle(container: HTMLDivElement, value: string) {
+  const title = container.querySelector<HTMLInputElement>('input[placeholder="输入视频标题"]');
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    setter?.call(title, value);
+    title?.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function submit(container: HTMLDivElement) {
+  await act(async () => {
+    container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+}
+
+function directUpload(assetID: number): MediaUploadResult {
+  return { mode: "direct", assetID };
+}
+
+function createdVideo(): Video {
+  return {
+    id: 1,
+    author_id: 1,
+    title: "uploaded",
+    description: "",
+    media_url: "",
+    cover_url: "",
+    status: 5,
+    visibility: "public",
+    like_count: 0,
+    comment_count: 0,
+    favorite_count: 0,
+    created_at: "2026-08-07T00:00:00Z",
+    updated_at: "2026-08-07T00:00:00Z",
+    media_status: "processing"
+  };
 }

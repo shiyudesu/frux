@@ -439,6 +439,23 @@ func (r *Repository) CreateUploadSession(ctx context.Context, session *domainmed
 	return uploadSessionFromModel(model), created, nil
 }
 
+func (r *Repository) FindUploadSessionByOwnerAndIdempotencyKey(
+	ctx context.Context,
+	ownerID int64,
+	idempotencyKey string,
+) (*domainmedia.UploadSession, error) {
+	var model UploadSessionModel
+	if err := r.db.WithContext(ctx).
+		Where("owner_id = ? AND idempotency_key = ?", ownerID, strings.TrimSpace(idempotencyKey)).
+		Take(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainmedia.ErrUploadSessionNotFound
+		}
+		return nil, err
+	}
+	return uploadSessionFromModel(model), nil
+}
+
 func (r *Repository) FindUploadSession(ctx context.Context, sessionID string) (*domainmedia.UploadSession, error) {
 	var model UploadSessionModel
 	if err := r.db.WithContext(ctx).Where("id = ?", sessionID).Take(&model).Error; err != nil {

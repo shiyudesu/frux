@@ -159,6 +159,12 @@ func (h *SessionHandler) Access(ctx context.Context, c *app.RequestContext) {
 
 func writeUploadSessionError(c *app.RequestContext, err error) {
 	switch {
+	case errors.Is(err, applicationmedia.ErrUploadFileTypeInvalid):
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadFileTypeInvalid, err.Error())
+	case errors.Is(err, applicationmedia.ErrVideoUploadTooLarge):
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadVideoTooLarge, err.Error())
+	case errors.Is(err, applicationmedia.ErrCoverUploadTooLarge):
+		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeUploadCoverTooLarge, err.Error())
 	case errors.Is(err, domainmedia.ErrInvalidOwnerID),
 		errors.Is(err, domainmedia.ErrInvalidAssetID),
 		errors.Is(err, domainmedia.ErrInvalidAssetKind),

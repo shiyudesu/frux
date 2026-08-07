@@ -248,6 +248,20 @@ func (r *e2eMediaRepo) CreateUploadSession(_ context.Context, session *domainmed
 	return &copy, true, nil
 }
 
+func (r *e2eMediaRepo) FindUploadSessionByOwnerAndIdempotencyKey(
+	_ context.Context,
+	ownerID int64,
+	idempotencyKey string,
+) (*domainmedia.UploadSession, error) {
+	for _, session := range r.sessions {
+		if session.OwnerID == ownerID && session.IdempotencyKey == idempotencyKey {
+			copy := *session
+			return &copy, nil
+		}
+	}
+	return nil, domainmedia.ErrUploadSessionNotFound
+}
+
 func (r *e2eMediaRepo) FindUploadSession(_ context.Context, sessionID string) (*domainmedia.UploadSession, error) {
 	session := r.sessions[sessionID]
 	if session == nil {

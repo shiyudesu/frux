@@ -35,7 +35,7 @@ export async function uploadMediaFile(
   const request: UploadSessionRequest = {
     kind,
     filename: file.name,
-    content_type: file.type || defaultContentType(kind),
+    content_type: file.type || defaultContentType(kind, file.name),
     size_bytes: file.size,
     checksum_sha256: checksum
   };
@@ -171,6 +171,14 @@ function uploadIdempotencyKey(attemptID: string, kind: UploadKind): string {
   return `web-media-${attemptID}-${kind}`.slice(0, 128);
 }
 
-function defaultContentType(kind: UploadKind): string {
-  return kind === "video" ? "video/mp4" : "image/jpeg";
+function defaultContentType(kind: UploadKind, filename: string): string {
+  const extension = filename.toLowerCase().match(/\.[^.]+$/)?.[0] || "";
+  if (kind === "video") {
+    if (extension === ".mov") return "video/quicktime";
+    if (extension === ".webm") return "video/webm";
+    return "video/mp4";
+  }
+  if (extension === ".png") return "image/png";
+  if (extension === ".webp") return "image/webp";
+  return "image/jpeg";
 }

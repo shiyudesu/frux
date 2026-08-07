@@ -115,15 +115,38 @@ describe("upload API errors", () => {
       code: "UPLOAD_OBJECT_FAILED"
     } satisfies Partial<ApiError>);
   });
+
+  it("derives fallback content types from file extensions", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+        mode: "direct",
+        completed_asset_id: 7
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await uploadWithFile(new File(["video"], "clip.webm"));
+    await uploadWithFile(new File(["cover"], "cover.png"), "cover");
+
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)) as Record<string, unknown>;
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body)) as Record<string, unknown>;
+    expect(firstBody.content_type).toBe("video/webm");
+    expect(secondBody.content_type).toBe("image/png");
+  });
 });
 
 function upload() {
   const file = new File(["video"], "video.mp4", { type: "video/mp4" });
+  return uploadWithFile(file);
+}
+
+function uploadWithFile(file: File, kind: "video" | "cover" = "video") {
   Object.defineProperty(file, "arrayBuffer", {
     configurable: true,
-    value: () => Promise.resolve(new TextEncoder().encode("video").buffer)
+    value: () => Promise.resolve(new TextEncoder().encode(file.name).buffer)
   });
-  return uploadMediaFile(file, "video", "token", "attempt");
+  return uploadMediaFile(file, kind, "token", `attempt-${kind}`);
 }
 
 function stubUploadSession(value: unknown) {

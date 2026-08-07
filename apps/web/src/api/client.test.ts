@@ -27,6 +27,14 @@ describe("safe API error messages", () => {
       new ApiError("video codec is unsupported", 400, "UPLOAD_VALIDATION_FAILED"),
       "发布失败"
     )).toBe("上传文件不符合要求，请检查后重试");
+    expect(apiErrorMessage(
+      new ApiError("cover upload exceeds 20 MiB", 400, "UPLOAD_COVER_TOO_LARGE"),
+      "发布失败"
+    )).toBe("封面不能超过 20 MB");
+    expect(apiErrorMessage(
+      new ApiError("unsupported upload file type", 400, "UPLOAD_FILE_TYPE_INVALID"),
+      "发布失败"
+    )).toBe("文件格式不受支持，请重新选择");
   });
 
   it("uses safe fallbacks for missing and unknown codes", () => {

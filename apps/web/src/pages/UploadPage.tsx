@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { createVideo } from "../api/account";
 import { UserFacingError, apiErrorMessage } from "../api/client";
 import { uploadMediaFile } from "../api/upload";
+import type { MediaUploadResult, UploadKind } from "../api/upload";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
 import { Icon } from "../components/Icon";
@@ -11,6 +12,12 @@ import { Icon } from "../components/Icon";
 interface UploadForm {
   title: string;
   description: string;
+}
+
+interface SelectedUpload {
+  file: File;
+  attemptID: string;
+  result: MediaUploadResult | null;
 }
 
 export function UploadPage() {
@@ -29,7 +36,9 @@ export function UploadPage() {
   const [submitting, setSubmitting] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
   const [coverProgress, setCoverProgress] = useState(0);
-  const uploadAttemptRef = useRef("");
+  const videoUploadRef = useRef<SelectedUpload | null>(null);
+  const coverUploadRef = useRef<SelectedUpload | null>(null);
+  const creationAttemptRef = useRef("");
 
   useEffect(() => {
     if (!coverFile) {
@@ -76,15 +85,21 @@ export function UploadPage() {
       if (!coverFile) {
         throw new UserFacingError("请选择封面文件");
       }
-      if (!uploadAttemptRef.current) {
-        uploadAttemptRef.current = crypto.randomUUID();
-      }
-      const uploadAttemptID = uploadAttemptRef.current;
+      validateMediaFile(videoFile, "video");
+      validateMediaFile(coverFile, "cover");
       setStatus("正在计算校验和并上传");
-      const [videoUpload, coverUpload] = await Promise.all([
-        uploadMediaFile(videoFile, "video", session.token, uploadAttemptID, setVideoProgress),
-        uploadMediaFile(coverFile, "cover", session.token, uploadAttemptID, setCoverProgress)
+      const [videoUploadResult, coverUploadResult] = await Promise.allSettled([
+        uploadSelectedFile(videoUploadRef, videoFile, "video", session.token, setVideoProgress),
+        uploadSelectedFile(coverUploadRef, coverFile, "cover", session.token, setCoverProgress)
       ]);
+      if (videoUploadResult.status === "rejected") {
+        throw videoUploadResult.reason;
+      }
+      if (coverUploadResult.status === "rejected") {
+        throw coverUploadResult.reason;
+      }
+      const videoUpload = videoUploadResult.value;
+      const coverUpload = coverUploadResult.value;
       const uploadReferences =
         videoUpload.mode === "direct" && coverUpload.mode === "direct"
           ? { media_asset_id: videoUpload.assetID, cover_asset_id: coverUpload.assetID }
@@ -94,9 +109,10 @@ export function UploadPage() {
       if (!uploadReferences) {
         throw new UserFacingError("视频和封面上传模式不一致，请重试");
       }
-      const videoReference = videoUpload.mode === "direct" ? String(videoUpload.assetID) : videoUpload.url;
-      const coverReference = coverUpload.mode === "direct" ? String(coverUpload.assetID) : coverUpload.url;
-      const creationKey = `web-video-${uploadAttemptID}-${videoReference}-${coverReference}`.slice(0, 128);
+      if (!creationAttemptRef.current) {
+        creationAttemptRef.current = crypto.randomUUID();
+      }
+      const creationKey = `web-video-${creationAttemptRef.current}`;
       setStatus("正在创建作品");
       const video = await createVideo(session.token, {
         title,
@@ -106,7 +122,9 @@ export function UploadPage() {
       setStatus(video.media_status === "processing"
         ? "上传完成，视频处理中并等待审核"
         : "上传成功，等待审核");
-      uploadAttemptRef.current = "";
+      videoUploadRef.current = null;
+      coverUploadRef.current = null;
+      creationAttemptRef.current = "";
       navigate("/profile");
     } catch (error) {
       setStatus(apiErrorMessage(error, "发布失败"));
@@ -176,10 +194,19 @@ export function UploadPage() {
                   <strong>{videoFile ? videoFile.name : "选择视频文件"}</strong>
                   <small>本地视频上传</small>
                 </span>
-                <input type="file" accept="video/*" onChange={(event) => {
-                  uploadAttemptRef.current = "";
-                  setVideoFile(event.target.files?.[0] || null);
-                }} />
+                <input
+                  type="file"
+                  accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
+                  disabled={submitting}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    setStatus("");
+                    setVideoProgress(0);
+                    setVideoFile(file);
+                    videoUploadRef.current = file ? newSelectedUpload(file) : null;
+                    creationAttemptRef.current = "";
+                  }}
+                />
               </span>
             </label>
             <label>
@@ -190,10 +217,19 @@ export function UploadPage() {
                   <strong>{coverFile ? coverFile.name : "选择封面文件"}</strong>
                   <small>本地图片上传</small>
                 </span>
-                <input type="file" accept="image/*" onChange={(event) => {
-                  uploadAttemptRef.current = "";
-                  setCoverFile(event.target.files?.[0] || null);
-                }} />
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                  disabled={submitting}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    setStatus("");
+                    setCoverProgress(0);
+                    setCoverFile(file);
+                    coverUploadRef.current = file ? newSelectedUpload(file) : null;
+                    creationAttemptRef.current = "";
+                  }}
+                />
               </span>
             </label>
             {submitting && (
@@ -248,6 +284,62 @@ export function UploadPage() {
 
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+function newSelectedUpload(file: File): SelectedUpload {
+  return {
+    file,
+    attemptID: crypto.randomUUID(),
+    result: null
+  };
+}
+
+async function uploadSelectedFile(
+  selectionRef: { current: SelectedUpload | null },
+  file: File,
+  kind: UploadKind,
+  token: string,
+  onProgress: (progress: number) => void
+): Promise<MediaUploadResult> {
+  const selection = selectionRef.current;
+  if (!selection || selection.file !== file) {
+    throw new UserFacingError("文件选择已变化，请重新发布");
+  }
+  if (selection.result) {
+    onProgress(100);
+    return selection.result;
+  }
+  const result = await uploadMediaFile(file, kind, token, selection.attemptID, onProgress);
+  if (selectionRef.current === selection) {
+    selection.result = result;
+  }
+  return result;
+}
+
+function validateMediaFile(file: File, kind: UploadKind) {
+  const isVideo = kind === "video";
+  const label = isVideo ? "视频" : "封面";
+  const maxBytes = isVideo ? 512 * 1024 * 1024 : 20 * 1024 * 1024;
+  if (file.size <= 0) {
+    throw new UserFacingError(`${label}文件为空，请重新选择`);
+  }
+  if (file.size > maxBytes) {
+    throw new UserFacingError(`${label}不能超过 ${isVideo ? 512 : 20} MB`);
+  }
+
+  const extension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0] || "";
+  const contentType = file.type.toLowerCase().split(";", 1)[0].trim();
+  const allowedExtensions = isVideo
+    ? new Set([".mp4", ".mov", ".webm"])
+    : new Set([".jpg", ".jpeg", ".png", ".webp"]);
+  const allowedContentTypes = isVideo
+    ? new Set(["video/mp4", "video/quicktime", "video/webm"])
+    : new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (!allowedExtensions.has(extension) || (contentType && !allowedContentTypes.has(contentType))) {
+    throw new UserFacingError(
+      isVideo ? "视频仅支持 MP4、MOV 或 WebM 格式" : "封面仅支持 JPG、PNG 或 WebP 格式"
+    );
+  }
 }
 
 function UploadProgress({ label, value }: { label: string; value: number }) {

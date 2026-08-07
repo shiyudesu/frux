@@ -21,8 +21,29 @@ const maxCoverUploadBytes int64 = 20 << 20
 var ErrCreateUploadSessionFailed = errors.New("failed to create upload session")
 var ErrCompleteUploadSessionFailed = errors.New("failed to complete upload session")
 var ErrUploadObjectMismatch = errors.New("uploaded object does not match session")
+var ErrUploadFileTypeInvalid = errors.New("unsupported upload file type")
+var ErrVideoUploadTooLarge = errors.New("video upload exceeds 512 MiB")
+var ErrCoverUploadTooLarge = errors.New("cover upload exceeds 20 MiB")
 var ErrDirectUploadUnavailable = errors.New("direct upload is unavailable")
 var ErrDispatchProcessingFailed = errors.New("failed to dispatch media processing")
+
+var allowedUploadExtensions = map[string]map[string]struct{}{
+	domainmedia.AssetKindVideo: {
+		".mp4": {}, ".mov": {}, ".webm": {},
+	},
+	domainmedia.AssetKindCover: {
+		".jpg": {}, ".jpeg": {}, ".png": {}, ".webp": {},
+	},
+}
+
+var allowedUploadContentTypes = map[string]map[string]struct{}{
+	domainmedia.AssetKindVideo: {
+		"video/mp4": {}, "video/quicktime": {}, "video/webm": {},
+	},
+	domainmedia.AssetKindCover: {
+		"image/jpeg": {}, "image/png": {}, "image/webp": {},
+	},
+}
 
 type ProcessingPublisher interface {
 	PublishMediaProcessingRequested(ctx context.Context, event *ProcessingRequestedEvent) error
@@ -30,6 +51,7 @@ type ProcessingPublisher interface {
 
 type Repository interface {
 	CreateUploadSession(ctx context.Context, session *domainmedia.UploadSession) (*domainmedia.UploadSession, bool, error)
+	FindUploadSessionByOwnerAndIdempotencyKey(ctx context.Context, ownerID int64, idempotencyKey string) (*domainmedia.UploadSession, error)
 	FindUploadSession(ctx context.Context, sessionID string) (*domainmedia.UploadSession, error)
 	CompleteUploadSession(ctx context.Context, sessionID string, asset *domainmedia.MediaAsset, completedAt time.Time) (*domainmedia.UploadSession, *domainmedia.MediaAsset, bool, error)
 	CreateOrGetProcessingJob(ctx context.Context, job *domainmedia.MediaProcessingJob) (*domainmedia.MediaProcessingJob, bool, error)
@@ -147,7 +169,43 @@ func (s *Service) CreateUploadSession(ctx context.Context, input CreateUploadSes
 	if s.backend != domainmedia.StorageBackendS3 || s.repo == nil || s.store == nil {
 		return nil, ErrDirectUploadUnavailable
 	}
-	if err := validateUploadIntent(input); err != nil {
+	if err := validateUploadIntentBase(input); err != nil {
+		return nil, err
+	}
+	fingerprint, err := uploadFingerprint(input)
+	if err != nil {
+		return nil, ErrCreateUploadSessionFailed
+	}
+	now := s.now()
+	if idempotencyKey := strings.TrimSpace(input.IdempotencyKey); idempotencyKey != "" {
+		stored, findErr := s.repo.FindUploadSessionByOwnerAndIdempotencyKey(ctx, input.OwnerID, idempotencyKey)
+		switch {
+		case findErr == nil:
+			if stored.RequestFingerprint != fingerprint {
+				return nil, domainmedia.ErrUploadSessionConflict
+			}
+			if stored.State == domainmedia.UploadSessionStateCompleted {
+				return &CreateUploadSessionResult{
+					Mode: "direct", Session: stored, CompletedAssetID: stored.CompletedAssetID, Replayed: true,
+				}, nil
+			}
+			if stored.State == domainmedia.UploadSessionStatePending && stored.ExpiresAt.After(now) {
+				request, requestErr := s.store.PresignPut(
+					ctx, stored.ObjectKey, stored.ContentType, stored.ChecksumSHA256,
+					stored.SizeBytes, stored.ExpiresAt.Sub(now),
+				)
+				if requestErr != nil {
+					return nil, ErrCreateUploadSessionFailed
+				}
+				return &CreateUploadSessionResult{
+					Mode: "direct", Session: stored, UploadRequest: request, Replayed: true,
+				}, nil
+			}
+		case !errors.Is(findErr, domainmedia.ErrUploadSessionNotFound):
+			return nil, findErr
+		}
+	}
+	if err := validateUploadFileConstraints(input); err != nil {
 		return nil, err
 	}
 	sessionID, err := s.newID()
@@ -158,11 +216,6 @@ func (s *Service) CreateUploadSession(ctx context.Context, input CreateUploadSes
 	if err != nil {
 		return nil, err
 	}
-	fingerprint, err := uploadFingerprint(input)
-	if err != nil {
-		return nil, ErrCreateUploadSessionFailed
-	}
-	now := s.now()
 	session, err := domainmedia.NewUploadSession(
 		sessionID, input.OwnerID, input.Kind, s.backend, objectKey, input.ContentType,
 		input.SizeBytes, input.ChecksumSHA256, input.IdempotencyKey, fingerprint, now.Add(s.sessionTTL), now,
@@ -380,34 +433,50 @@ func protectedPreviewVariantKey(
 	return ""
 }
 
-func validateUploadIntent(input CreateUploadSessionInput) error {
+func validateUploadIntentBase(input CreateUploadSessionInput) error {
 	if input.OwnerID <= 0 {
 		return domainmedia.ErrInvalidOwnerID
 	}
-	if !domainmedia.ValidAssetKind(input.Kind) {
+	kind := strings.ToLower(strings.TrimSpace(input.Kind))
+	if !domainmedia.ValidAssetKind(kind) {
 		return domainmedia.ErrInvalidAssetKind
 	}
-	if strings.TrimSpace(input.Filename) == "" {
+	filename := strings.TrimSpace(input.Filename)
+	if filename == "" {
 		return domainmedia.ErrInvalidObjectKey
 	}
 	if input.SizeBytes <= 0 {
 		return domainmedia.ErrInvalidSize
-	}
-	switch strings.ToLower(strings.TrimSpace(input.Kind)) {
-	case domainmedia.AssetKindVideo:
-		if input.SizeBytes > maxVideoUploadBytes || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(input.ContentType)), "video/") {
-			return domainmedia.ErrInvalidSize
-		}
-	case domainmedia.AssetKindCover:
-		if input.SizeBytes > maxCoverUploadBytes || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(input.ContentType)), "image/") {
-			return domainmedia.ErrInvalidSize
-		}
 	}
 	_, err := domainmedia.NewMediaAsset(
 		input.OwnerID, input.Kind, domainmedia.StorageBackendS3,
 		"validation/source.bin", input.ContentType, input.SizeBytes, input.ChecksumSHA256,
 	)
 	return err
+}
+
+func validateUploadFileConstraints(input CreateUploadSessionInput) error {
+	kind := strings.ToLower(strings.TrimSpace(input.Kind))
+	filename := strings.TrimSpace(input.Filename)
+	extension := strings.ToLower(filepath.Ext(filepath.Base(filename)))
+	if _, ok := allowedUploadExtensions[kind][extension]; !ok {
+		return ErrUploadFileTypeInvalid
+	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(input.ContentType, ";")[0]))
+	if _, ok := allowedUploadContentTypes[kind][contentType]; !ok {
+		return ErrUploadFileTypeInvalid
+	}
+	switch kind {
+	case domainmedia.AssetKindVideo:
+		if input.SizeBytes > maxVideoUploadBytes {
+			return ErrVideoUploadTooLarge
+		}
+	case domainmedia.AssetKindCover:
+		if input.SizeBytes > maxCoverUploadBytes {
+			return ErrCoverUploadTooLarge
+		}
+	}
+	return nil
 }
 
 func uploadFingerprint(input CreateUploadSessionInput) (string, error) {
