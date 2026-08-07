@@ -1,10 +1,6 @@
 package interfaceshttpreview
 
-import (
-	"strings"
-
-	domainreview "github.com/shiyudesu/frux/internal/domain/review"
-)
+import domainreview "github.com/shiyudesu/frux/internal/domain/review"
 
 func humanCaseResponseFromDomain(reviewCase *domainreview.ReviewCase) humanCaseResponse {
 	if reviewCase == nil {
@@ -37,15 +33,16 @@ func humanCaseDetailResponseFromDomain(detail *domainreview.HumanCaseDetail) hum
 		response.History.Signals = append(response.History.Signals, evidenceSignalResponse{
 			ID: signal.ID, ResultID: signal.ResultID, Label: signal.Label, Confidence: signal.Confidence,
 			EvidenceRefs: signal.EvidenceRefs, Provider: signal.Provider, ModelVersion: signal.ModelVersion,
-			PolicyVersion: signal.PolicyVersion, SourceKind: evidenceSourceKind(signal.Provider),
-			CreatedAt: signal.CreatedAt,
+			PolicyVersion: signal.PolicyVersion, SourceKind: signal.SourceKind,
+			GeneratedAt: signal.GeneratedAt, CreatedAt: signal.CreatedAt,
 		})
 	}
 
 	for _, decision := range detail.History.AutomatedDecisions {
 		response.History.AutomatedDecisions = append(response.History.AutomatedDecisions, automatedDecisionResponse{
 			ID: decision.ID, ResultID: decision.ResultID, Outcome: decision.Outcome,
-			PolicyVersion: decision.PolicyVersion, CreatedAt: decision.CreatedAt,
+			PolicyVersion: decision.PolicyVersion, RolloutMode: decision.RolloutMode,
+			CreatedAt: decision.CreatedAt,
 		})
 	}
 	for _, assignment := range detail.History.Assignments {
@@ -61,13 +58,6 @@ func humanCaseDetailResponseFromDomain(detail *domainreview.HumanCaseDetail) hum
 		)
 	}
 	return response
-}
-
-func evidenceSourceKind(provider string) string {
-	if strings.EqualFold(strings.TrimSpace(provider), "manual-seed") {
-		return "test_seed"
-	}
-	return "unverified"
 }
 
 func humanDecisionResponseFromDomain(decision *domainreview.HumanDecision) humanDecisionResponse {

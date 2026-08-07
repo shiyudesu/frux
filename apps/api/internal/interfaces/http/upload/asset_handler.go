@@ -1,9 +1,9 @@
 package interfaceshttpupload
 
 import (
+	"context"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
-	"context"
 	"net/http"
 	"strings"
 
@@ -71,7 +71,7 @@ func assetViewerID(c *app.RequestContext) (int64, bool) {
 
 func protectedUploadKind(assetURL string) bool {
 	kind := uploadKind(assetURL)
-	return kind == "video" || kind == "cover"
+	return kind == "video" || kind == "cover" || kind == "moderation"
 }
 
 func uploadKind(assetURL string) string {

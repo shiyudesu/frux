@@ -141,3 +141,17 @@ func TestAdminTransitionLegacyRestoreMarksPublicationReadyOnce(t *testing.T) {
 		t.Fatalf("publisher calls=%d marks=%d", publisher.calls, readiness.marks)
 	}
 }
+
+func TestModerationWorkerOwnerIsUniquePerProcessStart(t *testing.T) {
+	first, err := newModerationWorkerOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newModerationWorkerOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || len(first) > 128 || len(second) > 128 {
+		t.Fatalf("owners first=%q second=%q", first, second)
+	}
+}

@@ -125,6 +125,7 @@ const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   UPLOAD_RECORD_FAILED: "上传服务暂时不可用，请稍后重试",
   UPLOAD_STORAGE_UNAVAILABLE: "上传存储暂时不可用，请稍后重试",
   UPLOAD_UNAVAILABLE: "上传服务暂时不可用，请稍后重试",
+  VIDEO_VALIDATION_FAILED: "视频信息有误，请检查标题和简介",
   SERVICE_UNAVAILABLE: "服务暂时不可用，请稍后重试",
   INTERNAL_ERROR: "服务暂时不可用，请稍后重试"
 };

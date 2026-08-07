@@ -350,7 +350,7 @@ export function ReviewDetailPage({ reviewID }: { reviewID: number }) {
     return [
       ...detail.history.automated_decisions.map((item) => ({
         id: `auto-${item.id}`, time: item.created_at,
-        label: `自动审核：${outcomeLabel(item.outcome)} · policy v${item.policy_version}`
+        label: `自动审核：${outcomeLabel(item.outcome)} · ${rolloutModeLabel(item.rollout_mode)} · policy v${item.policy_version}`
       })),
       ...detail.history.assignments.map((item) => ({
         id: `assignment-${item.id}`, time: item.created_at,
@@ -422,11 +422,16 @@ export function ReviewDetailPage({ reviewID }: { reviewID: number }) {
               {signals.map((signal) => (
                 <div key={signal.id}>
                   <strong>{labelName(signal.label)} <small>({signal.label})</small></strong>
-                  <span>{Math.round(signal.confidence * 100)}%</span>
+                  <span>
+                    {signal.source_kind === "recovery"
+                      ? "未获得模型判断"
+                      : `${Math.round(signal.confidence * 100)}%`}
+                  </span>
                   <small>
-                    {signal.source_kind === "test_seed" ? "测试证据" : "来源未验证"}
+                    {evidenceSourceLabel(signal.source_kind)}
                     {" · "}{signal.provider} · {signal.model_version} · policy v{signal.policy_version}
                   </small>
+                  <small>证据生成于 {new Date(signal.generated_at).toLocaleString()}</small>
                   {signal.evidence_refs.map((reference) => <code key={reference}>{reference}</code>)}
                 </div>
               ))}
@@ -593,6 +598,26 @@ function outcomeLabel(outcome: string): string {
   if (outcome === "reject") return "驳回";
   if (outcome === "human") return "转人工审核";
   return outcome;
+}
+
+function evidenceSourceLabel(source: string): string {
+  switch (source) {
+    case "production_provider": return "生产模型证据";
+    case "test_seed": return "测试证据";
+    case "recovery": return "系统恢复记录（非模型判断）";
+    case "legacy_unknown": return "历史来源未验证";
+    default: return "来源不可识别";
+  }
+}
+
+function rolloutModeLabel(mode: string): string {
+  switch (mode) {
+    case "disabled": return "外部审核关闭";
+    case "observe": return "观察模式";
+    case "approve_only": return "仅自动通过";
+    case "enforce": return "完整执行";
+    default: return "未知 rollout";
+  }
 }
 
 function reviewStatusLabel(status: string): string {

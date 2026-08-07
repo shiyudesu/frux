@@ -29,6 +29,9 @@ type ResultModel struct {
 	ResultID      string    `gorm:"column:result_id;size:128;not null;uniqueIndex:uk_review_result_provider_identity,priority:2"`
 	PayloadHash   string    `gorm:"column:payload_hash;size:64;not null"`
 	ModelVersion  string    `gorm:"column:model_version;size:128;not null"`
+	SourceKind    string    `gorm:"column:source_kind;size:32;not null;default:'legacy_unknown'"`
+	GeneratedAt   time.Time `gorm:"column:generated_at;not null;default:CURRENT_TIMESTAMP"`
+	RolloutMode   string    `gorm:"column:rollout_mode;size:16;not null;default:'enforce'"`
 	PolicyVersion int       `gorm:"column:policy_version;not null"`
 	Outcome       string    `gorm:"column:outcome;size:16;not null"`
 	DecisionID    int64     `gorm:"column:decision_id;not null;default:0"`
@@ -47,6 +50,8 @@ type SignalModel struct {
 	Provider         string    `gorm:"column:provider;size:64;not null"`
 	ModelVersion     string    `gorm:"column:model_version;size:128;not null"`
 	PolicyVersion    int       `gorm:"column:policy_version;not null"`
+	SourceKind       string    `gorm:"column:source_kind;size:32;not null;default:'legacy_unknown'"`
+	GeneratedAt      time.Time `gorm:"column:generated_at;not null;default:CURRENT_TIMESTAMP"`
 	CreatedAt        time.Time `gorm:"column:created_at;not null;autoCreateTime;index:idx_review_signal_case_created,priority:2"`
 }
 
@@ -58,10 +63,37 @@ type DecisionModel struct {
 	ResultReceiptID int64     `gorm:"column:result_receipt_id;not null;uniqueIndex:uk_review_decision_result"`
 	Outcome         string    `gorm:"column:outcome;size:16;not null"`
 	PolicyVersion   int       `gorm:"column:policy_version;not null"`
+	RolloutMode     string    `gorm:"column:rollout_mode;size:16;not null;default:'enforce'"`
 	CreatedAt       time.Time `gorm:"column:created_at;not null;autoCreateTime;index:idx_review_decision_case_created,priority:2"`
 }
 
 func (DecisionModel) TableName() string { return "review_decision" }
+
+type ModerationJobModel struct {
+	ID                    int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	CaseID                int64      `gorm:"column:case_id;not null;uniqueIndex:uk_review_moderation_job_subject_config,priority:1;index:idx_review_moderation_job_case"`
+	VideoID               int64      `gorm:"column:video_id;not null;index:idx_review_moderation_job_video"`
+	ReviewVersion         int        `gorm:"column:review_version;not null;uniqueIndex:uk_review_moderation_job_subject_config,priority:2"`
+	ProviderConfigVersion int        `gorm:"column:provider_config_version;not null;uniqueIndex:uk_review_moderation_job_subject_config,priority:3"`
+	InputProfileVersion   string     `gorm:"column:input_profile_version;size:64;not null"`
+	RolloutMode           string     `gorm:"column:rollout_mode;size:16;not null"`
+	Status                string     `gorm:"column:status;size:16;not null;index:idx_review_moderation_job_claim,priority:1"`
+	ResultID              string     `gorm:"column:result_id;size:128;not null;uniqueIndex:uk_review_moderation_job_result"`
+	RequestID             string     `gorm:"column:request_id;size:128;not null;uniqueIndex:uk_review_moderation_job_request"`
+	Attempts              int        `gorm:"column:attempts;not null;default:0"`
+	MaxAttempts           int        `gorm:"column:max_attempts;not null"`
+	AvailableAt           time.Time  `gorm:"column:available_at;not null;index:idx_review_moderation_job_claim,priority:2"`
+	LeaseOwner            string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil            *time.Time `gorm:"column:lease_until;index:idx_review_moderation_job_claim,priority:3"`
+	InputManifestJSON     string     `gorm:"column:input_manifest_json;type:jsonb;not null;default:'{}'"`
+	LastErrorCode         string     `gorm:"column:last_error_code;size:64;not null;default:''"`
+	SubmittedAt           *time.Time `gorm:"column:submitted_at"`
+	CancelledAt           *time.Time `gorm:"column:cancelled_at"`
+	CreatedAt             time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt             time.Time  `gorm:"column:updated_at;not null"`
+}
+
+func (ModerationJobModel) TableName() string { return "review_moderation_job" }
 
 type PolicyModel struct {
 	ID         int64     `gorm:"column:id;primaryKey;autoIncrement"`

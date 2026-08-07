@@ -77,13 +77,25 @@ func (s *Service) SubmitMachineResult(ctx context.Context, input domainreview.Ma
 		s.observe("provider_result", "accepted")
 	}
 	s.observe("routing", processed.Decision.Outcome)
-	if s.outcomeApplier != nil && processed.ApplySideEffects {
-		if err := s.outcomeApplier.ApplyReviewOutcome(ctx, processed); err != nil {
-			s.observe("provider_result", "retry")
-			return nil, err
-		}
+	if err := s.ApplyMachineResultSideEffects(ctx, processed); err != nil {
+		return nil, err
 	}
 	return processed, nil
+}
+
+func (s *Service) ApplyMachineResultSideEffects(
+	ctx context.Context,
+	processed *domainreview.ProcessingResult,
+) error {
+	if s == nil || processed == nil || !processed.ApplySideEffects ||
+		s.outcomeApplier == nil {
+		return nil
+	}
+	if err := s.outcomeApplier.ApplyReviewOutcome(ctx, processed); err != nil {
+		s.observe("provider_result", "retry")
+		return err
+	}
+	return nil
 }
 
 func (s *Service) Reconcile(ctx context.Context, limit int) (domainreview.ReconciliationStats, error) {
@@ -135,6 +147,9 @@ func reviewErrorResult(err error) string {
 		errors.Is(err, domainreview.ErrInvalidResultIdentity),
 		errors.Is(err, domainreview.ErrInvalidProvider),
 		errors.Is(err, domainreview.ErrInvalidModelVersion),
+		errors.Is(err, domainreview.ErrInvalidMachineSource),
+		errors.Is(err, domainreview.ErrInvalidGeneratedAt),
+		errors.Is(err, domainreview.ErrInvalidModerationMode),
 		errors.Is(err, domainreview.ErrInvalidSignal),
 		errors.Is(err, domainreview.ErrInvalidConfidence),
 		errors.Is(err, domainreview.ErrTooManySignals),
@@ -145,7 +160,8 @@ func reviewErrorResult(err error) string {
 	case errors.Is(err, domainreview.ErrResultIdentityConflict),
 		errors.Is(err, domainreview.ErrReviewSubjectStale),
 		errors.Is(err, domainreview.ErrReviewCaseNotOpen),
-		errors.Is(err, domainreview.ErrReviewSubjectState):
+		errors.Is(err, domainreview.ErrReviewSubjectState),
+		errors.Is(err, domainreview.ErrModerationJobNotOwned):
 		return "conflict"
 	default:
 		return "retry"

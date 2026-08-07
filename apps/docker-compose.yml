@@ -89,6 +89,10 @@ services:
     container_name: frux-api
     environment:
       FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN to a strong random value}
+      FRUX_MODERATION_MODE: ${FRUX_MODERATION_MODE:-}
+      FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
+      FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
+      FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +123,10 @@ services:
     container_name: frux-worker
     environment:
       FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN to a strong random value}
+      FRUX_MODERATION_MODE: ${FRUX_MODERATION_MODE:-}
+      FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
+      FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
+      FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
     command: ["./frux-worker"]
     depends_on:
       postgres:

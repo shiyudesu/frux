@@ -409,6 +409,18 @@ func (*e2eMediaRepo) UpdateCleanupTask(context.Context, *domainmedia.CleanupTask
 	return nil
 }
 
+func (*e2eMediaRepo) UpdateCleanupTaskOwned(
+	context.Context, *domainmedia.CleanupTask, string,
+) error {
+	return nil
+}
+
+func (*e2eMediaRepo) RenewCleanupTaskLease(
+	context.Context, int64, string, time.Duration,
+) error {
+	return nil
+}
+
 func (r *e2eMediaRepo) ListIncompletePublicCleanupTasks(_ context.Context, assetIDs []int64) ([]*domainmedia.CleanupTask, error) {
 	allowed := map[int64]struct{}{}
 	for _, assetID := range assetIDs {

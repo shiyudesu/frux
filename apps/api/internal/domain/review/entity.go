@@ -30,6 +30,7 @@ const (
 	MaxEvidenceRefs         = 8
 	MaxEvidenceRefLength    = 512
 	MaxEvidenceBytes        = 2048
+	MaxGeneratedFutureSkew  = 5 * time.Minute
 )
 
 type ReviewCase struct {
@@ -113,28 +114,39 @@ type MachineSignal struct {
 }
 
 type MachineResultInput struct {
-	CaseID        int64
-	VideoID       int64
-	ReviewVersion int
-	ResultID      string
-	Provider      string
-	ModelVersion  string
-	PolicyVersion int
-	Signals       []MachineSignal
-	ReceivedAt    time.Time
+	CaseID               int64
+	VideoID              int64
+	ReviewVersion        int
+	ResultID             string
+	Provider             string
+	ModelVersion         string
+	SourceKind           string
+	GeneratedAt          time.Time
+	RolloutMode          string
+	ModerationJobID      int64
+	ModerationLeaseOwner string
+	PolicyVersion        int
+	Signals              []MachineSignal
+	ReceivedAt           time.Time
 }
 
 type MachineResult struct {
-	CaseID        int64
-	VideoID       int64
-	ReviewVersion int
-	ResultID      string
-	Provider      string
-	ModelVersion  string
-	PolicyVersion int
-	Signals       []MachineSignal
-	ReceivedAt    time.Time
-	PayloadHash   string
+	CaseID               int64
+	VideoID              int64
+	ReviewVersion        int
+	ResultID             string
+	Provider             string
+	ModelVersion         string
+	SourceKind           string
+	GeneratedAt          time.Time
+	RolloutMode          string
+	ModerationJobID      int64
+	ModerationLeaseOwner string
+	PolicyVersion        int
+	Signals              []MachineSignal
+	ReceivedAt           time.Time
+	PayloadHash          string
+	LegacyPayloadHash    string
 }
 
 func NewMachineResult(input MachineResultInput) (*MachineResult, error) {
@@ -153,14 +165,27 @@ func NewMachineResult(input MachineResultInput) (*MachineResult, error) {
 	resultID := strings.TrimSpace(input.ResultID)
 	provider := normalizeToken(input.Provider)
 	modelVersion := strings.TrimSpace(input.ModelVersion)
+	sourceKind := normalizeToken(input.SourceKind)
+	rolloutMode := normalizeToken(input.RolloutMode)
 	if resultID == "" || len(resultID) > MaxResultIdentityLength {
 		return nil, ErrInvalidResultIdentity
 	}
-	if provider == "" || len(provider) > MaxProviderLength {
+	if !ValidProviderIdentifier(provider) {
 		return nil, ErrInvalidProvider
 	}
-	if modelVersion == "" || len(modelVersion) > MaxModelVersionLength {
+	if !ValidModelVersion(modelVersion) {
 		return nil, ErrInvalidModelVersion
+	}
+	if !ValidMachineSourceKind(sourceKind) {
+		return nil, ErrInvalidMachineSource
+	}
+	if !ValidModerationMode(rolloutMode) {
+		return nil, ErrInvalidModerationMode
+	}
+	leaseOwner := strings.TrimSpace(input.ModerationLeaseOwner)
+	if (input.ModerationJobID > 0) != (leaseOwner != "") ||
+		len(leaseOwner) > MaxModerationLeaseOwnerLength {
+		return nil, ErrInvalidModerationJob
 	}
 	if len(input.Signals) == 0 || len(input.Signals) > MaxSignalsPerResult {
 		return nil, ErrTooManySignals
@@ -177,13 +202,42 @@ func NewMachineResult(input MachineResultInput) (*MachineResult, error) {
 	if receivedAt.IsZero() {
 		receivedAt = time.Now().UTC()
 	}
+	receivedAt = receivedAt.UTC().Truncate(time.Microsecond)
+	generatedAt := input.GeneratedAt.UTC().Truncate(time.Microsecond)
+	if generatedAt.IsZero() || generatedAt.After(receivedAt.Add(MaxGeneratedFutureSkew)) {
+		return nil, ErrInvalidGeneratedAt
+	}
 	result := &MachineResult{
 		CaseID: input.CaseID, VideoID: input.VideoID, ReviewVersion: input.ReviewVersion,
 		ResultID: resultID, Provider: provider, ModelVersion: modelVersion,
+		SourceKind: sourceKind, GeneratedAt: generatedAt, RolloutMode: rolloutMode,
+		ModerationJobID: input.ModerationJobID, ModerationLeaseOwner: leaseOwner,
 		PolicyVersion: input.PolicyVersion, Signals: signals,
-		ReceivedAt: receivedAt.UTC().Truncate(time.Microsecond),
+		ReceivedAt: receivedAt,
 	}
 	payload, err := json.Marshal(struct {
+		CaseID        int64           `json:"case_id"`
+		VideoID       int64           `json:"video_id"`
+		ReviewVersion int             `json:"review_version"`
+		ResultID      string          `json:"result_id"`
+		Provider      string          `json:"provider"`
+		ModelVersion  string          `json:"model_version"`
+		SourceKind    string          `json:"source_kind"`
+		GeneratedAt   time.Time       `json:"generated_at"`
+		RolloutMode   string          `json:"rollout_mode"`
+		PolicyVersion int             `json:"policy_version"`
+		Signals       []MachineSignal `json:"signals"`
+	}{
+		result.CaseID, result.VideoID, result.ReviewVersion, result.ResultID,
+		result.Provider, result.ModelVersion, result.SourceKind, result.GeneratedAt,
+		result.RolloutMode, result.PolicyVersion, result.Signals,
+	})
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(payload)
+	result.PayloadHash = hex.EncodeToString(sum[:])
+	legacyPayload, err := json.Marshal(struct {
 		CaseID        int64           `json:"case_id"`
 		VideoID       int64           `json:"video_id"`
 		ReviewVersion int             `json:"review_version"`
@@ -199,8 +253,8 @@ func NewMachineResult(input MachineResultInput) (*MachineResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(payload)
-	result.PayloadHash = hex.EncodeToString(sum[:])
+	legacySum := sha256.Sum256(legacyPayload)
+	result.LegacyPayloadHash = hex.EncodeToString(legacySum[:])
 	return result, nil
 }
 
@@ -258,6 +312,7 @@ type AutomatedDecision struct {
 	ResultID      string
 	Outcome       string
 	PolicyVersion int
+	RolloutMode   string
 	CreatedAt     time.Time
 }
 

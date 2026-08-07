@@ -421,18 +421,20 @@ func (r *Repository) CreateUploadSession(ctx context.Context, session *domainmed
 	}
 	created := result.RowsAffected > 0
 	if !created {
+		var existing UploadSessionModel
 		query := r.db.WithContext(ctx)
 		if session.IdempotencyKey != "" {
 			query = query.Where("owner_id = ? AND idempotency_key = ?", session.OwnerID, session.IdempotencyKey)
 		} else {
 			query = query.Where("id = ?", session.ID)
 		}
-		if err := query.Take(&model).Error; err != nil {
+		if err := query.Take(&existing).Error; err != nil {
 			return nil, false, err
 		}
-		if model.RequestFingerprint != session.RequestFingerprint {
+		if existing.RequestFingerprint != session.RequestFingerprint {
 			return nil, false, domainmedia.ErrUploadSessionConflict
 		}
+		model = existing
 	}
 	return uploadSessionFromModel(model), created, nil
 }
@@ -578,8 +580,13 @@ func (r *Repository) CreateCleanupTasks(ctx context.Context, tasks []*domainmedi
 				domainmedia.CleanupStateCompleted, domainmedia.CleanupStateFailed,
 			),
 			"not_before": gorm.Expr(
-				"CASE WHEN media_cleanup_task.state IN (?, ?) THEN EXCLUDED.not_before ELSE media_cleanup_task.not_before END",
+				`CASE
+					WHEN media_cleanup_task.state IN (?, ?) THEN EXCLUDED.not_before
+					WHEN media_cleanup_task.state = ? THEN LEAST(media_cleanup_task.not_before, EXCLUDED.not_before)
+					ELSE media_cleanup_task.not_before
+				END`,
 				domainmedia.CleanupStateCompleted, domainmedia.CleanupStateFailed,
+				domainmedia.CleanupStatePending,
 			),
 			"error_message": gorm.Expr(
 				"CASE WHEN media_cleanup_task.state IN (?, ?) THEN '' ELSE media_cleanup_task.error_message END",
@@ -640,9 +647,64 @@ func (r *Repository) UpdateCleanupTask(ctx context.Context, task *domainmedia.Cl
 	if result.Error != nil {
 		return result.Error
 	}
-
 	if result.RowsAffected == 0 {
 		return domainmedia.ErrCleanupTaskNotFound
+	}
+	return nil
+}
+
+func (r *Repository) RenewCleanupTaskLease(
+	ctx context.Context,
+	taskID int64,
+	leaseOwner string,
+	leaseTTL time.Duration,
+) error {
+	if taskID <= 0 || strings.TrimSpace(leaseOwner) == "" || leaseTTL <= 0 {
+		return domainmedia.ErrInvalidCleanupTask
+	}
+	result := r.db.WithContext(ctx).Model(&CleanupTaskModel{}).
+		Where(`id = ? AND state = ? AND lease_owner = ?
+			AND lease_until > clock_timestamp()`,
+			taskID, domainmedia.CleanupStateProcessing, strings.TrimSpace(leaseOwner)).
+		Updates(map[string]any{
+			"lease_until": gorm.Expr(
+				"clock_timestamp() + (? * interval '1 millisecond')",
+				leaseTTL.Milliseconds(),
+			),
+			"updated_at": gorm.Expr("clock_timestamp()"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return domainmedia.ErrInvalidCleanupTask
+	}
+	return nil
+}
+
+func (r *Repository) UpdateCleanupTaskOwned(
+	ctx context.Context,
+	task *domainmedia.CleanupTask,
+	leaseOwner string,
+) error {
+	if task == nil || task.ID <= 0 || strings.TrimSpace(leaseOwner) == "" {
+		return domainmedia.ErrInvalidCleanupTask
+	}
+	result := r.db.WithContext(ctx).Model(&CleanupTaskModel{}).
+		Where(`id = ? AND state = ? AND lease_owner = ?
+			AND lease_until > clock_timestamp()`,
+			task.ID, domainmedia.CleanupStateProcessing, strings.TrimSpace(leaseOwner)).
+		Updates(map[string]any{
+			"state": task.State, "attempts": task.Attempts,
+			"error_message": task.ErrorMessage, "not_before": task.NotBefore,
+			"lease_owner": "", "lease_until": nil,
+			"completed_at": task.CompletedAt, "updated_at": gorm.Expr("clock_timestamp()"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return domainmedia.ErrInvalidCleanupTask
 	}
 	return nil
 }

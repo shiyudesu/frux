@@ -9,9 +9,27 @@ type Config struct {
 	Redis      RedisConfig      `yaml:"redis"`
 	RabbitMQ   RabbitMQConfig   `yaml:"rabbitmq"`
 	Media      MediaConfig      `yaml:"media"`
+	Moderation ModerationConfig `yaml:"moderation"`
 	Playback   PlaybackConfig   `yaml:"playback"`
 	Governance GovernanceConfig `yaml:"governance"`
 	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
+}
+
+type ModerationConfig struct {
+	Mode                  string `yaml:"mode"`
+	ProviderConfigVersion int    `yaml:"provider_config_version"`
+	InputProfileVersion   string `yaml:"input_profile_version"`
+	Endpoint              string `yaml:"endpoint"`
+	HMACSecret            string `yaml:"hmac_secret"`
+	AllowInsecureLocal    bool   `yaml:"allow_insecure_local"`
+	Timeout               string `yaml:"timeout"`
+	WorkerConcurrency     int    `yaml:"worker_concurrency"`
+	MaxAttempts           int    `yaml:"max_attempts"`
+	LeaseTTL              string `yaml:"lease_ttl"`
+	PollInterval          string `yaml:"poll_interval"`
+	SampleURLTTL          string `yaml:"sample_url_ttl"`
+	SampleRetention       string `yaml:"sample_retention"`
+	SamplePresignEndpoint string `yaml:"sample_presign_endpoint"`
 }
 
 type GovernanceConfig struct {

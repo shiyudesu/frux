@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
@@ -20,12 +23,14 @@ import (
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
 	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	inframoderation "github.com/shiyudesu/frux/internal/infra/moderation"
 	inframq "github.com/shiyudesu/frux/internal/infra/mq"
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
@@ -123,7 +128,16 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 
 	recommendationRepo := infrarecommendation.New(gormDB)
 	interactionRepo := infrainteraction.New(gormDB)
-	reviewRepo := infrareview.New(gormDB)
+	moderationJobConfig := domainreview.ModerationJobConfig{
+		Mode:                  cfg.Moderation.Mode,
+		ProviderConfigVersion: cfg.Moderation.ProviderConfigVersion,
+		InputProfileVersion:   cfg.Moderation.InputProfileVersion,
+		MaxAttempts:           cfg.Moderation.MaxAttempts,
+	}
+	reviewRepo := infrareview.New(
+		gormDB,
+		infrareview.WithModerationJobConfig(moderationJobConfig),
+	)
 	messageService := applicationmessage.New(inframessage.New(gormDB))
 	commentNotificationWorker := applicationinteraction.NewCommentNotificationWorker(
 		interactionRepo,
@@ -212,6 +226,14 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	publicationRecovery := applicationvideo.NewPublicationRecoveryService(
 		videoRepo, mediaPublication, rabbitMQ,
 	)
+	reviewService := applicationreview.New(
+		reviewRepo,
+		applicationreview.WithObserver(workerReviewObserver{}),
+		applicationreview.WithOutcomeApplier(workerReviewOutcomeApplier{
+			videoReader: videoRepo, mediaPublication: mediaPublication,
+			publisher: rabbitMQ, cacheInvalidator: feedCache,
+		}),
+	)
 	lifecycleWriter := &lifecycleNotificationMessageWriter{
 		service: messageService, recovery: publicationRecovery,
 	}
@@ -246,10 +268,6 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	if err := adminIntentWorker.Start(ctx); err != nil {
 		return err
 	}
-	reviewService := applicationreview.New(
-		reviewRepo,
-		applicationreview.WithObserver(workerReviewObserver{}),
-	)
 	reviewReconciler := applicationreview.NewReconciliationWorker(reviewService)
 	if err := reviewReconciler.RunOnce(ctx); err != nil {
 		log.Printf("initial review reconciliation failed: %v", err)
@@ -258,7 +276,16 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	mediaCleanup := applicationmedia.NewCleanupService(
 		mediaRepo, mediaStore, cfg.Media.Backend, cleanupDelay, cfg.Media.Processing.MaxAttempts,
 	)
-	applicationmedia.NewCleanupWorker(mediaCleanup, "").Start(ctx)
+	cleanupOwner, err := newWorkerOwner("cleanup")
+	if err != nil {
+		return err
+	}
+	applicationmedia.NewCleanupWorker(mediaCleanup, cleanupOwner).Start(ctx)
+	if err := startModerationWorker(
+		ctx, cfg, reviewRepo, reviewService, mediaStore, mediaURLResolver, mediaCleanup,
+	); err != nil {
+		return err
+	}
 	reconciler := applicationmedia.NewReconciler(
 		mediaRepo, mediaStore, mediaPublication, cfg.Media.Backend,
 		cfg.Media.Processing.ProfileVersion, cfg.Media.Processing.MaxAttempts, cleanupDelay,
@@ -273,6 +300,7 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	if err := fanoutWorker.Start(ctx); err != nil {
 		return err
 	}
+
 	mediaWorker := applicationmedia.NewMediaProcessingWorker(
 		mediaRepo, mediaProcessor, rabbitMQ, leaseTTL, cfg.Media.Processing.WorkerConcurrency,
 		applicationmedia.WithMediaStateNotifier(reviewMediaReadyNotifier{
@@ -282,10 +310,214 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	return mediaWorker.Start(ctx)
 }
 
+func startModerationWorker(
+	ctx context.Context,
+	cfg *infraconfig.Config,
+	repository *infrareview.Repository,
+	reviewService *applicationreview.Service,
+	mediaStore domainmedia.MediaObjectStore,
+	defaultResolver domainmedia.MediaURLResolver,
+	cleanup applicationreview.ModerationSampleCleanup,
+) error {
+	leaseTTL, err := time.ParseDuration(cfg.Moderation.LeaseTTL)
+	if err != nil {
+		return err
+	}
+	pollInterval, err := time.ParseDuration(cfg.Moderation.PollInterval)
+	if err != nil {
+		return err
+	}
+	sampleURLTTL, err := time.ParseDuration(cfg.Moderation.SampleURLTTL)
+	if err != nil {
+		return err
+	}
+	sampleRetention, err := time.ParseDuration(cfg.Moderation.SampleRetention)
+	if err != nil {
+		return err
+	}
+	jobConfig := domainreview.ModerationJobConfig{
+		Mode:                  cfg.Moderation.Mode,
+		ProviderConfigVersion: cfg.Moderation.ProviderConfigVersion,
+		InputProfileVersion:   cfg.Moderation.InputProfileVersion,
+		MaxAttempts:           cfg.Moderation.MaxAttempts,
+	}
+	var preparer applicationreview.ModerationInputPreparer
+	var provider applicationreview.ModerationProvider
+	if cfg.Moderation.Mode != domainreview.ModerationModeDisabled {
+		timeout, err := time.ParseDuration(cfg.Moderation.Timeout)
+		if err != nil {
+			return err
+		}
+		gatewayOptions := []inframoderation.GatewayOption{}
+		if cfg.Moderation.AllowInsecureLocal {
+			gatewayOptions = append(gatewayOptions, inframoderation.WithInsecureLocalGateway())
+		}
+		provider, err = inframoderation.NewHTTPGateway(
+			cfg.Moderation.Endpoint, cfg.Moderation.HMACSecret, timeout, gatewayOptions...,
+		)
+		if err != nil {
+			return err
+		}
+		resolver := defaultResolver
+		if cfg.Media.Backend == domainmedia.StorageBackendS3 {
+			moderationMediaConfig := cfg.Media
+			moderationMediaConfig.S3.PresignEndpoint = cfg.Moderation.SamplePresignEndpoint
+			moderationStore, err := inframedia.NewObjectStore(ctx, moderationMediaConfig)
+			if err != nil {
+				return err
+			}
+			resolver, err = inframedia.NewURLResolver(
+				cfg.Moderation.SamplePresignEndpoint, moderationStore,
+			)
+			if err != nil {
+				return err
+			}
+		} else if cfg.Media.Backend == domainmedia.StorageBackendLocal {
+			signer, err := inframedia.NewLocalProtectedURLSigner(
+				"/moderation-media", cfg.JWT.Secret, sampleURLTTL,
+			)
+			if err != nil {
+				return err
+			}
+			resolver, err = inframedia.NewLocalModerationURLResolver(
+				fmt.Sprintf("http://127.0.0.1:%d", cfg.Port), signer,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		preparer = inframedia.NewModerationInputPreparer(
+			mediaStore, resolver, cleanup, sampleRetention,
+		)
+	}
+	worker, err := applicationreview.NewModerationWorker(
+		repository, preparer, provider, reviewService, cleanup,
+		inframetrics.ModerationObserver{},
+		applicationreview.ModerationWorkerConfig{
+			JobConfig: jobConfig, LeaseTTL: leaseTTL, PollInterval: pollInterval,
+			SampleURLTTL: sampleURLTTL, SampleRetention: sampleRetention,
+			Concurrency: cfg.Moderation.WorkerConcurrency,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if err := worker.Reconcile(ctx, 500); err != nil {
+		log.Printf("initial moderation reconciliation failed: %v", err)
+	}
+	owner, err := newModerationWorkerOwner()
+	if err != nil {
+		return err
+	}
+	go worker.Run(ctx, owner)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := worker.Reconcile(ctx, 500); err != nil {
+					log.Printf("moderation reconciliation failed: %v", err)
+				}
+			}
+		}
+	}()
+	return nil
+}
+
+func newModerationWorkerOwner() (string, error) {
+	return newWorkerOwner("moderation")
+}
+
+func newWorkerOwner(prefix string) (string, error) {
+	var random [12]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return prefix + "-" + hex.EncodeToString(random[:]), nil
+}
+
 type workerReviewObserver struct{}
 
 func (workerReviewObserver) Observe(stage, result string) {
 	inframetrics.ObserveReview(stage, result)
+}
+
+type workerReviewOutcomeApplier struct {
+	videoReader interface {
+		FindByIDAnyStatus(ctx context.Context, videoID int64) (*domainvideo.Video, error)
+	}
+	mediaPublication interface {
+		MediaReady(ctx context.Context, assetID int64) error
+		ProtectVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) error
+	}
+	publisher        applicationvideo.PublishedEventPublisher
+	cacheInvalidator applicationvideo.VideoCacheInvalidator
+}
+
+func (a workerReviewOutcomeApplier) ApplyReviewOutcome(
+	ctx context.Context,
+	result *domainreview.ProcessingResult,
+) error {
+	if result == nil || result.Decision == nil || result.Case == nil {
+		return nil
+	}
+	if a.cacheInvalidator != nil {
+		_ = a.cacheInvalidator.InvalidateVideo(ctx, result.Case.VideoID)
+	}
+	switch result.Decision.Outcome {
+	case domainreview.OutcomeApprove:
+		video, err := a.videoReader.FindByIDAnyStatus(ctx, result.Case.VideoID)
+		if err != nil {
+			return err
+		}
+		if video == nil ||
+			(!domainmedia.IsPublicReadyStatus(video.MediaStatus) &&
+				video.MediaErrorCode != "publication_event_failed") {
+			return nil
+		}
+		if result.MediaAssetID > 0 {
+			return a.mediaPublication.MediaReady(ctx, result.MediaAssetID)
+		}
+		event := applicationvideo.NewPublishedEvent(video)
+		if event == nil {
+			return nil
+		}
+		if tracker, ok := a.videoReader.(workerReviewPublicationTracker); ok {
+			ready, err := tracker.LifecyclePublicationReady(ctx, event.EventID)
+			if err != nil {
+				return err
+			}
+			if ready {
+				return nil
+			}
+		}
+		if a.publisher != nil {
+			if err := a.publisher.PublishVideoPublished(ctx, event); err != nil {
+				return err
+			}
+		}
+		if tracker, ok := a.videoReader.(workerReviewPublicationTracker); ok {
+			return tracker.MarkLifecyclePublicationReady(
+				ctx, domainmessage.PublicationEventID(result.Case.VideoID, result.Case.ReviewVersion),
+				time.Now().UTC(),
+			)
+		}
+	case domainreview.OutcomeReject:
+		if result.MediaAssetID > 0 {
+			return a.mediaPublication.ProtectVideo(
+				ctx, result.Case.VideoID, result.MediaAssetID, result.CoverAssetID,
+			)
+		}
+	}
+	return nil
+}
+
+type workerReviewPublicationTracker interface {
+	LifecyclePublicationReady(ctx context.Context, eventID string) (bool, error)
+	MarkLifecyclePublicationReady(ctx context.Context, eventID string, readyAt time.Time) error
 }
 
 func (workerReviewObserver) ObserveHumanNotification(result string) {

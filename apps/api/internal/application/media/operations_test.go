@@ -42,6 +42,33 @@ func TestCleanupServiceSchedulesAndDeletesMediaObjects(t *testing.T) {
 	}
 }
 
+func TestCleanupServiceSchedulesModerationSamplesIdempotently(t *testing.T) {
+	repo := &operationsRepositoryStub{}
+	service := NewCleanupService(
+		repo, nil, domainmedia.StorageBackendS3, time.Minute, 3,
+	)
+	notBefore := time.Now().UTC().Add(time.Hour)
+	keys := []string{"moderation/1/a.jpg", "moderation/1/a.jpg", "moderation/1/b.jpg"}
+	if err := service.ScheduleModerationSampleCleanup(
+		context.Background(), keys, notBefore,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ScheduleModerationSampleCleanup(
+		context.Background(), keys, notBefore,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.cleanupTasks) != 2 {
+		t.Fatalf("cleanup tasks = %#v", repo.cleanupTasks)
+	}
+	for _, task := range repo.cleanupTasks {
+		if task.AssetID != 0 || !task.NotBefore.Equal(notBefore) {
+			t.Fatalf("moderation cleanup task = %#v", task)
+		}
+	}
+}
+
 func TestReconcilerResetsIncompleteVariantsAndQueuesOrphans(t *testing.T) {
 	now := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
 	repo := &operationsRepositoryStub{
@@ -145,6 +172,18 @@ func (r *operationsRepositoryStub) LeaseCleanupTasks(_ context.Context, owner st
 }
 
 func (*operationsRepositoryStub) UpdateCleanupTask(context.Context, *domainmedia.CleanupTask) error {
+	return nil
+}
+
+func (*operationsRepositoryStub) UpdateCleanupTaskOwned(
+	context.Context, *domainmedia.CleanupTask, string,
+) error {
+	return nil
+}
+
+func (*operationsRepositoryStub) RenewCleanupTaskLease(
+	context.Context, int64, string, time.Duration,
+) error {
 	return nil
 }
 

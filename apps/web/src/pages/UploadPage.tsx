@@ -46,6 +46,17 @@ export function UploadPage() {
     setVideoProgress(0);
     setCoverProgress(0);
     try {
+      const title = form.title.trim();
+      if (!title) {
+        throw new UserFacingError("请输入视频标题");
+      }
+      if (utf8ByteLength(title) > 128) {
+        throw new UserFacingError("视频标题过长，请缩短后重试");
+      }
+      const description = form.description.trim();
+      if (utf8ByteLength(description) > 512) {
+        throw new UserFacingError("视频简介过长，请缩短后重试");
+      }
       if (!videoFile) {
         throw new UserFacingError("请选择视频文件");
       }
@@ -75,8 +86,8 @@ export function UploadPage() {
       const creationKey = `web-video-${uploadAttemptID}-${videoReference}-${coverReference}`.slice(0, 128);
       setStatus("正在创建作品");
       const video = await createVideo(session.token, {
-        title: form.title.trim(),
-        description: form.description.trim(),
+        title,
+        description,
         ...uploadReferences
       }, creationKey);
       setStatus(video.media_status === "processing"
@@ -130,6 +141,8 @@ export function UploadPage() {
                 value={form.title}
                 onChange={(event) => setForm({ ...form, title: event.target.value })}
                 placeholder="输入视频标题"
+                required
+                maxLength={128}
               />
             </label>
             <label>
@@ -139,6 +152,7 @@ export function UploadPage() {
                 onChange={(event) => setForm({ ...form, description: event.target.value })}
                 placeholder="输入视频简介"
                 rows={4}
+                maxLength={512}
               />
             </label>
             <label>
@@ -195,6 +209,10 @@ export function UploadPage() {
       </section>
     </main>
   );
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
 }
 
 function UploadProgress({ label, value }: { label: string; value: number }) {

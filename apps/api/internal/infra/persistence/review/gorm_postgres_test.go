@@ -806,6 +806,216 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 			t.Fatalf("decision after blocked expiry = %v", err)
 		}
 	})
+	t.Run("moderation jobs are atomic idempotent and leased by database time", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "moderation_jobs")
+		insertReviewVideo(t, db, 501, 1)
+		config := domainreview.ModerationJobConfig{
+			Mode: domainreview.ModerationModeObserve, ProviderConfigVersion: 7,
+			InputProfileVersion: "frames-v1", MaxAttempts: 3,
+		}
+		repo := New(db, WithModerationJobConfig(config))
+		reviewCase, created, err := repo.CreateOrGetCase(context.Background(), 501)
+		if err != nil || !created {
+			t.Fatalf("intake = %#v created=%v err=%v", reviewCase, created, err)
+		}
+		if _, created, err = repo.CreateOrGetCase(context.Background(), 501); err != nil || created {
+			t.Fatalf("duplicate intake created=%v err=%v", created, err)
+		}
+		var jobs []ModerationJobModel
+		if err := db.Find(&jobs).Error; err != nil {
+			t.Fatal(err)
+		}
+		if len(jobs) != 1 ||
+			jobs[0].ResultID != domainreview.ModerationResultID(reviewCase.ID, 1, 7) {
+			t.Fatalf("jobs = %#v", jobs)
+		}
+		first, err := repo.ClaimModerationJobs(context.Background(), "worker-a", 1, time.Minute)
+		if err != nil || len(first) != 1 || first[0].Attempts != 1 {
+			t.Fatalf("first claim = %#v err=%v", first, err)
+		}
+		if err := repo.RenewModerationJobLease(
+			context.Background(), first[0].ID, "worker-a", 2*time.Minute,
+		); err != nil {
+			t.Fatalf("renew lease: %v", err)
+		}
+		second, err := repo.ClaimModerationJobs(context.Background(), "worker-b", 1, time.Minute)
+		if err != nil || len(second) != 0 {
+			t.Fatalf("concurrent claim = %#v err=%v", second, err)
+		}
+		if err := db.Model(&ModerationJobModel{}).Where("id = ?", jobs[0].ID).
+			Update("lease_until", gorm.Expr("clock_timestamp() - interval '1 second'")).Error; err != nil {
+			t.Fatal(err)
+		}
+		second, err = repo.ClaimModerationJobs(context.Background(), "worker-b", 1, time.Minute)
+		if err != nil || len(second) != 1 || second[0].Attempts != 2 ||
+			second[0].RequestID != first[0].RequestID {
+			t.Fatalf("expired claim = %#v err=%v", second, err)
+		}
+		if err := db.Model(&ModerationJobModel{}).Where("id = ?", jobs[0].ID).
+			Update("lease_until", gorm.Expr("clock_timestamp() - interval '1 second'")).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.MarkModerationJobSubmitted(
+			context.Background(), second[0].ID, "worker-b", time.Now(),
+		); !errors.Is(err, domainreview.ErrModerationJobNotOwned) {
+			t.Fatalf("expired owner mutation error = %v", err)
+		}
+		expiredResult, err := domainreview.NewMachineResult(domainreview.MachineResultInput{
+			CaseID: reviewCase.ID, VideoID: 501, ReviewVersion: 1,
+			ResultID: second[0].ResultID, Provider: "test-provider", ModelVersion: "v1",
+			SourceKind:  domainreview.MachineSourceProductionProvider,
+			GeneratedAt: time.Now(), RolloutMode: domainreview.ModerationModeObserve,
+			ModerationJobID: second[0].ID, ModerationLeaseOwner: "worker-b",
+			PolicyVersion: 1,
+			Signals: []domainreview.MachineSignal{{
+				Label: domainreview.LabelSafe, Confidence: 1,
+			}},
+			ReceivedAt: time.Now(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.ProcessMachineResult(
+			context.Background(), expiredResult,
+		); !errors.Is(err, domainreview.ErrModerationJobNotOwned) {
+			t.Fatalf("expired result commit error = %v", err)
+		}
+	})
+	t.Run("moderation reconciliation recovers leases and cancels stale subjects", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "moderation_reconcile")
+		insertReviewVideo(t, db, 502, 1)
+		config := domainreview.ModerationJobConfig{
+			Mode: domainreview.ModerationModeEnforce, ProviderConfigVersion: 2,
+			InputProfileVersion: "frames-v1", MaxAttempts: 3,
+		}
+		repo := New(db, WithModerationJobConfig(config))
+		reviewCase, _, err := repo.CreateOrGetCase(context.Background(), 502)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := repo.ClaimModerationJobs(context.Background(), "worker", 1, time.Second)
+		if err != nil || len(claimed) != 1 {
+			t.Fatalf("claim = %#v err=%v", claimed, err)
+		}
+		if err := db.Model(&ModerationJobModel{}).Where("case_id = ?", reviewCase.ID).
+			Update("lease_until", gorm.Expr("clock_timestamp() - interval '1 second'")).Error; err != nil {
+			t.Fatal(err)
+		}
+		stats, err := repo.ReconcileModerationJobs(context.Background(), config, 100)
+		if err != nil || stats.RecoveredLeases != 1 {
+			t.Fatalf("recovery stats = %#v err=%v", stats, err)
+		}
+		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 502).
+			Update("status", domainvideo.StatusPublished).Error; err != nil {
+			t.Fatal(err)
+		}
+		stats, err = repo.ReconcileModerationJobs(context.Background(), config, 100)
+		if err != nil || stats.Cancelled != 1 {
+			t.Fatalf("cancel stats = %#v err=%v", stats, err)
+		}
+		var job ModerationJobModel
+		if err := db.Where("case_id = ?", reviewCase.ID).Take(&job).Error; err != nil {
+			t.Fatal(err)
+		}
+		if job.Status != domainreview.ModerationJobCancelled {
+			t.Fatalf("job status = %q", job.Status)
+		}
+	})
+	t.Run("machine provenance backfill classifies seed and legacy rows", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "provenance_backfill")
+		now := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+		results := []ResultModel{
+			{CaseID: 1, VideoID: 1, ReviewVersion: 1, Provider: " manual-seed ",
+				ResultID: "seed", PayloadHash: strings.Repeat("a", 64), ModelVersion: "v1",
+				PolicyVersion: 1, Outcome: domainreview.OutcomeHuman, CreatedAt: now},
+			{CaseID: 2, VideoID: 2, ReviewVersion: 1, Provider: "old-provider",
+				ResultID: "legacy", PayloadHash: strings.Repeat("b", 64), ModelVersion: "v1",
+				PolicyVersion: 1, Outcome: domainreview.OutcomeHuman, CreatedAt: now},
+		}
+		if err := db.Create(&results).Error; err != nil {
+			t.Fatal(err)
+		}
+		for _, result := range results {
+			if err := db.Create(&SignalModel{
+				CaseID: result.CaseID, ResultReceiptID: result.ID, Label: domainreview.LabelSafe,
+				Confidence: 1, EvidenceRefsJSON: "[]", Provider: result.Provider,
+				ModelVersion: "v1", PolicyVersion: 1, CreatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&DecisionModel{
+				CaseID: result.CaseID, ResultReceiptID: result.ID,
+				Outcome: domainreview.OutcomeHuman, PolicyVersion: 1, CreatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := EnsureMachineResultProvenance(db); err != nil {
+			t.Fatal(err)
+		}
+		var restored []ResultModel
+		if err := db.Order("id ASC").Find(&restored).Error; err != nil {
+			t.Fatal(err)
+		}
+		if restored[0].SourceKind != domainreview.MachineSourceTestSeed ||
+			restored[1].SourceKind != domainreview.MachineSourceLegacyUnknown ||
+			restored[0].RolloutMode != domainreview.ModerationModeEnforce ||
+			!restored[0].GeneratedAt.Equal(now) {
+			t.Fatalf("backfilled results = %#v", restored)
+		}
+	})
+	t.Run("manual seed backfill preserves legacy replay identity", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "manual_seed_replay")
+		insertReviewVideo(t, db, 503, 1)
+		repo := New(db)
+		reviewCase, _, err := repo.CreateOrGetCase(context.Background(), 503)
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		incoming, err := domainreview.NewMachineResult(domainreview.MachineResultInput{
+			CaseID: reviewCase.ID, VideoID: 503, ReviewVersion: 1,
+			ResultID: "legacy-seed", Provider: "manual-seed", ModelVersion: "seed-v1",
+			SourceKind: domainreview.MachineSourceTestSeed, GeneratedAt: now,
+			RolloutMode: domainreview.ModerationModeEnforce, PolicyVersion: 1,
+			Signals: []domainreview.MachineSignal{{
+				Label: domainreview.LabelSafe, Confidence: 1,
+			}},
+			ReceivedAt: now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt := ResultModel{
+			CaseID: reviewCase.ID, VideoID: 503, ReviewVersion: 1,
+			Provider: "manual-seed", ResultID: incoming.ResultID,
+			PayloadHash: incoming.LegacyPayloadHash, ModelVersion: incoming.ModelVersion,
+			SourceKind: domainreview.MachineSourceLegacyUnknown, GeneratedAt: now,
+			RolloutMode:   domainreview.ModerationModeEnforce,
+			PolicyVersion: 1, Outcome: domainreview.OutcomeHuman, CreatedAt: now,
+		}
+		if err := db.Create(&receipt).Error; err != nil {
+			t.Fatal(err)
+		}
+		decision := DecisionModel{
+			CaseID: reviewCase.ID, ResultReceiptID: receipt.ID,
+			Outcome: domainreview.OutcomeHuman, PolicyVersion: 1,
+			RolloutMode: domainreview.ModerationModeEnforce, CreatedAt: now,
+		}
+		if err := db.Create(&decision).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&receipt).Update("decision_id", decision.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := EnsureMachineResultProvenance(db); err != nil {
+			t.Fatal(err)
+		}
+		processed, err := repo.ProcessMachineResult(context.Background(), incoming)
+		if err != nil || !processed.Duplicate {
+			t.Fatalf("legacy replay = %#v err=%v", processed, err)
+		}
+	})
 }
 
 func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
@@ -834,7 +1044,7 @@ func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
 	if err := db.AutoMigrate(
 		&infravideo.VideoModel{}, &infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
 		&infravideo.NotificationOutboxModel{},
-		&CaseModel{}, &ResultModel{}, &SignalModel{}, &DecisionModel{}, &PolicyModel{},
+		&CaseModel{}, &ResultModel{}, &SignalModel{}, &DecisionModel{}, &ModerationJobModel{}, &PolicyModel{},
 		&AssignmentModel{}, &HumanDecisionModel{}, &HumanDecisionIdempotencyModel{},
 		&NotificationOutboxModel{}, &infraadminaudit.EventModel{},
 	); err != nil {
@@ -948,6 +1158,8 @@ func newPostgresMachineResult(t *testing.T, reviewCase *domainreview.ReviewCase,
 	result, err := domainreview.NewMachineResult(domainreview.MachineResultInput{
 		CaseID: reviewCase.ID, VideoID: reviewCase.VideoID, ReviewVersion: reviewCase.ReviewVersion,
 		ResultID: resultID, Provider: "test-provider", ModelVersion: "model-v1",
+		SourceKind: domainreview.MachineSourceProductionProvider, GeneratedAt: time.Now(),
+		RolloutMode:   domainreview.ModerationModeEnforce,
 		PolicyVersion: reviewCase.PolicyVersion, Signals: signals, ReceivedAt: time.Now(),
 	})
 	if err != nil {

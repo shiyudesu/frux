@@ -738,7 +738,8 @@ func (r *Repository) loadHumanHistory(ctx context.Context, detail *domainreview.
 		detail.History.Signals = append(detail.History.Signals, &domainreview.EvidenceSignal{
 			ID: signal.ID, ResultID: resultIDs[signal.ResultReceiptID], Label: signal.Label,
 			Confidence: signal.Confidence, EvidenceRefs: refs, Provider: signal.Provider,
-			ModelVersion: signal.ModelVersion, PolicyVersion: signal.PolicyVersion, CreatedAt: signal.CreatedAt,
+			ModelVersion: signal.ModelVersion, PolicyVersion: signal.PolicyVersion,
+			SourceKind: signal.SourceKind, GeneratedAt: signal.GeneratedAt, CreatedAt: signal.CreatedAt,
 		})
 	}
 	var automated []DecisionModel
@@ -749,7 +750,8 @@ func (r *Repository) loadHumanHistory(ctx context.Context, detail *domainreview.
 	for _, decision := range automated {
 		detail.History.AutomatedDecisions = append(detail.History.AutomatedDecisions, &domainreview.AutomatedDecision{
 			ID: decision.ID, CaseID: decision.CaseID, ResultID: resultIDs[decision.ResultReceiptID],
-			Outcome: decision.Outcome, PolicyVersion: decision.PolicyVersion, CreatedAt: decision.CreatedAt,
+			Outcome: decision.Outcome, PolicyVersion: decision.PolicyVersion,
+			RolloutMode: decision.RolloutMode, CreatedAt: decision.CreatedAt,
 		})
 	}
 	var assignments []AssignmentModel

@@ -423,7 +423,8 @@ describe("admin content operations workspace", () => {
     seeded.history.signals[0] = {
       ...seeded.history.signals[0],
       provider: "manual-seed",
-      source_kind: "test_seed"
+      source_kind: "test_seed",
+      generated_at: "2026-08-01T00:00:00Z"
     };
     vi.mocked(fetchReviewCase).mockResolvedValue(seeded);
     vi.mocked(fetchReviewPreview).mockRejectedValue(
@@ -434,6 +435,53 @@ describe("admin content operations workspace", () => {
     expect(container.textContent).toContain("视频预览暂时不可用");
     expect(container.textContent).toContain("测试证据");
     expect(container.textContent).toContain("manual-seed");
+  });
+
+  it("distinguishes production, recovery, and legacy evidence provenance", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read"]
+    });
+    const detail = reviewDetail();
+    detail.history.signals = [
+      {
+        ...detail.history.signals[0],
+        id: 1,
+        provider: "production-gateway",
+        source_kind: "production_provider"
+      },
+      {
+        ...detail.history.signals[0],
+        id: 2,
+        result_id: "recovery",
+        label: "moderation_unavailable",
+        provider: "frux-moderation-recovery",
+        source_kind: "recovery"
+      },
+      {
+        ...detail.history.signals[0],
+        id: 3,
+        result_id: "legacy",
+        provider: "old-provider",
+        source_kind: "legacy_unknown"
+      }
+    ];
+    detail.history.automated_decisions = [{
+      id: 1,
+      result_id: "r1",
+      outcome: "human",
+      policy_version: 1,
+      rollout_mode: "observe",
+      created_at: "2026-08-01T00:00:01Z"
+    }];
+    vi.mocked(fetchReviewCase).mockResolvedValue(detail);
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    expect(container.textContent).toContain("生产模型证据");
+    expect(container.textContent).toContain("系统恢复记录（非模型判断）");
+    expect(container.textContent).toContain("未获得模型判断");
+    expect(container.textContent).toContain("历史来源未验证");
+    expect(container.textContent).toContain("观察模式");
+    expect(container.textContent).toContain("证据生成于");
   });
 
   it("does not restore an in-flight preview after a version conflict", async () => {
@@ -592,7 +640,8 @@ function reviewDetail(): ReviewCaseDetail {
       signals: [{
         id: 1, result_id: "r1", label: "sexual_content", confidence: 0.91,
         evidence_refs: ["frame:10"], provider: "model", model_version: "v1",
-        policy_version: 1, source_kind: "unverified", created_at: "2026-08-01T00:00:00Z"
+        policy_version: 1, source_kind: "legacy_unknown",
+        generated_at: "2026-08-01T00:00:00Z", created_at: "2026-08-01T00:00:00Z"
       }],
       automated_decisions: [],
       assignments: [],

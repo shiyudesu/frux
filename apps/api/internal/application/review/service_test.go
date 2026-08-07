@@ -16,6 +16,7 @@ type reviewServiceRepo struct {
 	policy     *domainreview.Policy
 	processErr error
 	intakeErr  error
+	lastResult *domainreview.MachineResult
 }
 
 func newReviewServiceRepo(t *testing.T, outcome string) *reviewServiceRepo {
@@ -45,6 +46,7 @@ func (r *reviewServiceRepo) ProcessMachineResult(_ context.Context, result *doma
 	if r.processErr != nil {
 		return nil, r.processErr
 	}
+	r.lastResult = result
 	key := result.Provider + "|" + result.ResultID
 	if existing := r.results[key]; existing != nil {
 		duplicate := *existing
@@ -52,7 +54,13 @@ func (r *reviewServiceRepo) ProcessMachineResult(_ context.Context, result *doma
 		return &duplicate, nil
 	}
 	reviewCase := r.cases[result.VideoID]
-	outcome, priority, err := r.policy.RouteWithPriority(result.Signals)
+	policyOutcome, priority, err := r.policy.RouteWithPriority(result.Signals)
+	if err != nil {
+		return nil, err
+	}
+	outcome, priority, err := domainreview.RestrictAutomatedOutcome(
+		result.RolloutMode, policyOutcome, priority,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +77,8 @@ func (r *reviewServiceRepo) ProcessMachineResult(_ context.Context, result *doma
 		Case: reviewCase,
 		Decision: &domainreview.AutomatedDecision{
 			ID: 1, CaseID: reviewCase.ID, ResultID: result.ResultID,
-			Outcome: outcome, PolicyVersion: 1, CreatedAt: time.Now(),
+			Outcome: outcome, PolicyVersion: 1,
+			RolloutMode: result.RolloutMode, CreatedAt: time.Now(),
 		},
 		ApplySideEffects: true,
 	}
@@ -112,10 +121,13 @@ func TestServiceIntakeResultAndReconciliation(t *testing.T) {
 	if err != nil || created {
 		t.Fatalf("duplicate EnsureCase() created=%v err=%v", created, err)
 	}
+	generatedAt := time.Now().UTC().Truncate(time.Microsecond)
 	processed, err := service.SubmitMachineResult(context.Background(), domainreview.MachineResultInput{
 		CaseID: reviewCase.ID, VideoID: 11, ReviewVersion: 1, ResultID: "result-1",
 		Provider: "provider", ModelVersion: "v1", PolicyVersion: 1,
-		Signals: []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
+		SourceKind: domainreview.MachineSourceProductionProvider, GeneratedAt: generatedAt,
+		RolloutMode: domainreview.ModerationModeEnforce,
+		Signals:     []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
 	})
 	if err != nil || processed.Decision.Outcome != domainreview.OutcomeApprove {
 		t.Fatalf("SubmitMachineResult() = %#v err=%v", processed, err)
@@ -123,7 +135,9 @@ func TestServiceIntakeResultAndReconciliation(t *testing.T) {
 	replayed, err := service.SubmitMachineResult(context.Background(), domainreview.MachineResultInput{
 		CaseID: reviewCase.ID, VideoID: 11, ReviewVersion: 1, ResultID: "result-1",
 		Provider: "provider", ModelVersion: "v1", PolicyVersion: 1,
-		Signals: []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
+		SourceKind: domainreview.MachineSourceProductionProvider, GeneratedAt: generatedAt,
+		RolloutMode: domainreview.ModerationModeEnforce,
+		Signals:     []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
 	})
 	if err != nil || !replayed.Duplicate {
 		t.Fatalf("duplicate result = %#v err=%v", replayed, err)
@@ -147,7 +161,9 @@ func TestServiceInvalidAndRetryPaths(t *testing.T) {
 	_, err := service.SubmitMachineResult(context.Background(), domainreview.MachineResultInput{
 		CaseID: reviewCase.ID, VideoID: 21, ReviewVersion: 1, ResultID: "invalid",
 		Provider: "provider", ModelVersion: "v1", PolicyVersion: 1,
-		Signals: []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 2}},
+		SourceKind: domainreview.MachineSourceProductionProvider, GeneratedAt: time.Now(),
+		RolloutMode: domainreview.ModerationModeEnforce,
+		Signals:     []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 2}},
 	})
 	if !errors.Is(err, domainreview.ErrInvalidConfidence) {
 		t.Fatalf("invalid result error = %v", err)
@@ -156,7 +172,9 @@ func TestServiceInvalidAndRetryPaths(t *testing.T) {
 	_, err = service.SubmitMachineResult(context.Background(), domainreview.MachineResultInput{
 		CaseID: reviewCase.ID, VideoID: 21, ReviewVersion: 1, ResultID: "retry",
 		Provider: "provider", ModelVersion: "v1", PolicyVersion: 1,
-		Signals: []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
+		SourceKind: domainreview.MachineSourceProductionProvider, GeneratedAt: time.Now(),
+		RolloutMode: domainreview.ModerationModeEnforce,
+		Signals:     []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
 	})
 	if !errors.Is(err, retryErr) {
 		t.Fatalf("side effect error = %v", err)
@@ -180,7 +198,9 @@ func TestServiceSkipsStaleDuplicateSideEffects(t *testing.T) {
 	processed, err := service.SubmitMachineResult(context.Background(), domainreview.MachineResultInput{
 		CaseID: reviewCase.ID, VideoID: 31, ReviewVersion: 1, ResultID: "stale-duplicate",
 		Provider: "provider", ModelVersion: "v1", PolicyVersion: 1,
-		Signals: []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
+		SourceKind: domainreview.MachineSourceProductionProvider, GeneratedAt: time.Now(),
+		RolloutMode: domainreview.ModerationModeEnforce,
+		Signals:     []domainreview.MachineSignal{{Label: domainreview.LabelSafe, Confidence: 1}},
 	})
 	if err != nil || !processed.Duplicate {
 		t.Fatalf("stale duplicate = %#v err=%v", processed, err)

@@ -7,14 +7,17 @@ import (
 )
 
 func TestMachineResultNormalizesAndBoundsEvidence(t *testing.T) {
+	now := time.Now().UTC()
 	result, err := NewMachineResult(MachineResultInput{
 		CaseID: 1, VideoID: 2, ReviewVersion: 1, ResultID: "result-1",
 		Provider: " Provider-A ", ModelVersion: "model-v1", PolicyVersion: 3,
+		SourceKind: MachineSourceProductionProvider, GeneratedAt: now,
+		RolloutMode: ModerationModeEnforce,
 		Signals: []MachineSignal{{
 			Label: " Graphic Violence ", Confidence: 0.75,
 			EvidenceRefs: []string{" frame://001 "},
 		}},
-		ReceivedAt: time.Now(),
+		ReceivedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("NewMachineResult() error = %v", err)
@@ -27,10 +30,56 @@ func TestMachineResultNormalizesAndBoundsEvidence(t *testing.T) {
 	_, err = NewMachineResult(MachineResultInput{
 		CaseID: 1, VideoID: 2, ReviewVersion: 1, ResultID: "result-2",
 		Provider: "provider", ModelVersion: "v1", PolicyVersion: 1,
-		Signals: []MachineSignal{{Label: LabelSafe, Confidence: 1.1}},
+		SourceKind: MachineSourceProductionProvider, GeneratedAt: now,
+		RolloutMode: ModerationModeEnforce,
+		Signals:     []MachineSignal{{Label: LabelSafe, Confidence: 1.1}},
 	})
 	if !errors.Is(err, ErrInvalidConfidence) {
 		t.Fatalf("invalid confidence error = %v", err)
+	}
+}
+
+func TestMachineResultRequiresProvenanceAndValidGenerationTime(t *testing.T) {
+	now := time.Now().UTC()
+	base := MachineResultInput{
+		CaseID: 1, VideoID: 2, ReviewVersion: 1, ResultID: "result",
+		Provider: "provider", ModelVersion: "v1", PolicyVersion: 1,
+		SourceKind: MachineSourceProductionProvider, GeneratedAt: now,
+		RolloutMode: ModerationModeEnforce, ReceivedAt: now,
+		Signals: []MachineSignal{{Label: LabelSafe, Confidence: 1}},
+	}
+	input := base
+	input.SourceKind = ""
+	if _, err := NewMachineResult(input); !errors.Is(err, ErrInvalidMachineSource) {
+		t.Fatalf("missing source error = %v", err)
+	}
+	input = base
+	input.RolloutMode = "unsafe"
+	if _, err := NewMachineResult(input); !errors.Is(err, ErrInvalidModerationMode) {
+		t.Fatalf("invalid mode error = %v", err)
+	}
+	input = base
+	input.GeneratedAt = now.Add(MaxGeneratedFutureSkew + time.Second)
+	if _, err := NewMachineResult(input); !errors.Is(err, ErrInvalidGeneratedAt) {
+		t.Fatalf("future generation error = %v", err)
+	}
+}
+
+func TestRestrictAutomatedOutcome(t *testing.T) {
+	tests := []struct {
+		mode, input, want string
+	}{
+		{ModerationModeEnforce, OutcomeReject, OutcomeReject},
+		{ModerationModeApproveOnly, OutcomeApprove, OutcomeApprove},
+		{ModerationModeApproveOnly, OutcomeReject, OutcomeHuman},
+		{ModerationModeObserve, OutcomeApprove, OutcomeHuman},
+		{ModerationModeDisabled, OutcomeReject, OutcomeHuman},
+	}
+	for _, test := range tests {
+		got, priority, err := RestrictAutomatedOutcome(test.mode, test.input, 0)
+		if err != nil || got != test.want || (got == OutcomeHuman && priority < 1) {
+			t.Fatalf("RestrictAutomatedOutcome(%q, %q) = %q, %d, %v", test.mode, test.input, got, priority, err)
+		}
 	}
 }
 

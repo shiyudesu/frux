@@ -78,7 +78,11 @@ func (r *reviewAPIMemoryRepo) ProcessMachineResult(_ context.Context, input *dom
 	if reviewCase.Status != domainreview.CaseStatusOpen {
 		return nil, domainreview.ErrReviewCaseNotOpen
 	}
-	outcome, err := r.policy.Route(input.Signals)
+	policyOutcome, err := r.policy.Route(input.Signals)
+	if err != nil {
+		return nil, err
+	}
+	outcome, _, err := domainreview.RestrictAutomatedOutcome(input.RolloutMode, policyOutcome, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +98,8 @@ func (r *reviewAPIMemoryRepo) ProcessMachineResult(_ context.Context, input *dom
 		Case: reviewCase,
 		Decision: &domainreview.AutomatedDecision{
 			ID: int64(len(r.results) + 1), CaseID: reviewCase.ID, ResultID: input.ResultID,
-			Outcome: outcome, PolicyVersion: input.PolicyVersion, CreatedAt: time.Now(),
+			Outcome: outcome, PolicyVersion: input.PolicyVersion,
+			RolloutMode: input.RolloutMode, CreatedAt: time.Now(),
 		},
 	}
 	r.results[key] = reviewAPIStoredResult{hash: input.PayloadHash, result: processed}
@@ -159,6 +164,54 @@ func TestReviewMachineResultAPIFlow(t *testing.T) {
 		assertReviewAPIOutcome(t, response, domainreview.OutcomeHuman, false)
 	})
 
+	t.Run("rollout modes restrict policy outcomes", func(t *testing.T) {
+		reviewCase := repo.addCase(109)
+		response := performReviewResultRequest(
+			t, router, reviewCase.ID, "observe", testInternalToken,
+			reviewBodyWithMode(109, domainreview.LabelSafe, 1, "observe"),
+		)
+		assertReviewAPIOutcome(t, response, domainreview.OutcomeHuman, false)
+		var payload struct {
+			RolloutMode string `json:"rollout_mode"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil ||
+			payload.RolloutMode != domainreview.ModerationModeObserve {
+			t.Fatalf("observe payload = %#v err=%v", payload, err)
+		}
+
+		reviewCase = repo.addCase(110)
+		response = performReviewResultRequest(
+			t, router, reviewCase.ID, "approve-only", testInternalToken,
+			reviewBodyWithMode(110, domainreview.LabelHate, 0.9, "approve_only"),
+		)
+		assertReviewAPIOutcome(t, response, domainreview.OutcomeHuman, false)
+	})
+
+	t.Run("requires explicit valid provenance", func(t *testing.T) {
+		reviewCase := repo.addCase(111)
+		body := strings.Replace(
+			validReviewBody(111, domainreview.LabelSafe, 1, false),
+			`"source_kind":"test_seed",`, "", 1,
+		)
+		response := performReviewResultRequest(
+			t, router, reviewCase.ID, "missing-source", testInternalToken, body,
+		)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("missing source status = %d body=%s", response.Code, response.Body.String())
+		}
+		reviewCase = repo.addCase(112)
+		body = strings.Replace(
+			validReviewBody(112, domainreview.LabelSafe, 1, false),
+			"2026-08-01T00:00:00Z", "2999-01-01T00:00:00Z", 1,
+		)
+		response = performReviewResultRequest(
+			t, router, reviewCase.ID, "future-time", testInternalToken, body,
+		)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("future generated time status = %d body=%s", response.Code, response.Body.String())
+		}
+	})
+
 	t.Run("same identity different payload conflicts", func(t *testing.T) {
 		reviewCase := repo.addCase(107)
 		response := performReviewResultRequest(t, router, reviewCase.ID, "conflict", testInternalToken, validReviewBody(107, domainreview.LabelSafe, 0.8, false))
@@ -185,8 +238,22 @@ func validReviewBody(videoID int64, label string, confidence float64, unknown bo
 	if unknown {
 		extra = `,"unexpected":true`
 	}
-	return fmt.Sprintf(`{"video_id":%d,"review_version":1,"provider":"provider","model_version":"model-v1","policy_version":1,"signals":[{"label":%q,"confidence":%g,"evidence_refs":["frame://1"]}]%s}`,
-		videoID, label, confidence, extra)
+	return reviewBodyWithModeAndExtra(videoID, label, confidence, "enforce", extra)
+}
+
+func reviewBodyWithMode(videoID int64, label string, confidence float64, mode string) string {
+	return reviewBodyWithModeAndExtra(videoID, label, confidence, mode, "")
+}
+
+func reviewBodyWithModeAndExtra(
+	videoID int64,
+	label string,
+	confidence float64,
+	mode string,
+	extra string,
+) string {
+	return fmt.Sprintf(`{"video_id":%d,"review_version":1,"provider":"provider","model_version":"model-v1","source_kind":"test_seed","generated_at":"2026-08-01T00:00:00Z","rollout_mode":%q,"policy_version":1,"signals":[{"label":%q,"confidence":%g,"evidence_refs":["frame://1"]}]%s}`,
+		videoID, mode, label, confidence, extra)
 }
 
 func performReviewResultRequest(t *testing.T, router *server.Hertz, caseID int64, resultID, token, body string) *ut.ResponseRecorder {

@@ -38,6 +38,43 @@ RabbitMQ 死信恢复要求 RabbitMQ 3.13+ Management 镜像，并配置 `rabbit
 不得使用 Compose 的本地 guest 配置。Quorum Source/DLQ 需要足够磁盘和节点副本；容量上限、
 Delivery Limit 和 Replay timeout 必须在发布前压测。
 
+## 生产审核推理网关
+
+默认 `moderation.mode` 为空并归一化为 `disabled`。Compose 可注入：
+
+```bash
+export FRUX_MODERATION_MODE=observe
+export FRUX_MODERATION_ENDPOINT=https://moderation-gateway.example.com/v1/review
+export FRUX_MODERATION_HMAC_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+export FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT=https://media-origin.example.com
+```
+
+Provider-enabled mode 启动时强制要求 endpoint 和 32–512 字符 HMAC Secret。生产 endpoint
+必须使用 HTTPS；只有本地 loopback fixture 可配 `allow_insecure_local=true`。同时确认：
+
+- `provider_config_version` 每次改变网关、上游模型或映射语义时递增。
+- `input_profile_version` 只使用字母、数字、点、下划线和连字符。
+- S3 模式必须单独配置网关可达的 HTTPS `sample_presign_endpoint`；不要复用浏览器侧
+  `127.0.0.1` MinIO presign 地址。远程网关禁止接收 loopback 或明文 HTTP 样本 URL。
+- timeout 为 500ms–30s；lease TTL 至少比 timeout 长 1 秒且不超过 5 分钟。
+- concurrency 为 1–32，attempt 为 1–10，样本 URL 最长 5 分钟，retention 为 1 分钟–24 小时。
+- 网关验证请求 HMAC，并用同一 Secret 返回响应 HMAC；不得记录或转发样本 URL。
+- Worker 的对象存储权限包含私有 `moderation/` Put/Get/Delete，网关只获得短期单对象 GET。
+
+### Rollout promotion checklist
+
+1. **disabled**：先部署 schema/Worker，确认每个新案件稳定转人工、无外部请求、人工队列容量充足。
+2. **observe**：配置真实网关和新 provider config version；确认 Admin 显示“生产模型证据”，
+   对同一批样本比较模型信号与人工最终决定，持续观察 timeout、invalid、fallback 和人工 backlog。
+3. **approve_only**：仅在 safe/approve 一致率、误放风险、阈值和未知 label 处理通过评审后启用；
+   reject 仍必须转人工。
+4. **enforce**：需要明确运营批准和 reject threshold 验证；先小流量，再逐步扩大，并保持人工抽检。
+5. **rollback**：任一质量、可用性、签名或队列指标异常时立即切回 `disabled`。已提交 decision 不重算；
+   与当前 provider config/mode/profile 不兼容的 active/leased job 显式写 recovery 并转人工，新案件同样安全转人工。
+
+真实 promotion 证据至少包含样本窗口、人工一致率、假阴性/假阳性分析、未知 label 比例、P95 延迟、
+fallback 率、人工队列 oldest age 和回滚演练结果。
+
 当前 `action_changed_mode=dual` 是首个幂等试点。上线步骤：
 
 1. 先以 `legacy` 部署 `.q2`、DLX 和 DLQ，确认声明幂等且没有修改旧 Classic Queue 类型。

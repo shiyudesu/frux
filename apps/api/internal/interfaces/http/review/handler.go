@@ -273,7 +273,9 @@ func (h *Handler) PutMachineResult(ctx context.Context, c *app.RequestContext) {
 	result, err := h.service.SubmitMachineResult(ctx, domainreview.MachineResultInput{
 		CaseID: caseID, VideoID: request.VideoID, ReviewVersion: request.ReviewVersion,
 		ResultID: resultID, Provider: request.Provider, ModelVersion: request.ModelVersion,
-		PolicyVersion: request.PolicyVersion, Signals: signals, ReceivedAt: time.Now().UTC(),
+		SourceKind: request.SourceKind, GeneratedAt: request.GeneratedAt,
+		RolloutMode: request.RolloutMode, PolicyVersion: request.PolicyVersion,
+		Signals: signals, ReceivedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		writeReviewError(c, err)
@@ -281,7 +283,8 @@ func (h *Handler) PutMachineResult(ctx context.Context, c *app.RequestContext) {
 	}
 	c.JSON(http.StatusOK, machineResultResponse{
 		CaseID: result.Case.ID, Status: result.Case.Status, Outcome: result.Decision.Outcome,
-		PolicyVersion: result.Decision.PolicyVersion, Duplicate: result.Duplicate,
+		PolicyVersion: result.Decision.PolicyVersion, RolloutMode: result.Decision.RolloutMode,
+		Duplicate: result.Duplicate,
 	})
 }
 
@@ -301,6 +304,9 @@ func writeReviewError(c *app.RequestContext, err error) {
 		errors.Is(err, domainreview.ErrInvalidResultIdentity),
 		errors.Is(err, domainreview.ErrInvalidProvider),
 		errors.Is(err, domainreview.ErrInvalidModelVersion),
+		errors.Is(err, domainreview.ErrInvalidMachineSource),
+		errors.Is(err, domainreview.ErrInvalidGeneratedAt),
+		errors.Is(err, domainreview.ErrInvalidModerationMode),
 		errors.Is(err, domainreview.ErrInvalidSignal),
 		errors.Is(err, domainreview.ErrInvalidConfidence),
 		errors.Is(err, domainreview.ErrTooManySignals),
@@ -311,6 +317,7 @@ func writeReviewError(c *app.RequestContext, err error) {
 	case errors.Is(err, domainreview.ErrReviewCaseNotFound):
 		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeReviewCaseNotFound, "review case not found")
 	case errors.Is(err, domainreview.ErrResultIdentityConflict),
+		errors.Is(err, domainreview.ErrModerationJobNotOwned),
 		errors.Is(err, domainreview.ErrReviewCaseNotOpen),
 		errors.Is(err, domainreview.ErrReviewSubjectStale),
 		errors.Is(err, domainreview.ErrReviewSubjectState),

@@ -26,6 +26,7 @@ import (
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
@@ -152,6 +153,25 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	)
 	if err != nil {
 		return err
+	}
+	var moderationMediaHandler *interfaceshttpupload.ProtectedMediaHandler
+	if cfg.Media.Backend == "local" && cfg.Moderation.HMACSecret != "" {
+		sampleURLTTL, err := time.ParseDuration(cfg.Moderation.SampleURLTTL)
+		if err != nil {
+			return err
+		}
+		moderationSigner, err := inframediastore.NewLocalProtectedURLSigner(
+			"/moderation-media", cfg.JWT.Secret, sampleURLTTL,
+		)
+		if err != nil {
+			return err
+		}
+		moderationMediaHandler, err = interfaceshttpupload.NewProtectedMediaHandler(
+			reviewLocalStore, cfg.Media.LocalRoot, "/moderation-media", moderationSigner,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	mediaCatalog := inframediastore.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
 	videoRepo := infravideo.New(
@@ -317,7 +337,16 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	messageWriter := NewMessageWriter(messageService, publicationRecovery)
 	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
 	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
-	reviewRepo := infrareview.New(gormDB, infrareview.WithAuditWriter(adminAuditRepo))
+	reviewRepo := infrareview.New(
+		gormDB,
+		infrareview.WithAuditWriter(adminAuditRepo),
+		infrareview.WithModerationJobConfig(domainreview.ModerationJobConfig{
+			Mode:                  cfg.Moderation.Mode,
+			ProviderConfigVersion: cfg.Moderation.ProviderConfigVersion,
+			InputProfileVersion:   cfg.Moderation.InputProfileVersion,
+			MaxAttempts:           cfg.Moderation.MaxAttempts,
+		}),
+	)
 	reviewObserver := reviewMetricsAdapter{}
 	reviewService := applicationreview.New(
 		reviewRepo,
@@ -426,6 +455,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	h.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
 	h.GET("/review-media/*filepath", reviewMediaHandler.Get)
 	h.HEAD("/review-media/*filepath", reviewMediaHandler.Head)
+	if moderationMediaHandler != nil {
+		h.GET("/moderation-media/*filepath", moderationMediaHandler.Get)
+		h.HEAD("/moderation-media/*filepath", moderationMediaHandler.Head)
+	}
 	h.GET("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Get)
 	h.HEAD("/uploads/*filepath", optionalAuthMiddleware, assetHandler.Head)
 	if localMediaStore, ok := mediaStore.(*inframediastore.LocalStore); ok {

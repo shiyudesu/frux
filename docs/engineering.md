@@ -489,9 +489,20 @@ openspec validate --all --strict
   policy 后才能路由，优先级固定为 reject > human > approve；未知 label 保留证据但至少进入人审。
   自动通过/拒绝的 result、signal、decision、case 和 video 转换必须在同一 PostgreSQL 事务及
   行锁内提交，外部媒体提升或保护在提交后幂等执行。
-- 初始 review policy 只按版本 conflict-do-nothing 插入，不覆盖运营启停；ready pending 视频的
+- 初始 review policy 只按版本 conflict-do-nothing 插入，不覆盖运营启停；有媒体主体的 pending 视频
   丢失 intake 由有界 reconciliation 修复。Prometheus 标签不得包含 provider、model、policy、
   video、case 或 result identity。
+- 生产审核通过 `application/review.ModerationProvider` 接入可替换 HTTP inference gateway，
+  Domain/Application 不导入供应商 SDK。`review_moderation_job` 按
+  `(case_id, review_version, provider_config_version)` 唯一，intake 同事务创建；数据库时间租约、
+  `SKIP LOCKED`、稳定 request/result ID、重试、stale cancellation 和 reconciliation 是恢复边界。
+- moderation input profile 只允许受保护视频的确定性 JPEG 帧和既有有界标题/简介。帧数最多 12、
+  最长边 512、总计最多 8 MiB；manifest 保存 timestamp/hash/对象键，不保存签名 URL。样本进入
+  私有 `moderation/` 前缀并由通用 cleanup task 在接受结果或 retention 到期后清理。
+- machine result 必须保存 `production_provider/test_seed/recovery/legacy_unknown` source、
+  generated time 和 `disabled/observe/approve_only/enforce` rollout mode。mode 只能收紧 policy；
+  provider 或 extraction 失败耗尽后以 recovery provenance 和未知 `moderation_unavailable`
+  label 转人工，不得伪造 safe/unsafe 判断或绕过 review gate。
 - 人工队列固定使用 `priority DESC, created_at ASC, id ASC`，签名 cursor 必须绑定 priority
   过滤和完整排序元组。pending-human priority 必须由触发人审的 signal confidence 确定性映射到
   `1..100` 并与状态原子落库；队列查询必须直接按数据库时间纳入已过期租约，不能依赖固定上限

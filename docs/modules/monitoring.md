@@ -181,6 +181,21 @@ conflict 上升通常表示并发领取或陈旧页面；decision conflict 按�
 expiry、case version、review version 和 idempotency payload。notification retry 上升不影响已
 提交决定，检查 message 数据库和 Worker；terminal 表示违反封闭消息契约，需要修复生产代码。
 
+## 11.1 Production moderation provider observability
+
+生产推理链路使用 `frux_moderation_operations_total{operation,result}`：
+
+- operation：`loop`、`claim`、`extraction`、`provider_call`、`result_submission`、`retry`、
+  `fallback`、`cancellation`、`reconciliation`、`unknown`。
+- result：`success`、`retry`、`terminal`、`human`、`stale`、`created`、`cancelled`、
+  `recovered`、`noop`、`unknown`。
+
+标签不得包含 provider、model、provider config version、job/case/video/request ID、错误正文、
+签名或样本 URL。`provider_call/retry` 上升时检查网关延迟、429/5xx、签名和响应契约；
+`extraction/terminal` 上升时检查 ffmpeg、源对象完整性和输入预算；`fallback/human` 上升时确认
+视频仍为 pending-review 并评估人工队列容量。observe 阶段应结合人工最终决定离线计算一致率，
+不得把 provider/model 放进 Prometheus 标签。
+
 ## 12. Runtime degradation control observability
 
 运行时降级控制暴露 active revision、poll result、snapshot age、invalid snapshot 和 evaluation

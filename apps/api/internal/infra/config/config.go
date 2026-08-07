@@ -10,6 +10,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 )
 
 var ErrEmptyConfigPath = errors.New("config file path is empty")
@@ -22,6 +23,7 @@ var ErrInvalidInternalToken = errors.New("invalid internal token")
 var ErrInvalidRateLimitConfig = errors.New("invalid rate limit config")
 var ErrInvalidRabbitMQConfig = errors.New("invalid rabbitmq config")
 var ErrInvalidJWTConfig = errors.New("invalid jwt config")
+var ErrInvalidModerationConfig = errors.New("invalid moderation config")
 
 const minInternalTokenLength = 32
 const maxAdminAccessTTL = 8 * time.Hour
@@ -50,6 +52,12 @@ func LoadConfig(path string) (*Config, error) {
 	if err := normalizeAndValidateMediaConfig(&cfg.Media); err != nil {
 		return nil, err
 	}
+	if err := normalizeAndValidateModerationConfig(&cfg.Moderation); err != nil {
+		return nil, err
+	}
+	if err := validateModerationMediaConfig(&cfg.Moderation, &cfg.Media); err != nil {
+		return nil, err
+	}
 	if err := normalizeAndValidatePlaybackConfig(&cfg.Playback); err != nil {
 		return nil, err
 	}
@@ -61,6 +69,138 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func normalizeAndValidateModerationConfig(cfg *ModerationConfig) error {
+	if cfg == nil {
+		return ErrInvalidModerationConfig
+	}
+	cfg.Mode = strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if cfg.Mode == "" {
+		cfg.Mode = domainreview.ModerationModeDisabled
+	}
+	if !domainreview.ValidModerationMode(cfg.Mode) {
+		return ErrInvalidModerationConfig
+	}
+	if cfg.ProviderConfigVersion == 0 {
+		cfg.ProviderConfigVersion = 1
+	}
+	if cfg.ProviderConfigVersion < 1 || cfg.ProviderConfigVersion > 1_000_000 {
+		return ErrInvalidModerationConfig
+	}
+	cfg.InputProfileVersion = defaultValue(cfg.InputProfileVersion, "frames-v1")
+	if !domainreview.ValidModerationProfileVersion(cfg.InputProfileVersion) {
+		return ErrInvalidModerationConfig
+	}
+	cfg.Endpoint = strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/")
+	cfg.HMACSecret = strings.TrimSpace(cfg.HMACSecret)
+	cfg.SamplePresignEndpoint = strings.TrimRight(
+		strings.TrimSpace(cfg.SamplePresignEndpoint), "/",
+	)
+	cfg.Timeout = defaultDuration(cfg.Timeout, "10s")
+	cfg.LeaseTTL = defaultDuration(cfg.LeaseTTL, "45s")
+	cfg.PollInterval = defaultDuration(cfg.PollInterval, "1s")
+	cfg.SampleURLTTL = defaultDuration(cfg.SampleURLTTL, "30s")
+	cfg.SampleRetention = defaultDuration(cfg.SampleRetention, "1h")
+	if cfg.WorkerConcurrency == 0 {
+		cfg.WorkerConcurrency = 2
+	}
+	if cfg.MaxAttempts == 0 {
+		cfg.MaxAttempts = 5
+	}
+	timeout, err := time.ParseDuration(cfg.Timeout)
+	if err != nil || timeout < 500*time.Millisecond || timeout > 30*time.Second {
+		return ErrInvalidModerationConfig
+	}
+	leaseTTL, err := time.ParseDuration(cfg.LeaseTTL)
+	if err != nil || leaseTTL < timeout+time.Second || leaseTTL > 5*time.Minute {
+		return ErrInvalidModerationConfig
+	}
+	pollInterval, err := time.ParseDuration(cfg.PollInterval)
+	if err != nil || pollInterval < 100*time.Millisecond || pollInterval > time.Minute {
+		return ErrInvalidModerationConfig
+	}
+	sampleURLTTL, err := time.ParseDuration(cfg.SampleURLTTL)
+	if err != nil || sampleURLTTL < timeout || sampleURLTTL > 5*time.Minute {
+		return ErrInvalidModerationConfig
+	}
+	sampleRetention, err := time.ParseDuration(cfg.SampleRetention)
+	if err != nil || sampleRetention < time.Minute || sampleRetention > 24*time.Hour {
+		return ErrInvalidModerationConfig
+	}
+	if cfg.WorkerConcurrency < 1 || cfg.WorkerConcurrency > 32 ||
+		cfg.MaxAttempts < 1 || cfg.MaxAttempts > 10 {
+		return ErrInvalidModerationConfig
+	}
+	if cfg.Mode == domainreview.ModerationModeDisabled &&
+		cfg.Endpoint == "" && cfg.HMACSecret == "" {
+		return nil
+	}
+	if cfg.Endpoint == "" || len(cfg.HMACSecret) < 32 || len(cfg.HMACSecret) > 512 {
+		return ErrInvalidModerationConfig
+	}
+	endpoint, err := url.Parse(cfg.Endpoint)
+	if err != nil || endpoint.Host == "" || endpoint.User != nil ||
+		endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return ErrInvalidModerationConfig
+	}
+	if endpoint.Scheme == "https" {
+		return nil
+	}
+	if endpoint.Scheme != "http" || !cfg.AllowInsecureLocal || !isLocalEndpoint(endpoint.Hostname()) {
+		return ErrInvalidModerationConfig
+	}
+	return nil
+}
+
+func validateModerationMediaConfig(
+	moderation *ModerationConfig,
+	media *MediaConfig,
+) error {
+	if moderation == nil || media == nil {
+		return ErrInvalidModerationConfig
+	}
+	if moderation.Mode == domainreview.ModerationModeDisabled {
+		return nil
+	}
+	gateway, err := url.Parse(moderation.Endpoint)
+	if err != nil {
+		return ErrInvalidModerationConfig
+	}
+	gatewayLocal := isLocalEndpoint(gateway.Hostname())
+	if media.Backend == domainmedia.StorageBackendLocal {
+		if !gatewayLocal {
+			return ErrInvalidModerationConfig
+		}
+		return nil
+	}
+	if media.Backend != domainmedia.StorageBackendS3 ||
+		moderation.SamplePresignEndpoint == "" {
+		return ErrInvalidModerationConfig
+	}
+	sampleEndpoint, err := url.Parse(moderation.SamplePresignEndpoint)
+	if err != nil || sampleEndpoint.Host == "" || sampleEndpoint.User != nil ||
+		sampleEndpoint.RawQuery != "" || sampleEndpoint.Fragment != "" {
+		return ErrInvalidModerationConfig
+	}
+	sampleLocal := isLocalEndpoint(sampleEndpoint.Hostname())
+	if sampleEndpoint.Scheme != "https" &&
+		(sampleEndpoint.Scheme != "http" || !moderation.AllowInsecureLocal || !sampleLocal) {
+		return ErrInvalidModerationConfig
+	}
+	if !gatewayLocal && sampleLocal {
+		return ErrInvalidModerationConfig
+	}
+	return nil
+}
+
+func isLocalEndpoint(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.IsLoopback()
 }
 
 func normalizeAndValidateGovernanceConfig(cfg *GovernanceConfig) error {

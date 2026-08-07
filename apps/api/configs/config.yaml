@@ -79,6 +79,22 @@ media:
     use_path_style: true
     auto_create_bucket: false
 
+moderation:
+  mode: "${FRUX_MODERATION_MODE}"
+  provider_config_version: 1
+  input_profile_version: "frames-v1"
+  endpoint: "${FRUX_MODERATION_ENDPOINT}"
+  hmac_secret: "${FRUX_MODERATION_HMAC_SECRET}"
+  allow_insecure_local: true
+  timeout: "10s"
+  worker_concurrency: 2
+  max_attempts: 5
+  lease_ttl: "45s"
+  poll_interval: "1s"
+  sample_url_ttl: "30s"
+  sample_retention: "1h"
+  sample_presign_endpoint: "${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT}"
+
 playback:
   telemetry:
     retention: "168h"

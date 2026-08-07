@@ -3,6 +3,7 @@ package infraconfig
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
@@ -58,6 +59,57 @@ func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
 	cfg.Telemetry.CleanupInterval = "200h"
 	if err := normalizeAndValidatePlaybackConfig(&cfg); !errors.Is(err, ErrInvalidPlaybackConfig) {
 		t.Fatalf("expected invalid cleanup interval, got %v", err)
+	}
+}
+
+func TestNormalizeAndValidateModerationConfig(t *testing.T) {
+	var cfg ModerationConfig
+	if err := normalizeAndValidateModerationConfig(&cfg); err != nil {
+		t.Fatalf("disabled moderation defaults: %v", err)
+	}
+	if cfg.Mode != "disabled" || cfg.ProviderConfigVersion != 1 ||
+		cfg.InputProfileVersion != "frames-v1" || cfg.WorkerConcurrency != 2 ||
+		cfg.MaxAttempts != 5 {
+		t.Fatalf("unexpected moderation defaults: %+v", cfg)
+	}
+
+	cfg = ModerationConfig{
+		Mode: "observe", ProviderConfigVersion: 2,
+		Endpoint: "http://127.0.0.1:9001", HMACSecret: strings.Repeat("s", 32),
+		AllowInsecureLocal: true,
+	}
+	if err := normalizeAndValidateModerationConfig(&cfg); err != nil {
+		t.Fatalf("local observe moderation: %v", err)
+	}
+	localMedia := MediaConfig{Backend: domainmedia.StorageBackendLocal}
+	if err := validateModerationMediaConfig(&cfg, &localMedia); err != nil {
+		t.Fatalf("local moderation media: %v", err)
+	}
+	cfg.Endpoint = "http://provider.example.com"
+	if err := normalizeAndValidateModerationConfig(&cfg); !errors.Is(err, ErrInvalidModerationConfig) {
+		t.Fatalf("insecure remote endpoint error = %v", err)
+	}
+	cfg.Endpoint = "https://provider.example.com"
+	cfg.Mode = "unsafe"
+	if err := normalizeAndValidateModerationConfig(&cfg); !errors.Is(err, ErrInvalidModerationConfig) {
+		t.Fatalf("invalid rollout mode error = %v", err)
+	}
+
+	cfg = ModerationConfig{
+		Mode: "observe", ProviderConfigVersion: 2,
+		Endpoint: "https://provider.example.com", HMACSecret: strings.Repeat("s", 32),
+		SamplePresignEndpoint: "https://media.example.com",
+	}
+	if err := normalizeAndValidateModerationConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	s3Media := MediaConfig{Backend: domainmedia.StorageBackendS3}
+	if err := validateModerationMediaConfig(&cfg, &s3Media); err != nil {
+		t.Fatalf("remote moderation media: %v", err)
+	}
+	cfg.SamplePresignEndpoint = "http://127.0.0.1:9000"
+	if err := validateModerationMediaConfig(&cfg, &s3Media); !errors.Is(err, ErrInvalidModerationConfig) {
+		t.Fatalf("unreachable sample endpoint error = %v", err)
 	}
 }
 

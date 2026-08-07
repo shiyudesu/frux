@@ -13,6 +13,9 @@ type machineResultRequest struct {
 	ReviewVersion int                    `json:"review_version"`
 	Provider      string                 `json:"provider"`
 	ModelVersion  string                 `json:"model_version"`
+	SourceKind    string                 `json:"source_kind"`
+	GeneratedAt   time.Time              `json:"generated_at"`
+	RolloutMode   string                 `json:"rollout_mode"`
 	PolicyVersion int                    `json:"policy_version"`
 	Signals       []machineSignalRequest `json:"signals"`
 }
@@ -22,6 +25,7 @@ type machineResultResponse struct {
 	Status        string `json:"status"`
 	Outcome       string `json:"outcome"`
 	PolicyVersion int    `json:"policy_version"`
+	RolloutMode   string `json:"rollout_mode"`
 	Duplicate     bool   `json:"duplicate"`
 }
 
@@ -106,6 +110,7 @@ type evidenceSignalResponse struct {
 	ModelVersion  string    `json:"model_version"`
 	PolicyVersion int       `json:"policy_version"`
 	SourceKind    string    `json:"source_kind"`
+	GeneratedAt   time.Time `json:"generated_at"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -114,6 +119,7 @@ type automatedDecisionResponse struct {
 	ResultID      string    `json:"result_id"`
 	Outcome       string    `json:"outcome"`
 	PolicyVersion int       `json:"policy_version"`
+	RolloutMode   string    `json:"rollout_mode"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

@@ -16,6 +16,8 @@ type CleanupRepository interface {
 	CreateCleanupTasks(ctx context.Context, tasks []*domainmedia.CleanupTask) error
 	LeaseCleanupTasks(ctx context.Context, owner string, now time.Time, leaseUntil time.Time, limit int) ([]*domainmedia.CleanupTask, error)
 	UpdateCleanupTask(ctx context.Context, task *domainmedia.CleanupTask) error
+	UpdateCleanupTaskOwned(ctx context.Context, task *domainmedia.CleanupTask, leaseOwner string) error
+	RenewCleanupTaskLease(ctx context.Context, taskID int64, leaseOwner string, leaseTTL time.Duration) error
 	ReleaseExpiredCleanupLeases(ctx context.Context, now time.Time) (int64, error)
 }
 
@@ -93,21 +95,64 @@ func (s *CleanupService) ScheduleMediaCleanup(ctx context.Context, mediaAssetID,
 	return nil
 }
 
+func (s *CleanupService) ScheduleObjectCleanup(
+	ctx context.Context,
+	objectKeys []string,
+	notBefore time.Time,
+) error {
+	if s == nil || s.repo == nil || len(objectKeys) == 0 {
+		return nil
+	}
+	tasks := make([]*domainmedia.CleanupTask, 0, len(objectKeys))
+	seen := make(map[string]struct{}, len(objectKeys))
+	for _, objectKey := range objectKeys {
+		if _, exists := seen[objectKey]; exists {
+			continue
+		}
+		seen[objectKey] = struct{}{}
+		task, err := domainmedia.NewCleanupTask(
+			0, s.backend, objectKey, notBefore, s.maxAttempts,
+		)
+		if err != nil {
+			return err
+		}
+		tasks = append(tasks, task)
+	}
+	return s.repo.CreateCleanupTasks(ctx, tasks)
+}
+
+func (s *CleanupService) ScheduleModerationSampleCleanup(
+	ctx context.Context,
+	objectKeys []string,
+	notBefore time.Time,
+) error {
+	return s.ScheduleObjectCleanup(ctx, objectKeys, notBefore)
+}
+
 func (s *CleanupService) RunCleanupOnce(ctx context.Context, owner string, limit int, leaseTTL time.Duration) (int, error) {
 	if s == nil || s.repo == nil || s.store == nil {
 		return 0, nil
 	}
-	now := s.now()
-	if _, err := s.repo.ReleaseExpiredCleanupLeases(ctx, now); err != nil {
-		return 0, err
+	if limit <= 0 {
+		return 0, nil
 	}
-	tasks, err := s.repo.LeaseCleanupTasks(ctx, owner, now, now.Add(leaseTTL), limit)
-	if err != nil {
+	if _, err := s.repo.ReleaseExpiredCleanupLeases(ctx, s.now()); err != nil {
 		return 0, err
 	}
 	completed := 0
 	var cleanupErr error
-	for _, task := range tasks {
+	for processed := 0; processed < limit; processed++ {
+		claimTime := s.now()
+		tasks, err := s.repo.LeaseCleanupTasks(
+			ctx, owner, claimTime, claimTime.Add(leaseTTL), 1,
+		)
+		if err != nil {
+			return completed, errors.Join(cleanupErr, err)
+		}
+		if len(tasks) == 0 {
+			break
+		}
+		task := tasks[0]
 		if task.AssetID > 0 {
 			asset, assetErr := s.repo.FindAssetByID(ctx, task.AssetID)
 			if assetErr != nil && !errors.Is(assetErr, domainmedia.ErrMediaAssetNotFound) {
@@ -123,7 +168,10 @@ func (s *CleanupService) RunCleanupOnce(ctx context.Context, owner string, limit
 					if variant == nil || variant.ObjectKey == task.ObjectKey {
 						continue
 					}
-					candidate, createErr := domainmedia.NewCleanupTask(task.AssetID, task.StorageBackend, variant.ObjectKey, now, task.MaxAttempts)
+					candidate, createErr := domainmedia.NewCleanupTask(
+						task.AssetID, task.StorageBackend, variant.ObjectKey,
+						claimTime, task.MaxAttempts,
+					)
 					if createErr != nil {
 						return completed, createErr
 					}
@@ -135,10 +183,17 @@ func (s *CleanupService) RunCleanupOnce(ctx context.Context, owner string, limit
 			}
 		}
 		start := time.Now()
-		err := s.store.Delete(ctx, task.ObjectKey)
+		if err := s.repo.RenewCleanupTaskLease(ctx, task.ID, owner, leaseTTL); err != nil {
+			return completed, err
+		}
+		deleteTimeout := leaseTTL / 2
+		if deleteTimeout <= 0 || deleteTimeout > 30*time.Second {
+			deleteTimeout = 30 * time.Second
+		}
+		deleteCtx, cancel := context.WithTimeout(ctx, deleteTimeout)
+		err = s.store.Delete(deleteCtx, task.ObjectKey)
+		cancel()
 		inframetrics.ObserveMediaObject("delete", task.StorageBackend, time.Since(start), err)
-		task.LeaseOwner = ""
-		task.LeaseUntil = nil
 		if err == nil {
 			finishedAt := s.now()
 			task.State = domainmedia.CleanupStateCompleted
@@ -153,7 +208,7 @@ func (s *CleanupService) RunCleanupOnce(ctx context.Context, owner string, limit
 			task.ErrorMessage = truncateProcessingError(err)
 			cleanupErr = errors.Join(cleanupErr, err)
 		}
-		if updateErr := s.repo.UpdateCleanupTask(ctx, task); updateErr != nil {
+		if updateErr := s.repo.UpdateCleanupTaskOwned(ctx, task, owner); updateErr != nil {
 			return completed, updateErr
 		}
 	}

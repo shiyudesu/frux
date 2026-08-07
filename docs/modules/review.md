@@ -2,7 +2,7 @@
 
 ## 1. 模块职责
 
-审核模块在视频公开前创建版本化案件，接收服务间认证的模型无关机器证据，并按不可变策略版本把案件确定性路由为自动通过、自动拒绝或待人工复审。人工复审提供稳定优先级队列、租约领取、决定和不可变历史；模型推理、抽帧、OCR/ASR、供应商选择、申诉和多人共识不属于本模块。
+审核模块在视频公开前创建版本化案件，通过耐久任务和可替换 HTTP 推理网关获取真实机器证据，并按不可变策略版本与 rollout 模式把案件确定性路由为自动通过、自动拒绝或待人工复审。人工复审提供稳定优先级队列、租约领取、决定和不可变历史；供应商 SDK、模型训练、音频/ASR、OCR、申诉和多人共识不属于核心审核模块。
 
 ## 2. 内部接口
 
@@ -18,14 +18,15 @@
 | DELETE | `/api/admin/review/cases/{caseId}/lease` | 当前持有人释放租约 | `review.decide` |
 | POST | `/api/admin/review/cases/{caseId}/decision` | 幂等批准或拒绝 | `review.decide` |
 
-请求严格拒绝未知字段、尾随 JSON 和超过 32 KiB 的请求体。正文包含 `video_id`、正整数 `review_version`、`provider`、`model_version`、`policy_version` 和最多 32 条 `signals`。每条 signal 包含规范化 label、`0..1` confidence，以及最多 8 个、总计不超过 2048 字节的证据引用。
+请求严格拒绝未知字段、尾随 JSON 和超过 32 KiB 的请求体。正文包含 `video_id`、正整数 `review_version`、`provider`、`model_version`、`source_kind`、`generated_at`、`rollout_mode`、`policy_version` 和最多 32 条 `signals`。每条 signal 包含规范化 label、`0..1` confidence，以及最多 8 个、总计不超过 2048 字节的证据引用。
 
 ## 3. 数据模型
 
 - `review_case`：以 `(video_id, review_version)` 唯一，保存 `open`、`pending_human`、`approved`、`rejected`、`cancelled`、`superseded` 和案件策略版本。
-- `review_machine_result`：以 `(provider, result_id)` 唯一，保存规范化载荷 SHA-256；同身份异载荷冲突。
-- `review_signal`：不可变保存 label、confidence、有界证据引用、provider、model 和 policy provenance。
-- `review_decision`：每个机器结果最多一个自动决定，保存 outcome 和 policy version。
+- `review_machine_result`：以 `(provider, result_id)` 唯一，保存规范化载荷 SHA-256、`source_kind`、`generated_at` 和有效 rollout mode；同身份异载荷冲突。
+- `review_signal`：不可变保存 label、confidence、有界证据引用、provider、model、source、generation time 和 policy provenance。
+- `review_decision`：每个机器结果最多一个自动决定，保存 outcome、policy version 和当时有效的 rollout mode。
+- `review_moderation_job`：以 `(case_id, review_version, provider_config_version)` 唯一，保存稳定 request/result ID、input profile、rollout mode、attempt、数据库租约、manifest、错误码和 submitted/terminal/cancelled 状态。
 - `review_policy`：配置使用 JSONB，但读取必须恢复成经过 Domain 校验的 typed policy；版本唯一，数据库只允许一个 active 版本。
 - `review_assignment_history`：不可变保存 claimed、resumed、renewed、released、expired、decided、cancelled、superseded 事件。
 - `review_human_decision`：每案最多一个人工决定，保存 reviewer、outcome、注册 reason、bounded note 和版本。
@@ -46,6 +47,19 @@
 
 初始 v1 策略是保守的 active human-routing 策略；启动只按版本 conflict-do-nothing 插入，绝不覆盖运营状态。
 
+机器结果来源是封闭集合：`production_provider`、`test_seed`、`recovery`、`legacy_unknown`。`manual-seed` 历史行迁移为 `test_seed`，其他旧行迁移为 `legacy_unknown`；恢复事实不能呈现为模型判断。
+
+rollout mode 只限制、不放宽 active policy 的结果：
+
+| mode | 行为 |
+| --- | --- |
+| `disabled` | 不调用外部网关，写入 recovery 事实并转人工 |
+| `observe` | 保存生产证据，但所有结果转人工 |
+| `approve_only` | 只允许策略批准自动生效；reject/human 转人工 |
+| `enforce` | 完整执行 active policy 的 approve/reject/human |
+
+mode 和 provider config version 在任务创建时固定，最终 mode 进入 result/decision 历史；后续配置变化不重算旧结果。
+
 ## 5. 事务与恢复
 
 - 视频创建后只要存在生产媒体资产或兼容媒体 URL 且仍为 pending-review，即可创建案件；审核可以早于媒体基线完成，重复 intake 返回同一案件。
@@ -54,10 +68,17 @@
 - 自动通过把视频转换为 published，自动拒绝转换为 rejected；决定、案件、视频和对应生命周期通知事实必须同事务提交。
 - human 只把案件置为 `pending_human`，视频继续 pending-review。
 - 审核通过时若媒体和公开可见性已满足，写入同版本 combined publication 事实；否则只写 approved-but-not-public 事实。提交后再执行媒体提升/保护和发布事件，失败可通过同一结果重放重试，不重复证据、决定或发布消息。
+- intake 与当前 provider config version 的 moderation job 同事务提交；重复 intake 解析到同一任务。Worker 使用进程唯一 owner、`clock_timestamp()`、`FOR UPDATE SKIP LOCKED`、心跳续租和 lease fencing 领取；机器结果事务再次锁定并校验未过期任务租约，稳定 request/result ID 在超时、重启和重复响应下不变化。
+- Worker 从保护原始对象提取最多 12 张、最长边 512 像素、总计不超过 8 MiB 的确定性 JPEG 帧。只发送有界标题/简介和短期样本 URL，不发送原视频 URL、用户资料、评论或可复用存储凭据。
+- 样本对象按 case/review/provider-config/profile/preparation-attempt 位于私有 `moderation/` 前缀，manifest 只持久化 timestamp、SHA-256、尺寸、大小和对象键。准备时先创建 retention cleanup 再上传，接受结果后把同一任务提前为立即清理；部分或结果不确定的上传也已有耐久清理，重试使用新 generation，避免旧 cleanup 删除新样本。
+- 已接受机器结果若媒体提升/保护等提交后副作用失败，任务不会因 case 已关闭而直接完成；Worker 从持久化 result/decision 恢复 `ProcessingResult` 并继续幂等副作用。当前配置无法执行的旧 provider config/mode/profile 任务不会调用新网关，而是显式写 recovery 事实转人工。
+- transport timeout、429、5xx、抽帧或响应校验失败按有界退避重试；耗尽或不可重试错误提交稳定 recovery 结果，未知 `moderation_unavailable` label 强制进入人工队列。任何失败都不得公开视频。
 
 ## 6. 可观测性
 
 `frux_review_events_total{stage,result}` 只使用固定低基数 stage/result。stage 为 `intake`、`provider_result`、`routing`、`reconciliation`；result 折叠为 created/existing/accepted/approve/reject/human/duplicate/invalid/conflict/retry/success/unknown，不包含 provider、model、video、case 或 result ID。
+
+生产推理链路另暴露 `frux_moderation_operations_total{operation,result}`。operation 只允许 loop、claim、extraction、provider_call、result_submission、retry、fallback、cancellation、reconciliation；result 只允许 success、retry、terminal、human、stale、created、cancelled、recovered、noop、unknown。不得加入 provider、model、job、case、video、URL 或错误正文。
 
 ## 7. 人工复审规则
 
@@ -85,7 +106,35 @@
 - `/admin/reviews/{reviewId}` 通过独立 preview-access API 播放保护视频，展示机器 signal、自动决定、任务占用事件和人工决定审核记录。
 - Reviewer 开始审核后只在内存保存 opaque lease token；刷新时由当前持有人调用 resume 轮换 token，不写入 localStorage/sessionStorage。
 - 页面在有效任务打开期间自动延长占用并显示服务端到期倒计时，同时提供手动延长和“放回待处理”。
-- `manual-seed` 明确显示为“测试证据”；其他未持久化来源分类的旧结果显示“来源未验证”，证据引用仅作为有界文本展示。
+- `manual-seed` 明确显示为“测试证据”；迁移前其他旧结果以 `legacy_unknown` 显示“历史来源未验证”，证据引用仅作为有界文本展示。
+- 生产证据显示“生产模型证据”；recovery 显示“系统恢复记录（非模型判断）”且不把 confidence 呈现为模型置信度；历史未知来源明确显示为“历史来源未验证”。审核记录同时显示当时 rollout mode。
 - 同一 case/version 与决定 payload 在成功前复用同一 Web 幂等键，响应丢失后的重试不会创建第二个决定；payload 或 case 变化后生成新键。
 - 审核占用过期时保留已检查证据，禁用旧决定并提供返回任务列表；case/video 版本冲突提供显式刷新。
 - 只有 `review.decide` 才渲染领取和决定控件，但每个写接口仍由服务端权限中间件强制授权。
+
+## 9. 推理网关契约
+
+Worker 向配置的单一 HTTPS endpoint 发送 canonical JSON：
+
+```json
+{
+  "job_id": 1,
+  "case_id": 2,
+  "video_id": 3,
+  "review_version": 1,
+  "requested_policy_version": 1,
+  "request_id": "moderation-request:2:1:1",
+  "metadata": {"title": "...", "description": "..."},
+  "frames": [{"timestamp_ms": 500, "sha256": "...", "url": "https://..."}]
+}
+```
+
+请求头为 `X-Frux-Request-ID`、RFC3339 `X-Frux-Timestamp` 和 `X-Frux-Signature`。签名内容是
+`timestamp + "\n" + request_id + "\n" + hex(sha256(body))` 的 HMAC-SHA256 Base64URL。
+响应必须回传相同 `request_id`，包含 provider、model_version、generated_at 和有界 signals，
+并用 `X-Frux-Response-Signature` 对
+`request_id + "\n" + hex(sha256(response_body))` 签名。未知字段、尾随 JSON、超过 256 KiB
+的响应、未知帧时间、非法 confidence 或错误签名均拒绝。
+
+非 HTTPS 仅允许显式 `allow_insecure_local=true` 且 endpoint 主机是 loopback/localhost 的本地
+契约测试。客户端拒绝 redirect，日志不得输出签名、Secret、响应正文或样本 URL。

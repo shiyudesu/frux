@@ -19,8 +19,9 @@ import (
 )
 
 type Repository struct {
-	db          *gorm.DB
-	auditWriter AuditWriter
+	db                  *gorm.DB
+	auditWriter         AuditWriter
+	moderationJobConfig *domainreview.ModerationJobConfig
 }
 
 type AuditWriter interface {
@@ -32,6 +33,15 @@ type Option func(*Repository)
 
 func WithAuditWriter(writer AuditWriter) Option {
 	return func(repository *Repository) { repository.auditWriter = writer }
+}
+
+func WithModerationJobConfig(config domainreview.ModerationJobConfig) Option {
+	return func(repository *Repository) {
+		if domainreview.ValidateModerationJobConfig(config) == nil {
+			copyConfig := config
+			repository.moderationJobConfig = &copyConfig
+		}
+	}
 }
 
 func New(db *gorm.DB, options ...Option) *Repository {
@@ -69,6 +79,9 @@ func (r *Repository) CreateOrGetCase(ctx context.Context, videoID int64) (*domai
 		}
 		findErr := tx.Where("video_id = ? AND review_version = ?", video.ID, video.ReviewVersion).Take(&model).Error
 		if findErr == nil {
+			if err := r.ensureModerationJob(tx, model, time.Now().UTC()); err != nil {
+				return err
+			}
 			return nil
 		}
 		if !errors.Is(findErr, gorm.ErrRecordNotFound) {
@@ -90,6 +103,9 @@ func (r *Repository) CreateOrGetCase(ctx context.Context, videoID int64) (*domai
 		if err := tx.Create(&model).Error; err != nil {
 			return err
 		}
+		if err := r.ensureModerationJob(tx, model, reviewCase.CreatedAt); err != nil {
+			return err
+		}
 		created = true
 		return nil
 	})
@@ -97,6 +113,25 @@ func (r *Repository) CreateOrGetCase(ctx context.Context, videoID int64) (*domai
 		return nil, false, err
 	}
 	return restoreCase(model), created, nil
+}
+
+func (r *Repository) ensureModerationJob(tx *gorm.DB, reviewCase CaseModel, now time.Time) error {
+	if r == nil || r.moderationJobConfig == nil {
+		return nil
+	}
+	job, err := domainreview.NewModerationJob(
+		reviewCase.ID, reviewCase.VideoID, reviewCase.ReviewVersion,
+		*r.moderationJobConfig, now,
+	)
+	if err != nil {
+		return err
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "case_id"}, {Name: "review_version"}, {Name: "provider_config_version"},
+		},
+		DoNothing: true,
+	}).Create(moderationJobModelFromDomain(job)).Error
 }
 
 func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainreview.MachineResult) (*domainreview.ProcessingResult, error) {
@@ -111,7 +146,12 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 		var existing ResultModel
 		findErr := tx.Where("provider = ? AND result_id = ?", result.Provider, result.ResultID).Take(&existing).Error
 		if findErr == nil {
-			if existing.PayloadHash != result.PayloadHash {
+			legacySource := existing.SourceKind == domainreview.MachineSourceLegacyUnknown ||
+				(existing.SourceKind == domainreview.MachineSourceTestSeed &&
+					strings.EqualFold(strings.TrimSpace(existing.Provider), "manual-seed"))
+			legacyMatch := legacySource &&
+				existing.PayloadHash == result.LegacyPayloadHash
+			if existing.PayloadHash != result.PayloadHash && !legacyMatch {
 				return domainreview.ErrResultIdentityConflict
 			}
 			var err error
@@ -120,6 +160,20 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 		}
 		if !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return findErr
+		}
+		if result.ModerationJobID > 0 {
+			var moderationJob ModerationJobModel
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where(`id = ? AND result_id = ? AND status = ? AND lease_owner = ?
+					AND lease_until > clock_timestamp()`,
+					result.ModerationJobID, result.ResultID,
+					domainreview.ModerationJobLeased, result.ModerationLeaseOwner).
+				Take(&moderationJob).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return domainreview.ErrModerationJobNotOwned
+				}
+				return err
+			}
 		}
 
 		var caseModel CaseModel
@@ -157,15 +211,23 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 		if err != nil {
 			return err
 		}
-		outcome, priority, rejectionReason, err := policy.RouteWithPriorityAndReason(result.Signals)
+		policyOutcome, priority, rejectionReason, err := policy.RouteWithPriorityAndReason(result.Signals)
+		if err != nil {
+			return err
+		}
+		outcome, priority, err := domainreview.RestrictAutomatedOutcome(
+			result.RolloutMode, policyOutcome, priority,
+		)
 		if err != nil {
 			return err
 		}
 		receipt := ResultModel{
 			CaseID: caseModel.ID, VideoID: caseModel.VideoID, ReviewVersion: caseModel.ReviewVersion,
 			Provider: result.Provider, ResultID: result.ResultID, PayloadHash: result.PayloadHash,
-			ModelVersion: result.ModelVersion, PolicyVersion: result.PolicyVersion,
-			Outcome: outcome, CreatedAt: result.ReceivedAt,
+			ModelVersion: result.ModelVersion, SourceKind: result.SourceKind,
+			GeneratedAt: result.GeneratedAt, RolloutMode: result.RolloutMode,
+			PolicyVersion: result.PolicyVersion,
+			Outcome:       outcome, CreatedAt: result.ReceivedAt,
 		}
 		if err := tx.Create(&receipt).Error; err != nil {
 			return err
@@ -179,7 +241,8 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 				CaseID: caseModel.ID, ResultReceiptID: receipt.ID, Label: signal.Label,
 				Confidence: signal.Confidence, EvidenceRefsJSON: string(evidenceJSON),
 				Provider: result.Provider, ModelVersion: result.ModelVersion,
-				PolicyVersion: result.PolicyVersion, CreatedAt: result.ReceivedAt,
+				PolicyVersion: result.PolicyVersion, SourceKind: result.SourceKind,
+				GeneratedAt: result.GeneratedAt, CreatedAt: result.ReceivedAt,
 			}
 			if err := tx.Create(&signalModel).Error; err != nil {
 				return err
@@ -187,7 +250,8 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 		}
 		decision := DecisionModel{
 			CaseID: caseModel.ID, ResultReceiptID: receipt.ID, Outcome: outcome,
-			PolicyVersion: result.PolicyVersion, CreatedAt: result.ReceivedAt,
+			PolicyVersion: result.PolicyVersion, RolloutMode: result.RolloutMode,
+			CreatedAt: result.ReceivedAt,
 		}
 		if err := tx.Create(&decision).Error; err != nil {
 			return err
@@ -267,7 +331,8 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 			Case: restoreCase(caseModel),
 			Decision: &domainreview.AutomatedDecision{
 				ID: decision.ID, CaseID: decision.CaseID, ResultID: result.ResultID,
-				Outcome: decision.Outcome, PolicyVersion: decision.PolicyVersion, CreatedAt: decision.CreatedAt,
+				Outcome: decision.Outcome, PolicyVersion: decision.PolicyVersion,
+				RolloutMode: decision.RolloutMode, CreatedAt: decision.CreatedAt,
 			},
 			ApplySideEffects: true,
 			MediaAssetID:     positiveValue(video.MediaAssetID), CoverAssetID: positiveValue(video.CoverAssetID),
@@ -312,7 +377,8 @@ func loadProcessingResult(tx *gorm.DB, receipt ResultModel, duplicate bool) (*do
 		Case: restoreCase(caseModel),
 		Decision: &domainreview.AutomatedDecision{
 			ID: decision.ID, CaseID: decision.CaseID, ResultID: receipt.ResultID,
-			Outcome: decision.Outcome, PolicyVersion: decision.PolicyVersion, CreatedAt: decision.CreatedAt,
+			Outcome: decision.Outcome, PolicyVersion: decision.PolicyVersion,
+			RolloutMode: decision.RolloutMode, CreatedAt: decision.CreatedAt,
 		},
 		Duplicate:        duplicate,
 		ApplySideEffects: video.ReviewVersion == caseModel.ReviewVersion,

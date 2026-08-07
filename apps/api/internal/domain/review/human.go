@@ -394,6 +394,8 @@ type EvidenceSignal struct {
 	Provider      string
 	ModelVersion  string
 	PolicyVersion int
+	SourceKind    string
+	GeneratedAt   time.Time
 	CreatedAt     time.Time
 }
 

@@ -420,7 +420,8 @@ export interface ReviewEvidenceSignal {
   provider: string;
   model_version: string;
   policy_version: number;
-  source_kind: "test_seed" | "unverified";
+  source_kind: "production_provider" | "test_seed" | "recovery" | "legacy_unknown";
+  generated_at: string;
   created_at: string;
 }
 
@@ -429,6 +430,7 @@ export interface ReviewAutomatedDecision {
   result_id: string;
   outcome: string;
   policy_version: number;
+  rollout_mode: "disabled" | "observe" | "approve_only" | "enforce";
   created_at: string;
 }
 
