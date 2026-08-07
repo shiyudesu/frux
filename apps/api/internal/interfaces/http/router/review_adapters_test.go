@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 )
 
 type reviewPreviewRepositoryStub struct {
@@ -109,5 +111,138 @@ func TestReviewPreviewProviderRejectsUnprotectedExternalURL(t *testing.T) {
 		MediaURL: "https://public.example.test/source.mp4",
 	}, 5*time.Minute); !errors.Is(err, domainreview.ErrReviewPreviewUnavailable) {
 		t.Fatalf("external preview error = %v", err)
+	}
+}
+
+type outcomeVideoReaderStub struct {
+	video *domainvideo.Video
+}
+
+func (s outcomeVideoReaderStub) FindByIDAnyStatus(context.Context, int64) (*domainvideo.Video, error) {
+	return s.video, nil
+}
+
+type outcomeMediaPublicationStub struct {
+	ready int
+}
+
+type outcomePublicationTrackerStub struct {
+	video *domainvideo.Video
+	ready bool
+	marks int
+}
+
+func (s *outcomePublicationTrackerStub) FindByIDAnyStatus(
+	context.Context, int64,
+) (*domainvideo.Video, error) {
+	return s.video, nil
+}
+
+func (s *outcomePublicationTrackerStub) LifecyclePublicationReady(
+	context.Context, string,
+) (bool, error) {
+	return s.ready, nil
+}
+
+func (s *outcomePublicationTrackerStub) MarkLifecyclePublicationReady(
+	context.Context, string, time.Time,
+) error {
+	s.ready = true
+	s.marks++
+	return nil
+}
+
+type outcomePublisherStub struct {
+	calls int
+}
+
+func (s *outcomePublisherStub) PublishVideoPublished(
+	context.Context,
+	*applicationvideo.PublishedEvent,
+) error {
+	s.calls++
+	return nil
+}
+
+func (s *outcomeMediaPublicationStub) MediaReady(context.Context, int64) error {
+	s.ready++
+	return nil
+}
+
+func (*outcomeMediaPublicationStub) ProtectVideo(context.Context, int64, int64, int64) error {
+	return nil
+}
+
+func TestReviewOutcomeDefersPublicationUntilMediaIsReady(t *testing.T) {
+	publication := &outcomeMediaPublicationStub{}
+	applier := reviewOutcomeApplier{
+		videoReader: outcomeVideoReaderStub{video: &domainvideo.Video{
+			ID: 9, Status: domainvideo.StatusPublished,
+			Visibility:  domainvideo.VisibilityPublic,
+			MediaStatus: domainmedia.MediaStatusProcessing,
+		}},
+		mediaPublication: publication,
+	}
+
+	err := applier.ApplyReviewOutcome(context.Background(), &domainreview.ProcessingResult{
+		Case: &domainreview.ReviewCase{ID: 1, VideoID: 9},
+		Decision: &domainreview.AutomatedDecision{
+			Outcome: domainreview.OutcomeApprove,
+		},
+		MediaAssetID: 41,
+	})
+	if err != nil || publication.ready != 0 {
+		t.Fatalf("processing approval err=%v ready=%d", err, publication.ready)
+	}
+}
+
+func TestReviewOutcomeRetriesFailedPublication(t *testing.T) {
+	publication := &outcomeMediaPublicationStub{}
+	applier := reviewOutcomeApplier{
+		videoReader: outcomeVideoReaderStub{video: &domainvideo.Video{
+			ID: 9, Status: domainvideo.StatusPublished,
+			Visibility:     domainvideo.VisibilityPublic,
+			MediaStatus:    domainmedia.MediaStatusProcessing,
+			MediaErrorCode: "publication_event_failed",
+		}},
+		mediaPublication: publication,
+	}
+
+	err := applier.ApplyReviewOutcome(context.Background(), &domainreview.ProcessingResult{
+		Case: &domainreview.ReviewCase{ID: 1, VideoID: 9},
+		Decision: &domainreview.AutomatedDecision{
+			Outcome: domainreview.OutcomeApprove,
+		},
+		MediaAssetID: 41,
+	})
+	if err != nil || publication.ready != 1 {
+		t.Fatalf("publication retry err=%v ready=%d", err, publication.ready)
+	}
+}
+
+func TestReviewOutcomePublishesLegacyEventOnlyOnce(t *testing.T) {
+	publishedAt := time.Now().UTC()
+	tracker := &outcomePublicationTrackerStub{video: &domainvideo.Video{
+		ID: 9, ReviewVersion: 1, Status: domainvideo.StatusPublished,
+		Visibility:  domainvideo.VisibilityPublic,
+		MediaStatus: domainmedia.MediaStatusReady, PublishedAt: &publishedAt,
+	}}
+	publisher := &outcomePublisherStub{}
+	applier := reviewOutcomeApplier{
+		videoReader: tracker,
+		publisher:   publisher,
+	}
+	result := &domainreview.ProcessingResult{
+		Case:     &domainreview.ReviewCase{ID: 1, VideoID: 9, ReviewVersion: 1},
+		Decision: &domainreview.AutomatedDecision{Outcome: domainreview.OutcomeApprove},
+	}
+	if err := applier.ApplyReviewOutcome(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	if err := applier.ApplyReviewOutcome(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.calls != 1 || tracker.marks != 1 {
+		t.Fatalf("publisher calls=%d marks=%d", publisher.calls, tracker.marks)
 	}
 }

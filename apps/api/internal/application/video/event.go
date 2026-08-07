@@ -1,7 +1,7 @@
 package applicationvideo
 
 import (
-	"fmt"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"strings"
 	"time"
@@ -37,5 +37,5 @@ func NewPublishedEvent(video *domainvideo.Video) *PublishedEvent {
 }
 
 func publishedEventID(video *domainvideo.Video) string {
-	return fmt.Sprintf("video-published:%d:%d", video.ID, video.PublishedAt.UTC().UnixNano())
+	return domainmessage.PublicationEventID(video.ID, video.ReviewVersion)
 }

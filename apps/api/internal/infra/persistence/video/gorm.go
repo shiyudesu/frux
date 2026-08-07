@@ -5,9 +5,11 @@ import (
 	"errors"
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -145,6 +147,16 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 		}
 		publicDelta, privateDelta := contentWorkCounts(video.Status, video.Visibility, video.MediaStatus)
 		if err := AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+			return err
+		}
+		if err := AppendLifecycleNotification(tx, domainmessage.LifecycleNotification{
+			EventID:     domainmessage.SubmissionEventID(model.ID, model.ReviewVersion),
+			RecipientID: model.AuthorID, VideoID: model.ID,
+			ReviewVersion: model.ReviewVersion,
+			Stage:         domainmessage.LifecycleStageSubmitted,
+			Result:        domainmessage.LifecycleResultPending,
+			OccurredAt:    model.CreatedAt,
+		}); err != nil {
 			return err
 		}
 		return nil
@@ -436,6 +448,7 @@ func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvid
 			}
 			return err
 		}
+		previousMediaStatus := current.MediaStatus
 		eligible = current.Status == domainvideo.StatusPublished &&
 			current.Visibility == domainvideo.VisibilityPublic &&
 			domainmedia.IsPublicReadyStatus(video.MediaStatus)
@@ -448,14 +461,58 @@ func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvid
 			current.Status, current.Visibility, current.MediaStatus,
 			current.Status, current.Visibility, video.MediaStatus,
 		)
+		now := time.Now().UTC()
 		if err := tx.Model(&current).Updates(map[string]any{
 			"media_url": video.MediaURL, "cover_url": video.CoverURL,
 			"media_status": video.MediaStatus, "media_error_code": video.MediaErrorCode,
-			"updated_at": time.Now().UTC(),
+			"updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
-		return AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0)
+		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+			return err
+		}
+		if previousMediaStatus != domainmedia.MediaStatusFailed &&
+			video.MediaStatus == domainmedia.MediaStatusFailed &&
+			current.Status != domainvideo.StatusRejected &&
+			current.Status != domainvideo.StatusDeleted {
+			profileVersion := strings.TrimSpace(video.MediaProfileVersion)
+			if profileVersion == "" {
+				profileVersion = "current"
+			}
+			if err := AppendLifecycleNotification(tx, domainmessage.LifecycleNotification{
+				EventID: domainmessage.MediaFailureEventID(
+					current.ID, pointerID(current.MediaAssetID), profileVersion,
+				),
+				RecipientID: current.AuthorID, VideoID: current.ID,
+				ReviewVersion: current.ReviewVersion,
+				Stage:         domainmessage.LifecycleStageMediaProcessing,
+				Result:        domainmessage.LifecycleResultFailed,
+				ReasonCode:    domainmessage.LifecycleReasonMediaProcessingFailed,
+				OccurredAt:    now,
+			}); err != nil {
+				return err
+			}
+		}
+		if eligible {
+			tracked, err := LifecyclePublicationTracked(tx, current.ID, current.ReviewVersion)
+			if err != nil {
+				return err
+			}
+			if tracked {
+				if err := AppendLifecycleNotificationWithReadiness(tx, domainmessage.LifecycleNotification{
+					EventID:     domainmessage.PublicationEventID(current.ID, current.ReviewVersion),
+					RecipientID: current.AuthorID, VideoID: current.ID,
+					ReviewVersion: current.ReviewVersion,
+					Stage:         domainmessage.LifecycleStagePublished,
+					Result:        domainmessage.LifecycleResultPublic,
+					OccurredAt:    now,
+				}, video.MediaAssetID <= 0); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
 	return eligible, err
 }

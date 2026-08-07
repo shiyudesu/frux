@@ -121,6 +121,31 @@ type AdminTransitionIntentModel struct {
 	UpdatedAt   time.Time  `gorm:"column:updated_at;not null"`
 }
 
+type NotificationOutboxModel struct {
+	EventID       string     `gorm:"column:event_id;size:64;primaryKey"`
+	RecipientID   int64      `gorm:"column:recipient_id;not null"`
+	VideoID       int64      `gorm:"column:video_id;not null;index:idx_video_notification_video_stage,priority:1"`
+	ReviewVersion int        `gorm:"column:review_version;not null;default:0;index:idx_video_notification_video_stage,priority:2"`
+	Stage         string     `gorm:"column:stage;size:32;not null;index:idx_video_notification_video_stage,priority:3"`
+	Result        string     `gorm:"column:result;size:32;not null"`
+	ReasonCode    string     `gorm:"column:reason_code;size:64;not null;default:''"`
+	OccurredAt    time.Time  `gorm:"column:occurred_at;not null"`
+	DeliveryReady bool       `gorm:"column:delivery_ready;not null;default:false;index:idx_video_notification_pending,priority:4"`
+	State         string     `gorm:"column:state;size:16;not null;default:'pending';index:idx_video_notification_pending,priority:1"`
+	Attempts      int        `gorm:"column:attempts;not null;default:0"`
+	AvailableAt   time.Time  `gorm:"column:available_at;not null;index:idx_video_notification_pending,priority:2"`
+	LeaseOwner    string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil    *time.Time `gorm:"column:lease_until;index:idx_video_notification_pending,priority:3"`
+	LastError     string     `gorm:"column:last_error;size:1024;not null;default:''"`
+	DeliveredAt   *time.Time `gorm:"column:delivered_at"`
+	CreatedAt     time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt     time.Time  `gorm:"column:updated_at;not null"`
+}
+
+func (NotificationOutboxModel) TableName() string {
+	return "video_notification_outbox"
+}
+
 func (AdminTransitionIntentModel) TableName() string {
 	return "video_admin_transition_intent"
 }

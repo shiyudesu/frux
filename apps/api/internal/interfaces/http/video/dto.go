@@ -16,6 +16,7 @@ type CreateVideoRequest struct {
 }
 
 type CreatorVideoQueryRequest struct {
+	VideoID     int64  `json:"video_id"`
 	Visibility  string `json:"visibility"`
 	Statuses    []int  `json:"statuses"`
 	Query       string `json:"query"`

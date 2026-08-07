@@ -106,7 +106,7 @@ func (r *Reconciler) reconcileAsset(ctx context.Context, asset *domainmedia.Medi
 				return updateErr
 			}
 			if r.notifier != nil {
-				return r.notifier.MediaFailed(ctx, asset.ID, asset.ErrorCode)
+				return r.notifier.MediaFailed(ctx, asset.ID, "reconcile", asset.ErrorCode)
 			}
 			return nil
 		}
@@ -183,7 +183,7 @@ func (r *Reconciler) reconcileAsset(ctx context.Context, asset *domainmedia.Medi
 		return err
 	}
 	if r.notifier != nil {
-		return r.notifier.MediaFailed(ctx, asset.ID, asset.ErrorCode)
+		return r.notifier.MediaRepairing(ctx, asset.ID, asset.ErrorCode)
 	}
 	return nil
 }

@@ -38,6 +38,11 @@ export interface SearchNavigation {
   tab?: SearchTab;
 }
 
+export interface ProfileNavigation {
+  route: "/profile";
+  video?: number;
+}
+
 export interface SearchRoute {
   query: string;
   tab: SearchTab;
@@ -57,6 +62,7 @@ export type NavigationTarget =
   | Route
   | VideoDiscussionNavigation
   | SearchNavigation
+  | ProfileNavigation
   | AdminLoginNavigation;
 
 export interface VideoDiscussionRoute {
@@ -191,6 +197,11 @@ export function searchPath(target: SearchNavigation): string {
   return search ? `/search?${search}` : "/search";
 }
 
+export function profilePath(target: ProfileNavigation): string {
+  const videoID = target.video && target.video > 0 ? Math.round(target.video) : 0;
+  return videoID > 0 ? `/profile?video=${videoID}` : "/profile";
+}
+
 interface RouterValue {
   route: Route;
   search: string;
@@ -219,7 +230,9 @@ export function RouterProvider({ children }: { children: ReactNode }) {
         ? searchPath(target)
         : target.route === "/admin/login"
           ? adminLoginPath(target)
-        : videoDiscussionPath(target);
+          : target.route === "/profile"
+            ? profilePath(target)
+            : videoDiscussionPath(target);
     const url = new URL(authoredPath, window.location.origin);
     const nextPath = normalizeRoute(url.pathname);
     window.history.pushState({}, "", `${nextPath}${url.search}`);
@@ -260,6 +273,14 @@ export function useSearchRoute(): SearchRoute | null {
 export function useAdminLoginRoute(): AdminLoginRoute | null {
   const { route, search } = useRouterValue();
   return useMemo(() => adminLoginFromLocation(route, search), [route, search]);
+}
+
+export function useProfileVideoTarget(): number {
+  const { route, search } = useRouterValue();
+  return useMemo(() => {
+    if (route !== "/profile") return 0;
+    return positiveInteger(new URLSearchParams(search).get("video") || "");
+  }, [route, search]);
 }
 
 function validAdminReturnRoute(value: string): AdminProtectedRoute | null {

@@ -1,11 +1,11 @@
 package applicationmessage
 
 import (
-	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"strings"
 	"time"
 )
@@ -26,18 +26,23 @@ type CreateResult struct {
 }
 
 type CreateEventInput struct {
-	UserID         int64
-	MessageType    string
-	Title          string
-	Content        string
-	EventID        string
-	IdempotencyKey string
-	ActorID        int64
-	ActorNickname  string
-	ActorAvatarURL string
-	VideoID        int64
-	CommentID      int64
-	RootCommentID  int64
+	UserID          int64
+	MessageType     string
+	Title           string
+	Content         string
+	EventID         string
+	IdempotencyKey  string
+	ActorID         int64
+	ActorNickname   string
+	ActorAvatarURL  string
+	VideoID         int64
+	CommentID       int64
+	RootCommentID   int64
+	LifecycleStage  string
+	LifecycleResult string
+	ReasonCode      string
+	ReviewVersion   int
+	OccurredAt      time.Time
 }
 
 type ListResult struct {
@@ -83,6 +88,22 @@ func (s *Service) CreateFromTargetedActorEvent(ctx context.Context, userID int64
 	})
 }
 
+func (s *Service) CreateLifecycle(
+	ctx context.Context,
+	input domainmessage.LifecycleNotification,
+	title string,
+	content string,
+) (*CreateResult, error) {
+	return s.Create(ctx, CreateEventInput{
+		UserID: input.RecipientID, MessageType: domainmessage.TypeVideoLifecycle,
+		Title: title, Content: content, EventID: input.EventID,
+		IdempotencyKey: input.EventID, VideoID: input.VideoID,
+		LifecycleStage: input.Stage, LifecycleResult: input.Result,
+		ReasonCode: input.ReasonCode, ReviewVersion: input.ReviewVersion,
+		OccurredAt: input.OccurredAt,
+	})
+}
+
 func (s *Service) Create(ctx context.Context, input CreateEventInput) (*CreateResult, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if len(input.IdempotencyKey) > domainmessage.MaxIdempotencyKeyLength {
@@ -95,7 +116,14 @@ func (s *Service) Create(ctx context.Context, input CreateEventInput) (*CreateRe
 	}
 	message.WithActor(input.ActorID, input.ActorNickname, input.ActorAvatarURL)
 	message.WithTargets(input.VideoID, input.CommentID, input.RootCommentID)
+	message.WithLifecycle(
+		input.LifecycleStage, input.LifecycleResult, input.ReasonCode,
+		input.ReviewVersion, input.OccurredAt,
+	)
 	if err := message.ValidateTargets(); err != nil {
+		return nil, err
+	}
+	if err := message.ValidateLifecycle(); err != nil {
 		return nil, err
 	}
 

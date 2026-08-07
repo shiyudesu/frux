@@ -38,8 +38,12 @@ func TestMediaPublicationProjectsCompatibilityURLsAndPublishes(t *testing.T) {
 		len(video.PlaybackSources) != 1 {
 		t.Fatalf("unexpected media projection: %+v", video)
 	}
-	if repo.updates != 1 || publisher.events != 1 || cache.invalidations != 1 {
-		t.Fatalf("unexpected side effects: updates=%d events=%d invalidations=%d", repo.updates, publisher.events, cache.invalidations)
+	if repo.updates != 1 || repo.readyMarks != 1 ||
+		publisher.events != 1 || cache.invalidations != 1 {
+		t.Fatalf(
+			"unexpected side effects: updates=%d ready=%d events=%d invalidations=%d",
+			repo.updates, repo.readyMarks, publisher.events, cache.invalidations,
+		)
 	}
 }
 
@@ -52,7 +56,7 @@ func TestMediaPublicationExposesFailureToOwner(t *testing.T) {
 	repo := &mediaProjectionRepositoryStub{videos: []*domainvideo.Video{video}}
 	delivery := &mediaDeliveryResolverStub{}
 	service := NewMediaPublicationService(repo, delivery, nil, nil)
-	if err := service.MediaFailed(context.Background(), 21, "probe_invalid"); err != nil {
+	if err := service.MediaFailed(context.Background(), 21, "v1", "probe_invalid"); err != nil {
 		t.Fatalf("publish media failure: %v", err)
 	}
 	if video.MediaStatus != domainmedia.MediaStatusFailed || video.MediaErrorCode != "probe_invalid" ||
@@ -81,12 +85,89 @@ func TestMediaPublicationRetriesEventAfterPublishFailure(t *testing.T) {
 		video.MediaURL != "" || video.CoverURL != "" || delivery.protectCalls != 1 {
 		t.Fatalf("expected readiness rollback, got %+v", video)
 	}
+	if repo.readyMarks != 0 {
+		t.Fatalf("failed publication marked ready: %d", repo.readyMarks)
+	}
 	publisher.err = nil
 	if err := service.MediaReady(context.Background(), 41); err != nil {
 		t.Fatalf("retry publication: %v", err)
 	}
-	if video.MediaStatus != domainmedia.MediaStatusReady || publisher.events != 1 {
-		t.Fatalf("expected successful retry, video=%+v events=%d", video, publisher.events)
+	if video.MediaStatus != domainmedia.MediaStatusReady ||
+		publisher.events != 1 || repo.readyMarks != 1 {
+		t.Fatalf(
+			"expected successful retry, video=%+v events=%d ready=%d",
+			video, publisher.events, repo.readyMarks,
+		)
+	}
+}
+
+func TestMediaPublicationSkipsCompletedAndUntrackedPublicEvents(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		ready     bool
+		untracked bool
+	}{
+		{name: "already ready", ready: true},
+		{name: "historical untracked", untracked: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			video := domainvideo.RestoreVideoWithMedia(
+				90, 7, "public", "", "https://cdn/video.mp4", "https://cdn/cover.jpg",
+				domainvideo.StatusPublished, domainvideo.VisibilityPublic,
+				0, 0, 0, timePointer(time.Now().UTC()), time.Now().UTC(), time.Now().UTC(), "",
+				91, domainmedia.MediaStatusReady, "", nil, 92,
+			)
+			video.ReviewVersion = 1
+			repo := &mediaProjectionRepositoryStub{
+				videos: []*domainvideo.Video{video},
+				ready:  test.ready, untracked: test.untracked,
+			}
+
+			delivery := &mediaDeliveryResolverStub{public: true}
+			publisher := &publishedEventPublisherStub{}
+			service := NewMediaPublicationService(repo, delivery, publisher, nil)
+			if err := service.MediaReady(context.Background(), video.MediaAssetID); err != nil {
+				t.Fatal(err)
+			}
+			if publisher.events != 0 || repo.readyMarks != 0 {
+				t.Fatalf(
+					"unexpected replay events=%d marks=%d",
+					publisher.events, repo.readyMarks,
+				)
+			}
+		})
+	}
+}
+
+func TestMediaPublicationRepairsMediaWithoutReplayingCompletedEvent(t *testing.T) {
+	video := domainvideo.RestoreVideoWithMedia(
+		91, 7, "repair", "", "", "",
+		domainvideo.StatusPublished, domainvideo.VisibilityPublic,
+		0, 0, 0, timePointer(time.Now().UTC()), time.Now().UTC(), time.Now().UTC(), "",
+		92, domainmedia.MediaStatusProcessing, "", nil, 93,
+	)
+	video.ReviewVersion = 1
+	repo := &mediaProjectionRepositoryStub{
+		videos: []*domainvideo.Video{video},
+		ready:  true,
+	}
+	delivery := &mediaDeliveryResolverStub{
+		public: false,
+		delivery: &domainmedia.ResolvedDelivery{
+			MediaURL: "https://cdn.example.test/repaired.mp4",
+			CoverURL: "https://cdn.example.test/repaired.jpg",
+		},
+	}
+	publisher := &publishedEventPublisherStub{}
+	service := NewMediaPublicationService(repo, delivery, publisher, nil)
+	if err := service.MediaReady(context.Background(), video.MediaAssetID); err != nil {
+		t.Fatal(err)
+	}
+	if delivery.calls != 1 || publisher.events != 0 || repo.readyMarks != 0 {
+		t.Fatalf(
+			"repair calls=%d events=%d marks=%d",
+			delivery.calls, publisher.events, repo.readyMarks,
+		)
 	}
 }
 
@@ -176,7 +257,30 @@ func TestMediaPublicationDoesNotTrustStaleStoredURL(t *testing.T) {
 type mediaProjectionRepositoryStub struct {
 	videos           []*domainvideo.Video
 	updates          int
+	readyMarks       int
+	untracked        bool
+	ready            bool
 	eligibleOverride *bool
+}
+
+func (r *mediaProjectionRepositoryStub) LifecyclePublicationTracked(
+	context.Context, string,
+) (bool, error) {
+	return !r.untracked, nil
+}
+
+func (r *mediaProjectionRepositoryStub) LifecyclePublicationReady(
+	context.Context, string,
+) (bool, error) {
+	return r.ready, nil
+}
+
+func (r *mediaProjectionRepositoryStub) MarkLifecyclePublicationReady(
+	context.Context, string, time.Time,
+) error {
+	r.readyMarks++
+	r.ready = true
+	return nil
 }
 
 func (r *mediaProjectionRepositoryStub) ListByMediaAssetID(context.Context, int64) ([]*domainvideo.Video, error) {

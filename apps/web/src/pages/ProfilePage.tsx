@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchMyProfile, updateMyProfile } from "../api/account";
+import { resolveCreatorVideoTarget } from "../api/creator";
 import { apiErrorMessage, isUnauthorized, uploadFile } from "../api/client";
 import { fetchRelationList, followUser, loadFollowingMap } from "../api/social";
 import type { RelationTab } from "../api/social";
@@ -23,7 +24,7 @@ import { useCreatorContent } from "../hooks/useCreatorContent";
 import type { CreatorFilters } from "../hooks/useCreatorContent";
 import { useProfileLibrary } from "../hooks/useProfileLibrary";
 import type { ProfileLibraryTab } from "../hooks/useProfileLibrary";
-import { useNavigate } from "../router";
+import { useNavigate, useProfileVideoTarget } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
 import type {
   BatchVideoAction,
@@ -52,6 +53,7 @@ const defaultFilters: Record<"published" | "private", CreatorFilters> = {
 export function ProfilePage() {
   const session = useSession();
   const navigate = useNavigate();
+  const targetVideoID = useProfileVideoTarget();
   const { clearAuth, token, updateUser } = session;
   const profileRequest = useRef(0);
   const refreshCurrentProfile = useCallback(async () => {
@@ -81,6 +83,14 @@ export function ProfilePage() {
   const [selectedWork, setSelectedWork] = useState<Video | null>(null);
   const [libraryQueue, setLibraryQueue] = useState<{ source: ProfileLibraryTab; videoID: number } | null>(null);
   const [editing, setEditing] = useState(false);
+  const [targetWork, setTargetWork] = useState<{
+    video: Video;
+    tab: "published" | "private";
+  } | null>(null);
+  const [targetWorkState, setTargetWorkState] = useState<
+    "idle" | "loading" | "ready" | "unavailable"
+  >("idle");
+  const [targetRevision, setTargetRevision] = useState(0);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorMessage, setEditorMessage] = useState("");
   const [editingCollectionID, setEditingCollectionID] = useState<number | null | "new">(null);
@@ -97,6 +107,32 @@ export function ProfilePage() {
   const [relationBusyID, setRelationBusyID] = useState(0);
   const relationRequest = useRef(0);
   const relationFollowingRequest = useRef(0);
+  useEffect(() => {
+    if (targetVideoID <= 0 || !token) {
+      setTargetWork(null);
+      setTargetWorkState("idle");
+      return;
+    }
+    let active = true;
+    setPrimaryTab("works");
+    setTargetWork(null);
+    setTargetWorkState("loading");
+    void resolveCreatorVideoTarget(token, targetVideoID).then((match) => {
+      if (!active) return;
+      if (!match) {
+        setTargetWorkState("unavailable");
+        return;
+      }
+      setWorkTab(match.tab);
+      setTargetWork(match);
+      setTargetWorkState("ready");
+    }).catch(() => {
+      if (active) setTargetWorkState("unavailable");
+    });
+    return () => {
+      active = false;
+    };
+  }, [targetRevision, targetVideoID, token]);
   const relationTabRef = useRef<RelationTab>(relationTab);
   const relationModalOpenRef = useRef(relationModalOpen);
   relationTabRef.current = relationTab;
@@ -318,7 +354,12 @@ export function ProfilePage() {
   async function runBatch(action: BatchVideoAction) {
     if (workTab === "collections" || selectedIDs.size === 0) return;
     if (action === "delete" && !window.confirm("确定删除所选作品吗？")) return;
+    const affectedTarget = targetVideoID > 0 && selectedIDs.has(targetVideoID);
     await creator.runBatchAction(workTab, [...selectedIDs], action);
+    if (affectedTarget) {
+      setTargetWork(null);
+      setTargetRevision((current) => current + 1);
+    }
     setSelectedIDs(new Set());
     setSelectionMode(false);
   }
@@ -390,6 +431,11 @@ export function ProfilePage() {
       );
     }
     const current = creator.videos[workTab];
+    const currentItems = current.items.some((video) => video.id === targetWork?.video.id)
+      ? current.items
+      : targetWork?.tab === workTab
+        ? [targetWork.video, ...current.items]
+        : current.items;
     const draft = filters[workTab];
     return (
       <>
@@ -417,16 +463,21 @@ export function ProfilePage() {
           emptyTitle={workTab === "published" ? "暂无公开作品" : "暂无私密作品"}
           error={current.error}
           hasMore={current.hasMore}
-          items={current.items.map((video) => ({ video }))}
+          items={currentItems.map((video) => ({ video }))}
           selectedIDs={selectedIDs}
           selectionMode={selectionMode}
           state={current.state}
           statusLabels
+          targetVideoID={targetVideoID}
           onLoadMore={() => void creator.loadVideos(workTab)}
           onRetry={() => void creator.loadVideos(workTab, { reset: true })}
           onSelect={setSelectedWork}
           onToggleSelected={toggleSelected}
         />
+        {targetWorkState === "loading" && <p className="profile-target-message">正在定位目标作品…</p>}
+        {targetWorkState === "unavailable" && (
+          <p className="profile-target-message">目标作品已删除或暂不可用。</p>
+        )}
       </>
     );
   }

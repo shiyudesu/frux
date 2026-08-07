@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
@@ -62,7 +64,7 @@ func (r *Repository) CreateOrGetCase(ctx context.Context, videoID int64) (*domai
 		if video.Status != domainvideo.StatusPendingReview {
 			return domainreview.ErrReviewSubjectState
 		}
-		if !domainmedia.IsPublicReadyStatus(video.MediaStatus) {
+		if video.MediaAssetID == nil && strings.TrimSpace(video.MediaURL) == "" {
 			return domainreview.ErrReviewSubjectNotReady
 		}
 		findErr := tx.Where("video_id = ? AND review_version = ?", video.ID, video.ReviewVersion).Take(&model).Error
@@ -148,14 +150,14 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 		if video.ReviewVersion != caseModel.ReviewVersion {
 			return domainreview.ErrReviewSubjectStale
 		}
-		if !domainmedia.IsPublicReadyStatus(video.MediaStatus) {
+		if video.MediaAssetID == nil && strings.TrimSpace(video.MediaURL) == "" {
 			return domainreview.ErrReviewSubjectNotReady
 		}
 		policy, err := loadPolicyVersion(tx, caseModel.PolicyVersion)
 		if err != nil {
 			return err
 		}
-		outcome, priority, err := policy.RouteWithPriority(result.Signals)
+		outcome, priority, rejectionReason, err := policy.RouteWithPriorityAndReason(result.Signals)
 		if err != nil {
 			return err
 		}
@@ -234,6 +236,32 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 			if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
 				return err
 			}
+			reasonCode := ""
+			if outcome == domainreview.OutcomeReject {
+				reasonCode = rejectionReason
+				if !domainmessage.ValidReviewReasonCode(reasonCode) {
+					reasonCode = domainreview.ReasonRejectOther
+				}
+			}
+			notification := reviewLifecycleNotification(video, outcome, reasonCode, result.ReceivedAt)
+			outbox := NotificationOutboxModel{
+				EventID: notification.EventID, RecipientID: video.AuthorID, VideoID: video.ID,
+				Outcome: outcome, ReviewVersion: notification.ReviewVersion,
+				Stage: notification.Stage, Result: notification.Result,
+				ReasonCode: notification.ReasonCode, OccurredAt: &notification.OccurredAt,
+				State:       domainreview.NotificationStatePending,
+				AvailableAt: result.ReceivedAt, CreatedAt: result.ReceivedAt, UpdatedAt: result.ReceivedAt,
+			}
+			if err := tx.Create(&outbox).Error; err != nil {
+				return err
+			}
+			if notification.Stage == domainmessage.LifecycleStagePublished {
+				if err := infravideo.AppendLifecycleNotificationWithReadiness(
+					tx, notification, false,
+				); err != nil {
+					return err
+				}
+			}
 		}
 		processed = &domainreview.ProcessingResult{
 			Case: restoreCase(caseModel),
@@ -260,10 +288,9 @@ func (r *Repository) ListReviewableVideoIDsWithoutCase(ctx context.Context, limi
 	err := r.db.WithContext(ctx).Table("video AS v").
 		Select("v.id").
 		Joins("LEFT JOIN review_case AS rc ON rc.video_id = v.id AND rc.review_version = v.review_version").
-		Where("v.status = ? AND v.review_version > 0 AND v.media_status IN ? AND rc.id IS NULL",
-			domainvideo.StatusPendingReview,
-			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
-		).
+		Where(`v.status = ? AND v.review_version > 0 AND
+			(v.media_asset_id IS NOT NULL OR v.media_url <> '') AND rc.id IS NULL`,
+			domainvideo.StatusPendingReview).
 		Order("v.id ASC").Limit(limit).Scan(&ids).Error
 	return ids, err
 }

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
@@ -597,14 +599,26 @@ func (r *Repository) CommitHumanDecision(
 		if err := r.auditWriter.AppendInTransaction(ctx, tx, auditFact); err != nil {
 			return err
 		}
-		eventID := fmt.Sprintf("review-decision:%d", humanModel.ID)
+		notification := reviewLifecycleNotification(
+			video, decision.Outcome, decision.ReasonCode, now,
+		)
 		outbox := NotificationOutboxModel{
-			EventID: eventID, RecipientID: video.AuthorID, VideoID: video.ID,
+			EventID: notification.EventID, RecipientID: video.AuthorID, VideoID: video.ID,
 			Outcome: decision.Outcome, State: domainreview.NotificationStatePending,
+			ReviewVersion: notification.ReviewVersion,
+			Stage:         notification.Stage, Result: notification.Result,
+			ReasonCode: notification.ReasonCode, OccurredAt: &notification.OccurredAt,
 			AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&outbox).Error; err != nil {
 			return err
+		}
+		if notification.Stage == domainmessage.LifecycleStagePublished {
+			if err := infravideo.AppendLifecycleNotificationWithReadiness(
+				tx, notification, false,
+			); err != nil {
+				return err
+			}
 		}
 		receipt = HumanDecisionIdempotencyModel{
 			CaseID: decision.CaseID, ReviewerID: decision.ReviewerID,
@@ -889,11 +903,51 @@ func restoreHumanDecision(model HumanDecisionModel) *domainreview.HumanDecision 
 }
 
 func restoreNotification(model NotificationOutboxModel) *domainreview.ReviewNotification {
+	occurredAt := model.CreatedAt
+	if model.OccurredAt != nil {
+		occurredAt = model.OccurredAt.UTC()
+	}
 	return &domainreview.ReviewNotification{
 		EventID: model.EventID, RecipientID: model.RecipientID, VideoID: model.VideoID,
 		Outcome: model.Outcome, State: model.State, Attempts: model.Attempts,
+		ReviewVersion: model.ReviewVersion, Stage: model.Stage, Result: model.Result,
+		ReasonCode: model.ReasonCode, OccurredAt: occurredAt,
 		AvailableAt: model.AvailableAt, LeaseOwner: model.LeaseOwner, LeaseUntil: model.LeaseUntil,
 		LastError: model.LastError, DeliveredAt: model.DeliveredAt,
 		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}
+}
+
+func reviewLifecycleNotification(
+	video infravideo.VideoModel,
+	outcome string,
+	reasonCode string,
+	occurredAt time.Time,
+) domainmessage.LifecycleNotification {
+	notification := domainmessage.LifecycleNotification{
+		RecipientID: video.AuthorID, VideoID: video.ID,
+		ReviewVersion: video.ReviewVersion, OccurredAt: occurredAt,
+	}
+	if outcome == domainreview.OutcomeReject {
+		notification.EventID = domainmessage.ReviewEventID(
+			video.ID, video.ReviewVersion, domainmessage.LifecycleResultRejected,
+		)
+		notification.Stage = domainmessage.LifecycleStageReview
+		notification.Result = domainmessage.LifecycleResultRejected
+		notification.ReasonCode = reasonCode
+		return notification
+	}
+	if video.Visibility == domainvideo.VisibilityPublic &&
+		domainmedia.IsPublicReadyStatus(video.MediaStatus) {
+		notification.EventID = domainmessage.PublicationEventID(video.ID, video.ReviewVersion)
+		notification.Stage = domainmessage.LifecycleStagePublished
+		notification.Result = domainmessage.LifecycleResultPublic
+		return notification
+	}
+	notification.EventID = domainmessage.ReviewEventID(
+		video.ID, video.ReviewVersion, domainmessage.LifecycleResultApproved,
+	)
+	notification.Stage = domainmessage.LifecycleStageReview
+	notification.Result = domainmessage.LifecycleResultApproved
+	return notification
 }

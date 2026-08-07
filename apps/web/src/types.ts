@@ -170,6 +170,7 @@ export type BatchVideoAction = "make_public" | "make_private" | "delete";
 export type AsyncState = "idle" | "loading" | "loadingMore" | "ready" | "error" | "mutating";
 
 export interface CreatorVideoQueryRequest {
+  video_id?: number;
   visibility: VideoVisibility;
   statuses?: VideoStatus[];
   query: string;
@@ -734,7 +735,31 @@ export type RelationListResponse = CursorPage<RelationUser>;
 
 // ---------- 消息 ----------
 
-export type MessageType = "LIKE" | "COMMENT" | "COMMENT_REPLY" | "COMMENT_LIKE" | "FOLLOW" | "SYSTEM";
+export type MessageType =
+  | "LIKE"
+  | "COMMENT"
+  | "COMMENT_REPLY"
+  | "COMMENT_LIKE"
+  | "FOLLOW"
+  | "SYSTEM"
+  | "VIDEO_LIFECYCLE";
+
+export type VideoLifecycleStage =
+  | "submitted"
+  | "review"
+  | "media_processing"
+  | "published"
+  | "enforcement"
+  | "restoration";
+
+export type VideoLifecycleResult =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "failed"
+  | "public"
+  | "taken_down"
+  | "restored";
 
 export interface Message {
   id: number;
@@ -749,6 +774,11 @@ export interface Message {
   video_id?: number;
   comment_id?: number;
   root_comment_id?: number;
+  lifecycle_stage?: VideoLifecycleStage;
+  lifecycle_result?: VideoLifecycleResult;
+  reason_code?: string;
+  review_version?: number;
+  lifecycle_occurred_at?: string;
   is_read: boolean;
   created_at: string;
   read_at?: string;

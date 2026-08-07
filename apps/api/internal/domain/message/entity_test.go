@@ -27,3 +27,48 @@ func TestLegacyRestoredMessageAllowsMissingTargets(t *testing.T) {
 		t.Fatalf("legacy message unexpectedly requires targets: %+v", message)
 	}
 }
+
+func TestVideoLifecycleMessageValidationAndLegacyCompatibility(t *testing.T) {
+	message, err := New(7, TypeVideoLifecycle, "视频已发布", "内容", "video-published:9:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.WithTargets(9, 0, 0)
+	message.WithLifecycle(
+		LifecycleStagePublished, LifecycleResultPublic, "", 1, time.Now(),
+	)
+	if err := message.ValidateTargets(); err != nil {
+		t.Fatalf("targets: %v", err)
+	}
+	if err := message.ValidateLifecycle(); err != nil {
+		t.Fatalf("lifecycle: %v", err)
+	}
+	message.WithLifecycle(
+		LifecycleStagePublished, LifecycleResultFailed, "", 1, time.Now(),
+	)
+	if err := message.ValidateLifecycle(); err != ErrInvalidLifecycle {
+		t.Fatalf("invalid lifecycle error = %v", err)
+	}
+	withoutEvent, err := New(7, TypeVideoLifecycle, "视频已发布", "内容", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutEvent.WithTargets(9, 0, 0)
+	withoutEvent.WithLifecycle(
+		LifecycleStagePublished, LifecycleResultPublic, "", 1, time.Now(),
+	)
+	if err := withoutEvent.ValidateLifecycle(); err != ErrInvalidLifecycle {
+		t.Fatalf("missing event id error = %v", err)
+	}
+	if ValidReviewReasonCode("safe") || !ValidReviewReasonCode("other_policy_violation") {
+		t.Fatal("review reason registry accepted an unsafe reason")
+	}
+	legacy := RestoreWithLifecycle(
+		1, 7, TypeSystem, "旧审核通知", "内容", "legacy",
+		0, "", "", 0, 0, 0, "", "", "", 0, nil,
+		false, time.Now(), nil,
+	)
+	if err := legacy.ValidateLifecycle(); err != nil {
+		t.Fatalf("legacy system validation: %v", err)
+	}
+}

@@ -330,6 +330,7 @@ interface ProfileVideoGridProps {
   hasMore?: boolean;
   itemAction?: (item: ProfileGridItem) => void;
   itemActionLabel?: string;
+  targetVideoID?: number;
 }
 
 export function ProfileVideoGrid({
@@ -347,7 +348,8 @@ export function ProfileVideoGrid({
   onLoadMore,
   hasMore = false,
   itemAction,
-  itemActionLabel
+  itemActionLabel,
+  targetVideoID = 0
 }: ProfileVideoGridProps) {
   if (state === "loading" || state === "idle") {
     return (
@@ -381,7 +383,11 @@ export function ProfileVideoGrid({
           const selected = selectedIDs.has(video.id);
           const label = statusLabels ? creatorVideoStatusLabel(video) : "";
           return (
-            <article className={`profile-video-card ${selected ? "selected" : ""}`} key={video.id}>
+            <article
+              className={`profile-video-card ${selected ? "selected" : ""} ${video.id === targetVideoID ? "targeted" : ""}`}
+              data-video-id={video.id}
+              key={video.id}
+            >
               <button
                 className="profile-video-open"
                 type="button"

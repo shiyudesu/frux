@@ -6,6 +6,7 @@ import (
 	"errors"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"strings"
@@ -22,6 +23,9 @@ func (r *Repository) QueryCreatorVideos(ctx context.Context, filter domainvideo.
 		Select(videoWithStatSelect()).
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
 		Where("v.author_id = ? AND v.status <> ?", filter.AuthorID, domainvideo.StatusDeleted)
+	if filter.VideoID > 0 {
+		query = query.Where("v.id = ?", filter.VideoID)
+	}
 	if filter.Visibility != "" {
 		query = query.Where("v.visibility = ?", filter.Visibility)
 	}
@@ -157,6 +161,26 @@ func (r *Repository) ApplyBatch(ctx context.Context, userID int64, action string
 				}
 				if err := AdjustContentStat(tx, userID, publicDelta, privateDelta, receivedLikeDelta, 0); err != nil {
 					return err
+				}
+				if action == domainvideo.BatchActionMakePublic &&
+					video.Status == domainvideo.StatusPublished &&
+					domainmedia.IsPublicReadyStatus(video.MediaStatus) {
+					tracked, err := LifecyclePublicationTracked(tx, video.ID, video.ReviewVersion)
+					if err != nil {
+						return err
+					}
+					if tracked {
+						if err := AppendLifecycleNotificationWithReadiness(tx, domainmessage.LifecycleNotification{
+							EventID:     domainmessage.PublicationEventID(video.ID, video.ReviewVersion),
+							RecipientID: video.AuthorID, VideoID: video.ID,
+							ReviewVersion: video.ReviewVersion,
+							Stage:         domainmessage.LifecycleStagePublished,
+							Result:        domainmessage.LifecycleResultPublic,
+							OccurredAt:    time.Now().UTC(),
+						}, false); err != nil {
+							return err
+						}
+					}
 				}
 			}
 		}

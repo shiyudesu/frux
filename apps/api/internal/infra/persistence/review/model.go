@@ -115,19 +115,24 @@ func (HumanDecisionIdempotencyModel) TableName() string {
 }
 
 type NotificationOutboxModel struct {
-	EventID     string     `gorm:"column:event_id;size:64;primaryKey"`
-	RecipientID int64      `gorm:"column:recipient_id;not null"`
-	VideoID     int64      `gorm:"column:video_id;not null"`
-	Outcome     string     `gorm:"column:outcome;size:16;not null"`
-	State       string     `gorm:"column:state;size:16;not null;default:'pending';index:idx_review_notification_outbox_pending,priority:1"`
-	Attempts    int        `gorm:"column:attempts;not null;default:0"`
-	AvailableAt time.Time  `gorm:"column:available_at;not null;index:idx_review_notification_outbox_pending,priority:2"`
-	LeaseOwner  string     `gorm:"column:lease_owner;size:128;not null;default:''"`
-	LeaseUntil  *time.Time `gorm:"column:lease_until;index:idx_review_notification_outbox_pending,priority:3"`
-	LastError   string     `gorm:"column:last_error;size:1024;not null;default:''"`
-	DeliveredAt *time.Time `gorm:"column:delivered_at"`
-	CreatedAt   time.Time  `gorm:"column:created_at;not null"`
-	UpdatedAt   time.Time  `gorm:"column:updated_at;not null"`
+	EventID       string     `gorm:"column:event_id;size:64;primaryKey"`
+	RecipientID   int64      `gorm:"column:recipient_id;not null"`
+	VideoID       int64      `gorm:"column:video_id;not null"`
+	Outcome       string     `gorm:"column:outcome;size:16;not null"`
+	ReviewVersion int        `gorm:"column:review_version;not null;default:0"`
+	Stage         string     `gorm:"column:stage;size:32;not null;default:''"`
+	Result        string     `gorm:"column:result;size:32;not null;default:''"`
+	ReasonCode    string     `gorm:"column:reason_code;size:64;not null;default:''"`
+	OccurredAt    *time.Time `gorm:"column:occurred_at"`
+	State         string     `gorm:"column:state;size:16;not null;default:'pending';index:idx_review_notification_outbox_pending,priority:1"`
+	Attempts      int        `gorm:"column:attempts;not null;default:0"`
+	AvailableAt   time.Time  `gorm:"column:available_at;not null;index:idx_review_notification_outbox_pending,priority:2"`
+	LeaseOwner    string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil    *time.Time `gorm:"column:lease_until;index:idx_review_notification_outbox_pending,priority:3"`
+	LastError     string     `gorm:"column:last_error;size:1024;not null;default:''"`
+	DeliveredAt   *time.Time `gorm:"column:delivered_at"`
+	CreatedAt     time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt     time.Time  `gorm:"column:updated_at;not null"`
 }
 
 func (NotificationOutboxModel) TableName() string { return "review_notification_outbox" }

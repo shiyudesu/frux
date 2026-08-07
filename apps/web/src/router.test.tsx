@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   adminLoginFromLocation,
   adminLoginPath,
+  profilePath,
   normalizeRoute,
   adminReviewFromRoute,
   RouterProvider,
@@ -124,6 +125,7 @@ describe("typed video discussion routing", () => {
       "/admin/login",
       "?return=https%3A%2F%2Fevil.example"
     )).toEqual({ returnTo: "/admin/reviews" });
+    expect(profilePath({ route: "/profile", video: 42 })).toBe("/profile?video=42");
   });
 
   function renderRouter() {

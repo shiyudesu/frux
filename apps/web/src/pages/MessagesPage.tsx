@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiErrorMessage, isUnauthorized } from "../api/client";
 import { fetchMessages, markMessagesRead } from "../api/messages";
+import { fetchVideo } from "../api/account";
+import { ApiError } from "../api/client";
 import { PageMessage } from "../components/StatusMessages";
 import { useNavigate } from "../router";
 import type { NavigationTarget } from "../router";
@@ -12,7 +14,7 @@ import {
   formatRelativeTime,
   messageActor,
   messageBody,
-  messageDiscussionTarget,
+  messageNavigationTarget,
   messageIcon,
   messageTypeLabel
 } from "../utils";
@@ -90,7 +92,34 @@ export function MessagesPage() {
   }
 
   async function activateMessage(message: Message) {
-    await activateMessageNavigation(message, markMessageRead, navigate);
+    await activateMessageNavigation(
+      message,
+      markMessageRead,
+      navigate,
+      resolveCurrentMessageTarget
+    );
+  }
+
+  async function resolveCurrentMessageTarget(
+    message: Message,
+    target: NavigationTarget
+  ): Promise<NavigationTarget> {
+    const publicCandidate =
+      message.lifecycle_stage === "published" && message.lifecycle_result === "public" ||
+      message.lifecycle_stage === "restoration" && message.lifecycle_result === "restored";
+    if (message.type !== "VIDEO_LIFECYCLE" || !publicCandidate ||
+      !message.video_id) {
+      return target;
+    }
+    try {
+      await fetchVideo(message.video_id);
+      return target;
+    } catch (targetError: unknown) {
+      if (targetError instanceof ApiError && targetError.status >= 500) {
+        throw targetError;
+      }
+      return { route: "/profile", video: message.video_id };
+    }
   }
 
   async function markAllRead() {
@@ -148,7 +177,7 @@ export function MessagesPage() {
           {items.map((message) => {
             const actor = messageActor(message);
             const body = messageBody(message);
-            const target = messageDiscussionTarget(message);
+            const target = messageNavigationTarget(message);
             return (
               <button
                 className={`message-item ${message.is_read ? "read" : "unread"} ${target ? "actionable" : "read-only"}`}
@@ -163,7 +192,9 @@ export function MessagesPage() {
                 <span className="message-copy">
                   <span className="message-title-row">
                     <strong><span className="message-type-label">{messageTypeLabel(message.type)}</span>{message.title}</strong>
-                    <small>{formatRelativeTime(message.created_at)}</small>
+                    <small>{formatRelativeTime(
+                      message.lifecycle_occurred_at || message.created_at
+                    )}</small>
                   </span>
                   {actor && (
                     <span className="message-actor-row">
@@ -174,7 +205,9 @@ export function MessagesPage() {
                   <span className="message-content-text">{body}</span>
                 </span>
                 <span className="message-state">
-                  {target ? "查看讨论" : message.is_read ? "已读" : busyID === message.id ? "处理中" : "未读"}
+                  {target
+                    ? message.type === "VIDEO_LIFECYCLE" ? "查看状态" : "查看讨论"
+                    : message.is_read ? "已读" : busyID === message.id ? "处理中" : "未读"}
                 </span>
               </button>
             );
@@ -194,12 +227,16 @@ export function MessagesPage() {
 export async function activateMessageNavigation(
   message: Message,
   markRead: (message: Message) => Promise<boolean>,
-  navigate: (target: NavigationTarget) => void
+  navigate: (target: NavigationTarget) => void,
+  resolveTarget?: (
+    message: Message,
+    target: NavigationTarget
+  ) => Promise<NavigationTarget>
 ): Promise<boolean> {
   const marked = await markRead(message);
   if (!marked) return false;
-  const target = messageDiscussionTarget(message);
+  const target = messageNavigationTarget(message);
   if (!target) return true;
-  navigate(target);
+  navigate(resolveTarget ? await resolveTarget(message, target) : target);
   return true;
 }

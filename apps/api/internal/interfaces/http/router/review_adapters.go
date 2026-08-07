@@ -8,6 +8,7 @@ import (
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
@@ -52,10 +53,28 @@ func (a reviewOutcomeApplier) ApplyReviewOutcome(ctx context.Context, result *do
 	}
 	switch result.Decision.Outcome {
 	case domainreview.OutcomeApprove:
+		if a.videoReader != nil {
+			video, err := a.videoReader.FindByIDAnyStatus(ctx, result.Case.VideoID)
+			if err != nil {
+				return err
+			}
+			if video == nil ||
+				(!domainmedia.IsPublicReadyStatus(video.MediaStatus) &&
+					video.MediaErrorCode != "publication_event_failed") {
+				return nil
+			}
+		}
 		if result.MediaAssetID > 0 && a.mediaPublication != nil {
 			return a.mediaPublication.MediaReady(ctx, result.MediaAssetID)
 		}
 		if a.publisher == nil || a.videoReader == nil {
+			if tracker, ok := a.videoReader.(reviewPublicationTracker); ok {
+				return tracker.MarkLifecyclePublicationReady(
+					ctx,
+					domainmessage.PublicationEventID(result.Case.VideoID, result.Case.ReviewVersion),
+					time.Now().UTC(),
+				)
+			}
 			return nil
 		}
 		video, err := a.videoReader.FindByIDAnyStatus(ctx, result.Case.VideoID)
@@ -63,7 +82,21 @@ func (a reviewOutcomeApplier) ApplyReviewOutcome(ctx context.Context, result *do
 			return err
 		}
 		if event := applicationvideo.NewPublishedEvent(video); event != nil {
-			return a.publisher.PublishVideoPublished(ctx, event)
+			if tracker, ok := a.videoReader.(reviewPublicationTracker); ok {
+				ready, err := tracker.LifecyclePublicationReady(ctx, event.EventID)
+				if err != nil {
+					return err
+				}
+				if ready {
+					return nil
+				}
+			}
+			if err := a.publisher.PublishVideoPublished(ctx, event); err != nil {
+				return err
+			}
+			if tracker, ok := a.videoReader.(reviewPublicationTracker); ok {
+				return tracker.MarkLifecyclePublicationReady(ctx, event.EventID, time.Now().UTC())
+			}
 		}
 	case domainreview.OutcomeReject:
 		if result.MediaAssetID > 0 && a.mediaPublication != nil {
@@ -71,6 +104,11 @@ func (a reviewOutcomeApplier) ApplyReviewOutcome(ctx context.Context, result *do
 		}
 	}
 	return nil
+}
+
+type reviewPublicationTracker interface {
+	LifecyclePublicationReady(ctx context.Context, eventID string) (bool, error)
+	MarkLifecyclePublicationReady(ctx context.Context, eventID string, readyAt time.Time) error
 }
 
 type videoReviewIntakeAdapter struct {

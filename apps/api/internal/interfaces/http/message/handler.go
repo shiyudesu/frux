@@ -92,21 +92,16 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	result, err := h.service.CreateFromTargetedActorEvent(
-		ctx,
-		req.UserID,
-		req.Type,
-		req.Title,
-		req.Content,
-		req.EventID,
-		string(c.GetHeader("Idempotency-Key")),
-		req.ActorID,
-		req.ActorNickname,
-		req.ActorAvatarURL,
-		req.VideoID,
-		req.CommentID,
-		req.RootCommentID,
-	)
+	result, err := h.service.Create(ctx, applicationmessage.CreateEventInput{
+		UserID: req.UserID, MessageType: req.Type, Title: req.Title, Content: req.Content,
+		EventID: req.EventID, IdempotencyKey: string(c.GetHeader("Idempotency-Key")),
+		ActorID: req.ActorID, ActorNickname: req.ActorNickname,
+		ActorAvatarURL: req.ActorAvatarURL, VideoID: req.VideoID,
+		CommentID: req.CommentID, RootCommentID: req.RootCommentID,
+		LifecycleStage: req.LifecycleStage, LifecycleResult: req.LifecycleResult,
+		ReasonCode:    req.ReasonCode,
+		ReviewVersion: req.ReviewVersion, OccurredAt: req.OccurredAt,
+	})
 	if err != nil {
 		writeMessageError(c, err)
 		return
@@ -154,21 +149,26 @@ func listResponseFromResult(result *applicationmessage.ListResult) messageListRe
 
 func responseFromDomain(message *domainmessage.Message) messageResponse {
 	return messageResponse{
-		ID:             message.ID,
-		UserID:         message.UserID,
-		Type:           message.Type,
-		Title:          message.Title,
-		Content:        message.Content,
-		EventID:        message.EventID,
-		ActorID:        message.ActorID,
-		ActorNickname:  message.ActorNickname,
-		ActorAvatarURL: message.ActorAvatarURL,
-		VideoID:        message.VideoID,
-		CommentID:      message.CommentID,
-		RootCommentID:  message.RootCommentID,
-		IsRead:         message.IsRead,
-		CreatedAt:      message.CreatedAt,
-		ReadAt:         message.ReadAt,
+		ID:                  message.ID,
+		UserID:              message.UserID,
+		Type:                message.Type,
+		Title:               message.Title,
+		Content:             message.Content,
+		EventID:             message.EventID,
+		ActorID:             message.ActorID,
+		ActorNickname:       message.ActorNickname,
+		ActorAvatarURL:      message.ActorAvatarURL,
+		VideoID:             message.VideoID,
+		CommentID:           message.CommentID,
+		RootCommentID:       message.RootCommentID,
+		LifecycleStage:      message.LifecycleStage,
+		LifecycleResult:     message.LifecycleResult,
+		ReasonCode:          message.ReasonCode,
+		ReviewVersion:       message.ReviewVersion,
+		LifecycleOccurredAt: message.LifecycleOccurredAt,
+		IsRead:              message.IsRead,
+		CreatedAt:           message.CreatedAt,
+		ReadAt:              message.ReadAt,
 	}
 }
 
@@ -187,6 +187,7 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainmessage.ErrInvalidCursor) ||
 		errors.Is(err, domainmessage.ErrInvalidMessageType) ||
 		errors.Is(err, domainmessage.ErrInvalidMessageTarget) ||
+		errors.Is(err, domainmessage.ErrInvalidLifecycle) ||
 		errors.Is(err, domainmessage.ErrEmptyTitle) ||
 		errors.Is(err, domainmessage.ErrTitleTooLong) ||
 		errors.Is(err, domainmessage.ErrEmptyContent) ||

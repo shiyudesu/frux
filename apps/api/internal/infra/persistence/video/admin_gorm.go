@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 
 	"gorm.io/gorm"
@@ -139,6 +140,27 @@ func (r *Repository) CommitAdminTransition(
 		}
 		if err := tx.Create(intent).Error; err != nil {
 			return err
+		}
+		notification := domainmessage.LifecycleNotification{
+			RecipientID: current.AuthorID, VideoID: current.ID,
+			ReviewVersion: current.ReviewVersion, OccurredAt: command.OccurredAt,
+		}
+		switch command.Transition {
+		case domainvideo.LifecycleTakeOffline:
+			notification.EventID = domainmessage.EnforcementEventID(current.ID, action.ID)
+			notification.Stage = domainmessage.LifecycleStageEnforcement
+			notification.Result = domainmessage.LifecycleResultTakenDown
+			notification.ReasonCode = command.ReasonCode
+		case domainvideo.LifecycleRestore:
+			notification.EventID = domainmessage.RestorationEventID(current.ID, action.ID)
+			notification.Stage = domainmessage.LifecycleStageRestoration
+			notification.Result = domainmessage.LifecycleResultRestored
+			notification.ReasonCode = "compliance_restored"
+		}
+		if notification.EventID != "" {
+			if err := AppendLifecycleNotification(tx, notification); err != nil {
+				return err
+			}
 		}
 		domainResult := restoreVideo(videoWithStatModel{
 			ID: current.ID, AuthorID: current.AuthorID, Title: current.Title,

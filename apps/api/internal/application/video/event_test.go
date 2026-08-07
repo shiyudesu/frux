@@ -25,7 +25,10 @@ func TestPublishedEventRequiresCombinedPublicEligibility(t *testing.T) {
 		t.Fatalf("processing video produced event: %+v", event)
 	}
 	video.MediaStatus = domainmedia.MediaStatusReady
+	video.ReviewVersion = 3
 	if event := NewPublishedEvent(video); event == nil {
 		t.Fatal("eligible video did not produce published event")
+	} else if event.EventID != "video-published:1:3" {
+		t.Fatalf("event id = %q", event.EventID)
 	}
 }

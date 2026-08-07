@@ -2,13 +2,11 @@
 
 ## 1. 模块职责和边界
 
-消息模块负责站内消息持久化、列表、未读数和已读状态。它识别 `LIKE`、`COMMENT`、`COMMENT_REPLY`、`COMMENT_LIKE`、`FOLLOW`、`SYSTEM`，并保存 actor 展示信息与可选结构化讨论目标。
+消息模块负责站内消息持久化、列表、未读数和已读状态。它识别 `LIKE`、`COMMENT`、`COMMENT_REPLY`、`COMMENT_LIKE`、`FOLLOW`、`SYSTEM` 和 `VIDEO_LIFECYCLE`，并保存 actor 展示信息、结构化讨论目标与视频生命周期目标。
 
 评论事实和通知可靠性仍归 interaction：根评论、回复和首次评论点赞在同一事务写入 `interaction_comment_notification_outbox`；Worker 通过窄 `CommentNotificationMessageWriter` 调用 message Application Service。message 不读取互动表，也不拥有互动 Outbox。
 
-人工审核通知可靠性归 review：最终决定事务写入 `review_notification_outbox`；Review Worker
-通过窄 `ReviewNotificationMessageWriter` 创建 `SYSTEM` 消息。message 不读取审核表，也不决定
-批准/拒绝文案或重试状态。
+视频生命周期通知事实分别归 video 和 review：提交、媒体终态失败、首次公开、下架和恢复写入 `video_notification_outbox`；审核决定写入 `review_notification_outbox`。两个 Worker 都通过窄 writer 创建 `VIDEO_LIFECYCLE` 消息，标题和正文由 message Application Service 根据注册 stage/result/reason 生成。message 不读取视频或审核表，也不拥有其 Outbox。历史 `SYSTEM` 审核消息继续兼容读取。
 
 ## 2. 接口设计
 
@@ -27,6 +25,10 @@
 | `video_id` | 讨论所属视频 |
 | `root_comment_id` | 应展开的根评论 |
 | `comment_id` | 应高亮的根或回复 |
+| `lifecycle_stage`, `lifecycle_result` | 注册的视频生命周期阶段与结果 |
+| `reason_code` | 注册且可安全展示的审核、处置或失败原因 |
+| `review_version` | 目标视频审核版本 |
+| `lifecycle_occurred_at` | 业务事实发生时间，不使用投递时间代替 |
 
 `COMMENT`、`COMMENT_REPLY`、`COMMENT_LIKE` 的新写入必须有三个正 ID；非评论消息可为空。公开 DTO 使用 additive/omitempty 字段，旧客户端可忽略。
 
@@ -37,10 +39,14 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id`, `user_id` | BIGINT | 消息和接收用户 |
-| `type` | VARCHAR(16) | 六种消息类型 |
+| `type` | VARCHAR(16) | 既有消息类型及 `VIDEO_LIFECYCLE` |
 | `title`, `content` | VARCHAR(128/1024) | 展示文本 |
 | `actor_*` | BIGINT/VARCHAR | 触发用户快照 |
-| `video_id`, `comment_id`, `root_comment_id` | BIGINT NULL | 结构化讨论目标 |
+| `video_id`, `comment_id`, `root_comment_id` | BIGINT NULL | 结构化讨论或生命周期目标 |
+| `lifecycle_stage`, `lifecycle_result` | VARCHAR(32) | 生命周期阶段与结果 |
+| `reason_code` | VARCHAR(64) | 注册安全原因 |
+| `review_version` | INTEGER | 目标审核版本；非生命周期消息为 0 |
+| `lifecycle_occurred_at` | TIMESTAMPTZ NULL | 生命周期事实发生时间 |
 | `event_id` | VARCHAR(64) NULL | 业务事件 ID |
 | `idempotency_key` | VARCHAR(128) NULL | 内部请求键 |
 | `is_read`, `read_at` | BOOL/TIMESTAMPTZ | 已读状态 |
@@ -73,6 +79,8 @@ actor 与 recipient 相同时 interaction 不创建 Outbox，避免自己评论�
 5. message 通过 `user_id + event_id` 及同值 idempotency key 保证重复领取、Worker 重启和响应不确定时只保存一条消息。
 6. actor 资料读取失败不会阻断投递，结构化目标和正文快照仍可持久化。
 7. 人工审核 Outbox 使用相同的 `FOR UPDATE SKIP LOCKED`、30 秒租约、5 秒写入超时和指数退避；event ID 为稳定决定 ID，message 以 `user_id + event_id` 去重。
+8. 视频生命周期 Outbox 使用稳定业务 event ID、数据库租约、有界指数退避和 terminal 分类。首次发布行在媒体提升及发布事件成功前保持 `delivery_ready=false`，Publication Recovery 完成副作用后才允许创建用户消息。
+9. 生命周期 event ID 覆盖 `video-submitted`、`video-review-approved/rejected`、`video-media-failed`、`video-published`、`video-taken-down` 和 `video-restored`；同一接收人和 event 只产生一条消息。
 
 迁移不为历史评论合成消息；既有无目标消息保持可读、可分页、可标已读。
 
@@ -85,7 +93,10 @@ actor 与 recipient 相同时 interaction 不创建 Outbox，避免自己评论�
 - 目标已删除、被治理或视频不可读时仍保持消息已读，并显示“讨论不可用”，不泄露隐藏内容。
 - legacy 消息或缺少目标的消息为只读激活：仍可标已读，不尝试从文本/event ID 猜测跳转。
 - 旧文本中缺少 actor 结构时，前端保留现有正文兼容解析；结构化 actor 优先。
+- 生命周期消息严格校验 stage/result/reason、正 `video_id`、正 `review_version` 和发生时间；未知组合使用安全 fallback，不解析标题或正文推断状态。
+- 激活生命周期消息时先标已读。已发布/已恢复目标若当前仍公开可读则进入视频详情；待审、审核通过但未公开、拒绝、处理失败或下架目标进入创作者作品页。
+- 作品页使用认证查询跨公开/私密作品定位 `video_id`；目标已删除或不可解析时只显示安全不可用状态，不泄露保护媒体。
 
 ## 7. 测试覆盖
 
-已覆盖根评论、回复、评论点赞事件，自通知抑制，租约/瞬时重试/terminal 错误，稳定 event 去重，结构化目标，旧消息补齐与 legacy 读取，消息标签图标，先已读后导航，typed 路由、reload、高亮和不可用目标。
+已覆盖根评论、回复、评论点赞事件，自通知抑制，租约/瞬时重试/terminal 错误，稳定 event 去重，结构化目标，旧消息补齐与 legacy 读取；并覆盖生命周期载荷校验、事务回滚、发布竞态、重启恢复、消息渲染、先已读后导航、保护/删除目标和旧 `SYSTEM` 兼容。

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 )
 
@@ -13,6 +14,29 @@ type reviewNotificationStore struct {
 	item      *domainreview.ReviewNotification
 	delivered bool
 	terminal  bool
+}
+
+func TestReviewNotificationWorkerDeliversStructuredLifecycleAndLegacy(t *testing.T) {
+	now := time.Now().UTC()
+	store := &reviewNotificationStore{item: &domainreview.ReviewNotification{
+		EventID:     domainmessage.PublicationEventID(9, 1),
+		RecipientID: 7, VideoID: 9, ReviewVersion: 1,
+		Stage:      domainmessage.LifecycleStagePublished,
+		Result:     domainmessage.LifecycleResultPublic,
+		OccurredAt: now, AvailableAt: now,
+	}}
+	writer := &reviewNotificationWriter{}
+	worker := NewReviewNotificationWorker(store, writer, nil)
+	worker.now = func() time.Time { return now }
+	worker.batchSize = 1
+	if processed, err := worker.DispatchOnce(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("structured dispatch processed=%d err=%v", processed, err)
+	}
+	if len(writer.items) != 1 ||
+		writer.items[0].MessageType != domainmessage.TypeVideoLifecycle ||
+		writer.items[0].Title != "视频已发布" {
+		t.Fatalf("structured delivery = %#v", writer.items)
+	}
 }
 
 func (s *reviewNotificationStore) ClaimReviewNotifications(_ context.Context, owner string, _ int, now, leaseUntil time.Time) ([]*domainreview.ReviewNotification, error) {

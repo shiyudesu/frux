@@ -1,10 +1,10 @@
 package inframessage
 
 import (
-	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
-	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"errors"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"strings"
 	"time"
 
@@ -25,19 +25,24 @@ func New(db *gorm.DB) *Repository {
 func (r *Repository) Create(ctx context.Context, message *domainmessage.Message, idempotencyKey string) (*domainmessage.Message, bool, error) {
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	model := MessageModel{
-		UserID:         message.UserID,
-		Type:           message.Type,
-		Title:          message.Title,
-		Content:        message.Content,
-		ActorID:        message.ActorID,
-		ActorNickname:  message.ActorNickname,
-		ActorAvatarURL: message.ActorAvatarURL,
-		VideoID:        optionalInt64(message.VideoID),
-		CommentID:      optionalInt64(message.CommentID),
-		RootCommentID:  optionalInt64(message.RootCommentID),
-		EventID:        optionalString(message.EventID),
-		IdempotencyKey: optionalString(idempotencyKey),
-		IsRead:         false,
+		UserID:              message.UserID,
+		Type:                message.Type,
+		Title:               message.Title,
+		Content:             message.Content,
+		ActorID:             message.ActorID,
+		ActorNickname:       message.ActorNickname,
+		ActorAvatarURL:      message.ActorAvatarURL,
+		VideoID:             optionalInt64(message.VideoID),
+		CommentID:           optionalInt64(message.CommentID),
+		RootCommentID:       optionalInt64(message.RootCommentID),
+		LifecycleStage:      message.LifecycleStage,
+		LifecycleResult:     message.LifecycleResult,
+		ReasonCode:          message.ReasonCode,
+		ReviewVersion:       message.ReviewVersion,
+		LifecycleOccurredAt: message.LifecycleOccurredAt,
+		EventID:             optionalString(message.EventID),
+		IdempotencyKey:      optionalString(idempotencyKey),
+		IsRead:              false,
 	}
 
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -174,7 +179,7 @@ func (r *Repository) findExisting(ctx context.Context, userID int64, eventID str
 }
 
 func restore(model MessageModel) *domainmessage.Message {
-	return domainmessage.RestoreWithActorAndTargets(
+	return domainmessage.RestoreWithLifecycle(
 		model.ID,
 		model.UserID,
 		model.Type,
@@ -187,6 +192,11 @@ func restore(model MessageModel) *domainmessage.Message {
 		int64Value(model.VideoID),
 		int64Value(model.CommentID),
 		int64Value(model.RootCommentID),
+		model.LifecycleStage,
+		model.LifecycleResult,
+		model.ReasonCode,
+		model.ReviewVersion,
+		model.LifecycleOccurredAt,
 		model.IsRead,
 		model.CreatedAt,
 		model.ReadAt,

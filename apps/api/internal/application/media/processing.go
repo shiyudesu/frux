@@ -64,7 +64,8 @@ type ProcessingConsumer interface {
 
 type MediaStateNotifier interface {
 	MediaReady(ctx context.Context, assetID int64) error
-	MediaFailed(ctx context.Context, assetID int64, errorCode string) error
+	MediaRepairing(ctx context.Context, assetID int64, errorCode string) error
+	MediaFailed(ctx context.Context, assetID int64, profileVersion, errorCode string) error
 }
 
 type MediaProcessingWorker struct {
@@ -191,7 +192,7 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 	}
 	if asset.State == domainmedia.AssetStateFailed {
 		if w.notifier != nil {
-			if err := w.notifier.MediaFailed(ctx, asset.ID, asset.ErrorCode); err != nil {
+			if err := w.notifier.MediaFailed(ctx, asset.ID, job.ProfileVersion, asset.ErrorCode); err != nil {
 				return err
 			}
 		}
@@ -332,7 +333,7 @@ func (w *MediaProcessingWorker) failJobOwned(ctx context.Context, asset *domainm
 		}
 	}
 	if terminal && asset != nil && w.notifier != nil {
-		if err := w.notifier.MediaFailed(ctx, asset.ID, code); err != nil {
+		if err := w.notifier.MediaFailed(ctx, asset.ID, job.ProfileVersion, code); err != nil {
 			return err
 		}
 	}

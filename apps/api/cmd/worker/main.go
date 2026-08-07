@@ -19,6 +19,7 @@ import (
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
@@ -132,14 +133,6 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	if err := commentNotificationWorker.Start(ctx); err != nil {
 		return err
 	}
-	reviewNotificationWorker := applicationreview.NewReviewNotificationWorker(
-		reviewRepo,
-		&reviewNotificationMessageWriter{service: messageService},
-		workerReviewObserver{},
-	)
-	if err := reviewNotificationWorker.Start(ctx); err != nil {
-		return err
-	}
 	actionWorker := applicationinteraction.NewActionWorker(
 		interactionRepo,
 		rabbitMQ,
@@ -216,6 +209,30 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	mediaCatalog := inframedia.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
 	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
 	mediaPublication := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
+	publicationRecovery := applicationvideo.NewPublicationRecoveryService(
+		videoRepo, mediaPublication, rabbitMQ,
+	)
+	lifecycleWriter := &lifecycleNotificationMessageWriter{
+		service: messageService, recovery: publicationRecovery,
+	}
+	reviewNotificationWorker := applicationreview.NewReviewNotificationWorker(
+		reviewRepo,
+		&reviewNotificationMessageWriter{
+			service: messageService, lifecycle: lifecycleWriter,
+		},
+		workerReviewObserver{},
+	)
+	if err := reviewNotificationWorker.Start(ctx); err != nil {
+		return err
+	}
+	lifecycleNotificationWorker := applicationvideo.NewLifecycleNotificationWorker(
+		videoRepo,
+		lifecycleWriter,
+		inframetrics.VideoLifecycleNotificationObserver{},
+	)
+	if err := lifecycleNotificationWorker.Start(ctx); err != nil {
+		return err
+	}
 	adminIntentWorker := applicationvideo.NewAdminTransitionIntentWorker(
 		videoRepo,
 		videoRepo,
@@ -223,6 +240,7 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 		workerVideoAdminTransitionApplier{
 			mediaPublication: mediaPublication,
 			publisher:        rabbitMQ,
+			publication:      videoRepo,
 		},
 	)
 	if err := adminIntentWorker.Start(ctx); err != nil {
@@ -285,7 +303,11 @@ type workerVideoAdminTransitionApplier struct {
 		MediaReady(ctx context.Context, assetID int64) error
 		ProtectVideo(ctx context.Context, videoID, mediaAssetID, coverAssetID int64) error
 	}
-	publisher applicationvideo.PublishedEventPublisher
+	publisher   applicationvideo.PublishedEventPublisher
+	publication interface {
+		LifecyclePublicationReady(ctx context.Context, eventID string) (bool, error)
+		MarkLifecyclePublicationReady(ctx context.Context, eventID string, readyAt time.Time) error
+	}
 }
 
 func (a workerVideoAdminTransitionApplier) ApplyAdminTransition(
@@ -310,7 +332,25 @@ func (a workerVideoAdminTransitionApplier) ApplyAdminTransition(
 		return a.mediaPublication.MediaReady(ctx, video.MediaAssetID)
 	}
 	if event := applicationvideo.NewPublishedEvent(video); event != nil {
-		return a.publisher.PublishVideoPublished(ctx, event)
+		if a.publication != nil {
+			ready, err := a.publication.LifecyclePublicationReady(ctx, event.EventID)
+			if err != nil {
+				return err
+			}
+			if ready {
+				return nil
+			}
+		}
+		if a.publisher != nil {
+			if err := a.publisher.PublishVideoPublished(ctx, event); err != nil {
+				return err
+			}
+		}
+		if a.publication != nil {
+			return a.publication.MarkLifecyclePublicationReady(
+				ctx, event.EventID, time.Now().UTC(),
+			)
+		}
 	}
 	return nil
 }
@@ -333,8 +373,12 @@ func (n reviewMediaReadyNotifier) MediaReady(ctx context.Context, assetID int64)
 	return nil
 }
 
-func (n reviewMediaReadyNotifier) MediaFailed(ctx context.Context, assetID int64, errorCode string) error {
-	return n.publication.MediaFailed(ctx, assetID, errorCode)
+func (n reviewMediaReadyNotifier) MediaFailed(ctx context.Context, assetID int64, profileVersion, errorCode string) error {
+	return n.publication.MediaFailed(ctx, assetID, profileVersion, errorCode)
+}
+
+func (n reviewMediaReadyNotifier) MediaRepairing(ctx context.Context, assetID int64, errorCode string) error {
+	return n.publication.MediaRepairing(ctx, assetID, errorCode)
 }
 
 type commentNotificationMessageWriter struct {
@@ -342,17 +386,59 @@ type commentNotificationMessageWriter struct {
 }
 
 type reviewNotificationMessageWriter struct {
-	service *applicationmessage.Service
+	service   *applicationmessage.Service
+	lifecycle *lifecycleNotificationMessageWriter
+}
+
+type lifecycleNotificationMessageWriter struct {
+	service  *applicationmessage.Service
+	recovery interface {
+		EnsurePublication(
+			ctx context.Context,
+			notification domainmessage.LifecycleNotification,
+		) error
+	}
 }
 
 func (w *reviewNotificationMessageWriter) WriteReviewNotification(
 	ctx context.Context,
 	notification applicationreview.ReviewNotificationDelivery,
 ) error {
+	if notification.MessageType == domainmessage.TypeVideoLifecycle {
+		if w.lifecycle == nil {
+			return applicationvideo.ErrLifecycleNotificationNotReady
+		}
+		return w.lifecycle.WriteLifecycleNotification(
+			ctx, domainmessage.LifecycleNotification{
+				EventID: notification.EventID, RecipientID: notification.RecipientID,
+				VideoID: notification.VideoID, ReviewVersion: notification.ReviewVersion,
+				Stage: notification.Stage, Result: notification.Result,
+				ReasonCode: notification.ReasonCode, OccurredAt: notification.OccurredAt,
+			}, notification.Title, notification.Content,
+		)
+	}
 	_, err := w.service.CreateFromEvent(
 		ctx, notification.RecipientID, "SYSTEM", notification.Title, notification.Content,
 		notification.EventID, notification.EventID,
 	)
+	return err
+}
+
+func (w *lifecycleNotificationMessageWriter) WriteLifecycleNotification(
+	ctx context.Context,
+	notification domainmessage.LifecycleNotification,
+	title string,
+	content string,
+) error {
+	if notification.Stage == domainmessage.LifecycleStagePublished {
+		if w.recovery == nil {
+			return applicationvideo.ErrLifecycleNotificationNotReady
+		}
+		if err := w.recovery.EnsurePublication(ctx, notification); err != nil {
+			return err
+		}
+	}
+	_, err := w.service.CreateLifecycle(ctx, notification, title, content)
 	return err
 }
 

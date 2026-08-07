@@ -55,7 +55,8 @@ func (h *Handler) QueryMine(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	result, err := h.management.QueryCreatorVideos(ctx, userID, applicationvideo.CreatorQueryRequest{
-		Visibility: req.Visibility, Statuses: req.Statuses, Query: req.Query, CreatedFrom: createdFrom,
+		VideoID: req.VideoID, Visibility: req.Visibility,
+		Statuses: req.Statuses, Query: req.Query, CreatedFrom: createdFrom,
 		CreatedTo: createdTo, Cursor: req.Cursor, Limit: req.Limit,
 	})
 	if err != nil {

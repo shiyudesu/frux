@@ -138,7 +138,9 @@ func (s *Service) CreateWithAssets(ctx context.Context, authorID int64, title, d
 		return nil, domainvideo.ErrVideoPermissionDenied
 	}
 	if videoAsset.Kind != domainmedia.AssetKindVideo || coverAsset.Kind != domainmedia.AssetKindCover ||
-		coverAsset.State != domainmedia.AssetStateReady || videoAsset.State == domainmedia.AssetStateDeleted {
+		coverAsset.State != domainmedia.AssetStateReady ||
+		videoAsset.State == domainmedia.AssetStateDeleted ||
+		videoAsset.State == domainmedia.AssetStateFailed {
 		return nil, domainvideo.ErrVideoStateNotAllowed
 	}
 	video, err := domainvideo.NewProcessing(authorID, title, description, mediaAssetID, coverAssetID, idempotencyKey)
@@ -154,6 +156,7 @@ func (s *Service) CreateWithAssets(ctx context.Context, authorID int64, title, d
 		}
 		return nil, ErrSaveVideoFailed
 	}
+	s.ensureReviewCase(ctx, video)
 	if videoAsset.State == domainmedia.AssetStateReady {
 		return s.ensureReadyAssetPublication(ctx, video, true)
 	}
@@ -237,7 +240,7 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, de
 
 func (s *Service) ensureReviewCase(ctx context.Context, video *domainvideo.Video) {
 	if s.reviewIntake == nil || video == nil || video.Status != domainvideo.StatusPendingReview ||
-		!domainmedia.IsPublicReadyStatus(video.MediaStatus) {
+		(video.MediaAssetID <= 0 && strings.TrimSpace(video.MediaURL) == "") {
 		return
 	}
 	_ = s.reviewIntake.EnsureReviewCase(ctx, video.ID)

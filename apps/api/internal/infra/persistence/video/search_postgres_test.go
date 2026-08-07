@@ -8,6 +8,7 @@ import (
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
@@ -34,6 +35,18 @@ func (failingAdminAuditWriter) AppendInTransaction(
 }
 
 func (failingAdminAuditWriter) RecordCommittedWrite(*domainadminaudit.Fact) {}
+
+type successfulAdminAuditWriter struct{}
+
+func (successfulAdminAuditWriter) AppendInTransaction(
+	context.Context,
+	*gorm.DB,
+	*domainadminaudit.Fact,
+) error {
+	return nil
+}
+
+func (successfulAdminAuditWriter) RecordCommittedWrite(*domainadminaudit.Fact) {}
 
 func TestPostgresPublicSearchRankingVisibilityAndLiteralWildcards(t *testing.T) {
 	db := openSearchPostgres(t)
@@ -168,6 +181,7 @@ func TestPostgresAdminTransitionRollsBackWhenAuditFails(t *testing.T) {
 	if err := db.AutoMigrate(
 		&infravideo.EnforcementActionModel{},
 		&infravideo.AdminTransitionIntentModel{},
+		&infravideo.NotificationOutboxModel{},
 	); err != nil {
 		t.Fatalf("migrate admin transition tables: %v", err)
 	}
@@ -212,16 +226,417 @@ func TestPostgresAdminTransitionRollsBackWhenAuditFails(t *testing.T) {
 	if current.Status != domainvideo.StatusPublished || current.Version != 4 {
 		t.Fatalf("video changed despite rollback: status=%d version=%d", current.Status, current.Version)
 	}
-	var actionCount, outboxCount int64
+	var actionCount, outboxCount, notificationCount int64
 	if err := db.Model(&infravideo.EnforcementActionModel{}).Count(&actionCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&infravideo.AdminTransitionIntentModel{}).Count(&outboxCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if actionCount != 0 || outboxCount != 0 {
-		t.Fatalf("rollback counts action=%d outbox=%d", actionCount, outboxCount)
+	if err := db.Model(&infravideo.NotificationOutboxModel{}).Count(&notificationCount).Error; err != nil {
+		t.Fatal(err)
 	}
+	if actionCount != 0 || outboxCount != 0 || notificationCount != 0 {
+		t.Fatalf(
+			"rollback counts action=%d outbox=%d notification=%d",
+			actionCount, outboxCount, notificationCount,
+		)
+	}
+}
+
+func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testing.T) {
+	db := openSearchPostgres(t)
+	if err := db.AutoMigrate(
+		&infravideo.EnforcementActionModel{},
+		&infravideo.AdminTransitionIntentModel{},
+		&infravideo.NotificationOutboxModel{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 7, 1, 0, 0, 0, time.UTC)
+	repository := infravideo.New(db, infravideo.WithAdminAuditWriter(successfulAdminAuditWriter{}))
+	video := &domainvideo.Video{
+		AuthorID: 1, Title: "Lifecycle", Description: "",
+		MediaURL: "", CoverURL: "", MediaAssetID: 41, CoverAssetID: 42,
+		MediaStatus:   domainmedia.MediaStatusProcessing,
+		ReviewVersion: 1, Version: 1, Status: domainvideo.StatusPendingReview,
+		Visibility: domainvideo.VisibilityPublic,
+	}
+	if err := repository.Save(context.Background(), video); err != nil {
+		t.Fatalf("save video: %v", err)
+	}
+	assertVideoNotification(t, db, domainmessage.SubmissionEventID(video.ID, 1),
+		domainmessage.LifecycleStageSubmitted, domainmessage.LifecycleResultPending)
+
+	video.Status = domainvideo.StatusPublished
+	video.MediaStatus = domainmedia.MediaStatusReady
+	video.MediaURL = "https://example.com/ready.mp4"
+	video.CoverURL = "https://example.com/cover.jpg"
+	if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", video.ID).
+		Updates(map[string]any{"status": domainvideo.StatusPublished, "published_at": now}).
+		Error; err != nil {
+		t.Fatal(err)
+	}
+	if eligible, err := repository.UpdateMediaProjection(context.Background(), video); err != nil || !eligible {
+		t.Fatalf("ready projection eligible=%v err=%v", eligible, err)
+	}
+	if eligible, err := repository.UpdateMediaProjection(context.Background(), video); err != nil || !eligible {
+		t.Fatalf("replayed projection eligible=%v err=%v", eligible, err)
+	}
+	eventID := domainmessage.PublicationEventID(video.ID, 1)
+	assertVideoNotification(
+		t, db, eventID,
+		domainmessage.LifecycleStagePublished, domainmessage.LifecycleResultPublic,
+	)
+	var publicationCount int64
+	if err := db.Model(&infravideo.NotificationOutboxModel{}).
+		Where("event_id = ?", eventID).Count(&publicationCount).Error; err != nil ||
+		publicationCount != 1 {
+		t.Fatalf("publication count=%d err=%v", publicationCount, err)
+	}
+	if ready, err := repository.LifecyclePublicationReady(
+		context.Background(), eventID,
+	); err != nil || ready {
+		t.Fatalf("production projection ready=%v err=%v", ready, err)
+	}
+	if err := repository.MarkLifecyclePublicationReady(
+		context.Background(), eventID, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := repository.LifecyclePublicationReady(
+		context.Background(), eventID,
+	); err != nil || !ready {
+		t.Fatalf("completed publication ready=%v err=%v", ready, err)
+	}
+	legacyCandidate := searchVideoModel(
+		98, "Legacy candidate", "", domainvideo.StatusPublished,
+		domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now,
+	)
+	legacyCandidate.AuthorID = 1
+	legacyCandidate.ReviewVersion = 1
+	if err := db.Create(&legacyCandidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return infravideo.AppendLifecycleNotification(tx, domainmessage.LifecycleNotification{
+			EventID:     domainmessage.SubmissionEventID(legacyCandidate.ID, 1),
+			RecipientID: 1, VideoID: legacyCandidate.ID, ReviewVersion: 1,
+			Stage:  domainmessage.LifecycleStageSubmitted,
+			Result: domainmessage.LifecycleResultPending, OccurredAt: now,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := repository.ReconcileLifecyclePublicationNotifications(
+		context.Background(), 10,
+	); err != nil || created != 1 {
+		t.Fatalf("legacy reconciliation created=%d err=%v", created, err)
+	}
+	assertVideoNotification(
+		t, db, domainmessage.PublicationEventID(legacyCandidate.ID, 1),
+		domainmessage.LifecycleStagePublished, domainmessage.LifecycleResultPublic,
+	)
+	historical := searchVideoModel(
+		99, "Historical", "", domainvideo.StatusPublished,
+		domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now,
+	)
+	historical.AuthorID = 1
+	historical.ReviewVersion = 1
+	if err := db.Create(&historical).Error; err != nil {
+		t.Fatal(err)
+	}
+	if created, err := repository.ReconcileLifecyclePublicationNotifications(
+		context.Background(), 10,
+	); err != nil || created != 0 {
+		t.Fatalf("historical reconciliation created=%d err=%v", created, err)
+	}
+	var historicalNotifications int64
+	if err := db.Model(&infravideo.NotificationOutboxModel{}).
+		Where("video_id = ?", historical.ID).Count(&historicalNotifications).Error; err != nil ||
+		historicalNotifications != 0 {
+		t.Fatalf("historical notifications=%d err=%v", historicalNotifications, err)
+	}
+	if err := repository.MarkLifecyclePublicationReady(
+		context.Background(),
+		domainmessage.PublicationEventID(historical.ID, historical.ReviewVersion),
+		now,
+	); err != nil {
+		t.Fatalf("untracked historical readiness: %v", err)
+	}
+	rejected := searchVideoModel(
+		100, "Rejected", "", domainvideo.StatusRejected,
+		domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now,
+	)
+	rejected.AuthorID = 1
+	rejected.ReviewVersion = 1
+	rejected.MediaAssetID = int64Pointer(100)
+	if err := db.Create(&rejected).Error; err != nil {
+		t.Fatal(err)
+	}
+	rejectedDomain := &domainvideo.Video{
+		ID: rejected.ID, AuthorID: rejected.AuthorID,
+		Status: rejected.Status, Visibility: rejected.Visibility,
+		ReviewVersion: rejected.ReviewVersion, MediaAssetID: 100,
+		MediaStatus:         domainmedia.MediaStatusFailed,
+		MediaProfileVersion: "v1",
+	}
+	if _, err := repository.UpdateMediaProjection(context.Background(), rejectedDomain); err != nil {
+		t.Fatal(err)
+	}
+	var rejectedFailureNotifications int64
+	if err := db.Model(&infravideo.NotificationOutboxModel{}).
+		Where("video_id = ? AND stage = ?", rejected.ID, domainmessage.LifecycleStageMediaProcessing).
+		Count(&rejectedFailureNotifications).Error; err != nil ||
+		rejectedFailureNotifications != 0 {
+		t.Fatalf(
+			"rejected failure notifications=%d err=%v",
+			rejectedFailureNotifications, err,
+		)
+	}
+
+	video.MediaStatus = domainmedia.MediaStatusFailed
+	video.MediaErrorCode = "probe_invalid"
+	video.MediaProfileVersion = "v1"
+	video.MediaURL = ""
+	video.CoverURL = ""
+	if _, err := repository.UpdateMediaProjection(context.Background(), video); err != nil {
+		t.Fatalf("failed projection: %v", err)
+	}
+	assertVideoNotification(
+		t, db, domainmessage.MediaFailureEventID(video.ID, video.MediaAssetID, "v1"),
+		domainmessage.LifecycleStageMediaProcessing, domainmessage.LifecycleResultFailed,
+	)
+
+	video.MediaStatus = domainmedia.MediaStatusReady
+	video.MediaErrorCode = ""
+	video.Status = domainvideo.StatusPublished
+	video.Version = 1
+	video.PublishedAt = &now
+	if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", video.ID).
+		Updates(map[string]any{
+			"status": domainvideo.StatusPublished, "version": 1,
+			"media_status": domainmedia.MediaStatusReady, "published_at": now,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+	fact, err := domainadminaudit.NewFact(domainadminaudit.FactInput{
+		ActorID: 9, Permission: domainaccount.PermissionContentEnforce,
+		Action:     domainadminaudit.ActionContentEnforce,
+		TargetType: domainadminaudit.TargetVideo, TargetID: fmt.Sprint(video.ID),
+		Outcome:   domainadminaudit.OutcomeSuccess,
+		RequestID: domainadminaudit.NewRequestID(),
+		Detail: map[string]string{
+			"http_method": "POST", "previous_status": "published",
+			"new_status": "offline", "reason_code": "policy_violation",
+			"route": "/api/admin/videos/:videoId/enforcement",
+		},
+		CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := repository.CommitAdminTransition(
+		context.Background(),
+		domainvideo.AdminTransitionCommand{
+			VideoID: video.ID, ActorID: 9, ExpectedVersion: 1,
+			Transition: domainvideo.LifecycleTakeOffline,
+			ReasonCode: domainvideo.EnforcementReasonPolicy, OccurredAt: now,
+		},
+		fact,
+	)
+	if err != nil {
+		t.Fatalf("take down: %v", err)
+	}
+	var action infravideo.EnforcementActionModel
+	if err := db.Where("video_id = ?", video.ID).Order("id DESC").Take(&action).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertVideoNotification(
+		t, db, domainmessage.EnforcementEventID(video.ID, action.ID),
+		domainmessage.LifecycleStageEnforcement, domainmessage.LifecycleResultTakenDown,
+	)
+	if result.Video.Status != domainvideo.StatusOffline {
+		t.Fatalf("offline result=%#v", result.Video)
+	}
+	restoreAt := now.Add(time.Minute)
+	restoreFact, err := domainadminaudit.NewFact(domainadminaudit.FactInput{
+		ActorID: 9, Permission: domainaccount.PermissionContentEnforce,
+		Action:     domainadminaudit.ActionContentRestore,
+		TargetType: domainadminaudit.TargetVideo, TargetID: fmt.Sprint(video.ID),
+		Outcome:   domainadminaudit.OutcomeSuccess,
+		RequestID: domainadminaudit.NewRequestID(),
+		Detail: map[string]string{
+			"http_method": "POST", "previous_status": "offline",
+			"new_status": "published", "reason_code": "compliance_restored",
+			"route": "/api/admin/videos/:videoId/restoration",
+		},
+		CreatedAt: restoreAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := repository.CommitAdminTransition(
+		context.Background(),
+		domainvideo.AdminTransitionCommand{
+			VideoID: video.ID, ActorID: 9, ExpectedVersion: result.Video.Version,
+			Transition: domainvideo.LifecycleRestore,
+			ReasonCode: domainvideo.RestorationReasonAllowed, OccurredAt: restoreAt,
+		},
+		restoreFact,
+	)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	action = infravideo.EnforcementActionModel{}
+	if err := db.Where("video_id = ?", video.ID).
+		Order("id DESC").Take(&action).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertVideoNotification(
+		t, db, domainmessage.RestorationEventID(video.ID, action.ID),
+		domainmessage.LifecycleStageRestoration, domainmessage.LifecycleResultRestored,
+	)
+	if restored.Video.Status != domainvideo.StatusPublished {
+		t.Fatalf("restored result=%#v", restored.Video)
+	}
+
+	privateVideo := searchVideoModel(
+		101, "Private first publish", "", domainvideo.StatusPublished,
+		domainvideo.VisibilityPrivate, domainmedia.MediaStatusReady, now,
+	)
+	privateVideo.AuthorID = 1
+	privateVideo.ReviewVersion = 1
+	privateVideo.MediaAssetID = int64Pointer(101)
+	if err := db.Create(&privateVideo).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return infravideo.AppendLifecycleNotification(tx, domainmessage.LifecycleNotification{
+			EventID:     domainmessage.SubmissionEventID(privateVideo.ID, 1),
+			RecipientID: 1, VideoID: privateVideo.ID, ReviewVersion: 1,
+			Stage:  domainmessage.LifecycleStageSubmitted,
+			Result: domainmessage.LifecycleResultPending, OccurredAt: now,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repository.ApplyBatch(
+		context.Background(), 1, domainvideo.BatchActionMakePublic,
+		[]int64{privateVideo.ID}, "public-private-target", "fingerprint",
+	); err != nil {
+		t.Fatal(err)
+	}
+	privatePublicationID := domainmessage.PublicationEventID(privateVideo.ID, 1)
+	var pendingPublication infravideo.NotificationOutboxModel
+	if err := db.Where("event_id = ?", privatePublicationID).
+		Take(&pendingPublication).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingPublication.DeliveryReady {
+		t.Fatal("visibility transaction marked production media publication ready")
+	}
+	if _, err := repository.UpdateMediaProjection(context.Background(), &domainvideo.Video{
+		ID: privateVideo.ID, AuthorID: 1, ReviewVersion: 1,
+		Status: domainvideo.StatusPublished, Visibility: domainvideo.VisibilityPublic,
+		MediaAssetID: 101, MediaStatus: domainmedia.MediaStatusReady,
+		MediaURL: "https://example.com/private-promoted.mp4",
+		CoverURL: "https://example.com/private-promoted.jpg",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := repository.LifecyclePublicationReady(
+		context.Background(), privatePublicationID,
+	); err != nil || ready {
+		t.Fatalf("pre-event publication ready=%v err=%v", ready, err)
+	}
+	if err := repository.MarkLifecyclePublicationReady(
+		context.Background(), privatePublicationID, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := repository.LifecyclePublicationReady(
+		context.Background(), privatePublicationID,
+	); err != nil || !ready {
+		t.Fatalf("completed private publication ready=%v err=%v", ready, err)
+	}
+	historicalPrivate := searchVideoModel(
+		102, "Historical private", "", domainvideo.StatusPublished,
+		domainvideo.VisibilityPrivate, domainmedia.MediaStatusReady, now,
+	)
+	historicalPrivate.AuthorID = 1
+	historicalPrivate.ReviewVersion = 1
+	if err := db.Create(&historicalPrivate).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repository.ApplyBatch(
+		context.Background(), 1, domainvideo.BatchActionMakePublic,
+		[]int64{historicalPrivate.ID}, "public-historical-private", "fingerprint-historical",
+	); err != nil {
+		t.Fatal(err)
+	}
+	var synthesized int64
+	if err := db.Model(&infravideo.NotificationOutboxModel{}).
+		Where("event_id = ?", domainmessage.PublicationEventID(historicalPrivate.ID, 1)).
+		Count(&synthesized).Error; err != nil || synthesized != 0 {
+		t.Fatalf("historical make-public notifications=%d err=%v", synthesized, err)
+	}
+}
+
+func TestPostgresVideoCreationRollsBackWhenNotificationFails(t *testing.T) {
+	db := openSearchPostgres(t)
+	if err := db.AutoMigrate(&infravideo.NotificationOutboxModel{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`
+		ALTER TABLE video_notification_outbox
+		ADD CONSTRAINT reject_submission_notification CHECK (stage <> 'submitted')
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
+	repository := infravideo.New(db)
+	video := &domainvideo.Video{
+		AuthorID: 1, Title: "Rollback", MediaAssetID: 51, CoverAssetID: 52,
+		MediaStatus: domainmedia.MediaStatusProcessing, ReviewVersion: 1, Version: 1,
+		Status: domainvideo.StatusPendingReview, Visibility: domainvideo.VisibilityPublic,
+	}
+	if err := repository.Save(context.Background(), video); err == nil {
+		t.Fatal("expected notification insertion failure")
+	}
+	var videos, stats int64
+	if err := db.Model(&infravideo.VideoModel{}).Count(&videos).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&infravideo.VideoStatModel{}).Count(&stats).Error; err != nil {
+		t.Fatal(err)
+	}
+	if videos != 0 || stats != 0 {
+		t.Fatalf("creation rollback videos=%d stats=%d", videos, stats)
+	}
+}
+
+func assertVideoNotification(
+	t *testing.T,
+	db *gorm.DB,
+	eventID string,
+	stage string,
+	result string,
+) {
+	t.Helper()
+	var model infravideo.NotificationOutboxModel
+	if err := db.Where("event_id = ?", eventID).Take(&model).Error; err != nil {
+		var all []infravideo.NotificationOutboxModel
+		_ = db.Order("event_id ASC").Find(&all).Error
+		t.Fatalf("load notification %q: %v all=%#v", eventID, err, all)
+	}
+
+	if model.Stage != stage || model.Result != result {
+		t.Fatalf("notification=%#v", model)
+	}
+}
+
+func int64Pointer(value int64) *int64 {
+	return &value
 }
 
 func openSearchPostgres(t *testing.T) *gorm.DB {
@@ -253,7 +668,12 @@ func openSearchPostgres(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open GORM: %v", err)
 	}
-	if err := db.AutoMigrate(&infraaccount.UserModel{}, &infravideo.VideoModel{}, &infravideo.VideoStatModel{}); err != nil {
+	if err := db.AutoMigrate(
+		&infraaccount.UserModel{}, &infravideo.VideoModel{},
+		&infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
+		&infravideo.BatchOperationModel{},
+		&infravideo.NotificationOutboxModel{},
+	); err != nil {
 		t.Fatalf("migrate search tables: %v", err)
 	}
 	return db

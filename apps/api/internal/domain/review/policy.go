@@ -82,12 +82,19 @@ func (p *Policy) Route(signals []MachineSignal) (string, error) {
 }
 
 func (p *Policy) RouteWithPriority(signals []MachineSignal) (string, int, error) {
+	outcome, priority, _, err := p.RouteWithPriorityAndReason(signals)
+	return outcome, priority, err
+}
+
+func (p *Policy) RouteWithPriorityAndReason(
+	signals []MachineSignal,
+) (string, int, string, error) {
 	if p == nil {
-		return "", 0, ErrInvalidPolicy
+		return "", 0, "", ErrInvalidPolicy
 	}
 	config, err := normalizePolicy(p.Config)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	rules := make(map[string]LabelRule, len(config.Rules))
 	for _, rule := range config.Rules {
@@ -103,7 +110,7 @@ func (p *Policy) RouteWithPriority(signals []MachineSignal) (string, int, error)
 			continue
 		}
 		if rule.RejectThreshold != nil && signal.Confidence >= *rule.RejectThreshold {
-			return OutcomeReject, 0, nil
+			return OutcomeReject, 0, signal.Label, nil
 		}
 		if rule.HumanThreshold != nil && signal.Confidence >= *rule.HumanThreshold {
 			human = true
@@ -111,12 +118,12 @@ func (p *Policy) RouteWithPriority(signals []MachineSignal) (string, int, error)
 		}
 	}
 	if human {
-		return OutcomeHuman, max(priority, 1), nil
+		return OutcomeHuman, max(priority, 1), "", nil
 	}
 	if config.DefaultOutcome == OutcomeHuman {
-		return OutcomeHuman, 1, nil
+		return OutcomeHuman, 1, "", nil
 	}
-	return config.DefaultOutcome, 0, nil
+	return config.DefaultOutcome, 0, "", nil
 }
 
 func KnownLabel(label string) bool {

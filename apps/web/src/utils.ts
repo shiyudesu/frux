@@ -4,7 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { DEFAULT_PLAYBACK_CONFIG, PUBLIC_PROFILE_KEY, image } from "./constants";
 import type { IconName } from "./components/Icon";
 import { playbackNetworkType, readFeedPreloadEnvironment } from "./feedPreload";
-import type { Route, VideoDiscussionNavigation } from "./router";
+import type { NavigationTarget, Route, VideoDiscussionNavigation } from "./router";
 import {
   parseStoredPublicProfiles,
   type Comment,
@@ -329,6 +329,8 @@ export function messageIcon(type: string): IconName {
       return "user-plus";
     case "SYSTEM":
       return "megaphone";
+    case "VIDEO_LIFECYCLE":
+      return "megaphone";
     default:
       return "bell";
   }
@@ -348,6 +350,8 @@ export function messageTypeLabel(type: string): string {
       return "新增关注";
     case "SYSTEM":
       return "系统通知";
+    case "VIDEO_LIFECYCLE":
+      return "视频状态";
     default:
       return "消息";
   }
@@ -364,6 +368,54 @@ export function messageDiscussionTarget(message: Message): VideoDiscussionNaviga
     comment: rootID,
     highlight: commentID
   };
+}
+
+export function messageLifecycleTarget(message: Message): NavigationTarget | null {
+  if (message.type !== "VIDEO_LIFECYCLE") return null;
+  const videoID = positiveMessageID(message.video_id);
+  const reviewVersion = positiveMessageID(message.review_version);
+  const occurredAt = Date.parse(String(message.lifecycle_occurred_at || ""));
+  if (!videoID || !reviewVersion || !Number.isFinite(occurredAt) ||
+    !validLifecyclePair(message.lifecycle_stage, message.lifecycle_result, message.reason_code)) {
+    return null;
+  }
+  if (
+    message.lifecycle_stage === "published" && message.lifecycle_result === "public" ||
+    message.lifecycle_stage === "restoration" && message.lifecycle_result === "restored"
+  ) {
+    return { route: `/videos/${videoID}` };
+  }
+  return { route: "/profile", video: videoID };
+}
+
+export function messageNavigationTarget(message: Message): NavigationTarget | null {
+  return messageDiscussionTarget(message) || messageLifecycleTarget(message);
+}
+
+function validLifecyclePair(
+  stage: Message["lifecycle_stage"],
+  result: Message["lifecycle_result"],
+  reason: string | undefined
+): boolean {
+  const reasonCode = String(reason || "").trim();
+  switch (stage) {
+    case "submitted":
+      return result === "pending" && !reasonCode;
+    case "review":
+      return result === "approved" && !reasonCode ||
+        result === "rejected" && Boolean(reasonCode);
+    case "media_processing":
+      return result === "failed" && reasonCode === "media_processing_failed";
+    case "published":
+      return result === "public" && !reasonCode;
+    case "enforcement":
+      return result === "taken_down" &&
+        (reasonCode === "manual_enforcement" || reasonCode === "policy_violation");
+    case "restoration":
+      return result === "restored" && reasonCode === "compliance_restored";
+    default:
+      return false;
+  }
 }
 
 function positiveMessageID(value: number | undefined): number {

@@ -70,8 +70,11 @@ func TestReconcilerResetsIncompleteVariantsAndQueuesOrphans(t *testing.T) {
 	if repo.assets[2].State != domainmedia.AssetStateUploaded || repo.job.State != domainmedia.JobStateRetryable {
 		t.Fatalf("expected incomplete asset retry: asset=%+v job=%+v", repo.assets[2], repo.job)
 	}
-	if notifier.failed != 1 {
-		t.Fatalf("expected failed projection notification, got %d", notifier.failed)
+	if notifier.failed != 0 || notifier.repairing != 1 {
+		t.Fatalf(
+			"expected retry projection notification, failed=%d repairing=%d",
+			notifier.failed, notifier.repairing,
+		)
 	}
 	foundOrphan := false
 	for _, task := range repo.cleanupTasks {
@@ -243,14 +246,20 @@ func (*operationsStore) PresignGet(context.Context, string, time.Duration) (*dom
 }
 
 type mediaStateNotifierStub struct {
-	failed int
+	failed    int
+	repairing int
 }
 
 func (*mediaStateNotifierStub) MediaReady(context.Context, int64) error {
 	return nil
 }
 
-func (s *mediaStateNotifierStub) MediaFailed(context.Context, int64, string) error {
+func (s *mediaStateNotifierStub) MediaRepairing(context.Context, int64, string) error {
+	s.repairing++
+	return nil
+}
+
+func (s *mediaStateNotifierStub) MediaFailed(context.Context, int64, string, string) error {
 	s.failed++
 	return nil
 }

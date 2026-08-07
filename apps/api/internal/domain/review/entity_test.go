@@ -79,6 +79,7 @@ func TestPolicyDerivesBoundedHumanPriority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_, low, err := policy.RouteWithPriority([]MachineSignal{{Label: LabelHate, Confidence: 0.21}})
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +94,28 @@ func TestPolicyDerivesBoundedHumanPriority(t *testing.T) {
 	_, unknown, err := policy.RouteWithPriority([]MachineSignal{{Label: "new-label", Confidence: 1}})
 	if err != nil || unknown != 100 {
 		t.Fatalf("unknown priority = %d err=%v", unknown, err)
+	}
+}
+
+func TestPolicyReturnsTheSignalThatTriggeredRejection(t *testing.T) {
+	sexualReject := 0.9
+	hateReject := 0.8
+	policy, err := NewPolicy(3, true, PolicyConfiguration{
+		DefaultOutcome: OutcomeHuman,
+		Rules: []LabelRule{
+			{Label: LabelSexualContent, RejectThreshold: &sexualReject},
+			{Label: LabelHate, RejectThreshold: &hateReject},
+		},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, _, reason, err := policy.RouteWithPriorityAndReason([]MachineSignal{
+		{Label: LabelSexualContent, Confidence: 0.2},
+		{Label: LabelHate, Confidence: 0.95},
+	})
+	if err != nil || outcome != OutcomeReject || reason != LabelHate {
+		t.Fatalf("route outcome=%q reason=%q err=%v", outcome, reason, err)
 	}
 }
 

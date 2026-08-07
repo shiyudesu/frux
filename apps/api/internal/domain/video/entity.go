@@ -24,28 +24,29 @@ const (
 
 // Video 是视频聚合根，包含内容信息、发布状态和统计快照。
 type Video struct {
-	ID              int64
-	AuthorID        int64
-	Title           string
-	Description     string
-	MediaURL        string
-	CoverURL        string
-	Status          int
-	Visibility      string
-	LikeCount       int
-	CommentCount    int
-	FavoriteCount   int
-	PublishedAt     *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	IdempotencyKey  string
-	MediaAssetID    int64
-	CoverAssetID    int64
-	MediaStatus     string
-	MediaErrorCode  string
-	ReviewVersion   int
-	Version         int
-	PlaybackSources []domainmedia.PlaybackSource
+	ID                  int64
+	AuthorID            int64
+	Title               string
+	Description         string
+	MediaURL            string
+	CoverURL            string
+	Status              int
+	Visibility          string
+	LikeCount           int
+	CommentCount        int
+	FavoriteCount       int
+	PublishedAt         *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	IdempotencyKey      string
+	MediaAssetID        int64
+	CoverAssetID        int64
+	MediaStatus         string
+	MediaErrorCode      string
+	MediaProfileVersion string
+	ReviewVersion       int
+	Version             int
+	PlaybackSources     []domainmedia.PlaybackSource
 }
 
 type LifecycleTransition string

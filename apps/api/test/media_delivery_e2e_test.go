@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -25,6 +26,7 @@ func TestProductionMediaDeliveryEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create delivery resolver: %v", err)
 	}
+
 	catalog := inframedia.NewDeliveryCatalog(repo, resolver, store)
 	ids := []string{"video-session", "cover-session"}
 	idIndex := 0
@@ -153,6 +155,27 @@ func TestProductionMediaDeliveryEndToEnd(t *testing.T) {
 	}
 }
 
+func TestCreateWithAssetsRejectsAlreadyFailedVideoAsset(t *testing.T) {
+	repo := newE2EMediaRepo()
+	repo.assets[1] = &domainmedia.MediaAsset{
+		ID: 1, OwnerID: 7, Kind: domainmedia.AssetKindVideo,
+		State: domainmedia.AssetStateFailed,
+	}
+	repo.assets[2] = &domainmedia.MediaAsset{
+		ID: 2, OwnerID: 7, Kind: domainmedia.AssetKindCover,
+		State: domainmedia.AssetStateReady,
+	}
+	service := applicationvideo.New(
+		&memoryVideoRepo{byID: map[int64]*domainvideo.Video{}},
+		applicationvideo.WithMediaAssets(repo),
+	)
+	if _, err := service.CreateWithAssets(
+		context.Background(), 7, "failed", "", 1, 2, "failed-asset",
+	); !errors.Is(err, domainvideo.ErrVideoStateNotAllowed) {
+		t.Fatalf("failed asset creation error = %v", err)
+	}
+}
+
 func (r *memoryVideoRepo) ListByMediaAssetID(_ context.Context, mediaAssetID int64) ([]*domainvideo.Video, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -172,6 +195,7 @@ func (r *memoryVideoRepo) UpdateMediaProjection(_ context.Context, video *domain
 	if stored == nil {
 		return false, domainvideo.ErrVideoNotFound
 	}
+
 	eligible := stored.Status == domainvideo.StatusPublished &&
 		stored.Visibility == domainvideo.VisibilityPublic &&
 		domainmedia.IsPublicReadyStatus(video.MediaStatus)
@@ -186,6 +210,20 @@ func (r *memoryVideoRepo) UpdateMediaProjection(_ context.Context, video *domain
 	stored.MediaErrorCode = video.MediaErrorCode
 	stored.PlaybackSources = append([]domainmedia.PlaybackSource(nil), video.PlaybackSources...)
 	return eligible, nil
+}
+
+func (*memoryVideoRepo) MarkLifecyclePublicationReady(
+	context.Context, string, time.Time,
+) error {
+	return nil
+}
+
+func (*memoryVideoRepo) LifecyclePublicationTracked(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func (*memoryVideoRepo) LifecyclePublicationReady(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 type e2eMediaRepo struct {

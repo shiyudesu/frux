@@ -10,16 +10,18 @@ import (
 )
 
 type managementRepoStub struct {
-	lastIDs         []int64
-	lastFingerprint string
-	assetReferences []domainvideo.AssetReference
-	localAssets     map[string]*domainvideo.LocalAsset
-	collection      *domainvideo.Collection
-	collectionItems []*domainvideo.CollectionItem
-	lastUpdate      domainvideo.CollectionUpdate
-	mediaRefs       []MediaAssetRef
-	replayed        bool
-	videos          map[int64]*domainvideo.Video
+	lastIDs          []int64
+	lastFingerprint  string
+	assetReferences  []domainvideo.AssetReference
+	localAssets      map[string]*domainvideo.LocalAsset
+	collection       *domainvideo.Collection
+	collectionItems  []*domainvideo.CollectionItem
+	lastUpdate       domainvideo.CollectionUpdate
+	mediaRefs        []MediaAssetRef
+	replayed         bool
+	videos           map[int64]*domainvideo.Video
+	publicationReady bool
+	publicationMarks int
 }
 
 type managementMediaPublisherStub struct {
@@ -64,6 +66,14 @@ func (r *managementRepoStub) FindByIDAnyStatus(_ context.Context, videoID int64)
 	}
 	cloned := *video
 	return &cloned, nil
+}
+func (r *managementRepoStub) LifecyclePublicationReady(context.Context, string) (bool, error) {
+	return r.publicationReady, nil
+}
+func (r *managementRepoStub) MarkLifecyclePublicationReady(context.Context, string, time.Time) error {
+	r.publicationReady = true
+	r.publicationMarks++
+	return nil
 }
 func (r *managementRepoStub) CreateCollection(context.Context, *domainvideo.Collection) (*domainvideo.Collection, bool, error) {
 	return nil, false, nil
@@ -201,6 +211,8 @@ func TestMakePublicPublishesLegacyVideoEvent(t *testing.T) {
 			),
 		},
 	}
+
+	repo.videos[1].ReviewVersion = 1
 	service := NewManagement(repo, nil, WithManagementPublishedPublisher(publisher))
 	if _, err := service.ApplyBatch(
 		context.Background(),
@@ -213,6 +225,53 @@ func TestMakePublicPublishesLegacyVideoEvent(t *testing.T) {
 	}
 	if len(publisher.events) != 1 || publisher.events[0].VideoID != 1 {
 		t.Fatalf("legacy public event missing: %+v", publisher.events)
+	}
+	if repo.publicationMarks != 1 {
+		t.Fatalf("legacy publication marks=%d", repo.publicationMarks)
+	}
+	if _, err := service.ApplyBatch(
+		context.Background(), 7, domainvideo.BatchActionMakePublic,
+		[]int64{1}, "legacy-public-retry",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.events) != 1 || repo.publicationMarks != 1 {
+		t.Fatalf(
+			"legacy event replayed events=%d marks=%d",
+			len(publisher.events), repo.publicationMarks,
+		)
+	}
+}
+
+func TestMakePublicMarksLegacyReadyWithoutPublisher(t *testing.T) {
+	publishedAt := time.Now().UTC()
+	repo := &managementRepoStub{
+		mediaRefs: []MediaAssetRef{{
+			VideoID: 2, Status: domainvideo.StatusPublished,
+			Visibility:  domainvideo.VisibilityPublic,
+			MediaStatus: domainmedia.MediaStatusLegacyReady,
+		}},
+		videos: map[int64]*domainvideo.Video{
+			2: domainvideo.RestoreVideoWithVisibility(
+				2, 7, "legacy", "", "media", "cover",
+				domainvideo.StatusPublished, domainvideo.VisibilityPublic,
+				0, 0, 0, &publishedAt, publishedAt, publishedAt, "",
+			),
+		},
+	}
+	repo.videos[2].ReviewVersion = 1
+	service := NewManagement(repo, nil)
+	if _, err := service.ApplyBatch(
+		context.Background(), 7, domainvideo.BatchActionMakePublic,
+		[]int64{2}, "legacy-no-publisher",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if repo.publicationMarks != 1 || !repo.publicationReady {
+		t.Fatalf(
+			"legacy readiness marks=%d ready=%v",
+			repo.publicationMarks, repo.publicationReady,
+		)
 	}
 }
 

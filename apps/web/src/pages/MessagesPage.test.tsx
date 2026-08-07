@@ -161,6 +161,64 @@ describe("comment message navigation", () => {
     expect(container.textContent).toContain("已读");
   });
 
+  it("routes published lifecycle messages to public video detail", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(messagePage([lifecycleMessage(
+      "published", "public", ""
+    )]));
+    await renderMessages();
+    expect(container.textContent).toContain("视频状态");
+    expect(container.textContent).toContain("查看状态");
+    await clickAsync(required<HTMLButtonElement>(".message-item"));
+    expect(markMessagesRead).toHaveBeenCalledWith("message-token", [8]);
+    expect(fetchVideo).toHaveBeenCalledWith(3);
+    expect(window.location.pathname).toBe("/videos/3");
+  });
+
+  it("routes a no-longer-public publication target to creator works", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(messagePage([lifecycleMessage(
+      "published", "public", ""
+    )]));
+    vi.mocked(fetchVideo).mockRejectedValue(new ApiError("not found", 404, "VIDEO_NOT_FOUND"));
+    await renderMessages();
+    await clickAsync(required<HTMLButtonElement>(".message-item"));
+    expect(window.location.pathname).toBe("/profile");
+    expect(window.location.search).toBe("?video=3");
+  });
+
+  it("routes protected lifecycle states to the targeted creator works page", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(messagePage([lifecycleMessage(
+      "submitted", "pending", ""
+    )]));
+    await renderMessages();
+    await clickAsync(required<HTMLButtonElement>(".message-item"));
+    expect(window.location.pathname).toBe("/profile");
+    expect(window.location.search).toBe("?video=3");
+  });
+
+  it("routes private restoration through creator works after readability check", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(messagePage([lifecycleMessage(
+      "restoration", "restored", "compliance_restored"
+    )]));
+    vi.mocked(fetchVideo).mockRejectedValue(new ApiError("not found", 404, "VIDEO_NOT_FOUND"));
+    await renderMessages();
+    await clickAsync(required<HTMLButtonElement>(".message-item"));
+    expect(fetchVideo).toHaveBeenCalledWith(3);
+    expect(window.location.pathname).toBe("/profile");
+    expect(window.location.search).toBe("?video=3");
+  });
+
+  it("keeps malformed lifecycle metadata readable but non-actionable", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(messagePage([lifecycleMessage(
+      "published", "failed", ""
+    )]));
+    await renderMessages();
+    const item = required<HTMLButtonElement>(".message-item");
+    expect(item.classList.contains("read-only")).toBe(true);
+    await clickAsync(item);
+    expect(markMessagesRead).toHaveBeenCalledWith("message-token", [8]);
+    expect(window.location.pathname).toBe("/messages");
+  });
+
   async function renderMessages(renderVideoDetail = false) {
     await act(async () => {
       root.render(
@@ -203,6 +261,28 @@ function targetedMessage(): Message {
     video_id: 3,
     root_comment_id: 7,
     comment_id: 9,
+    is_read: false,
+    created_at: "2026-08-03T00:00:00Z"
+  };
+}
+
+function lifecycleMessage(
+  stage: Message["lifecycle_stage"],
+  result: Message["lifecycle_result"],
+  reasonCode: string
+): Message {
+  return {
+    id: 8,
+    user_id: 2,
+    type: "VIDEO_LIFECYCLE",
+    title: "视频状态变化",
+    content: "查看视频状态",
+    video_id: 3,
+    lifecycle_stage: stage,
+    lifecycle_result: result,
+    reason_code: reasonCode,
+    review_version: 1,
+    lifecycle_occurred_at: "2026-08-03T00:00:00Z",
     is_read: false,
     created_at: "2026-08-03T00:00:00Z"
   };

@@ -30,7 +30,7 @@
 - `review_assignment_history`：不可变保存 claimed、resumed、renewed、released、expired、decided、cancelled、superseded 事件。
 - `review_human_decision`：每案最多一个人工决定，保存 reviewer、outcome、注册 reason、bounded note 和版本。
 - `review_human_decision_idempotency`：按 case、reviewer 和幂等键摘要绑定规范化 payload。
-- `review_notification_outbox`：与决定同事务写入的作者通知事实，由 Worker 租约投递到 message。
+- `review_notification_outbox`：与决定同事务写入的结构化作者通知事实，保存 stable event ID、video/review version、stage/result、安全 reason 和发生时间，由 Worker 租约投递到 message；历史行仍按旧 `SYSTEM` 载荷兼容排空。
 
 视频持有正整数 `review_version`，初始值为 1。历史证据不随后续版本覆盖。
 
@@ -48,12 +48,12 @@
 
 ## 5. 事务与恢复
 
-- 媒体基线 ready 且视频仍为 pending-review 时创建案件；重复 ready 事件返回同一案件。
-- Worker 定期扫描 ready pending 视频与缺失案件，补建遗漏 intake。
+- 视频创建后只要存在生产媒体资产或兼容媒体 URL 且仍为 pending-review，即可创建案件；审核可以早于媒体基线完成，重复 intake 返回同一案件。
+- Worker 定期扫描有媒体主体的 pending-review 视频与缺失案件，补建遗漏 intake。
 - 结果事务按稳定结果身份串行，锁定案件和视频行，再写 result、signals、decision、case 和视频生命周期。
-- 自动通过把视频转换为 published，自动拒绝转换为 rejected；决定、案件和视频必须同事务提交。
+- 自动通过把视频转换为 published，自动拒绝转换为 rejected；决定、案件、视频和对应生命周期通知事实必须同事务提交。
 - human 只把案件置为 `pending_human`，视频继续 pending-review。
-- 提交后再执行媒体提升/保护和发布事件；失败可通过同一结果重放重试，不重复证据或决定。
+- 审核通过时若媒体和公开可见性已满足，写入同版本 combined publication 事实；否则只写 approved-but-not-public 事实。提交后再执行媒体提升/保护和发布事件，失败可通过同一结果重放重试，不重复证据、决定或发布消息。
 
 ## 6. 可观测性
 
@@ -71,6 +71,7 @@
 - decision 要求当前 reviewer、未过期 token、匹配 case/review version 和必填 `Idempotency-Key`。同键同规范化 payload 返回原结果；异 payload 返回稳定 409。
 - 人工决定、案件关闭、视频生命周期、内容统计、成功审计事实、通知 Outbox 和幂等回执在同一事务提交；审计插入失败全部回滚。
 - 决定提交后媒体提升/保护继续使用既有幂等 publication adapter；幂等重放仅在当前 video review version 仍匹配案件时重试这些副作用。通知失败只重试 Outbox，不回滚审核事实。
+- 自动和人工审核使用相同结构化语义：拒绝写 `review/rejected` 与注册 reason；批准但尚未公开写 `review/approved`；批准同时完成最后公开门禁时只写 `published/public`，不重复发送批准消息。
 
 人工指标为 `frux_human_review_queue_available`、`frux_human_review_queue_oldest_age_seconds`、
 `frux_human_review_operations_total{operation,result}` 和

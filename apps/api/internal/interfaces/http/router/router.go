@@ -25,6 +25,7 @@ import (
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
@@ -303,16 +304,21 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		cfg.Media.Processing.ProfileVersion, cfg.Media.Processing.MaxAttempts, mediaOptions...,
 	)
 	uploadSessionHandler := interfaceshttpupload.NewSessionHandler(mediaService)
-	messageWriter := NewMessageWriter(messageService)
-	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
-	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
-	mediaPublicationService := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
-	reviewRepo := infrareview.New(gormDB, infrareview.WithAuditWriter(adminAuditRepo))
-	reviewObserver := reviewMetricsAdapter{}
 	var reviewPublisher applicationvideo.PublishedEventPublisher
 	if rabbitMQ != nil {
 		reviewPublisher = rabbitMQ
 	}
+	mediaPublicationService := applicationvideo.NewMediaPublicationService(
+		videoRepo, mediaCatalog, reviewPublisher, feedCache,
+	)
+	publicationRecovery := applicationvideo.NewPublicationRecoveryService(
+		videoRepo, mediaPublicationService, reviewPublisher,
+	)
+	messageWriter := NewMessageWriter(messageService, publicationRecovery)
+	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
+	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
+	reviewRepo := infrareview.New(gormDB, infrareview.WithAuditWriter(adminAuditRepo))
+	reviewObserver := reviewMetricsAdapter{}
 	reviewService := applicationreview.New(
 		reviewRepo,
 		applicationreview.WithObserver(reviewObserver),
@@ -706,6 +712,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
 	governanceContext, stopGovernance := context.WithCancel(context.Background())
 	deadLetterContext, stopDeadLetter := context.WithCancel(context.Background())
+	notificationContext, stopNotifications := context.WithCancel(context.Background())
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
 	if err != nil {
 		return err
@@ -736,10 +743,23 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			}
 		}()
 	}
+	reviewNotificationWorker := applicationreview.NewReviewNotificationWorker(
+		reviewRepo, messageWriter, reviewObserver,
+	)
+	if err := reviewNotificationWorker.Start(notificationContext); err != nil {
+		return err
+	}
+	lifecycleNotificationWorker := applicationvideo.NewLifecycleNotificationWorker(
+		videoRepo, messageWriter, inframetrics.VideoLifecycleNotificationObserver{},
+	)
+	if err := lifecycleNotificationWorker.Start(notificationContext); err != nil {
+		return err
+	}
 	h.Engine.OnShutdown = append(h.Engine.OnShutdown, func(context.Context) {
 		stopTelemetryCleaner()
 		stopGovernance()
 		stopDeadLetter()
+		stopNotifications()
 		if rabbitMQ != nil {
 			_ = rabbitMQ.Close()
 		}
@@ -753,7 +773,8 @@ func validateAPIConfig(cfg *infraconfig.Config) error {
 }
 
 type MessageWriter struct {
-	service *applicationmessage.Service
+	service  *applicationmessage.Service
+	recovery *applicationvideo.PublicationRecoveryService
 }
 
 type rateLimitControls struct {
@@ -768,8 +789,11 @@ func (c rateLimitControls) EmergencyEnabled() bool {
 	return c.runtime != nil && c.runtime.Bool(domaingovernance.RateLimitEmergencyEnabled)
 }
 
-func NewMessageWriter(service *applicationmessage.Service) *MessageWriter {
-	return &MessageWriter{service: service}
+func NewMessageWriter(
+	service *applicationmessage.Service,
+	recovery *applicationvideo.PublicationRecoveryService,
+) *MessageWriter {
+	return &MessageWriter{service: service, recovery: recovery}
 }
 
 func (w *MessageWriter) CreateFromEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string) (any, error) {
@@ -799,6 +823,46 @@ func (w *MessageWriter) WriteCommentNotification(ctx context.Context, notificati
 		notification.VideoID,
 		notification.CommentID,
 		notification.RootCommentID,
+	)
+	return err
+}
+
+func (w *MessageWriter) WriteLifecycleNotification(
+	ctx context.Context,
+	notification domainmessage.LifecycleNotification,
+	title string,
+	content string,
+) error {
+	if w.recovery != nil {
+		if err := w.recovery.EnsurePublication(ctx, notification); err != nil {
+			return err
+		}
+	}
+	_, err := w.service.CreateLifecycle(ctx, notification, title, content)
+	return err
+}
+
+func (w *MessageWriter) WriteReviewNotification(
+	ctx context.Context,
+	notification applicationreview.ReviewNotificationDelivery,
+) error {
+	if notification.MessageType == domainmessage.TypeVideoLifecycle {
+		return w.WriteLifecycleNotification(
+			ctx,
+			domainmessage.LifecycleNotification{
+				EventID: notification.EventID, RecipientID: notification.RecipientID,
+				VideoID: notification.VideoID, ReviewVersion: notification.ReviewVersion,
+				Stage: notification.Stage, Result: notification.Result,
+				ReasonCode: notification.ReasonCode, OccurredAt: notification.OccurredAt,
+			},
+			notification.Title,
+			notification.Content,
+		)
+	}
+	_, err := w.service.CreateFromEvent(
+		ctx, notification.RecipientID, domainmessage.TypeSystem,
+		notification.Title, notification.Content,
+		notification.EventID, notification.EventID,
 	)
 	return err
 }

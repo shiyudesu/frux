@@ -55,6 +55,9 @@ func (r *managementMemoryRepo) QueryCreatorVideos(_ context.Context, filter doma
 		if video.AuthorID != filter.AuthorID || video.Status == domainvideo.StatusDeleted {
 			continue
 		}
+		if filter.VideoID > 0 && video.ID != filter.VideoID {
+			continue
+		}
 		if filter.Visibility != "" && video.Visibility != filter.Visibility {
 			continue
 		}
@@ -310,6 +313,15 @@ func TestCreatorManagementAPIFlow(t *testing.T) {
 	decodeJSON(t, query, &queryPayload)
 	if len(queryPayload.Items) != 1 || queryPayload.Items[0].ID != 2 {
 		t.Fatalf("unexpected private query: %s", query.Body.String())
+	}
+	targetQuery := performJSONRequest(
+		router, http.MethodPost, "/api/users/me/video-queries",
+		`{"video_id":2,"visibility":"private","limit":1}`, token,
+	)
+	requireStatus(t, targetQuery, http.StatusOK)
+	decodeJSON(t, targetQuery, &queryPayload)
+	if len(queryPayload.Items) != 1 || queryPayload.Items[0].ID != 2 {
+		t.Fatalf("unexpected target query: %s", targetQuery.Body.String())
 	}
 	pendingQuery := performJSONRequest(
 		router,

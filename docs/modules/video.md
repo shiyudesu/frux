@@ -118,6 +118,12 @@
 
 以 `(user_id, idempotency_key)` 唯一，保存规范化请求指纹、动作、排序后的视频 ID JSON、结果 JSON和创建时间。
 
+### 3.8 `video_notification_outbox`
+
+保存视频模块拥有的结构化生命周期事实：提交审核、媒体终态失败、首次公开、下架和恢复。`event_id` 唯一，载荷包含 recipient、video、review version、stage、result、safe reason 和业务发生时间。Worker 通过 30 秒数据库租约、`FOR UPDATE SKIP LOCKED`、有界指数退避和 terminal 状态投递。
+
+首次发布事实使用两阶段 `delivery_ready`：业务事务先写 Outbox；生产媒体提升、稳定 RabbitMQ 发布事件和恢复副作用完成后才置为可投递。API 与 Worker 可并发运行投递器，数据库租约保证不会重复创建消息。
+
 ## 4. 业务规则
 
 | 规则 | 说明 |
@@ -140,6 +146,10 @@
 | 公开视频可读 | 视频详情、公开作者作品、Feed、推荐、预加载和公开合集只返回 `status=2 AND visibility=public AND media_status IN (legacy_ready, ready)` |
 | 生产上传 | Web 创建上传会话后直传 S3 兼容存储，完成接口严格校验 owner、对象键、大小、类型、SHA-256 和过期时间；本地模式继续使用 `/api/uploads` |
 | 双门门禁 | 审核通过和 H.264/AAC faststart 基线就绪相互独立；两者同时满足前只对作者展示真实处理/审核状态 |
+| 生命周期通知 | 创建提交事实；审核拒绝/批准、终态媒体失败、首次公开、下架和恢复各使用稳定 event ID；瞬时上传进度、处理重试和转人工审核不写消息中心 |
+| 首次发布唯一性 | 同一 `video_id + review_version` 最多一个 `video-published` 事实；审核、媒体 ready、可见性、恢复和 reconciliation 共享该身份 |
+| 发布恢复 | 未 ready 的发布事实由 `PublicationRecoveryService` 幂等完成媒体提升和发布事件；删除或 review version 已推进的事实转 terminal |
+| 历史兼容 | 只有存在同版本 submission/publication 跟踪标记的迁移后视频才补首次发布事实，既有历史公开视频不会被合成通知 |
 | 兼容与增量响应 | `media_url`、`cover_url` 继续投影可播放基线和封面；新客户端可读取有序 `playback_sources` |
 | 延迟清理 | 删除视频立即移除公开发现，并为原始对象、封面和所有变体创建延迟清理任务 |
 | 旧列表兼容 | `/users/me/videos` 与 `/users/{userId}/videos` 保留 offset 响应 |
@@ -182,6 +192,8 @@
 | 直传对象不匹配 | owner、对象键、大小、类型或校验和不匹配时返回冲突且不创建资产 |
 | 视频仍在处理 | 作者列表返回 `media_status=processing`，公共详情、Feed、推荐和预加载均不返回 |
 | 基线完成 | `media_url` 投影到基线，`playback_sources` 按基线、MP4 清晰度、DASH manifest 稳定排序 |
+| 首次发布投递失败 | 视频事实保持提交；Outbox 重试且同一 event 不重复创建消息 |
+| 发布副作用中断 | 未 ready 的 publication 事实由 API/Worker 恢复后再投递，不提前声称视频已公开 |
 | 删除生产视频 | 公开发现立即消失，物理对象在安全延迟后由 Worker 清理 |
 
 ## 6. 前端接入点
@@ -191,6 +203,7 @@
 | 发布页 | 生产模式使用预签名直传和独立视频/封面进度，本地模式保留 multipart 回退 |
 | Feed/详情 | 展示已发布公开视频 |
 | 个人主页作品 Tab | “公开作品”按公开可见性查询并展示处理中、审核中、未通过、已发布和已下架标签；“私密作品”对应私密可见性 |
+| 消息中心目标 | 已发布/恢复且当前可读时进入详情；其他生命周期状态进入作品页并按认证 `video_id` 跨公开/私密定位 |
 | 个人主页合集 Tab | 创建、编辑、删除合集并管理成员；编辑器独立搜索和游标加载全部公开/私密候选作品 |
 | 公开主页 | 展示已发布公开作品和公开合集 |
 | Admin Shell | 按 typed 筛选查询视频；下架/恢复弹窗携带原因、备注、确认和当前 version，只在服务端确认审计提交后报告成功 |

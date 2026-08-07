@@ -74,6 +74,7 @@ func AutoMigrate(db *gorm.DB) error {
 			&infravideo.BatchOperationModel{},
 			&infravideo.EnforcementActionModel{},
 			&infravideo.AdminTransitionIntentModel{},
+			&infravideo.NotificationOutboxModel{},
 			&infrafeed.InboxModel{},
 			&infragovernance.RevisionModel{},
 			&infragovernance.ActiveModel{},

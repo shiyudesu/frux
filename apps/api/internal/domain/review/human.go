@@ -426,17 +426,22 @@ type HumanDecisionResult struct {
 }
 
 type ReviewNotification struct {
-	EventID     string
-	RecipientID int64
-	VideoID     int64
-	Outcome     string
-	State       string
-	Attempts    int
-	AvailableAt time.Time
-	LeaseOwner  string
-	LeaseUntil  *time.Time
-	LastError   string
-	DeliveredAt *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	EventID       string
+	RecipientID   int64
+	VideoID       int64
+	Outcome       string
+	ReviewVersion int
+	Stage         string
+	Result        string
+	ReasonCode    string
+	OccurredAt    time.Time
+	State         string
+	Attempts      int
+	AvailableAt   time.Time
+	LeaseOwner    string
+	LeaseUntil    *time.Time
+	LastError     string
+	DeliveredAt   *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }

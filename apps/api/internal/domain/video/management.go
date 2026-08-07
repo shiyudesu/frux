@@ -27,6 +27,7 @@ type CreatorVideoCursor struct {
 
 type CreatorVideoFilter struct {
 	AuthorID    int64
+	VideoID     int64
 	Visibility  string
 	Statuses    []int
 	Query       string

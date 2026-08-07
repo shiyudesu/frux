@@ -10,12 +10,17 @@ type MessageModel struct {
 	Title   string `gorm:"column:title;size:128;not null"`
 	Content string `gorm:"column:content;size:1024;not null"`
 	// Actor 字段保存触发消息的用户展示信息，消息列表可直接展示头像和昵称。
-	ActorID        int64  `gorm:"column:actor_id;not null;default:0"`
-	ActorNickname  string `gorm:"column:actor_nickname;size:128"`
-	ActorAvatarURL string `gorm:"column:actor_avatar_url;size:512"`
-	VideoID        *int64 `gorm:"column:video_id"`
-	CommentID      *int64 `gorm:"column:comment_id"`
-	RootCommentID  *int64 `gorm:"column:root_comment_id"`
+	ActorID             int64      `gorm:"column:actor_id;not null;default:0"`
+	ActorNickname       string     `gorm:"column:actor_nickname;size:128"`
+	ActorAvatarURL      string     `gorm:"column:actor_avatar_url;size:512"`
+	VideoID             *int64     `gorm:"column:video_id"`
+	CommentID           *int64     `gorm:"column:comment_id"`
+	RootCommentID       *int64     `gorm:"column:root_comment_id"`
+	LifecycleStage      string     `gorm:"column:lifecycle_stage;size:32;not null;default:''"`
+	LifecycleResult     string     `gorm:"column:lifecycle_result;size:32;not null;default:''"`
+	ReasonCode          string     `gorm:"column:reason_code;size:64;not null;default:''"`
+	ReviewVersion       int        `gorm:"column:review_version;not null;default:0"`
+	LifecycleOccurredAt *time.Time `gorm:"column:lifecycle_occurred_at"`
 	// EventID 与 UserID 组成唯一索引，用于内部事件重复消费的幂等写入。
 	EventID *string `gorm:"column:event_id;size:64;uniqueIndex:uk_user_message_user_event,priority:2"`
 	// IdempotencyKey 与 UserID 组成唯一索引，用于内部接口重复请求的幂等写入。

@@ -17,6 +17,7 @@ import (
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
@@ -93,6 +94,17 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if video.Status != domainvideo.StatusPublished || video.PublishedAt == nil {
 			t.Fatalf("video outcome = %#v", video)
 		}
+		assertReviewNotification(
+			t, db, domainmessage.PublicationEventID(101, 1),
+			domainmessage.LifecycleStagePublished, domainmessage.LifecycleResultPublic,
+		)
+		var publicationReady bool
+		if err := db.Model(&infravideo.NotificationOutboxModel{}).
+			Select("delivery_ready").
+			Where("event_id = ?", domainmessage.PublicationEventID(101, 1)).
+			Scan(&publicationReady).Error; err != nil || publicationReady {
+			t.Fatalf("legacy publication ready=%v err=%v", publicationReady, err)
+		}
 	})
 
 	t.Run("disabled policy blocks new result", func(t *testing.T) {
@@ -115,6 +127,80 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		assertReviewCounts(t, db, 0, 0, 0)
 	})
 
+	t.Run("approval before media readiness is notified without publication", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "approval_before_media")
+		insertReviewVideo(t, db, 106, 1)
+		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 106).
+			Update("media_status", domainmedia.MediaStatusProcessing).Error; err != nil {
+			t.Fatal(err)
+		}
+		setReviewPolicy(t, db, domainreview.PolicyConfiguration{
+			DefaultOutcome: domainreview.OutcomeApprove,
+			Rules:          []domainreview.LabelRule{{Label: domainreview.LabelSafe}},
+		})
+
+		t.Run("production approval creates a pending publication readiness marker", func(t *testing.T) {
+			db := openReviewPostgres(t, dsn, "production_approval_marker")
+			insertReviewVideo(t, db, 109, 1)
+			if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 109).
+				Update("media_asset_id", 9001).Error; err != nil {
+				t.Fatal(err)
+			}
+			setReviewPolicy(t, db, domainreview.PolicyConfiguration{
+				DefaultOutcome: domainreview.OutcomeApprove,
+				Rules:          []domainreview.LabelRule{{Label: domainreview.LabelSafe}},
+			})
+			repo := New(db)
+			reviewCase, _, err := repo.CreateOrGetCase(context.Background(), 109)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.ProcessMachineResult(
+				context.Background(),
+				newPostgresMachineResult(t, reviewCase, "production-approve", []domainreview.MachineSignal{{
+					Label: domainreview.LabelSafe, Confidence: 0.99,
+				}}),
+			); err != nil {
+				t.Fatal(err)
+			}
+			var marker infravideo.NotificationOutboxModel
+			if err := db.Where(
+				"event_id = ?", domainmessage.PublicationEventID(109, 1),
+			).Take(&marker).Error; err != nil {
+				t.Fatal(err)
+			}
+			if marker.DeliveryReady {
+				t.Fatal("review transaction marked production media publication ready")
+			}
+		})
+		repo := New(db)
+		reviewCase, created, err := repo.CreateOrGetCase(context.Background(), 106)
+		if err != nil || !created {
+			t.Fatalf("intake=%#v created=%v err=%v", reviewCase, created, err)
+		}
+		processed, err := repo.ProcessMachineResult(
+			context.Background(),
+			newPostgresMachineResult(t, reviewCase, "processing-approve", []domainreview.MachineSignal{{
+				Label: domainreview.LabelSafe, Confidence: 0.99,
+			}}),
+		)
+		if err != nil || processed.Decision.Outcome != domainreview.OutcomeApprove {
+			t.Fatalf("approval=%#v err=%v", processed, err)
+		}
+		assertReviewNotification(
+			t, db, domainmessage.ReviewEventID(
+				106, 1, domainmessage.LifecycleResultApproved,
+			),
+			domainmessage.LifecycleStageReview, domainmessage.LifecycleResultApproved,
+		)
+		var published int64
+		if err := db.Model(&NotificationOutboxModel{}).
+			Where("event_id = ?", domainmessage.PublicationEventID(106, 1)).
+			Count(&published).Error; err != nil || published != 0 {
+			t.Fatalf("premature publication count=%d err=%v", published, err)
+		}
+	})
+
 	t.Run("same identity different payload conflicts", func(t *testing.T) {
 		db := openReviewPostgres(t, dsn, "identity_conflict")
 		insertReviewVideo(t, db, 102, 1)
@@ -132,6 +218,83 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 			t.Fatalf("identity conflict error = %v", err)
 		}
 		assertReviewCounts(t, db, 1, 1, 1)
+	})
+
+	t.Run("unregistered automated reject reason falls back safely", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "safe_reject_reason")
+		insertReviewVideo(t, db, 108, 1)
+		reject := 0.5
+		setReviewPolicy(t, db, domainreview.PolicyConfiguration{
+			DefaultOutcome: domainreview.OutcomeHuman,
+			Rules: []domainreview.LabelRule{{
+				Label: domainreview.LabelSafe, RejectThreshold: &reject,
+			}},
+		})
+		repo := New(db)
+		reviewCase, _, err := repo.CreateOrGetCase(context.Background(), 108)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.ProcessMachineResult(
+			context.Background(),
+			newPostgresMachineResult(t, reviewCase, "safe-reject", []domainreview.MachineSignal{{
+				Label: domainreview.LabelSafe, Confidence: 0.9,
+			}}),
+		); err != nil {
+			t.Fatal(err)
+		}
+		var notification NotificationOutboxModel
+		if err := db.Where(
+			"event_id = ?",
+			domainmessage.ReviewEventID(108, 1, domainmessage.LifecycleResultRejected),
+		).Take(&notification).Error; err != nil {
+			t.Fatal(err)
+		}
+		if notification.ReasonCode != domainreview.ReasonRejectOther {
+			t.Fatalf("reason code = %q", notification.ReasonCode)
+		}
+	})
+
+	t.Run("automated outcome rolls back when notification outbox fails", func(t *testing.T) {
+		db := openReviewPostgres(t, dsn, "notification_rollback")
+		insertReviewVideo(t, db, 107, 1)
+		setReviewPolicy(t, db, domainreview.PolicyConfiguration{
+			DefaultOutcome: domainreview.OutcomeApprove,
+			Rules:          []domainreview.LabelRule{{Label: domainreview.LabelSafe}},
+		})
+		repo := New(db)
+		reviewCase, _, err := repo.CreateOrGetCase(context.Background(), 107)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Exec(`
+			ALTER TABLE review_notification_outbox
+			ADD CONSTRAINT reject_published_notification CHECK (stage <> 'published')
+		`).Error; err != nil {
+			t.Fatal(err)
+		}
+		_, err = repo.ProcessMachineResult(
+			context.Background(),
+			newPostgresMachineResult(t, reviewCase, "notification-rollback", []domainreview.MachineSignal{{
+				Label: domainreview.LabelSafe, Confidence: 0.99,
+			}}),
+		)
+		if err == nil {
+			t.Fatal("expected notification insertion failure")
+		}
+		var video infravideo.VideoModel
+		if err := db.Where("id = ?", 107).Take(&video).Error; err != nil {
+			t.Fatal(err)
+		}
+		if video.Status != domainvideo.StatusPendingReview || video.PublishedAt != nil {
+			t.Fatalf("video changed despite notification rollback: %#v", video)
+		}
+		assertReviewCounts(t, db, 0, 0, 0)
+		var notifications int64
+		if err := db.Model(&NotificationOutboxModel{}).Count(&notifications).Error; err != nil ||
+			notifications != 0 {
+			t.Fatalf("notification count=%d err=%v", notifications, err)
+		}
 	})
 
 	t.Run("stale version rolls back evidence", func(t *testing.T) {
@@ -180,6 +343,12 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if video.Status != domainvideo.StatusRejected || video.PublishedAt != nil {
 			t.Fatalf("rejected video = %#v", video)
 		}
+		assertReviewNotification(
+			t, db, domainmessage.ReviewEventID(
+				104, 1, domainmessage.LifecycleResultRejected,
+			),
+			domainmessage.LifecycleStageReview, domainmessage.LifecycleResultRejected,
+		)
 		assertReviewCounts(t, db, 1, 1, 1)
 	})
 
@@ -542,6 +711,10 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if err != nil || committed.Duplicate || committed.Case.Status != domainreview.CaseStatusApproved {
 			t.Fatalf("committed decision = %#v err=%v", committed, err)
 		}
+		assertReviewNotification(
+			t, db, domainmessage.PublicationEventID(301, 1),
+			domainmessage.LifecycleStagePublished, domainmessage.LifecycleResultPublic,
+		)
 		recent, err := repo.ListHumanRecent(context.Background(), domainreview.HumanQueueFilter{
 			Scope: domainreview.HumanQueueScopeRecent, ReviewerID: 7,
 			MinPriority: 0, MaxPriority: 100, Limit: 10,
@@ -660,6 +833,7 @@ func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
 	}
 	if err := db.AutoMigrate(
 		&infravideo.VideoModel{}, &infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
+		&infravideo.NotificationOutboxModel{},
 		&CaseModel{}, &ResultModel{}, &SignalModel{}, &DecisionModel{}, &PolicyModel{},
 		&AssignmentModel{}, &HumanDecisionModel{}, &HumanDecisionIdempotencyModel{},
 		&NotificationOutboxModel{}, &infraadminaudit.EventModel{},
@@ -797,6 +971,23 @@ func assertReviewCounts(t *testing.T, db *gorm.DB, results, signals, decisions i
 		if got != item.want {
 			t.Fatalf("count for %T = %d, want %d", item.model, got, item.want)
 		}
+	}
+}
+
+func assertReviewNotification(
+	t *testing.T,
+	db *gorm.DB,
+	eventID string,
+	stage string,
+	result string,
+) {
+	t.Helper()
+	var model NotificationOutboxModel
+	if err := db.Where("event_id = ?", eventID).Take(&model).Error; err != nil {
+		t.Fatalf("load review notification %q: %v", eventID, err)
+	}
+	if model.Stage != stage || model.Result != result {
+		t.Fatalf("review notification = %#v", model)
 	}
 }
 

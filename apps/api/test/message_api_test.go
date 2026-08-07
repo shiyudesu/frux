@@ -22,21 +22,26 @@ import (
 const testInternalToken = "test-internal-token"
 
 type messageAPIResponse struct {
-	ID             int64      `json:"id"`
-	UserID         int64      `json:"user_id"`
-	Type           string     `json:"type"`
-	Title          string     `json:"title"`
-	Content        string     `json:"content"`
-	EventID        string     `json:"event_id"`
-	ActorID        int64      `json:"actor_id"`
-	ActorNickname  string     `json:"actor_nickname"`
-	ActorAvatarURL string     `json:"actor_avatar_url"`
-	VideoID        int64      `json:"video_id"`
-	CommentID      int64      `json:"comment_id"`
-	RootCommentID  int64      `json:"root_comment_id"`
-	IsRead         bool       `json:"is_read"`
-	CreatedAt      time.Time  `json:"created_at"`
-	ReadAt         *time.Time `json:"read_at"`
+	ID                  int64      `json:"id"`
+	UserID              int64      `json:"user_id"`
+	Type                string     `json:"type"`
+	Title               string     `json:"title"`
+	Content             string     `json:"content"`
+	EventID             string     `json:"event_id"`
+	ActorID             int64      `json:"actor_id"`
+	ActorNickname       string     `json:"actor_nickname"`
+	ActorAvatarURL      string     `json:"actor_avatar_url"`
+	VideoID             int64      `json:"video_id"`
+	CommentID           int64      `json:"comment_id"`
+	RootCommentID       int64      `json:"root_comment_id"`
+	LifecycleStage      string     `json:"lifecycle_stage"`
+	LifecycleResult     string     `json:"lifecycle_result"`
+	ReasonCode          string     `json:"reason_code"`
+	ReviewVersion       int        `json:"review_version"`
+	LifecycleOccurredAt *time.Time `json:"lifecycle_occurred_at"`
+	IsRead              bool       `json:"is_read"`
+	CreatedAt           time.Time  `json:"created_at"`
+	ReadAt              *time.Time `json:"read_at"`
 }
 
 type messageListAPIResponse struct {
@@ -341,8 +346,46 @@ func TestMessageAPIValidation(t *testing.T) {
 	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":0,"type":"system","title":"x","content":"x"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidUserID.Error())
 	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"","content":"x"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrEmptyTitle.Error())
 	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"comment","title":"x","content":"x","event_id":"comment-without-target"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidMessageTarget.Error())
+	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"video_lifecycle","title":"x","content":"x","event_id":"bad-lifecycle","video_id":9,"review_version":1,"occurred_at":"2026-08-07T00:00:00Z","lifecycle_stage":"published","lifecycle_result":"failed"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidLifecycle.Error())
+	assertAPIError(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"video_lifecycle","title":"x","content":"x","video_id":9,"review_version":1,"occurred_at":"2026-08-07T00:00:00Z","lifecycle_stage":"published","lifecycle_result":"public"}`, testInternalToken, ""), http.StatusBadRequest, interfaceshttpapierror.CodeMessageValidationFailed, domainmessage.ErrInvalidLifecycle.Error())
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"x","content":"x"}`, "", ""), http.StatusUnauthorized)
 	requireStatus(t, performInternalMessageRequest(router, http.MethodPost, "/internal/messages", `{"user_id":42,"type":"system","title":"x","content":"x"}`, "wrong-token", ""), http.StatusUnauthorized)
+}
+
+func TestLifecycleMessageAPIIsStructuredAndIdempotent(t *testing.T) {
+	router, jwtManager := newMessageRouter(t)
+	token := signTestToken(t, jwtManager, 42)
+	body := `{"user_id":42,"type":"video_lifecycle","title":"视频已发布","content":"你的视频已发布","event_id":"video-published:9:1","video_id":9,"review_version":1,"occurred_at":"2026-08-07T00:00:00Z","lifecycle_stage":"published","lifecycle_result":"public","reason_code":""}`
+	created := performInternalMessageRequest(
+		router, http.MethodPost, "/internal/messages", body,
+		testInternalToken, "video-published:9:1",
+	)
+	requireStatus(t, created, http.StatusCreated)
+	var message messageAPIResponse
+	decodeJSON(t, created, &message)
+	if message.Type != domainmessage.TypeVideoLifecycle || message.VideoID != 9 ||
+		message.ReviewVersion != 1 || message.LifecycleOccurredAt == nil ||
+		message.LifecycleStage != domainmessage.LifecycleStagePublished ||
+		message.LifecycleResult != domainmessage.LifecycleResultPublic {
+		t.Fatalf("lifecycle response = %#v", message)
+	}
+	replayed := performInternalMessageRequest(
+		router, http.MethodPost, "/internal/messages", body,
+		testInternalToken, "video-published:9:1",
+	)
+	requireStatus(t, replayed, http.StatusOK)
+	var replay messageAPIResponse
+	decodeJSON(t, replayed, &replay)
+	if replay.ID != message.ID {
+		t.Fatalf("replay = %#v want id=%d", replay, message.ID)
+	}
+	list := performJSONRequest(router, http.MethodGet, "/api/messages?limit=20", "", token)
+	requireStatus(t, list, http.StatusOK)
+	var page messageListAPIResponse
+	decodeJSON(t, list, &page)
+	if len(page.Items) != 1 || page.Items[0].LifecycleStage != domainmessage.LifecycleStagePublished {
+		t.Fatalf("lifecycle page = %#v", page)
+	}
 }
 
 func newMessageRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {
