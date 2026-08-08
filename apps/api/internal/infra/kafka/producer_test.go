@@ -58,7 +58,7 @@ func TestPublisherClassifiesFailureCancellationAndUncertainty(t *testing.T) {
 	}{
 		{name: "broker error", ctx: context.Background, fake: &fakeSyncProducer{
 			results: kgo.ProduceResults{{Err: errors.New("broker rejected")}},
-		}, want: ErrProduceFailed},
+		}, want: ErrProduceUncertain},
 		{name: "missing result", ctx: context.Background, fake: &fakeSyncProducer{
 			results: kgo.ProduceResults{},
 		}, want: ErrProduceUncertain},

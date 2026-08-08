@@ -10,7 +10,6 @@ import (
 )
 
 var (
-	ErrProduceFailed    = errors.New("kafka produce failed")
 	ErrProduceUncertain = errors.New("kafka produce result uncertain")
 	ErrProduceCanceled  = errors.New("kafka produce canceled")
 )
@@ -86,16 +85,18 @@ func (p *Publisher) Publish(
 	result := results[0]
 	if result.Err != nil {
 		switch {
-		case errors.Is(result.Err, context.Canceled):
-			resultLabel = "canceled"
-			return ProduceMetadata{}, fmt.Errorf("%w: canceled", ErrProduceCanceled)
-		case errors.Is(result.Err, context.DeadlineExceeded) ||
+		case errors.Is(result.Err, context.Canceled),
+			errors.Is(result.Err, context.DeadlineExceeded),
 			errors.Is(produceContext.Err(), context.DeadlineExceeded):
 			resultLabel = "uncertain"
-			return ProduceMetadata{}, fmt.Errorf("%w: deadline", ErrProduceUncertain)
+			return ProduceMetadata{}, fmt.Errorf("%w: canceled or deadline", ErrProduceUncertain)
 		default:
-			resultLabel = "failed"
-			return ProduceMetadata{}, fmt.Errorf("%w: %s", ErrProduceFailed, sanitizeKafkaError(result.Err))
+			resultLabel = "uncertain"
+			return ProduceMetadata{}, fmt.Errorf(
+				"%w: %s",
+				ErrProduceUncertain,
+				sanitizeKafkaError(result.Err),
+			)
 		}
 	}
 	resultLabel = "acknowledged"

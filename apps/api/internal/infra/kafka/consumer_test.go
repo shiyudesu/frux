@@ -73,10 +73,11 @@ func (f *fakeConsumerSource) AllowRebalance() {
 	f.mu.Unlock()
 }
 
-func (f *fakeConsumerSource) Close() {
+func (f *fakeConsumerSource) Close(context.Context) error {
 	f.mu.Lock()
 	f.closed = true
 	f.mu.Unlock()
+	return nil
 }
 
 type handlerFunc func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error)
@@ -488,6 +489,7 @@ func testConsumer(source consumerSource, handler applicationeventstream.Handler)
 		groupName: "frux.platform.backbone_probe.active.v1",
 		handler:   handler, maxPollRecords: 100, concurrency: 2,
 		drainTimeout: 50 * time.Millisecond, commitTimeout: time.Second,
+		closeTimeout: time.Second,
 	}
 }
 

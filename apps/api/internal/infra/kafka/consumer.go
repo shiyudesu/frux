@@ -38,7 +38,7 @@ type consumerSource interface {
 	Commit(ctx context.Context, records []brokerRecord) error
 	Lag(ctx context.Context, groupName string) (int64, error)
 	AllowRebalance()
-	Close()
+	Close(ctx context.Context) error
 }
 
 type franzConsumerSource struct {
@@ -66,6 +66,7 @@ type Consumer struct {
 	concurrency    int
 	drainTimeout   time.Duration
 	commitTimeout  time.Duration
+	closeTimeout   time.Duration
 	observer       ConsumerObserver
 	lagSampleEvery time.Duration
 	lastLagSample  time.Time
@@ -116,6 +117,10 @@ func NewConsumer(
 		return nil, err
 	}
 	commitTimeout, err := time.ParseDuration(cfg.Timeouts.Request)
+	if err != nil {
+		return nil, err
+	}
+	closeTimeout, err := time.ParseDuration(cfg.Timeouts.Shutdown)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +181,8 @@ func NewConsumer(
 		maxPollRecords: cfg.Consumer.MaxPollRecords,
 		concurrency:    cfg.Consumer.PartitionConcurrency,
 		drainTimeout:   drainTimeout, commitTimeout: commitTimeout,
-		observer: observer, lagSampleEvery: 15 * time.Second,
+		closeTimeout: closeTimeout,
+		observer:     observer, lagSampleEvery: 15 * time.Second,
 		rebalance: rebalanceRequested,
 	}, nil
 }
@@ -185,7 +191,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 	if c == nil || c.source == nil || c.handler == nil {
 		return ErrConsumerSession
 	}
-	defer c.source.Close()
+	defer func() {
+		closeContext, cancel := context.WithTimeout(context.Background(), c.closeTimeout)
+		_ = c.source.Close(closeContext)
+		cancel()
+	}()
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -227,6 +237,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 		if processErr != nil {
 			c.sampleLag(ctx, true)
 			if errors.Is(processErr, ErrShutdownDeadline) {
+				return processErr
+			}
+			if errors.Is(processErr, ErrRebalanceDrain) {
 				return processErr
 			}
 			return fmt.Errorf("%w: handler", ErrConsumerSession)
@@ -544,8 +557,27 @@ func (s *franzConsumerSource) AllowRebalance() {
 	s.client.AllowRebalance()
 }
 
-func (s *franzConsumerSource) Close() {
-	s.client.CloseAllowingRebalance()
+func (s *franzConsumerSource) Close(ctx context.Context) error {
+	if s == nil || s.client == nil {
+		return nil
+	}
+	s.client.AllowRebalance()
+	leaveErr := s.client.LeaveGroupContext(ctx)
+	if leaveErr != nil {
+		_ = s.client.LeaveGroupContext(nil)
+	}
+	closed := make(chan struct{})
+	go func() {
+		s.client.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		return leaveErr
+	case <-ctx.Done():
+		_ = s.client.LeaveGroupContext(nil)
+		return ctx.Err()
+	}
 }
 
 func groupAllowed(topic TopicSpec, group ConsumerGroupID) bool {
@@ -588,12 +620,26 @@ func (s Supervisor) Run(ctx context.Context) error {
 		maxBackoff = 30 * time.Second
 	}
 	for {
+		sessionStarted := time.Now()
 		consumer, err := s.NewConsumer(ctx)
 		if err == nil {
 			err = consumer.Run(ctx)
 		}
 		if ctx.Err() != nil {
 			return nil
+		}
+		if errors.Is(err, ErrRebalanceDrain) {
+			backoff = s.MinBackoff
+			if backoff <= 0 {
+				backoff = 100 * time.Millisecond
+			}
+			continue
+		}
+		if time.Since(sessionStarted) >= maxBackoff {
+			backoff = s.MinBackoff
+			if backoff <= 0 {
+				backoff = 100 * time.Millisecond
+			}
 		}
 		timer := time.NewTimer(backoff)
 		select {

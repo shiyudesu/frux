@@ -79,7 +79,7 @@ Alternative: rely on Kafka broker auto-creation. Rejected because accidental top
 
 ### Use idempotent acknowledged production without Kafka transactions
 
-Producers use `acks=all`, idempotence, bounded request timeouts, bounded retries inside the client, explicit in-flight cancellation, and per-record result inspection. In-flight cancellation can make the broker result uncertain and can permit a later application retry to duplicate the record, so the publisher returns `uncertain` and every event retains its stable application identity. The Application caller receives success only after Kafka acknowledges the record.
+Producers use `acks=all`, idempotence, bounded request timeouts, bounded retries inside the client, explicit in-flight cancellation, and per-record result inspection. After a record enters franz-go, every cancellation, deadline, retry-exhaustion, or broker error is treated as `uncertain` because the broker may already have stored it; every event therefore retains its stable application identity. The Application caller receives success only after Kafka acknowledges the record.
 
 Kafka transactions are not introduced in the foundation. Most Frux handlers also write PostgreSQL, Redis, or object storage, so Kafka-only exactly-once transactions would not make the end-to-end workflow exactly once and would add fencing and transactional-ID operations.
 
