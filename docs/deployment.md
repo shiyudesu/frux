@@ -2,7 +2,10 @@
 
 ## Compose
 
-`apps/docker-compose.yml` 提供 PostgreSQL、Redis、RabbitMQ、MinIO、API、Worker、Web、Prometheus 和 Grafana。MinIO 地址：
+`apps/docker-compose.yml` 提供 PostgreSQL、Redis、RabbitMQ、单节点 KRaft Kafka、MinIO、API、
+Worker、Web、Prometheus 和 Grafana。Kafka 容器内 Listener 为 `kafka:9092`，宿主机测试 Listener
+为 `127.0.0.1:29092`；`kafka_data` 卷保存日志。单节点、副本 1 和明文 Listener 仅用于本地开发。
+MinIO 地址：
 
 | 服务 | 地址 |
 | --- | --- |
@@ -37,6 +40,23 @@ RabbitMQ 死信恢复要求 RabbitMQ 3.13+ Management 镜像，并配置 `rabbit
 服务端 Management 凭据、timeout 和 `rabbitmq.dead_letter`。生产凭据必须由 Secret 注入，
 不得使用 Compose 的本地 guest 配置。Quorum Source/DLQ 需要足够磁盘和节点副本；容量上限、
 Delivery Limit 和 Replay timeout 必须在发布前压测。
+
+## Kafka 生产要求
+
+生产环境必须关闭 Broker auto topic creation，并由平台按代码注册表预建 Topic。Frux 在
+`environment=production` 只验证、不修改 Topic，且要求：
+
+- 至少 3 个 Broker，并为 Controller quorum 提供独立故障域；业务 Topic replication factor
+  至少 3，`min.insync.replicas` 至少 2。
+- Producer 保持 idempotence 与 `acks=all`；Broker/ACL 必须允许幂等写，不能通过降低 Ack 绕过。
+- 客户端使用 TLS 1.2+；生产通常同时启用 SASL/SCRAM（SHA-256 或 SHA-512）或平台批准的认证，
+  凭据和 CA/client key 由 Secret 挂载，不能写入 YAML 或日志。
+- Topic 的 partition 下限、`cleanup.policy`、`retention.ms`、`max.message.bytes` 和
+  `min.insync.replicas` 与代码注册表一致。Retention 变更需要兼容性评审，不能依赖 Broker 默认值。
+- 网络策略只开放 Broker Listener；Controller Listener 不暴露给 API/Worker。滚动升级前验证 ISR
+  和 under-replicated partition 为零。
+
+完整配置字段、迁移模式和验证命令见 [Kafka event backbone](kafka.md)。
 
 ## 生产审核推理网关
 

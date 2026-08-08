@@ -28,6 +28,7 @@ import (
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
+	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	inframoderation "github.com/shiyudesu/frux/internal/infra/moderation"
@@ -62,6 +63,17 @@ func main() {
 	if cfg.Redis.Addr == "" {
 		log.Fatal("redis addr is required for worker")
 	}
+	kafkaBackbone, err := infrakafka.Start(
+		context.Background(), cfg.Kafka, inframetrics.KafkaObserver{}, inframetrics.KafkaObserver{},
+	)
+	if err != nil {
+		log.Fatalf("init kafka backbone failed: %v", err)
+	}
+	defer func() {
+		if err := kafkaBackbone.Close(context.Background()); err != nil {
+			log.Printf("close kafka backbone failed: %v", err)
+		}
+	}()
 
 	sqlDB, err := infradatabase.New(cfg.Database)
 	if err != nil {

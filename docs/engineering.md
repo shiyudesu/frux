@@ -9,7 +9,7 @@
 | API | Go、Hertz、GORM |
 | 数据库 | PostgreSQL |
 | 缓存 | Redis |
-| 消息队列 | RabbitMQ |
+| 消息队列 / 事件流 | RabbitMQ、Apache Kafka（KRaft） |
 | 鉴权 | JWT |
 | Web | React、Vite |
 | 规格驱动 | OpenSpec |
@@ -163,6 +163,7 @@ internal/infra/database/
 internal/infra/httphertz/
 internal/infra/cache/
 internal/infra/mq/
+internal/infra/kafka/
 internal/infra/jwt/
 internal/infra/persistence/{module}/
 internal/infra/persistence/migration/
@@ -186,6 +187,16 @@ GORM Repository 规则：
 - 在线实例可能并发写聚合时，reconciliation 不得绝对覆盖统计行；应基于同一语句快照计算“事实值 - 快照聚合值”差量，再叠加到获得行锁后的当前值。
 - 由业务模块拥有的 Transactional Outbox 与业务事实同事务提交。通用 Worker 模式为：有界批次、`FOR UPDATE SKIP LOCKED`、稳定 lease owner、租约超时、指数退避、terminal 分类、稳定 event ID 下游去重和受监督 shutdown；不得让 message 或 RabbitMQ 成为互动 HTTP 事务的提交前依赖。
 - RabbitMQ Consumer 必须在 Ack/Nack 前分类：格式错误、无效必填字段和 terminal domain error 使用 reject/no-requeue；基础设施错误才 requeue。受保护 Consumer 使用新名称 Quorum Queue、`x-delivery-limit`、`overflow=reject-publish` 和有界 DLQ；Queue Type 不得原地修改。所有新 Quorum Consumer（包括 `dual` 次 Consumer）必须使用独立受监督 Channel 和最大 30 秒的有界退避。关键流程使用 at-least-once dead-lettering，允许由数据库任务恢复的唤醒队列可使用 at-most-once DLX。
+- Kafka Topic、Producer、Consumer Group、Key Kind、Retention、Cleanup Policy 和迁移模式必须来自
+  `internal/infra/kafka` 封闭注册表。业务代码不得接受任意 Topic/Group 字符串；Domain 不导入
+  franz-go 类型。JSON Envelope 和 Payload 使用显式版本、严格未知字段/尾随数据校验及有界大小。
+- Kafka Producer 固定使用 idempotence、`acks=all`、有界 delivery deadline 和逐 Record 结果；
+  Application 不在不确定结果后自行无界重发。Consumer 禁用 auto commit，按 Partition 顺序和有界
+  并发处理，只在 durable-success 或注册 terminal 结果后显式提交 Offset；Commit 不确定必须结束
+  当前 Session，由稳定 Event ID 和耐久幂等边界承受重投。
+- Kafka 迁移只允许 registered primary/mirror Producer 与 active/shadow Consumer。Shadow Group
+  必须使用独立 Group ID，只做 Envelope、Key、Age 和可选 Parity 校验，不调用变更业务状态的
+  Handler。基础设施阶段所有业务流继续保持 RabbitMQ Producer/Consumer active。
 - Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
 - DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。

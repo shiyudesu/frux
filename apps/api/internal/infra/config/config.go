@@ -2,6 +2,7 @@ package infraconfig
 
 import (
 	"errors"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ var ErrInvalidGovernanceConfig = errors.New("invalid governance config")
 var ErrInvalidInternalToken = errors.New("invalid internal token")
 var ErrInvalidRateLimitConfig = errors.New("invalid rate limit config")
 var ErrInvalidRabbitMQConfig = errors.New("invalid rabbitmq config")
+var ErrInvalidKafkaConfig = errors.New("invalid kafka config")
 var ErrInvalidJWTConfig = errors.New("invalid jwt config")
 var ErrInvalidModerationConfig = errors.New("invalid moderation config")
 
@@ -65,6 +67,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	if err := normalizeAndValidateRateLimitConfig(&cfg.RateLimit); err != nil {
+		return nil, err
+	}
+	if err := normalizeAndValidateKafkaConfig(&cfg.Kafka); err != nil {
 		return nil, err
 	}
 
@@ -232,7 +237,207 @@ func ValidateAPIConfig(cfg *Config) error {
 	if err := normalizeAndValidateRateLimitConfig(&cfg.RateLimit); err != nil {
 		return err
 	}
-	return normalizeAndValidateRabbitMQConfig(&cfg.RabbitMQ)
+	if err := normalizeAndValidateRabbitMQConfig(&cfg.RabbitMQ); err != nil {
+		return err
+	}
+	return normalizeAndValidateKafkaConfig(&cfg.Kafka)
+}
+
+func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
+	if cfg == nil {
+		return ErrInvalidKafkaConfig
+	}
+	cfg.Environment = strings.ToLower(strings.TrimSpace(cfg.Environment))
+	if cfg.Environment == "" {
+		cfg.Environment = "local"
+	}
+	switch cfg.Environment {
+	case "local", "test", "staging", "production":
+	default:
+		return ErrInvalidKafkaConfig
+	}
+	cfg.ClientID = defaultValue(cfg.ClientID, "frux")
+	cfg.TopicPrefix = strings.TrimSpace(strings.TrimSuffix(cfg.TopicPrefix, "."))
+	if !validKafkaName(cfg.ClientID, 128) ||
+		(cfg.TopicPrefix != "" && !validKafkaName(cfg.TopicPrefix, 64)) {
+		return ErrInvalidKafkaConfig
+	}
+	if len(cfg.Brokers) > 16 {
+		return ErrInvalidKafkaConfig
+	}
+	seenBrokers := make(map[string]struct{}, len(cfg.Brokers))
+	for index, broker := range cfg.Brokers {
+		broker = strings.TrimSpace(broker)
+		if broker == "" || strings.ContainsAny(broker, "/?#") {
+			return ErrInvalidKafkaConfig
+		}
+		host, port, err := net.SplitHostPort(broker)
+		if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+			return ErrInvalidKafkaConfig
+		}
+		if _, duplicate := seenBrokers[broker]; duplicate {
+			return ErrInvalidKafkaConfig
+		}
+		seenBrokers[broker] = struct{}{}
+		cfg.Brokers[index] = broker
+	}
+	cfg.Authentication.Mechanism = strings.ToLower(strings.TrimSpace(cfg.Authentication.Mechanism))
+	if cfg.Authentication.Mechanism == "" {
+		cfg.Authentication.Mechanism = "none"
+	}
+	cfg.Authentication.Username = strings.TrimSpace(cfg.Authentication.Username)
+	switch cfg.Authentication.Mechanism {
+	case "none":
+		if cfg.Authentication.Username != "" || cfg.Authentication.Password != "" {
+			return ErrInvalidKafkaConfig
+		}
+	case "plain", "scram-sha-256", "scram-sha-512":
+		if cfg.Authentication.Username == "" || cfg.Authentication.Password == "" ||
+			len(cfg.Authentication.Username) > 256 || len(cfg.Authentication.Password) > 1024 {
+			return ErrInvalidKafkaConfig
+		}
+	default:
+		return ErrInvalidKafkaConfig
+	}
+	cfg.TLS.CAFile = strings.TrimSpace(cfg.TLS.CAFile)
+	cfg.TLS.CertificateFile = strings.TrimSpace(cfg.TLS.CertificateFile)
+	cfg.TLS.PrivateKeyFile = strings.TrimSpace(cfg.TLS.PrivateKeyFile)
+	cfg.TLS.ServerName = strings.TrimSpace(cfg.TLS.ServerName)
+	if cfg.TLS.InsecureSkipVerify && cfg.Environment != "local" && cfg.Environment != "test" {
+		return ErrInvalidKafkaConfig
+	}
+	if (cfg.TLS.CertificateFile == "") != (cfg.TLS.PrivateKeyFile == "") ||
+		(!cfg.TLS.Enabled && (cfg.TLS.CAFile != "" || cfg.TLS.CertificateFile != "" ||
+			cfg.TLS.PrivateKeyFile != "" || cfg.TLS.ServerName != "" || cfg.TLS.InsecureSkipVerify)) {
+		return ErrInvalidKafkaConfig
+	}
+	cfg.Timeouts.Dial = defaultDuration(cfg.Timeouts.Dial, "5s")
+	cfg.Timeouts.Request = defaultDuration(cfg.Timeouts.Request, "10s")
+	cfg.Timeouts.Produce = defaultDuration(cfg.Timeouts.Produce, "10s")
+	cfg.Timeouts.Admin = defaultDuration(cfg.Timeouts.Admin, "10s")
+	cfg.Timeouts.Shutdown = defaultDuration(cfg.Timeouts.Shutdown, "15s")
+	for _, item := range []struct {
+		value string
+		min   time.Duration
+		max   time.Duration
+	}{
+		{cfg.Timeouts.Dial, 100 * time.Millisecond, 30 * time.Second},
+		{cfg.Timeouts.Request, time.Second, time.Minute},
+		{cfg.Timeouts.Produce, time.Second, time.Minute},
+		{cfg.Timeouts.Admin, time.Second, time.Minute},
+		{cfg.Timeouts.Shutdown, time.Second, time.Minute},
+	} {
+		duration, err := time.ParseDuration(item.value)
+		if err != nil || duration < item.min || duration > item.max {
+			return ErrInvalidKafkaConfig
+		}
+	}
+	if cfg.Consumer.MaxPollRecords == 0 {
+		cfg.Consumer.MaxPollRecords = 100
+	}
+	if cfg.Consumer.MaxPollBytes == 0 {
+		cfg.Consumer.MaxPollBytes = 8 << 20
+	}
+	if cfg.Consumer.PartitionConcurrency == 0 {
+		cfg.Consumer.PartitionConcurrency = 8
+	}
+	cfg.Consumer.DrainTimeout = defaultDuration(cfg.Consumer.DrainTimeout, "10s")
+	drainTimeout, err := time.ParseDuration(cfg.Consumer.DrainTimeout)
+	if err != nil || drainTimeout < time.Second || drainTimeout > time.Minute ||
+		cfg.Consumer.MaxPollRecords < 1 || cfg.Consumer.MaxPollRecords > 1000 ||
+		cfg.Consumer.MaxPollBytes < 1<<20 || cfg.Consumer.MaxPollBytes > 32<<20 ||
+		cfg.Consumer.PartitionConcurrency < 1 || cfg.Consumer.PartitionConcurrency > 64 {
+		return ErrInvalidKafkaConfig
+	}
+	if cfg.ProductionValidation.ReplicationFactor == 0 {
+		if cfg.Environment == "local" || cfg.Environment == "test" {
+			cfg.ProductionValidation.ReplicationFactor = 1
+		} else {
+			cfg.ProductionValidation.ReplicationFactor = 3
+		}
+	}
+	if cfg.ProductionValidation.MinInSyncReplicas == 0 {
+		if cfg.Environment == "local" || cfg.Environment == "test" {
+			cfg.ProductionValidation.MinInSyncReplicas = 1
+		} else {
+			cfg.ProductionValidation.MinInSyncReplicas = 2
+		}
+	}
+	if cfg.ProductionValidation.ReplicationFactor < 1 ||
+		cfg.ProductionValidation.ReplicationFactor > 9 ||
+		cfg.ProductionValidation.MinInSyncReplicas < 1 ||
+		cfg.ProductionValidation.MinInSyncReplicas > cfg.ProductionValidation.ReplicationFactor {
+		return ErrInvalidKafkaConfig
+	}
+	streams := []*KafkaStreamMigrationConfig{
+		&cfg.Migration.ActionChanged,
+		&cfg.Migration.VideoPublished,
+		&cfg.Migration.VideoEmbedding,
+		&cfg.Migration.ViewEventRecorded,
+		&cfg.Migration.MediaProcessing,
+	}
+	for _, stream := range streams {
+		stream.ProducerMode = strings.ToLower(strings.TrimSpace(stream.ProducerMode))
+		stream.ConsumerMode = strings.ToLower(strings.TrimSpace(stream.ConsumerMode))
+		if stream.ProducerMode == "" {
+			stream.ProducerMode = "rabbit"
+		}
+		if stream.ConsumerMode == "" {
+			stream.ConsumerMode = "rabbit"
+		}
+		switch stream.ProducerMode {
+		case "rabbit", "rabbit_with_kafka_mirror", "kafka_with_rabbit_mirror", "kafka":
+		default:
+			return ErrInvalidKafkaConfig
+		}
+		switch stream.ConsumerMode {
+		case "rabbit", "kafka_shadow", "kafka":
+		default:
+			return ErrInvalidKafkaConfig
+		}
+		if !cfg.Enabled && (stream.ProducerMode != "rabbit" || stream.ConsumerMode != "rabbit") {
+			return ErrInvalidKafkaConfig
+		}
+	}
+	if !cfg.Enabled {
+		return nil
+	}
+	if len(cfg.Brokers) == 0 {
+		return ErrInvalidKafkaConfig
+	}
+	local := cfg.Environment == "local" || cfg.Environment == "test"
+	if cfg.AllowLocalProvisioning && !local {
+		return ErrInvalidKafkaConfig
+	}
+	if !local {
+		if cfg.ProductionValidation.ReplicationFactor < 3 ||
+			cfg.ProductionValidation.MinInSyncReplicas < 2 ||
+			(cfg.ProductionValidation.RequireTLS && !cfg.TLS.Enabled) ||
+			(cfg.ProductionValidation.RequireAuthentication &&
+				cfg.Authentication.Mechanism == "none") {
+			return ErrInvalidKafkaConfig
+		}
+	}
+	if cfg.Environment == "production" &&
+		(!cfg.ProductionValidation.RequireTLS ||
+			!cfg.ProductionValidation.RequireAuthentication) {
+		return ErrInvalidKafkaConfig
+	}
+	return nil
+}
+
+func validKafkaName(value string, max int) bool {
+	if value == "" || len(value) > max {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func normalizeAndValidateJWTConfig(cfg *JWTConfig) error {

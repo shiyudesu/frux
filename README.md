@@ -12,6 +12,7 @@ Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单�
 - JWT 登录态。
 - Redis Feed 缓存、热榜和互动计数。
 - RabbitMQ 异步互动落库、视频发布事件和向量任务。
+- Kafka KRaft 本地运行、版本化事件契约、Topic/Group 注册表和显式 Offset 提交基础；业务流尚未切换。
 - React + Vite Web 客户端。
 - 结构化视频生命周期消息中心、评论通知和播放优化接入。
 - 当前账号驱动的 Reviewer、Operator 和 Admin 后台权限。
@@ -96,6 +97,7 @@ docker compose down -v
 | PostgreSQL | `127.0.0.1:5432` |
 | Redis | `127.0.0.1:6379` |
 | RabbitMQ 管理台 | `http://127.0.0.1:15672` |
+| Kafka（宿主机 Listener） | `127.0.0.1:29092` |
 | MinIO S3 API | `http://127.0.0.1:9000` |
 | MinIO Console | `http://127.0.0.1:9001` |
 | Prometheus | `http://127.0.0.1:9090` |
@@ -236,6 +238,7 @@ Prometheus 抓取目标：
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
 | [docs/security.md](docs/security.md) | 媒体所有权、签名访问和缓存安全 |
 | [docs/deployment.md](docs/deployment.md) | MinIO/S3 配置、灰度和回滚 |
+| [docs/kafka.md](docs/kafka.md) | Kafka 配置、契约、Topic 治理、迁移与生产要求 |
 | [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
 | [docs/modules/](docs/modules/README.md) | 各业务模块设计 |
 | [openspec/](openspec/) | OpenSpec 项目基线和变更规格 |

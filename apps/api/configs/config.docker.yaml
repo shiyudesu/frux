@@ -57,6 +57,48 @@ rabbitmq:
     view_event_recorded_mode: "legacy"
     media_processing_mode: "legacy"
 
+kafka:
+  enabled: true
+  environment: "local"
+  brokers:
+    - "kafka:9092"
+  client_id: "frux-compose"
+  topic_prefix: ""
+  allow_local_provisioning: true
+  authentication:
+    mechanism: "none"
+    username: ""
+    password: ""
+  tls:
+    enabled: false
+    ca_file: ""
+    certificate_file: ""
+    private_key_file: ""
+    server_name: ""
+    insecure_skip_verify: false
+  timeouts:
+    dial: "5s"
+    request: "10s"
+    produce: "10s"
+    admin: "10s"
+    shutdown: "15s"
+  consumer:
+    max_poll_records: 100
+    max_poll_bytes: 8388608
+    partition_concurrency: 8
+    drain_timeout: "10s"
+  production_validation:
+    replication_factor: 1
+    min_in_sync_replicas: 1
+    require_authentication: false
+    require_tls: false
+  migration:
+    action_changed: {producer_mode: "rabbit", consumer_mode: "rabbit"}
+    video_published: {producer_mode: "rabbit", consumer_mode: "rabbit"}
+    video_embedding: {producer_mode: "rabbit", consumer_mode: "rabbit"}
+    view_event_recorded: {producer_mode: "rabbit", consumer_mode: "rabbit"}
+    media_processing: {producer_mode: "rabbit", consumer_mode: "rabbit"}
+
 media:
   backend: "s3"
   local_root: "./uploads"

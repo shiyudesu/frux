@@ -187,6 +187,106 @@ func TestNormalizeAndValidateRabbitMQDeadLetterConfig(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
+	t.Run("disabled defaults remain RabbitMQ active", func(t *testing.T) {
+		var cfg KafkaConfig
+		if err := normalizeAndValidateKafkaConfig(&cfg); err != nil {
+			t.Fatalf("disabled Kafka config: %v", err)
+		}
+		if cfg.Environment != "local" || cfg.ClientID != "frux" ||
+			cfg.Migration.ActionChanged.ProducerMode != "rabbit" ||
+			cfg.Migration.ActionChanged.ConsumerMode != "rabbit" {
+			t.Fatalf("unexpected defaults: %+v", cfg)
+		}
+	})
+
+	t.Run("local provisioning", func(t *testing.T) {
+		cfg := KafkaConfig{
+			Enabled: true, Brokers: []string{"localhost:9092"},
+			AllowLocalProvisioning: true,
+		}
+		if err := normalizeAndValidateKafkaConfig(&cfg); err != nil {
+			t.Fatalf("local Kafka config: %v", err)
+		}
+		if cfg.ProductionValidation.ReplicationFactor != 1 ||
+			cfg.ProductionValidation.MinInSyncReplicas != 1 {
+			t.Fatalf("unexpected local topology: %+v", cfg.ProductionValidation)
+		}
+	})
+
+	t.Run("authenticated TLS production", func(t *testing.T) {
+		cfg := KafkaConfig{
+			Enabled: true, Environment: "production",
+			Brokers: []string{"broker-1.example.com:9093", "broker-2.example.com:9093"},
+			Authentication: KafkaAuthenticationConfig{
+				Mechanism: "scram-sha-512", Username: "frux", Password: "secret",
+			},
+			TLS: KafkaTLSConfig{Enabled: true, ServerName: "kafka.example.com"},
+			ProductionValidation: KafkaProductionValidationConfig{
+				ReplicationFactor: 3, MinInSyncReplicas: 2,
+				RequireAuthentication: true, RequireTLS: true,
+			},
+		}
+		if err := normalizeAndValidateKafkaConfig(&cfg); err != nil {
+			t.Fatalf("production Kafka config: %v", err)
+		}
+	})
+
+	for _, test := range []struct {
+		name string
+		cfg  KafkaConfig
+	}{
+		{name: "missing brokers", cfg: KafkaConfig{Enabled: true}},
+		{name: "invalid broker", cfg: KafkaConfig{Enabled: true, Brokers: []string{"http://localhost:9092"}}},
+		{name: "credentials without mechanism", cfg: KafkaConfig{
+			Authentication: KafkaAuthenticationConfig{Username: "frux", Password: "secret"},
+		}},
+		{name: "partial mutual TLS", cfg: KafkaConfig{
+			TLS: KafkaTLSConfig{Enabled: true, CertificateFile: "client.crt"},
+		}},
+		{name: "production local provisioning", cfg: KafkaConfig{
+			Enabled: true, Environment: "production", Brokers: []string{"broker:9092"},
+			AllowLocalProvisioning: true,
+		}},
+		{name: "production unsafe replication", cfg: KafkaConfig{
+			Enabled: true, Environment: "production", Brokers: []string{"broker:9092"},
+			ProductionValidation: KafkaProductionValidationConfig{
+				ReplicationFactor: 1, MinInSyncReplicas: 1,
+			},
+		}},
+		{name: "production security requirements disabled", cfg: KafkaConfig{
+			Enabled: true, Environment: "production", Brokers: []string{"broker:9093"},
+			Authentication: KafkaAuthenticationConfig{
+				Mechanism: "scram-sha-256", Username: "frux", Password: "secret",
+			},
+			TLS: KafkaTLSConfig{Enabled: true},
+			ProductionValidation: KafkaProductionValidationConfig{
+				ReplicationFactor: 3, MinInSyncReplicas: 2,
+			},
+		}},
+		{name: "disabled Kafka migration", cfg: KafkaConfig{
+			Migration: KafkaMigrationConfig{
+				ActionChanged: KafkaStreamMigrationConfig{ProducerMode: "rabbit_with_kafka_mirror"},
+			},
+		}},
+		{name: "dual active consumer", cfg: KafkaConfig{
+			Enabled: true, Brokers: []string{"localhost:9092"},
+			Migration: KafkaMigrationConfig{
+				ActionChanged: KafkaStreamMigrationConfig{ConsumerMode: "rabbit_and_kafka"},
+			},
+		}},
+		{name: "unbounded poll", cfg: KafkaConfig{
+			Consumer: KafkaConsumerConfig{MaxPollRecords: 1001},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := normalizeAndValidateKafkaConfig(&test.cfg); !errors.Is(err, ErrInvalidKafkaConfig) {
+				t.Fatalf("error = %v, want ErrInvalidKafkaConfig", err)
+			}
+		})
+	}
+}
+
 func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
 	validToken := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
 	tests := []struct {

@@ -230,3 +230,20 @@ user、Redis key 和 route parameter 均不得进入标签。
 `public_search` Redis 故障时仍由更严格 local fallback 保护；`upload_session` 明确 fail
 closed。Grafana `Frux Layered Rate Limits` 看板展示三类信号。恢复 Redis 后确认
 backend_error/fallback 停止增长，再观察一个完整告警窗口。
+
+## 14. Kafka event backbone observability
+
+Kafka 基础暴露：
+
+- `frux_kafka_produce_total{topic,producer,result}` 与 produce duration；
+- `frux_kafka_consumed_total{topic,group,outcome}` 与 consume duration；
+- `frux_kafka_commit_total{topic,group,result}`、`frux_kafka_rebalance_total{group,result}`；
+- `frux_kafka_consumer_lag{topic,group}`、delivery delay；
+- `frux_kafka_contract_failures_total{topic,group,code}`；
+- `frux_kafka_topology_validation_total{topic,result}` 和 broker health。
+
+Topic、Producer、Group、Outcome、Contract Code 和 Topology Result 均来自封闭集合。禁止使用
+event/user/video/key/partition/offset/payload/raw error 作为标签。`commit result=uncertain` 表示
+当前 Consumer Session 已停止，后续可能重投；先检查 Consumer 幂等边界，再检查 Group Coordinator。
+`topology result=invalid/missing` 在生产会阻止启动，不能临时开启 auto creation。Delivery delay 或
+lag 增长时按注册 Topic/Group 定位，不要添加动态 Partition/Offset 标签。

@@ -8,11 +8,77 @@ type Config struct {
 	Database   DatabaseConfig   `yaml:"database"`
 	Redis      RedisConfig      `yaml:"redis"`
 	RabbitMQ   RabbitMQConfig   `yaml:"rabbitmq"`
+	Kafka      KafkaConfig      `yaml:"kafka"`
 	Media      MediaConfig      `yaml:"media"`
 	Moderation ModerationConfig `yaml:"moderation"`
 	Playback   PlaybackConfig   `yaml:"playback"`
 	Governance GovernanceConfig `yaml:"governance"`
 	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
+}
+
+type KafkaConfig struct {
+	Enabled                bool                            `yaml:"enabled"`
+	Environment            string                          `yaml:"environment"`
+	Brokers                []string                        `yaml:"brokers"`
+	ClientID               string                          `yaml:"client_id"`
+	TopicPrefix            string                          `yaml:"topic_prefix"`
+	AllowLocalProvisioning bool                            `yaml:"allow_local_provisioning"`
+	Authentication         KafkaAuthenticationConfig       `yaml:"authentication"`
+	TLS                    KafkaTLSConfig                  `yaml:"tls"`
+	Timeouts               KafkaTimeoutConfig              `yaml:"timeouts"`
+	Consumer               KafkaConsumerConfig             `yaml:"consumer"`
+	ProductionValidation   KafkaProductionValidationConfig `yaml:"production_validation"`
+	Migration              KafkaMigrationConfig            `yaml:"migration"`
+}
+
+type KafkaAuthenticationConfig struct {
+	Mechanism string `yaml:"mechanism"`
+	Username  string `yaml:"username"`
+	Password  string `yaml:"password"`
+}
+
+type KafkaTLSConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	CAFile             string `yaml:"ca_file"`
+	CertificateFile    string `yaml:"certificate_file"`
+	PrivateKeyFile     string `yaml:"private_key_file"`
+	ServerName         string `yaml:"server_name"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+}
+
+type KafkaTimeoutConfig struct {
+	Dial     string `yaml:"dial"`
+	Request  string `yaml:"request"`
+	Produce  string `yaml:"produce"`
+	Admin    string `yaml:"admin"`
+	Shutdown string `yaml:"shutdown"`
+}
+
+type KafkaConsumerConfig struct {
+	MaxPollRecords       int    `yaml:"max_poll_records"`
+	MaxPollBytes         int    `yaml:"max_poll_bytes"`
+	PartitionConcurrency int    `yaml:"partition_concurrency"`
+	DrainTimeout         string `yaml:"drain_timeout"`
+}
+
+type KafkaProductionValidationConfig struct {
+	ReplicationFactor     int  `yaml:"replication_factor"`
+	MinInSyncReplicas     int  `yaml:"min_in_sync_replicas"`
+	RequireAuthentication bool `yaml:"require_authentication"`
+	RequireTLS            bool `yaml:"require_tls"`
+}
+
+type KafkaMigrationConfig struct {
+	ActionChanged     KafkaStreamMigrationConfig `yaml:"action_changed"`
+	VideoPublished    KafkaStreamMigrationConfig `yaml:"video_published"`
+	VideoEmbedding    KafkaStreamMigrationConfig `yaml:"video_embedding"`
+	ViewEventRecorded KafkaStreamMigrationConfig `yaml:"view_event_recorded"`
+	MediaProcessing   KafkaStreamMigrationConfig `yaml:"media_processing"`
+}
+
+type KafkaStreamMigrationConfig struct {
+	ProducerMode string `yaml:"producer_mode"`
+	ConsumerMode string `yaml:"consumer_mode"`
 }
 
 type ModerationConfig struct {

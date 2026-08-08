@@ -33,7 +33,8 @@ flowchart LR
   PostgreSQL[("PostgreSQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
-  MQ[("MQ<br/>异步事件")]
+  RabbitMQ[("RabbitMQ<br/>当前异步任务与业务事件")]
+  Kafka[("Kafka<br/>保留事件流基础")]
   ObjectStorage[("对象存储<br/>媒体文件")]
 
   Web -->|"调用管理与浏览接口"| API
@@ -41,13 +42,14 @@ flowchart LR
   API -->|"读写业务事实、投影和聚合"| PostgreSQL
   API -->|"保存和读取本地文件"| Uploads
   API -->|"缓存 Feed、互动状态与计数；原子协调部分限流"| Redis
-  API -->|"投递互动、发布和曝光事件"| MQ
+  API -->|"当前投递互动、发布和曝光事件"| RabbitMQ
+  API -.->|"仅连接、校验 Topic；尚未切换业务流"| Kafka
   API -.->|"迁移媒体文件"| ObjectStorage
 
   class Web,Client client;
   class API system;
   class PostgreSQL,Uploads store;
-  class Redis,MQ service;
+  class Redis,RabbitMQ,Kafka service;
   class ObjectStorage future;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
@@ -132,6 +134,11 @@ Broker 的 versioned Quorum Source 用 Delivery Limit 将毒消息送入 per-con
 Management Adapter 提供脱敏摘要/Preview；Replay Service 验证 allowlist 路由，保持原 Event ID
 和 Payload、增加 Replay ID，等待 Publisher Confirm 并提交 Audit Fact 后才 Ack DLQ。PostgreSQL
 不保存 Payload Queue。
+
+Kafka 是并行存在的事件流基础，不是 RabbitMQ 的重命名适配层。代码注册 Topic、Partition Key、
+Producer 和 Consumer Group；franz-go Producer 使用 idempotence + `acks=all`，Consumer 禁用自动
+提交并在耐久结果后提交 Offset。当前变更只启动连接、Topic provisioning/validation、健康诊断和
+迁移控制；互动、视频、曝光、媒体处理等业务发布与消费仍全部走 RabbitMQ。
 
 ## 3. 核心请求链路
 

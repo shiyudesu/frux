@@ -31,6 +31,7 @@ import (
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
+	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	inframq "github.com/shiyudesu/frux/internal/infra/mq"
@@ -85,6 +86,18 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	if err := validateAPIConfig(cfg); err != nil {
 		return err
 	}
+	kafkaBackbone, err := infrakafka.Start(
+		context.Background(), cfg.Kafka, inframetrics.KafkaObserver{}, inframetrics.KafkaObserver{},
+	)
+	if err != nil {
+		return err
+	}
+	kafkaOwnedByShutdown := false
+	defer func() {
+		if !kafkaOwnedByShutdown {
+			_ = kafkaBackbone.Close(context.Background())
+		}
+	}()
 	// database/sql 连接池交给 GORM 复用，避免维护两套数据库连接。
 	gormDB, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
 		Conn: db,
@@ -451,7 +464,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		return err
 	}
 
-	h.GET("/health", HealthCheck)
+	h.GET("/health", KafkaHealthCheck(kafkaBackbone))
 	h.GET("/metrics", adaptor.HertzHandler(promhttp.Handler()))
 	h.GET("/review-media/*filepath", reviewMediaHandler.Get)
 	h.HEAD("/review-media/*filepath", reviewMediaHandler.Head)
@@ -796,8 +809,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		if rabbitMQ != nil {
 			_ = rabbitMQ.Close()
 		}
+		_ = kafkaBackbone.Close(context.Background())
 	})
 
+	kafkaOwnedByShutdown = true
 	return nil
 }
 
@@ -936,4 +951,36 @@ func HealthCheck(_ context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, utils.H{
 		"message": "All is well",
 	})
+}
+
+func KafkaHealthCheck(backbone *infrakafka.Backbone) app.HandlerFunc {
+	return func(_ context.Context, c *app.RequestContext) {
+		healthContext, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		err := backbone.Health(healthContext)
+		diagnostics := backbone.Diagnostics()
+		status := http.StatusOK
+		message := "All is well"
+		if diagnostics.Enabled && err != nil {
+			status = http.StatusServiceUnavailable
+			message = "Kafka is unavailable"
+		}
+		validations := make([]utils.H, 0, len(diagnostics.ValidationResults))
+		for _, validation := range diagnostics.ValidationResults {
+			validations = append(validations, utils.H{
+				"topic": string(validation.Topic), "result": validation.Result,
+			})
+		}
+		c.JSON(status, utils.H{
+			"message": message,
+			"kafka": utils.H{
+				"enabled": diagnostics.Enabled, "healthy": diagnostics.Healthy,
+				"environment":        diagnostics.Environment,
+				"registered_topics":  diagnostics.RegisteredTopics,
+				"last_validated_at":  diagnostics.LastValidatedAt,
+				"validation_results": validations,
+				"failure_code":       diagnostics.FailureCode,
+			},
+		})
+	}
 }
