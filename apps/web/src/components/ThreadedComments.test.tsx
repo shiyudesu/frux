@@ -251,8 +251,9 @@ describe("threaded comment components", () => {
     );
     const authorImage = required<HTMLImageElement>(".details-author img");
     const commentImage = required<HTMLImageElement>(".comment-user-button img");
-    expect(authorImage.src).toBe(image.currentUser);
-    expect(commentImage.src).toBe(image.currentUser);
+    const fallbackAvatar = new URL(image.currentUser, window.location.href).href;
+    expect(authorImage.src).toBe(fallbackAvatar);
+    expect(commentImage.src).toBe(fallbackAvatar);
   });
 
   it("counts Unicode code points and blocks over-limit submission behaviorally", () => {

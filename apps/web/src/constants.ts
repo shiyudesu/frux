@@ -41,8 +41,7 @@ export function getFeedSceneMeta(key: string): FeedSceneMeta {
 }
 
 export const image = {
-  currentUser:
-    "https://lh3.googleusercontent.com/aida-public/AB6AXuAEH5ZNpPdQoO7Qiy3CGshEypK0dp1HFeVoZ1TAHDLhfcvYMg_js-k2rhBTIPpqMjs6GQpIgKMnUhIu0tY_QYUCTocPD70FDbGWYmHI25NPQ1Quod_7Ssaq0ICv7vvwNephDLNouriPhG7ubVy8GZKbFP9Qi-2yLe2mzST0t9Vfygo2jvgiHITh11LVRZ2ZTcE3nmySn6ZMnpqONtz0zbaKbQMLsDNfR-5smwYHCQLvdp6U5U2-OW_kZS1P6U9vR_PN9Ey84a1VDgRZ",
+  currentUser: "/assets/default-avatar.webp",
   stage:
     "https://lh3.googleusercontent.com/aida-public/AB6AXuBoRvSlHsGSK5JYfx8r7praM2C7qfaT8MA3oCiEBrp2qR1Ew_d_BBW1bayhxrA9QACs__BYjSfSKuyEvZcT0YtXO8fuXj8VQ2YLiuTimXER4hQXjdpWsSohnXC6O_Q_Ax3IYrf6kxn3pfnf3gbpdpHg6Z_gBGl-pwwh9QZ1MJMCDFNOgDIYu6YlIUcGa_f9muHACh25ulddKdk1mb9Ml2sMhagIzsTCt5xLaDwtQUM8HjhIkIrThVgRoRpajSVgMilICEgR6TB1uoLn",
   vertical:

@@ -5,6 +5,8 @@ import type { FeedVideo } from "../types";
 import type { PublicProfileInput } from "../utils";
 import { formatMetric, profileFromFeedItem, publicUserAvatar } from "../utils";
 import { ActionButton } from "./ActionButton";
+import { Icon } from "./Icon";
+import type { IconName } from "./Icon";
 
 interface FeedActionRailProps {
   item: FeedVideo;
@@ -106,6 +108,15 @@ export function FeedActionRail({
       setWatchLaterError(apiErrorMessage(error, "操作未完成，请重试"));
     }
   };
+  const moreMenuStatus = watchLaterState === "loading"
+    ? "正在更新稍后再看…"
+    : watchLaterState === "success"
+      ? watchLaterAction === "remove" ? "已移除" : "已加入稍后再看"
+      : watchLaterError || (
+        feedbackState === "loading"
+          ? "正在提交反馈…"
+          : feedbackState === "success" ? "反馈已提交" : feedbackError
+      );
   return (
     <div className="action-rail" data-ui="action-rail">
       {showSocialActions && (
@@ -169,32 +180,41 @@ export function FeedActionRail({
             />
             {moreOpen && (showRecommendationFeedback || showWatchLater) && (
               <div ref={moreMenuRef} className="recommendation-feedback-menu" role="menu" aria-label="更多操作">
-                <p role="status" aria-live="polite">
-                  {watchLaterState === "loading"
-                    ? "正在更新稍后再看…"
-                    : watchLaterState === "success"
-                      ? watchLaterAction === "remove" ? "已移除" : "已加入稍后再看"
-                      : watchLaterError || (
-                        feedbackState === "loading"
-                          ? "正在提交反馈…"
-                          : feedbackState === "success" ? "反馈已提交" : feedbackError
-                      )}
-                </p>
+                {moreMenuStatus && <p role="status" aria-live="polite">{moreMenuStatus}</p>}
                 {showWatchLater && (
-                  <button
-                    type="button"
-                    role="menuitem"
+                  <MoreMenuItem
+                    icon={watchLaterAction === "remove" ? "close" : "bookmark"}
+                    label={watchLaterAction === "remove" ? "从稍后再看移除" : "稍后再看"}
+                    description={watchLaterAction === "remove"
+                      ? "从当前稍后再看列表中移除"
+                      : "加入个人内容库，之后继续观看"}
                     disabled={watchLaterState === "loading"}
                     onClick={() => void submitWatchLater()}
-                  >
-                    {watchLaterAction === "remove" ? "从稍后再看移除" : "稍后再看"}
-                  </button>
+                  />
                 )}
                 {showRecommendationFeedback && (
                   <>
-                    <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("not_interested")}>不感兴趣</button>
-                    <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("reduce_author")}>减少此作者内容</button>
-                    <button type="button" role="menuitem" disabled={feedbackState === "loading"} onClick={() => void submitFeedback("already_seen")}>已看过</button>
+                    <MoreMenuItem
+                      icon="close"
+                      label="不感兴趣"
+                      description="减少类似内容推荐"
+                      disabled={feedbackState === "loading"}
+                      onClick={() => void submitFeedback("not_interested")}
+                    />
+                    <MoreMenuItem
+                      icon="users"
+                      label="减少此作者内容"
+                      description="降低该作者内容出现频率"
+                      disabled={feedbackState === "loading"}
+                      onClick={() => void submitFeedback("reduce_author")}
+                    />
+                    <MoreMenuItem
+                      icon="check"
+                      label="已看过"
+                      description="减少重复推荐"
+                      disabled={feedbackState === "loading"}
+                      onClick={() => void submitFeedback("already_seen")}
+                    />
                   </>
                 )}
               </div>
@@ -203,5 +223,34 @@ export function FeedActionRail({
         </>
       )}
     </div>
+  );
+}
+
+interface MoreMenuItemProps {
+  icon: IconName;
+  label: string;
+  description: string;
+  disabled: boolean;
+  onClick: () => void;
+}
+
+function MoreMenuItem({ icon, label, description, disabled, onClick }: MoreMenuItemProps) {
+  return (
+    <button
+      className="recommendation-feedback-option"
+      type="button"
+      role="menuitem"
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <span className="recommendation-feedback-icon" aria-hidden="true">
+        <Icon name={icon} size={18} />
+      </span>
+      <span className="recommendation-feedback-copy">
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+    </button>
   );
 }

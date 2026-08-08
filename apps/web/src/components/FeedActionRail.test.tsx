@@ -30,7 +30,11 @@ describe("FeedActionRail menus", () => {
     const menu = required<HTMLElement>('[role="menu"][aria-label="更多操作"]');
     expect(menu).toBeTruthy();
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement?.textContent).toBe("不感兴趣");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("不感兴趣");
+    expect(menu.querySelector('[role="status"]')).toBeNull();
+    expect(menu.querySelectorAll(".recommendation-feedback-option")).toHaveLength(3);
+    expect(menu.textContent).toContain("减少类似内容推荐");
+    expect(menu.textContent).toContain("降低该作者内容出现频率");
 
     act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(container.querySelector('[role="menu"][aria-label="更多操作"]')).toBeNull();
