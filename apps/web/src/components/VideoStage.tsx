@@ -37,6 +37,7 @@ import { createVideoQoSState, isVideoSource } from "../utils";
 import { FeedActionRail, feedbackStateKey } from "./FeedActionRail";
 import { FeedMetadata } from "./FeedMetadata";
 import { FeedPlayerControls } from "./FeedPlayerControls";
+import { StageGestureLayer } from "./StageGestureLayer";
 
 export interface VideoStageHandle {
   togglePlayback: () => void;
@@ -670,7 +671,15 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       <img className="stage-backdrop" src={cover} alt="" />
       <div className="stage-vignette" />
       {showVideo ? (
-        <div ref={mediaHostRef} className="stage-media-host" onClick={togglePlayback} />
+        <StageGestureLayer
+          ref={mediaHostRef}
+          active={active}
+          canLike={showSocialActions}
+          videoID={item.video_id}
+          liked={liked}
+          onLike={onLike}
+          onTogglePlayback={togglePlayback}
+        />
       ) : (
         <img className="stage-media portrait-media" src={media} alt="" />
       )}

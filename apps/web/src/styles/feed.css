@@ -110,11 +110,44 @@
 }
 
 .stage-media-host {
-  display: contents;
+  position: absolute;
+  z-index: 2;
+  inset: 0;
 }
 
 video.stage-media {
   cursor: pointer;
+}
+
+.stage-like-burst {
+  position: absolute;
+  z-index: 7;
+  width: 88px;
+  height: 88px;
+  color: var(--frux-rose);
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.42));
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: stage-like-burst 680ms var(--frux-ease) both;
+}
+
+@keyframes stage-like-burst {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.35) rotate(-14deg);
+  }
+  28% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.12) rotate(5deg);
+  }
+  62% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.96) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -58%) scale(0.72);
+  }
 }
 
 .portrait-media {
@@ -343,7 +376,9 @@ video.stage-media {
   padding: 6px 12px 0;
 }
 
-.player-controls-row button {
+.player-controls-row > button,
+.player-choice-trigger,
+.player-continuous-toggle {
   display: inline-flex;
   width: 34px;
   height: 34px;
@@ -355,14 +390,15 @@ video.stage-media {
   background: transparent;
 }
 
-.player-controls-row button:hover {
+.player-controls-row > button:hover,
+.player-choice-trigger:hover,
+.player-continuous-toggle:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
 }
 
-.player-controls-row button.active {
+.player-continuous-toggle.active {
   color: #fff;
-  background: rgba(37, 244, 238, 0.18);
 }
 
 .player-time {
@@ -370,26 +406,104 @@ video.stage-media {
   font-variant-numeric: tabular-nums;
 }
 
-.player-select select {
-  min-width: 72px;
-  height: 30px;
-  padding: 0 24px 0 8px;
-  color: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  outline: none;
-  background: rgba(0, 0, 0, 0.34);
-  font: inherit;
+.player-choice {
+  position: relative;
+  display: flex;
 }
 
-.player-select select:focus-visible,
-.player-controls-row button:focus-visible {
-  box-shadow: 0 0 0 2px var(--frux-cyan);
+.player-choice-trigger {
+  width: auto;
+  min-width: 48px;
+  gap: 4px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
-.player-select option {
+.player-choice-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 9px);
+  display: grid;
+  min-width: 112px;
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 10px;
+  background: rgba(25, 25, 28, 0.96);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(18px);
+}
+
+.player-choice-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 9px;
+  color: rgba(255, 255, 255, 0.72);
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.player-choice-menu button:hover,
+.player-choice-menu button.active {
   color: #fff;
-  background: var(--frux-bg);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.player-controls-row > .player-continuous-toggle {
+  width: auto;
+  gap: 6px;
+  padding: 0 6px;
+  font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.player-toggle-track {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  transition: background var(--frux-motion) var(--frux-ease);
+}
+
+.player-toggle-track i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.38);
+  transition: transform var(--frux-motion) var(--frux-ease);
+}
+
+.player-continuous-toggle.active .player-toggle-track {
+  background: var(--frux-cyan);
+}
+
+.player-continuous-toggle.active .player-toggle-track i {
+  transform: translateX(10px);
+}
+
+.player-choice-trigger:focus-visible,
+.player-choice-menu button:focus-visible,
+.player-controls-row > button:focus-visible,
+.player-continuous-toggle:focus-visible {
+  box-shadow: 0 0 0 2px var(--frux-cyan);
 }
 
 .player-status {

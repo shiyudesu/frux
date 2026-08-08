@@ -35,10 +35,12 @@ describe("FeedPlayerControls", () => {
       />
     );
 
-    expect(html).toContain('aria-label="清晰度"');
-    expect(html).toContain('aria-label="播放速度"');
+    expect(html).toContain('aria-label="清晰度，当前 720p"');
+    expect(html).toContain('aria-label="播放速度，当前 1.25x"');
     expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain("720p · 当前");
+    expect(html).toContain("自动连播");
+    expect(html).not.toContain("<select");
+    expect(html).toContain("720p");
     expect(html).toContain("1.25x");
   });
 

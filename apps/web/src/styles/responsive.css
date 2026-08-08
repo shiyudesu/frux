@@ -324,8 +324,13 @@
     min-height: 44px;
   }
 
-  .player-controls-row button {
+  .player-controls-row > button {
     width: 44px;
+    height: 44px;
+  }
+
+  .player-choice-trigger,
+  .player-continuous-toggle {
     height: 44px;
   }
 
@@ -519,10 +524,8 @@
     font-size: 11px;
   }
 
-  .player-select select {
-    min-width: 58px;
-    max-width: 74px;
-    padding-right: 18px;
+  .player-choice-trigger,
+  .player-continuous-toggle {
     font-size: 11px;
   }
 
@@ -530,10 +533,13 @@
     gap: 3px;
   }
 
-  .player-controls-row button[aria-pressed] {
-    width: auto;
-    padding: 0 7px;
-    font-size: 11px;
+  .player-continuous-toggle {
+    gap: 4px;
+    padding: 0 4px;
+  }
+
+  .player-continuous-toggle > span:first-child {
+    display: none;
   }
 
   .player-controls-row {

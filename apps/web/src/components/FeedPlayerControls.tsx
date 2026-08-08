@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   SUPPORTED_PLAYBACK_RATES,
   type NormalizedPlayerState,
@@ -45,6 +47,10 @@ export function FeedPlayerControls({
   const playing = state.status === "playing" || (state.status === "buffering" && state.intendedPlay);
   const busy = state.status === "loading";
   const statusText = playerStatusText(state);
+  const qualityOptions = [
+    { value: "auto", label: "自动" },
+    ...state.qualities.map((quality) => ({ value: quality.id, label: quality.label }))
+  ];
 
   return (
     <div className="player-controls" data-ui="player-controls">
@@ -83,41 +89,27 @@ export function FeedPlayerControls({
           {formatPlaybackTime(safeCurrentTime)} / {formatPlaybackTime(safeDuration)}
         </span>
         <span className="player-controls-spacer" />
-        <label className="player-select">
-          <span className="sr-only">清晰度</span>
-          <select
-            aria-label="清晰度"
-            value={state.selectedQuality}
-            onChange={(event) => onSelectQuality(event.target.value)}
-          >
-            <option value="auto">自动</option>
-            {state.qualities.map((quality) => (
-              <option key={quality.id} value={quality.id}>
-                {quality.label}{quality.active ? " · 当前" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="player-select">
-          <span className="sr-only">播放速度</span>
-          <select
-            aria-label="播放速度"
-            value={state.playbackRate}
-            onChange={(event) => onSelectRate(Number(event.target.value))}
-          >
-            {SUPPORTED_PLAYBACK_RATES.map((rate) => (
-              <option key={rate} value={rate}>{rate}x</option>
-            ))}
-          </select>
-        </label>
+        <PlayerChoiceMenu
+          label="清晰度"
+          options={qualityOptions}
+          value={state.selectedQuality}
+          onSelect={onSelectQuality}
+        />
+        <PlayerChoiceMenu
+          label="播放速度"
+          options={SUPPORTED_PLAYBACK_RATES.map((rate) => ({ value: String(rate), label: `${rate}x` }))}
+          value={String(state.playbackRate)}
+          onSelect={(value) => onSelectRate(Number(value))}
+        />
         <button
           type="button"
           aria-label={continuousPlay ? "关闭连续播放" : "开启连续播放"}
           aria-pressed={continuousPlay}
-          className={continuousPlay ? "active" : ""}
+          className={`player-continuous-toggle ${continuousPlay ? "active" : ""}`}
           onClick={onToggleContinuousPlay}
         >
-          连播
+          <span>自动连播</span>
+          <span className="player-toggle-track" aria-hidden="true"><i /></span>
         </button>
         <button type="button" onClick={onToggleMute} aria-label={state.muted ? "打开声音" : "静音"}>
           <Icon name={state.muted ? "volume-off" : "volume"} size={20} />
@@ -126,6 +118,129 @@ export function FeedPlayerControls({
           <Icon name="fullscreen" size={20} />
         </button>
       </div>
+    </div>
+  );
+}
+
+interface PlayerChoiceMenuProps {
+  label: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onSelect: (value: string) => void;
+}
+
+function PlayerChoiceMenu({ label, value, options, onSelect }: PlayerChoiceMenuProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const typeahead = useRef("");
+  const typeaheadTimer = useRef(0);
+  const selected = options.find((option) => option.value === value) || options[0];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    typeahead.current = "";
+    const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
+    optionRefs.current[selectedIndex]?.focus();
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, value]);
+
+  useEffect(() => () => window.clearTimeout(typeaheadTimer.current), []);
+
+  function handleTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    setOpen(true);
+  }
+
+  function handleMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const currentIndex = optionRefs.current.findIndex((option) => option === document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = (Math.max(0, currentIndex) + direction + options.length) % options.length;
+      optionRefs.current[nextIndex]?.focus();
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      optionRefs.current[event.key === "Home" ? 0 : options.length - 1]?.focus();
+      return;
+    }
+    if (event.key === "Tab") {
+      setOpen(false);
+      return;
+    }
+    if (
+      event.key.length !== 1
+      || event.altKey
+      || event.ctrlKey
+      || event.metaKey
+    ) return;
+    typeahead.current += event.key.toLocaleLowerCase();
+    window.clearTimeout(typeaheadTimer.current);
+    typeaheadTimer.current = window.setTimeout(() => {
+      typeahead.current = "";
+    }, 600);
+    const matchIndex = options.findIndex((option) =>
+      option.label.toLocaleLowerCase().startsWith(typeahead.current)
+    );
+    if (matchIndex >= 0) optionRefs.current[matchIndex]?.focus();
+  }
+
+  return (
+    <div ref={rootRef} className={`player-choice ${open ? "open" : ""}`}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="player-choice-trigger"
+        aria-label={`${label}，当前 ${selected.label}`}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <span>{selected.label}</span>
+        <Icon name={open ? "chevron-down" : "chevron-up"} size={12} />
+      </button>
+      {open && (
+        <div className="player-choice-menu" role="menu" aria-label={label} onKeyDown={handleMenuKeyDown}>
+          {options.map((option, index) => (
+            <button
+              ref={(element) => {
+                optionRefs.current[index] = element;
+              }}
+              type="button"
+              className={option.value === value ? "active" : ""}
+              key={option.value}
+              role="menuitemradio"
+              aria-checked={option.value === value}
+              onClick={() => {
+                onSelect(option.value);
+                setOpen(false);
+                triggerRef.current?.focus();
+              }}
+            >
+              <span>{option.label}</span>
+              {option.value === value && <Icon name="check-all" size={14} />}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
