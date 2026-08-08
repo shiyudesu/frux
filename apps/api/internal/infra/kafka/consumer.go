@@ -16,10 +16,9 @@ import (
 )
 
 var (
-	ErrConsumerSession   = errors.New("kafka consumer session failed")
-	ErrCommitUncertain   = errors.New("kafka offset commit uncertain")
-	ErrShutdownDeadline  = errors.New("kafka consumer shutdown deadline exceeded")
-	ErrRecoveredDataLoss = errors.New("kafka consumer recovered from data loss")
+	ErrConsumerSession  = errors.New("kafka consumer session failed")
+	ErrCommitUncertain  = errors.New("kafka offset commit uncertain")
+	ErrShutdownDeadline = errors.New("kafka consumer shutdown deadline exceeded")
 )
 
 type brokerRecord struct {
@@ -34,7 +33,7 @@ type brokerRecord struct {
 }
 
 type consumerSource interface {
-	Poll(ctx context.Context, maxRecords int) ([]brokerRecord, error)
+	Poll(ctx context.Context, maxRecords int) ([]brokerRecord, bool, error)
 	Commit(ctx context.Context, records []brokerRecord) error
 	Lag(ctx context.Context, groupName string) (int64, error)
 	AllowRebalance()
@@ -188,16 +187,15 @@ func (c *Consumer) Run(ctx context.Context) error {
 			return nil
 		}
 		c.sampleLag(ctx, false)
-		records, err := c.source.Poll(ctx, c.maxPollRecords)
+		records, dataLoss, err := c.source.Poll(ctx, c.maxPollRecords)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil
 			}
-			if errors.Is(err, ErrRecoveredDataLoss) {
-				c.observeDataLoss()
-				continue
-			}
 			return fmt.Errorf("%w: poll", ErrConsumerSession)
+		}
+		if dataLoss {
+			c.observeDataLoss()
 		}
 		if len(records) == 0 {
 			if ctx.Err() != nil {
@@ -438,14 +436,16 @@ func (c *Consumer) sampleLag(ctx context.Context, force bool) {
 	c.observer.ObserveLag(c.topicID, c.groupID, lag)
 }
 
-func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]brokerRecord, error) {
+func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]brokerRecord, bool, error) {
 	fetches := s.client.PollRecords(ctx, maxRecords)
-	if err := fetches.Err(); err != nil {
+	recoveredDataLoss := false
+	for _, fetchErr := range fetches.Errors() {
 		var dataLoss *kgo.ErrDataLoss
-		if errors.As(err, &dataLoss) {
-			return nil, fmt.Errorf("%w", ErrRecoveredDataLoss)
+		if errors.As(fetchErr.Err, &dataLoss) {
+			recoveredDataLoss = true
+			continue
 		}
-		return nil, err
+		return nil, recoveredDataLoss, fetchErr.Err
 	}
 	records := make([]brokerRecord, 0, fetches.NumRecords())
 	fetches.EachPartition(func(partition kgo.FetchTopicPartition) {
@@ -463,7 +463,7 @@ func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]broke
 			})
 		}
 	})
-	return records, nil
+	return records, recoveredDataLoss, nil
 }
 
 func (s *franzConsumerSource) Commit(ctx context.Context, records []brokerRecord) error {

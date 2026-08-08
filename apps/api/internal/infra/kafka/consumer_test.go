@@ -17,6 +17,7 @@ type fakeConsumerSource struct {
 	mu         sync.Mutex
 	batches    [][]brokerRecord
 	pollErrors []error
+	dataLosses []bool
 	commitErr  error
 	commits    [][]brokerRecord
 	lag        int64
@@ -25,23 +26,28 @@ type fakeConsumerSource struct {
 	closed     bool
 }
 
-func (f *fakeConsumerSource) Poll(ctx context.Context, _ int) ([]brokerRecord, error) {
+func (f *fakeConsumerSource) Poll(ctx context.Context, _ int) ([]brokerRecord, bool, error) {
 	f.mu.Lock()
 	if len(f.pollErrors) > 0 {
 		err := f.pollErrors[0]
 		f.pollErrors = f.pollErrors[1:]
 		f.mu.Unlock()
-		return nil, err
+		return nil, false, err
 	}
 	if len(f.batches) > 0 {
 		batch := f.batches[0]
 		f.batches = f.batches[1:]
+		dataLoss := false
+		if len(f.dataLosses) > 0 {
+			dataLoss = f.dataLosses[0]
+			f.dataLosses = f.dataLosses[1:]
+		}
 		f.mu.Unlock()
-		return batch, nil
+		return batch, dataLoss, nil
 	}
 	f.mu.Unlock()
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return nil, false, ctx.Err()
 }
 
 func (f *fakeConsumerSource) Commit(_ context.Context, records []brokerRecord) error {
@@ -131,8 +137,8 @@ func (o *consumerObserver) ObserveDataLoss(TopicID, ConsumerGroupID) {
 func TestConsumerContinuesAfterRecoveredDataLoss(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	source := &fakeConsumerSource{
-		pollErrors: []error{ErrRecoveredDataLoss},
 		batches:    [][]brokerRecord{{probeRecord(t, 0, 3)}},
+		dataLosses: []bool{true},
 	}
 	observer := &consumerObserver{}
 	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
