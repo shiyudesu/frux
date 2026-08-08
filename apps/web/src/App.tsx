@@ -20,6 +20,7 @@ import {
 } from "./router";
 import { SessionProvider, useSession } from "./session";
 import { PageMessage } from "./components/StatusMessages";
+import { FeedRefreshProvider } from "./feedRefresh";
 
 const AdminApp = lazy(() => import("./admin/AdminApp"));
 
@@ -27,7 +28,9 @@ export default function App() {
   return (
     <RouterProvider>
       <SessionProvider>
-        <AppRoutes />
+        <FeedRefreshProvider>
+          <AppRoutes />
+        </FeedRefreshProvider>
       </SessionProvider>
     </RouterProvider>
   );

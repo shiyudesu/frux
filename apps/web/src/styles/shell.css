@@ -85,9 +85,50 @@
   padding-top: 2px;
 }
 
+.side-nav-entry {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+
+.side-nav-entry.has-refresh {
+  min-height: 42px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 0;
+  padding-right: 4px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.side-nav-entry.has-refresh .side-nav-link {
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  padding-right: 8px;
+  padding-left: 8px;
+  border-radius: 10px 0 0 10px;
+  background: transparent;
+}
+
+.side-nav-entry.has-refresh .side-nav-link > span {
+  white-space: nowrap;
+}
+
+.side-nav-entry.has-refresh .side-nav-link:hover,
+.side-nav-entry.has-refresh .side-nav-link.active {
+  background: transparent;
+}
+
+.side-nav-entry.has-refresh:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .side-nav-link {
   position: relative;
   display: grid;
+  width: 100%;
   grid-template-columns: 26px minmax(0, 1fr) auto;
   min-height: 42px;
   align-items: center;
@@ -116,6 +157,38 @@
   font-weight: 750;
 }
 
+.side-nav-refresh {
+  display: inline-flex;
+  width: 34px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.42);
+  border: 0;
+  border-radius: 0 10px 10px 0;
+  background: transparent;
+  transition:
+    color var(--frux-motion-fast) ease,
+    background var(--frux-motion-fast) ease,
+    transform var(--frux-motion-fast) ease;
+}
+
+.side-nav-refresh:hover {
+  color: var(--frux-text-strong);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.side-nav-refresh:focus-visible {
+  color: var(--frux-text-strong);
+  outline: 2px solid var(--frux-cyan);
+  outline-offset: -3px;
+}
+
+.side-nav-refresh:active {
+  transform: scale(0.94);
+}
+
 .side-nav-link.active::before {
   position: absolute;
   left: 0;
@@ -126,12 +199,13 @@
   content: "";
 }
 
-.side-nav-link.section-start {
+.side-nav-entry.section-start {
   margin-top: 14px;
 }
 
-.side-nav-link.section-start::after {
+.side-nav-entry.section-start::after {
   position: absolute;
+  z-index: 1;
   top: -8px;
   right: 8px;
   left: 8px;

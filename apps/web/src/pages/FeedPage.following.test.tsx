@@ -39,9 +39,7 @@ vi.mock("../hooks/useFeed", () => ({
     index: 0,
     setIndex: vi.fn(),
     liked: {},
-    setLiked: vi.fn(),
     favorited: {},
-    setFavorited: vi.fn(),
     feedState: "ready",
     feedError: "",
     hasMore: false,
@@ -49,6 +47,7 @@ vi.mock("../hooks/useFeed", () => ({
     current: video(),
     loadFeed: vi.fn(),
     updateCurrentItem: vi.fn(),
+    updateViewerAction: vi.fn(),
     removeAcceptedFeedback: vi.fn(),
     isRecommendationSceneActive: () => false,
     preloadController: {},
@@ -127,6 +126,10 @@ describe("FeedPage following directory integration", () => {
 
     render("timeline");
     expect(container.querySelector('[data-ui="following-directory"]')).toBeNull();
+
+    render("following");
+    expect(required<HTMLElement>('[data-ui="following-directory"]').getAttribute("aria-hidden")).toBe("true");
+    expect(requiredButton("关注列表")).toBeTruthy();
   });
 
   function render(scene: string) {

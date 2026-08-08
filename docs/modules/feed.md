@@ -188,3 +188,24 @@ Web 以当前场景已经返回的 `items` 数组作为唯一预加载顺序来�
 - pool 优先 current，其次 next、previous，绝对上限为 3；scene、请求代次、登录态或源 revision 变化会释放旧 adapter、监听器和媒体源。
 - next slot 使用 `buffer_ms` 判断 ready；提交切换时即使未 ready 也不回退导航，而由新 current 显示 loading/buffering。
 - 视频舞台直接挂载 pool 已 acquire 的预加载句柄；无句柄时使用同一 adaptive media resource 内部准备兼容 MP4。
+
+## 7. Web Feed 场景连续性
+
+Web 在同一次已挂载 Feed 会话中为 `timeline`、`recommend`、`following` 和 `hot` 分别保留内存快照。
+快照包含有序卡片、活动视频、viewer action、后续 cursor、request ID，以及推荐场景专属的
+session/context、下一 refresh index 和反馈抑制集合。用户直接切换 Feed 路由或通过浏览器 Back
+返回时，如果快照仍有效，页面恢复原活动视频和分页尾部，不重新请求第一页。
+
+- 快照绑定当前 Token 与用户 ID；登录、退出或账号替换会清除全部场景，避免跨身份恢复关注流、推荐流或互动状态。
+- 显式刷新/重试只替换当前场景并从第一项开始，其他有效场景不受影响；FeedPage 卸载或浏览器完整刷新后不保留快照。
+- 非活动场景最多保留连续的 120 张卡片。只有后缀同时包含活动视频和已加载分页尾部时才保留 cursor；
+  无法安全压缩、缺少活动视频或 request/context 不一致时直接丢弃并重新加载，不能伪造分页连续性。
+- 场景切换会提升 activation/request generation，并使旧 first-page、load-more 和预加载结果失去提交权限；
+  迟到响应不能覆盖当前场景或污染已提交快照。
+- 快照只保留数据。切换时关闭评论、取消 swipe，并释放 player/preload adapter、监听器、缓冲和媒体资源；
+  返回后创建新的可见播放生命周期，不恢复播放时间、菜单、全屏或焦点。
+- 点赞、收藏和评论计数按 video ID 更新所有包含该视频的有效快照；推荐负反馈的删除和抑制只修改推荐快照。
+- 新推荐请求的 `recent_video_ids` 与 `current_video_id` 只读取推荐快照。Timeline、Following 和 Hot
+  的活动视频不会进入推荐上下文；返回有效推荐快照时继续使用原 request/session、签名 cursor 和抑制状态。
+- 左侧导航只在当前活动 Feed 的同一高亮行内显示低强调单向刷新按钮，不使用独立凸起方块。点击栏目主体仍恢复快照；
+  点击刷新按钮会关闭临时 UI、保留其他场景快照，并让当前场景从第一页和第一条卡片重新开始。

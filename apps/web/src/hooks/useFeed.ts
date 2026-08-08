@@ -1,12 +1,27 @@
-// useFeed：Feed 数据逻辑——items/index/cursor/hasMore/loadingMore/feedState，
-// 加载与翻页、播放配置、预加载。播放生命周期上报由 VideoStage 负责。
-//
-// 注：loadFeed 需要顺带重置 swipe 与评论面板（迁移前这些 state 同处一个组件），
-// 这两个 setter 现在属于 useSwipe/useComments，因此由容器组件通过 callbacks 注入。
+// useFeed: Feed data, pagination, scene restoration, playback configuration,
+// and preloading. VideoStage owns playback lifecycle reporting.
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { apiErrorMessage, isUnauthorized } from "../api/client";
 import { buildRecommendationContext, fetchFeedPage, fetchPlaybackConfig } from "../api/feed";
 import { DEFAULT_PLAYBACK_CONFIG, getFeedSceneMeta } from "../constants";
+import type { FeedSceneKey } from "../constants";
+import {
+  activateFeedSceneSnapshot,
+  compactFeedSceneSnapshot,
+  createFeedSceneSnapshot,
+  feedAuthIdentity,
+  patchFeedSceneSnapshots,
+  removeFeedSceneSnapshot,
+  replaceFeedSceneSnapshot,
+  setFeedSceneSnapshotIndex,
+  updateFeedSceneSnapshot
+} from "../feedSceneState";
+import type {
+  FeedSceneSnapshot,
+  FeedSceneSnapshots,
+  RecommendationSceneSnapshot
+} from "../feedSceneState";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
 import type { FeedVideo, PlaybackConfig, RecommendationContext, RecommendationFeedbackType } from "../types";
@@ -15,7 +30,6 @@ import {
   createFeedRequestID,
   createFeedSessionID,
   mapFeedItem,
-  mergeViewerActions,
   normalizePlaybackConfig,
   requiresAuthFeed,
   viewerActionMap
@@ -26,9 +40,7 @@ export type FeedState = "loading" | "auth" | "error" | "ready";
 const MAX_EMPTY_SUPPRESSION_REFILLS = 8;
 
 export interface UseFeedCallbacks {
-  /** loadFeed 重置列表时清空滑动状态 */
   resetSwipe: () => void;
-  /** loadFeed 重置列表时关闭评论面板 */
   closeComments: () => void;
 }
 
@@ -55,6 +67,19 @@ export interface FeedbackSessionIdentity {
   userID: number;
 }
 
+interface RecommendationRuntime {
+  sessionID: string;
+  nextRefreshIndex: number;
+  context?: RecommendationContext;
+  suppressedVideoIDs: Set<number>;
+  suppressedAuthorIDs: Set<number>;
+}
+
+interface FeedRequestAuthority {
+  activationEpoch: number;
+  generation: number;
+}
+
 export function isFeedbackOriginCurrent(
   origin: { generation: number; scene: string; requestID: string },
   current: { generation: number; scene: string; requestID: string }
@@ -65,8 +90,8 @@ export function isFeedbackOriginCurrent(
 }
 
 // Feedback is durable server state. A response that arrives after a
-// recommendation refresh must still suppress the target from the replacement
-// recommendation list, but it must not mutate another authenticated session.
+// recommendation refresh still applies to the replacement recommendation
+// list, but never to another authenticated session or Feed scene.
 export function shouldApplyAcceptedRecommendationFeedback(
   origin: FeedbackSessionIdentity,
   current: FeedbackSessionIdentity
@@ -150,11 +175,13 @@ function matchesFeedbackTarget(candidate: FeedVideo, item: FeedVideo, feedbackTy
     (feedbackType === "reduce_author" && candidate.author_id === item.author_id);
 }
 
-export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
+export function useFeed(feedScene: string, callbacks: UseFeedCallbacks, refreshRequest = 0) {
   const session = useSession();
   const navigate = useNavigate();
+  const scene = getFeedSceneMeta(feedScene).key;
+  const authIdentity = feedAuthIdentity(session.token, session.user?.id || 0);
   const [items, setItems] = useState<FeedVideo[]>([]);
-  const [index, setIndex] = useState(0);
+  const [index, setIndexState] = useState(0);
   const [liked, setLiked] = useState<Record<number, boolean>>({});
   const [favorited, setFavorited] = useState<Record<number, boolean>>({});
   const [feedState, setFeedState] = useState<FeedState>("loading");
@@ -165,176 +192,403 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
   const [playbackConfig, setPlaybackConfig] = useState<PlaybackConfig>(DEFAULT_PLAYBACK_CONFIG);
   const [feedRequestID, setFeedRequestID] = useState("");
   const [feedGeneration, setFeedGeneration] = useState(0);
+  const mountedRef = useRef(true);
+  const snapshotsRef = useRef<FeedSceneSnapshots>({});
+  const snapshotAuthIdentityRef = useRef(authIdentity);
+  const handledRefreshRequestsRef = useRef<Partial<Record<FeedSceneKey, number>>>({});
+  const activatedSceneRef = useRef<FeedSceneKey>();
+  const activationEpochRef = useRef(0);
   const loadingMoreRef = useRef(false);
   const feedRequestIDRef = useRef("");
   const recommendationContextRef = useRef<RecommendationContext>();
-  const feedSessionIDRef = useRef("");
-  const refreshIndexRef = useRef(0);
-  const feedSessionSceneRef = useRef("");
+  const recommendationRuntimeRef = useRef<RecommendationRuntime>();
   const feedGenerationRef = useRef(0);
-  const feedSceneRef = useRef(feedScene);
+  const feedSceneRef = useRef<FeedSceneKey>(scene);
   const sessionTokenRef = useRef(session.token);
-  const suppressionSessionTokenRef = useRef(session.token);
+  const authIdentityRef = useRef(authIdentity);
   const itemsRef = useRef(items);
   const indexRef = useRef(index);
-  const suppressedVideoIDsRef = useRef(new Set<number>());
-  const suppressedAuthorIDsRef = useRef(new Set<number>());
+  const likedRef = useRef(liked);
+  const favoritedRef = useRef(favorited);
+  const feedStateRef = useRef<FeedState>(feedState);
+  const nextCursorRef = useRef(nextCursor);
+  const hasMoreRef = useRef(hasMore);
   const paginationEpochRef = useRef(0);
   const paginationRequestSerialRef = useRef(0);
   const emptySuppressionRefillAttemptsRef = useRef(0);
-  const currentFeedScene = getFeedSceneMeta(feedScene);
   sessionTokenRef.current = session.token;
+  authIdentityRef.current = authIdentity;
   itemsRef.current = items;
   indexRef.current = index;
-  feedSceneRef.current = feedScene;
-  if (suppressionSessionTokenRef.current !== session.token) {
-    suppressionSessionTokenRef.current = session.token;
-    suppressedVideoIDsRef.current.clear();
-    suppressedAuthorIDsRef.current.clear();
-  }
-  if (feedSessionSceneRef.current !== feedScene) {
-    feedSessionSceneRef.current = feedScene;
-    feedSessionIDRef.current = createFeedSessionID(feedScene);
-    refreshIndexRef.current = 0;
-    recommendationContextRef.current = undefined;
-    suppressedVideoIDsRef.current.clear();
-    suppressedAuthorIDsRef.current.clear();
-  }
+  likedRef.current = liked;
+  favoritedRef.current = favorited;
+  feedStateRef.current = feedState;
+  nextCursorRef.current = nextCursor;
+  hasMoreRef.current = hasMore;
+  feedSceneRef.current = scene;
 
-  const loadFeed = useCallback(() => {
-    let live = true;
-    const generation = ++feedGenerationRef.current;
+  const requestIsCurrent = useCallback((
+    requestScene: FeedSceneKey,
+    requestAuthIdentity: string,
+    requestToken: string,
+    authority: FeedRequestAuthority,
+    paginationEpoch?: number
+  ): boolean => (
+    mountedRef.current &&
+    feedSceneRef.current === requestScene &&
+    authIdentityRef.current === requestAuthIdentity &&
+    sessionTokenRef.current === requestToken &&
+    activationEpochRef.current === authority.activationEpoch &&
+    feedGenerationRef.current === authority.generation &&
+    (paginationEpoch === undefined || paginationEpochRef.current === paginationEpoch)
+  ), []);
+
+  const beginRequestAuthority = useCallback((): FeedRequestAuthority => {
+    const authority = {
+      activationEpoch: ++activationEpochRef.current,
+      generation: ++feedGenerationRef.current
+    };
     paginationEpochRef.current += 1;
     paginationRequestSerialRef.current += 1;
     emptySuppressionRefillAttemptsRef.current = 0;
-    setFeedGeneration(generation);
-    const requestToken = session.token;
-    if (requiresAuthFeed(feedScene) && !session.token) {
-      callbacks.resetSwipe();
-      setItems([]);
-      setIndex(0);
-      callbacks.closeComments();
-      setFeedError("");
-      setNextCursor("");
-      setHasMore(false);
-      setLoadingMore(false);
-      setFeedState("auth");
-      return () => {
-        live = false;
-      };
-    }
-
-    const requestID = createFeedRequestID(feedScene);
-    const recommendationContext = buildRecommendationContext({
-      requestID,
-      sessionID: feedSessionIDRef.current,
-      refreshIndex: refreshIndexRef.current++,
-      recentVideoIDs: recentRecommendationVideoIDs(itemsRef.current, indexRef.current),
-      currentVideoID: itemsRef.current[indexRef.current]?.video_id || 0
-    });
-    feedRequestIDRef.current = requestID;
-    recommendationContextRef.current = recommendationContext;
     loadingMoreRef.current = false;
-    setFeedRequestID(requestID);
+    setLoadingMore(false);
+    setFeedGeneration(authority.generation);
+    return authority;
+  }, []);
+
+  const applyActiveSnapshot = useCallback((snapshot: FeedSceneSnapshot) => {
+    itemsRef.current = snapshot.items;
+    indexRef.current = snapshot.index;
+    likedRef.current = snapshot.liked;
+    favoritedRef.current = snapshot.favorited;
+    nextCursorRef.current = snapshot.nextCursor;
+    hasMoreRef.current = snapshot.hasMore;
+    feedRequestIDRef.current = snapshot.requestID;
+    recommendationContextRef.current = snapshot.recommendation?.context;
+    loadingMoreRef.current = false;
+    if (snapshot.recommendation) {
+      recommendationRuntimeRef.current = recommendationRuntimeFromSnapshot(snapshot.recommendation);
+    }
+    setItems(snapshot.items);
+    setIndexState(snapshot.index);
+    setLiked(snapshot.liked);
+    setFavorited(snapshot.favorited);
+    setNextCursor(snapshot.nextCursor);
+    setHasMore(snapshot.hasMore);
+    setFeedRequestID(snapshot.requestID);
+    setLoadingMore(false);
+    setFeedError("");
+    feedStateRef.current = "ready";
+    setFeedState("ready");
+  }, []);
+
+  const resetActiveState = useCallback((state: FeedState, error = "") => {
+    itemsRef.current = [];
+    indexRef.current = 0;
+    likedRef.current = {};
+    favoritedRef.current = {};
+    nextCursorRef.current = "";
+    hasMoreRef.current = false;
+    feedRequestIDRef.current = "";
+    recommendationContextRef.current = undefined;
+    loadingMoreRef.current = false;
+    setItems([]);
+    setIndexState(0);
+    setLiked({});
+    setFavorited({});
     setNextCursor("");
     setHasMore(false);
+    setFeedRequestID("");
     setLoadingMore(false);
-    setFeedState("loading");
-    setFeedError("");
-    fetchFeedPage(feedScene, requestToken, "", recommendationContext)
-      .then((data) => {
-        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
-        const resolvedRequestID = resolveFeedRequestID(feedScene, requestID, data.request_id);
-        if (feedScene === "recommend") {
-          feedRequestIDRef.current = resolvedRequestID;
-          recommendationContextRef.current = {
-            ...recommendationContext,
-            request_id: resolvedRequestID
-          };
-          setFeedRequestID(resolvedRequestID);
-        }
-        const nextItems = filterSuppressedFeedItems(
-          (data.items || []).map((item) => mapFeedItem(item, feedScene, resolvedRequestID)),
-          suppressedVideoIDsRef.current,
-          suppressedAuthorIDsRef.current,
-          feedScene
-        );
-        callbacks.resetSwipe();
-        itemsRef.current = nextItems;
-        setItems(nextItems);
-        setLiked(viewerActionMap(nextItems, "liked"));
-        setFavorited(viewerActionMap(nextItems, "favorited"));
-        setIndex(0);
-        callbacks.closeComments();
-        setNextCursor(data.next_cursor || "");
-        setHasMore(Boolean(data.has_more && data.next_cursor));
-        setFeedState("ready");
-      })
-      .catch((error: unknown) => {
-        if (!live || generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken) return;
-        if (isUnauthorized(error) && requiresAuthFeed(feedScene)) {
-          setItems([]);
-          setIndex(0);
-          callbacks.closeComments();
-          setNextCursor("");
-          setHasMore(false);
-          setFeedState("auth");
-          return;
-        }
-        setItems([]);
-        setFeedError(apiErrorMessage(error, `${currentFeedScene.label}加载失败`));
-        setFeedState("error");
-      });
-    return () => {
-      live = false;
-    };
-  }, [callbacks, currentFeedScene.label, feedScene, session.token]);
+    setFeedError(error);
+    feedStateRef.current = state;
+    setFeedState(state);
+  }, []);
 
-  const loadMoreFeed = useCallback(() => {
-    if (loadingMoreRef.current || feedState !== "ready" || !hasMore || !nextCursor || (requiresAuthFeed(feedScene) && !session.token)) {
+  const startSceneLoad = useCallback(({
+    requestScene,
+    requestAuthIdentity,
+    requestToken,
+    authority,
+    priorSnapshot
+  }: {
+    requestScene: FeedSceneKey;
+    requestAuthIdentity: string;
+    requestToken: string;
+    authority: FeedRequestAuthority;
+    priorSnapshot: FeedSceneSnapshot | null;
+  }) => {
+    if (requiresAuthFeed(requestScene) && !requestToken) {
+      resetActiveState("auth");
       return;
     }
 
-    const requestID = feedRequestIDRef.current || feedRequestID || createFeedRequestID(feedScene);
-    const recommendationContext = recommendationContextRef.current;
-    const generation = feedGenerationRef.current;
-    const paginationEpoch = paginationEpochRef.current;
-    const requestSerial = ++paginationRequestSerialRef.current;
-    const requestedCursor = nextCursor;
-    const requestToken = session.token;
-    loadingMoreRef.current = true;
-    setLoadingMore(true);
-    fetchFeedPage(feedScene, requestToken, requestedCursor, recommendationContext)
+    const requestID = createFeedRequestID(requestScene);
+    let recommendationRuntime: RecommendationRuntime | undefined;
+    let recommendationContext: RecommendationContext | undefined;
+    if (requestScene === "recommend") {
+      const existingRuntime = priorSnapshot?.recommendation
+        ? recommendationRuntimeFromSnapshot(priorSnapshot.recommendation)
+        : recommendationRuntimeRef.current;
+      const sessionID = existingRuntime?.sessionID || createFeedSessionID(requestScene);
+      const refreshIndex = existingRuntime?.nextRefreshIndex || 0;
+      recommendationContext = buildRecommendationContext({
+        requestID,
+        sessionID,
+        refreshIndex,
+        recentVideoIDs: recentRecommendationVideoIDs(priorSnapshot?.items || [], priorSnapshot?.index || 0),
+        currentVideoID: priorSnapshot?.items[priorSnapshot.index]?.video_id || 0
+      });
+      recommendationRuntime = {
+        sessionID,
+        nextRefreshIndex: refreshIndex + 1,
+        context: recommendationContext,
+        suppressedVideoIDs: new Set(existingRuntime?.suppressedVideoIDs || []),
+        suppressedAuthorIDs: new Set(existingRuntime?.suppressedAuthorIDs || [])
+      };
+      recommendationRuntimeRef.current = recommendationRuntime;
+    }
+
+    resetActiveState("loading");
+    feedRequestIDRef.current = requestID;
+    recommendationContextRef.current = recommendationContext;
+    setFeedRequestID(requestID);
+    fetchFeedPage(requestScene, requestToken, "", recommendationContext)
       .then((data) => {
-        if (generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken || paginationEpoch !== paginationEpochRef.current) return;
-        const resolvedRequestID = resolveFeedRequestID(feedScene, requestID, data.request_id);
-        if (feedScene === "recommend") {
-          feedRequestIDRef.current = resolvedRequestID;
-          recommendationContextRef.current = recommendationContext
-            ? { ...recommendationContext, request_id: resolvedRequestID }
-            : recommendationContext;
-          setFeedRequestID(resolvedRequestID);
+        if (!requestIsCurrent(requestScene, requestAuthIdentity, requestToken, authority)) return;
+        const resolvedRequestID = resolveFeedRequestID(requestScene, requestID, data.request_id);
+        if (recommendationRuntime?.context) {
+          recommendationRuntime = {
+            ...recommendationRuntime,
+            context: {
+              ...recommendationRuntime.context,
+              request_id: resolvedRequestID
+            }
+          };
+          recommendationRuntimeRef.current = recommendationRuntime;
         }
         const nextItems = filterSuppressedFeedItems(
-          (data.items || []).map((item) => mapFeedItem(item, feedScene, resolvedRequestID)),
-          suppressedVideoIDsRef.current,
-          suppressedAuthorIDsRef.current,
-          feedScene
+          (data.items || []).map((item) => mapFeedItem(item, requestScene, resolvedRequestID)),
+          recommendationRuntime?.suppressedVideoIDs || new Set(),
+          recommendationRuntime?.suppressedAuthorIDs || new Set(),
+          requestScene
         );
-        setItems((state) => {
-          const merged = appendFeedItems(state, nextItems);
-          itemsRef.current = merged;
-          return merged;
+        const snapshot = createFeedSceneSnapshot({
+          scene: requestScene,
+          authIdentity: requestAuthIdentity,
+          items: nextItems,
+          index: 0,
+          liked: viewerActionMap(nextItems, "liked"),
+          favorited: viewerActionMap(nextItems, "favorited"),
+          nextCursor: data.next_cursor || "",
+          hasMore: Boolean(data.has_more && data.next_cursor),
+          requestID: resolvedRequestID,
+          recommendation: recommendationRuntime
+            ? recommendationSnapshotFromRuntime(recommendationRuntime)
+            : undefined
         });
-        mergeViewerActions(nextItems, setLiked, "liked");
-        mergeViewerActions(nextItems, setFavorited, "favorited");
-        const returnedCursor = data.next_cursor || "";
-        setNextCursor(returnedCursor);
-        setHasMore(Boolean(data.has_more && returnedCursor && returnedCursor !== requestedCursor));
+        snapshotsRef.current = replaceFeedSceneSnapshot(snapshotsRef.current, snapshot);
+        applyActiveSnapshot(snapshot);
       })
       .catch((error: unknown) => {
-        if (generation !== feedGenerationRef.current || sessionTokenRef.current !== requestToken || paginationEpoch !== paginationEpochRef.current) return;
-        if (isUnauthorized(error) && requiresAuthFeed(feedScene)) {
+        if (!requestIsCurrent(requestScene, requestAuthIdentity, requestToken, authority)) return;
+        if (isUnauthorized(error) && requiresAuthFeed(requestScene)) {
+          resetActiveState("auth");
+          return;
+        }
+        resetActiveState("error", apiErrorMessage(error, `${getFeedSceneMeta(requestScene).label}加载失败`));
+      });
+  }, [applyActiveSnapshot, requestIsCurrent, resetActiveState]);
+
+  const loadFeed = useCallback(() => {
+    const requestScene = feedSceneRef.current;
+    const requestAuthIdentity = authIdentityRef.current;
+    const priorSnapshot = activateFeedSceneSnapshot(
+      snapshotsRef.current[requestScene],
+      requestScene,
+      requestAuthIdentity
+    );
+    snapshotsRef.current = removeFeedSceneSnapshot(snapshotsRef.current, requestScene);
+    const authority = beginRequestAuthority();
+    callbacks.resetSwipe();
+    callbacks.closeComments();
+    startSceneLoad({
+      requestScene,
+      requestAuthIdentity,
+      requestToken: sessionTokenRef.current,
+      authority,
+      priorSnapshot
+    });
+  }, [beginRequestAuthority, callbacks, startSceneLoad]);
+
+  useEffect(() => {
+    if (snapshotAuthIdentityRef.current !== authIdentity) {
+      snapshotsRef.current = {};
+      recommendationRuntimeRef.current = undefined;
+      snapshotAuthIdentityRef.current = authIdentity;
+    } else {
+      const previousScene = activatedSceneRef.current;
+      if (previousScene && previousScene !== scene) {
+        const previousSnapshot = snapshotsRef.current[previousScene];
+        if (previousSnapshot) {
+          const compacted = compactFeedSceneSnapshot(previousSnapshot);
+          snapshotsRef.current = compacted
+            ? replaceFeedSceneSnapshot(snapshotsRef.current, compacted)
+            : removeFeedSceneSnapshot(snapshotsRef.current, previousScene);
+          if (previousScene === "recommend" && !compacted) {
+            recommendationRuntimeRef.current = undefined;
+          }
+        }
+      }
+    }
+
+    activatedSceneRef.current = scene;
+    const handledRefreshRequest = handledRefreshRequestsRef.current[scene] || 0;
+    const forceRefresh = refreshRequest > handledRefreshRequest;
+    if (forceRefresh) {
+      handledRefreshRequestsRef.current[scene] = refreshRequest;
+    }
+    const authority = beginRequestAuthority();
+    callbacks.resetSwipe();
+    callbacks.closeComments();
+    const snapshot = activateFeedSceneSnapshot(snapshotsRef.current[scene], scene, authIdentity);
+    if (snapshot && !forceRefresh) {
+      snapshotsRef.current = replaceFeedSceneSnapshot(snapshotsRef.current, snapshot);
+      applyActiveSnapshot(snapshot);
+      return;
+    }
+    if (snapshotsRef.current[scene]) {
+      snapshotsRef.current = removeFeedSceneSnapshot(snapshotsRef.current, scene);
+      if (scene === "recommend") {
+        recommendationRuntimeRef.current = undefined;
+      }
+    }
+    startSceneLoad({
+      requestScene: scene,
+      requestAuthIdentity: authIdentity,
+      requestToken: session.token,
+      authority,
+      priorSnapshot: forceRefresh ? snapshot : null
+    });
+  }, [
+    applyActiveSnapshot,
+    authIdentity,
+    beginRequestAuthority,
+    callbacks,
+    refreshRequest,
+    scene,
+    session.token,
+    startSceneLoad
+  ]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      activationEpochRef.current += 1;
+      feedGenerationRef.current += 1;
+      paginationEpochRef.current += 1;
+      paginationRequestSerialRef.current += 1;
+    };
+  }, []);
+
+  const setIndex = useCallback<Dispatch<SetStateAction<number>>>((value) => {
+    setIndexState((previous) => {
+      const requested = resolveStateAction(value, previous);
+      const next = clampFeedIndex(itemsRef.current, requested);
+      indexRef.current = next;
+      const activeScene = feedSceneRef.current;
+      snapshotsRef.current = updateFeedSceneSnapshot(
+        snapshotsRef.current,
+        activeScene,
+        (snapshot) => setFeedSceneSnapshotIndex(snapshot, next)
+      );
+      return next;
+    });
+  }, []);
+
+  const loadMoreFeed = useCallback(() => {
+    const requestScene = feedSceneRef.current;
+    const requestToken = sessionTokenRef.current;
+    const requestAuthIdentity = authIdentityRef.current;
+    if (
+      loadingMoreRef.current ||
+      feedStateRef.current !== "ready" ||
+      !hasMoreRef.current ||
+      !nextCursorRef.current ||
+      (requiresAuthFeed(requestScene) && !requestToken)
+    ) {
+      return;
+    }
+
+    const requestID = feedRequestIDRef.current || createFeedRequestID(requestScene);
+    const recommendationRuntime = requestScene === "recommend"
+      ? recommendationRuntimeRef.current
+      : undefined;
+    const authority = {
+      activationEpoch: activationEpochRef.current,
+      generation: feedGenerationRef.current
+    };
+    const paginationEpoch = paginationEpochRef.current;
+    const requestSerial = ++paginationRequestSerialRef.current;
+    const requestedCursor = nextCursorRef.current;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    fetchFeedPage(requestScene, requestToken, requestedCursor, recommendationRuntime?.context)
+      .then((data) => {
+        if (!requestIsCurrent(
+          requestScene,
+          requestAuthIdentity,
+          requestToken,
+          authority,
+          paginationEpoch
+        )) {
+          return;
+        }
+        const resolvedRequestID = resolveFeedRequestID(requestScene, requestID, data.request_id);
+        if (recommendationRuntime?.context) {
+          recommendationRuntime.context = {
+            ...recommendationRuntime.context,
+            request_id: resolvedRequestID
+          };
+          recommendationRuntimeRef.current = recommendationRuntime;
+        }
+        const nextItems = filterSuppressedFeedItems(
+          (data.items || []).map((item) => mapFeedItem(item, requestScene, resolvedRequestID)),
+          recommendationRuntime?.suppressedVideoIDs || new Set(),
+          recommendationRuntime?.suppressedAuthorIDs || new Set(),
+          requestScene
+        );
+        const returnedCursor = data.next_cursor || "";
+        const snapshot = createFeedSceneSnapshot({
+          scene: requestScene,
+          authIdentity: requestAuthIdentity,
+          items: appendFeedItems(itemsRef.current, nextItems),
+          index: indexRef.current,
+          liked: mergeViewerActionState(likedRef.current, nextItems, "liked"),
+          favorited: mergeViewerActionState(favoritedRef.current, nextItems, "favorited"),
+          nextCursor: returnedCursor,
+          hasMore: Boolean(data.has_more && returnedCursor && returnedCursor !== requestedCursor),
+          requestID: resolvedRequestID,
+          recommendation: recommendationRuntime
+            ? recommendationSnapshotFromRuntime(recommendationRuntime)
+            : undefined
+        });
+        snapshotsRef.current = replaceFeedSceneSnapshot(snapshotsRef.current, snapshot);
+        applyActiveSnapshot(snapshot);
+      })
+      .catch((error: unknown) => {
+        if (!requestIsCurrent(
+          requestScene,
+          requestAuthIdentity,
+          requestToken,
+          authority,
+          paginationEpoch
+        )) {
+          return;
+        }
+        if (isUnauthorized(error) && requiresAuthFeed(requestScene)) {
           session.clearAuth();
           navigate("/auth");
         }
@@ -344,7 +598,7 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
         loadingMoreRef.current = false;
         setLoadingMore(false);
       });
-  }, [feedRequestID, feedScene, feedState, hasMore, navigate, nextCursor, session]);
+  }, [applyActiveSnapshot, navigate, requestIsCurrent, session.clearAuth]);
 
   useEffect(() => {
     if (!shouldAutoLoadSuppressedEmptyPage(
@@ -362,10 +616,6 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     emptySuppressionRefillAttemptsRef.current += 1;
     loadMoreFeed();
   }, [hasMore, items.length, loadMoreFeed, loadingMore, nextCursor]);
-
-  useEffect(() => {
-    return loadFeed();
-  }, [loadFeed]);
 
   useEffect(() => {
     if (!session.token) {
@@ -400,11 +650,35 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
   const current = items[index];
 
   const updateCurrentItem = useCallback((videoID: number, patch: Partial<FeedVideo>) => {
-    setItems((state) => {
-      const updated = state.map((item) => (item.video_id === videoID ? { ...item, ...patch } : item));
-      itemsRef.current = updated;
-      return updated;
-    });
+    snapshotsRef.current = patchFeedSceneSnapshots(snapshotsRef.current, videoID, { item: patch });
+    const activeSnapshot = snapshotsRef.current[feedSceneRef.current];
+    if (!activeSnapshot) return;
+    itemsRef.current = activeSnapshot.items;
+    setItems(activeSnapshot.items);
+  }, []);
+
+  const updateViewerAction = useCallback((
+    videoID: number,
+    action: "liked" | "favorited",
+    active: boolean,
+    patch: Partial<FeedVideo>
+  ) => {
+    snapshotsRef.current = patchFeedSceneSnapshots(
+      snapshotsRef.current,
+      videoID,
+      {
+        item: patch,
+        ...(action === "liked" ? { liked: active } : { favorited: active })
+      }
+    );
+    const activeSnapshot = snapshotsRef.current[feedSceneRef.current];
+    if (!activeSnapshot) return;
+    itemsRef.current = activeSnapshot.items;
+    likedRef.current = activeSnapshot.liked;
+    favoritedRef.current = activeSnapshot.favorited;
+    setItems(activeSnapshot.items);
+    setLiked(activeSnapshot.liked);
+    setFavorited(activeSnapshot.favorited);
   }, []);
 
   const removeAcceptedFeedback = useCallback((
@@ -412,10 +686,12 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     feedbackType: RecommendationFeedbackType,
     transition?: FeedSwipeTransition
   ) => {
+    const recommendationRuntime = recommendationRuntimeRef.current;
+    if (feedSceneRef.current !== "recommend" || !recommendationRuntime) return;
     if (feedbackType === "reduce_author") {
-      suppressedAuthorIDsRef.current.add(item.author_id);
+      recommendationRuntime.suppressedAuthorIDs.add(item.author_id);
     } else {
-      suppressedVideoIDsRef.current.add(item.video_id);
+      recommendationRuntime.suppressedVideoIDs.add(item.video_id);
     }
     paginationEpochRef.current += 1;
     paginationRequestSerialRef.current += 1;
@@ -425,26 +701,34 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     const cancelSwipe = shouldCancelSwipeForAcceptedFeedback(removal, item, feedbackType, transition);
     const retainedItems = filterSuppressedFeedItems(
       removal.items,
-      suppressedVideoIDsRef.current,
-      suppressedAuthorIDsRef.current,
-      item.feed_scene
+      recommendationRuntime.suppressedVideoIDs,
+      recommendationRuntime.suppressedAuthorIDs,
+      "recommend"
     );
     const retainedIndex = retainedItems.length === 0 ? 0 : Math.min(removal.index, retainedItems.length - 1);
+    const retainedLiked = removeViewerActions(likedRef.current, retainedItems);
+    const retainedFavorited = removeViewerActions(favoritedRef.current, retainedItems);
+    const snapshot = createFeedSceneSnapshot({
+      scene: "recommend",
+      authIdentity: authIdentityRef.current,
+      items: retainedItems,
+      index: retainedIndex,
+      liked: retainedLiked,
+      favorited: retainedFavorited,
+      nextCursor: nextCursorRef.current,
+      hasMore: hasMoreRef.current,
+      requestID: feedRequestIDRef.current,
+      recommendation: recommendationSnapshotFromRuntime(recommendationRuntime)
+    });
+    snapshotsRef.current = replaceFeedSceneSnapshot(snapshotsRef.current, snapshot);
     itemsRef.current = retainedItems;
     indexRef.current = retainedIndex;
-    setItems((state) => {
-      const retained = filterSuppressedFeedItems(
-        state,
-        suppressedVideoIDsRef.current,
-        suppressedAuthorIDsRef.current,
-        item.feed_scene
-      );
-      itemsRef.current = retained;
-      return retained;
-    });
-    setIndex(retainedIndex);
-    setLiked((state) => removeViewerActions(state, retainedItems));
-    setFavorited((state) => removeViewerActions(state, retainedItems));
+    likedRef.current = retainedLiked;
+    favoritedRef.current = retainedFavorited;
+    setItems(retainedItems);
+    setIndexState(retainedIndex);
+    setLiked(retainedLiked);
+    setFavorited(retainedFavorited);
     if (cancelSwipe) {
       callbacks.resetSwipe();
     }
@@ -453,15 +737,20 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     }
   }, [callbacks]);
 
-  const isCurrentFeedbackTarget = useCallback((generation: number, scene: string, requestID: string) => isFeedbackOriginCurrent(
-    { generation, scene, requestID },
-    { generation: feedGenerationRef.current, scene: feedSceneRef.current, requestID: feedRequestIDRef.current }
-  ), []);
+  const isCurrentFeedbackTarget = useCallback((generation: number, targetScene: string, requestID: string) =>
+    isFeedbackOriginCurrent(
+      { generation, scene: targetScene, requestID },
+      {
+        generation: feedGenerationRef.current,
+        scene: feedSceneRef.current,
+        requestID: feedRequestIDRef.current
+      }
+    ), []);
 
   const isRecommendationSceneActive = useCallback(() => feedSceneRef.current === "recommend", []);
 
   const preloading = useFeedPreloading({
-    scene: feedScene,
+    scene,
     requestID: feedRequestID,
     requestGeneration: feedGeneration,
     authKey: session.token,
@@ -479,9 +768,7 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     index,
     setIndex,
     liked,
-    setLiked,
     favorited,
-    setFavorited,
     feedState,
     feedError,
     hasMore,
@@ -491,6 +778,7 @@ export function useFeed(feedScene: string, callbacks: UseFeedCallbacks) {
     feedGeneration,
     loadFeed,
     updateCurrentItem,
+    updateViewerAction,
     removeAcceptedFeedback,
     isCurrentFeedbackTarget,
     isRecommendationSceneActive,
@@ -512,4 +800,43 @@ function recentRecommendationVideoIDs(items: FeedVideo[], index: number): number
 function removeViewerActions(actions: Record<number, boolean>, items: FeedVideo[]): Record<number, boolean> {
   const retainedIDs = new Set(items.map((item) => item.video_id));
   return Object.fromEntries(Object.entries(actions).filter(([videoID]) => retainedIDs.has(Number(videoID))));
+}
+
+function recommendationRuntimeFromSnapshot(snapshot: RecommendationSceneSnapshot): RecommendationRuntime {
+  return {
+    sessionID: snapshot.sessionID,
+    nextRefreshIndex: snapshot.nextRefreshIndex,
+    context: snapshot.context,
+    suppressedVideoIDs: new Set(snapshot.suppressedVideoIDs),
+    suppressedAuthorIDs: new Set(snapshot.suppressedAuthorIDs)
+  };
+}
+
+function recommendationSnapshotFromRuntime(runtime: RecommendationRuntime): RecommendationSceneSnapshot {
+  return {
+    sessionID: runtime.sessionID,
+    nextRefreshIndex: runtime.nextRefreshIndex,
+    context: runtime.context,
+    suppressedVideoIDs: [...runtime.suppressedVideoIDs],
+    suppressedAuthorIDs: [...runtime.suppressedAuthorIDs]
+  };
+}
+
+function mergeViewerActionState(
+  current: Record<number, boolean>,
+  items: FeedVideo[],
+  field: "liked" | "favorited"
+): Record<number, boolean> {
+  return { ...current, ...viewerActionMap(items, field) };
+}
+
+function resolveStateAction<T>(action: SetStateAction<T>, current: T): T {
+  return typeof action === "function"
+    ? (action as (value: T) => T)(current)
+    : action;
+}
+
+function clampFeedIndex(items: FeedVideo[], index: number): number {
+  if (items.length === 0) return 0;
+  return Math.min(Math.max(0, Math.trunc(index)), items.length - 1);
 }

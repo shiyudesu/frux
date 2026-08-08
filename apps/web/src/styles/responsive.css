@@ -40,6 +40,28 @@
     padding: 0;
   }
 
+  .side-nav-entry.has-refresh {
+    display: grid;
+    min-height: 44px;
+    grid-template-columns: minmax(0, 1fr) 22px;
+    padding-right: 4px;
+  }
+
+  .side-nav-entry.has-refresh .side-nav-link {
+    gap: 0;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  .side-nav-refresh {
+    position: static;
+    width: 22px;
+    height: 44px;
+    border-radius: 0 10px 10px 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
   .side-nav-link > span:not(.nav-badge) {
     display: none;
   }

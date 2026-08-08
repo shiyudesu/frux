@@ -205,7 +205,7 @@ function renderIcon(name: IconName, filled: boolean) {
         </>
       );
     case "refresh":
-      return <path d="M19 7v5h-5M5.4 17a8 8 0 0 0 13.2-3M5 17v-5h5M18.6 7A8 8 0 0 0 5.4 10" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />;
+      return <path d="M18.1 7.25A7.4 7.4 0 1 0 19.35 15a1 1 0 0 0-1.86-.74A5.4 5.4 0 1 1 16.7 8H15a1 1 0 1 0 0 2h4a1 1 0 0 0 1-1V5a1 1 0 1 0-2 0v2.25h.1Z" fill="currentColor" />;
     case "reply":
       return <path d="m10 7-6 5 6 5v-3c4.8 0 7.8 1.4 10 4-1-5.8-4.2-9-10-9V7Z" fill={fill} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.7" />;
     case "save":

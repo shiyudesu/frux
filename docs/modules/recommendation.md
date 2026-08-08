@@ -82,6 +82,14 @@
 失败显示可理解错误且不伪造成功。异步反馈会绑定发起时的用户和 Token，只有同一已认证推荐
 会话仍然当前时才更新本地列表，因此登出、切换账号或重新登录不会修改替换账号的 Feed。
 
+Web 为推荐场景独立保留内存快照。临时访问 Timeline、Following 或 Hot 后返回时，继续使用原
+request/session、活动视频、签名 cursor、下一 refresh index 和已接受反馈的抑制集合，不重新请求
+推荐首页。显式刷新才创建新的 request，并且 `recent_video_ids`、`current_video_id` 只从推荐
+快照派生，不能读取刚离开的其他 Feed 场景。登录身份变化、FeedPage 卸载或快照无法同时保留
+活动视频与分页尾部时，旧推荐快照失效并开始新的逻辑会话。
+当推荐流为当前栏目时，左侧栏目旁显示刷新按钮；该按钮显式创建新的推荐 request，并以原推荐
+快照的最近视频和活动视频构建下一 refresh context，其他 Feed 快照保持不变。
+
 ## 7. Context、反馈与评估
 
 `POST /api/feed-queries` 在 `scene=recommend` 时接受 `context`。`request_id`、`session_id`

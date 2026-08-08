@@ -26,6 +26,7 @@ import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
 import { usePlayerPreferences } from "../hooks/usePlayerPreferences";
 import { useFollowingDirectory } from "../hooks/useFollowingDirectory";
+import { useFeedRefreshRequest } from "../feedRefresh";
 import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch, RecommendationFeedbackType, RelationUser } from "../types";
 import type { PlaybackQoSMetrics } from "../utils";
 import { buildPlaybackQoSPayload, createPlaybackQoSKey, openPublicProfile } from "../utils";
@@ -52,15 +53,14 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const resetSwipe = useCallback(() => feedUICallbacksRef.current.resetSwipe(), []);
   const closeComments = useCallback(() => feedUICallbacksRef.current.closeComments(), []);
   const feedCallbacks = useMemo(() => ({ resetSwipe, closeComments }), [resetSwipe, closeComments]);
+  const refreshRequest = useFeedRefreshRequest(getFeedSceneMeta(feedScene).key);
 
   const {
     items,
     index,
     setIndex,
     liked,
-    setLiked,
     favorited,
-    setFavorited,
     feedState,
     feedError,
     hasMore,
@@ -68,6 +68,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     current,
     loadFeed,
     updateCurrentItem,
+    updateViewerAction,
     removeAcceptedFeedback,
     isRecommendationSceneActive,
     preloadController,
@@ -75,7 +76,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     playerResourceByVideoID,
     preloadPolicy,
     preloadDebug
-  } = useFeed(feedScene, feedCallbacks);
+  } = useFeed(feedScene, feedCallbacks, refreshRequest);
 
   const { swipe, cancelSwipe, moveTo, handlePointerDown, handlePointerMove, handlePointerEnd, handleWheel } = useSwipe({
     index,
@@ -270,30 +271,38 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     try {
       const nextLiked = !Boolean(liked[current.video_id]);
       const data = await likeVideo(session.token, current.video_id, nextLiked, recommendationOutcomeContext(current));
-      setLiked((state) => ({ ...state, [current.video_id]: Boolean(data.active) }));
-      updateCurrentItem(current.video_id, { like_count: data.like_count ?? current.like_count });
+      updateViewerAction(
+        current.video_id,
+        "liked",
+        Boolean(data.active),
+        { like_count: data.like_count ?? current.like_count }
+      );
     } catch (error) {
       if (isUnauthorized(error)) {
         session.clearAuth();
         navigate("/auth");
       }
     }
-  }, [current, liked, navigate, requireLogin, session, setLiked, swipe, updateCurrentItem]);
+  }, [current, liked, navigate, requireLogin, session, swipe, updateViewerAction]);
 
   const setFavorite = useCallback(async () => {
     if (!current || swipe || !requireLogin()) return;
     try {
       const nextFavorited = !Boolean(favorited[current.video_id]);
       const data = await favoriteVideo(session.token, current.video_id, nextFavorited, recommendationOutcomeContext(current));
-      setFavorited((state) => ({ ...state, [current.video_id]: Boolean(data.active) }));
-      updateCurrentItem(current.video_id, { favorite_count: data.favorite_count ?? current.favorite_count });
+      updateViewerAction(
+        current.video_id,
+        "favorited",
+        Boolean(data.active),
+        { favorite_count: data.favorite_count ?? current.favorite_count }
+      );
     } catch (error) {
       if (isUnauthorized(error)) {
         session.clearAuth();
         navigate("/auth");
       }
     }
-  }, [current, favorited, navigate, requireLogin, session, setFavorited, swipe, updateCurrentItem]);
+  }, [current, favorited, navigate, requireLogin, session, swipe, updateViewerAction]);
 
   const setFollow = useCallback(async () => {
     if (!current || swipe || !requireLogin()) return;
