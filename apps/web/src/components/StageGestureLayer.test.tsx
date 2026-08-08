@@ -25,10 +25,10 @@ describe("StageGestureLayer", () => {
   it("toggles playback after a confirmed single click", async () => {
     const onTogglePlayback = vi.fn();
     await renderGesture({ onTogglePlayback });
-    const layer = requiredLayer();
+    const video = mountedVideo();
 
     act(() => {
-      layer.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      video.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
       vi.advanceTimersByTime(STAGE_SINGLE_CLICK_DELAY_MS - 1);
     });
     expect(onTogglePlayback).not.toHaveBeenCalled();
@@ -41,12 +41,12 @@ describe("StageGestureLayer", () => {
     const onLike = vi.fn();
     const onTogglePlayback = vi.fn();
     await renderGesture({ onLike, onTogglePlayback });
-    const layer = requiredLayer();
+    const video = mountedVideo();
 
     act(() => {
-      layer.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-      layer.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
-      layer.dispatchEvent(new MouseEvent("dblclick", {
+      video.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      video.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
+      video.dispatchEvent(new MouseEvent("dblclick", {
         bubbles: true,
         cancelable: true,
         clientX: 80,
@@ -111,5 +111,11 @@ describe("StageGestureLayer", () => {
     const layer = container.querySelector<HTMLDivElement>('[data-ui="stage-gesture-layer"]');
     if (!layer) throw new Error("gesture layer not found");
     return layer;
+  }
+
+  function mountedVideo(): HTMLVideoElement {
+    const video = document.createElement("video");
+    requiredLayer().appendChild(video);
+    return video;
   }
 });

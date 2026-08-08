@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { Icon } from "./Icon";
 
-export const STAGE_SINGLE_CLICK_DELAY_MS = 500;
+export const STAGE_SINGLE_CLICK_DELAY_MS = 240;
 const LIKE_BURST_DURATION_MS = 680;
 
 interface StageGestureLayerProps {
@@ -73,6 +73,7 @@ export const StageGestureLayer = forwardRef<HTMLDivElement, StageGestureLayerPro
           className="stage-media-host"
           data-ui="stage-gesture-layer"
           onClick={handleClick}
+          onContextMenu={(event) => event.preventDefault()}
           onDoubleClick={handleDoubleClick}
         />
         {burst && (

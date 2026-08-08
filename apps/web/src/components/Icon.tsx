@@ -5,6 +5,7 @@ export type IconName =
   | "bell"
   | "bookmark"
   | "camera"
+  | "check"
   | "check-all"
   | "chevron-down"
   | "chevron-up"
@@ -93,6 +94,8 @@ function renderIcon(name: IconName, filled: boolean) {
           <circle cx="12" cy="12.5" r="3.2" stroke="currentColor" strokeWidth="1.7" />
         </>
       );
+    case "check":
+      return <path d="m5 12.5 4.2 4.2L19 7" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />;
     case "check-all":
       return (
         <>

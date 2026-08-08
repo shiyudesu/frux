@@ -236,7 +236,7 @@ function PlayerChoiceMenu({ label, value, options, onSelect }: PlayerChoiceMenuP
               }}
             >
               <span>{option.label}</span>
-              {option.value === value && <Icon name="check-all" size={14} />}
+              {option.value === value && <Icon name="check" size={14} />}
             </button>
           ))}
         </div>

@@ -113,10 +113,11 @@
   position: absolute;
   z-index: 2;
   inset: 0;
+  cursor: pointer;
 }
 
 video.stage-media {
-  cursor: pointer;
+  pointer-events: none;
 }
 
 .stage-like-burst {

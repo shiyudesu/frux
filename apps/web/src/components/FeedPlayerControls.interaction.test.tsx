@@ -44,6 +44,7 @@ describe("FeedPlayerControls menus", () => {
     ));
     const trigger = requiredButton("清晰度，当前 自动");
     act(() => trigger.click());
+    expect(container.querySelectorAll(".player-choice-menu button.active svg path")).toHaveLength(1);
     const option = requiredButton("720p");
     act(() => option.click());
 
