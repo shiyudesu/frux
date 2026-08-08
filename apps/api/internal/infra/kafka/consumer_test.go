@@ -105,8 +105,12 @@ func TestConsumerCancelsBlockedRebalanceBeforeReleasingOwnership(t *testing.T) {
 	}))
 	consumer.rebalance = rebalance
 	done := make(chan struct{})
+	var batchErr error
 	go func() {
-		_, _ = consumer.processBatch(context.Background(), []brokerRecord{probeRecord(t, 0, 0)})
+		_, batchErr = consumer.processBatch(
+			context.Background(),
+			[]brokerRecord{probeRecord(t, 0, 0)},
+		)
 		close(done)
 	}()
 	<-started
@@ -120,6 +124,43 @@ func TestConsumerCancelsBlockedRebalanceBeforeReleasingOwnership(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("batch did not drain after rebalance cancellation")
+	}
+	if !errors.Is(batchErr, ErrRebalanceDrain) {
+		t.Fatalf("error = %v, want ErrRebalanceDrain", batchErr)
+	}
+}
+
+func TestRebalanceDrainRestartsBeforeUndispatchedPartitionsCanBeSkipped(t *testing.T) {
+	rebalance := make(chan struct{}, 1)
+	started := make(chan struct{})
+	var calls atomic.Int32
+	consumer := testConsumer(nil, handlerFunc(func(ctx context.Context, _ applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			<-ctx.Done()
+			return applicationeventstream.OutcomeRetryable, ctx.Err()
+		}
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	}))
+	consumer.concurrency = 1
+	consumer.rebalance = rebalance
+	done := make(chan error, 1)
+	go func() {
+		_, err := consumer.processBatch(context.Background(), []brokerRecord{
+			probeRecord(t, 0, 0),
+			probeRecord(t, 1, 0),
+		})
+		done <- err
+	}()
+	<-started
+	rebalance <- struct{}{}
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrRebalanceDrain) {
+			t.Fatalf("error = %v, want ErrRebalanceDrain", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("rebalance drain did not finish")
 	}
 }
 

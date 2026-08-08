@@ -103,6 +103,7 @@ func clientOptions(cfg infraconfig.KafkaConfig) ([]kgo.Opt, error) {
 		kgo.RecordRetries(5),
 		kgo.RecordDeliveryTimeout(produceTimeout),
 		kgo.ProduceRequestTimeout(produceTimeout),
+		kgo.AllowIdempotentProduceCancellation(),
 		kgo.ProducerBatchMaxBytes(1 << 20),
 	}
 	switch cfg.Authentication.Mechanism {

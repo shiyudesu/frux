@@ -142,6 +142,34 @@ func (b *Backbone) Diagnostics() Diagnostics {
 	return result
 }
 
+func (b *Backbone) RunHealthObserver(
+	ctx context.Context,
+	interval time.Duration,
+	timeout time.Duration,
+) {
+	if b == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			healthContext, cancel := context.WithTimeout(ctx, timeout)
+			_ = b.Health(healthContext)
+			cancel()
+		}
+	}
+}
+
 func (b *Backbone) Close(ctx context.Context) error {
 	if b == nil || b.client == nil {
 		return nil

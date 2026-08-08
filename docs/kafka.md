@@ -56,10 +56,12 @@ fails on missing or incompatible topology.
 - TLS 1.2+ and authenticated clients; mount secrets/keys instead of embedding them in YAML.
 - Broker auto topic creation disabled.
 - `acks=all`, idempotent producer permissions, and reviewed retention/cleanup/max-record settings.
+- In-flight produce cancellation is enabled to enforce deadlines; uncertain results must be handled through stable event IDs and application fallback.
 - Controller listeners isolated from application networks.
 - Alerts for broker health, topology failures, commit uncertainty, contract failures, lag, and delay.
 - Rebalance timeout covers handler cancellation and offset commit; a blocked rebalance cancels the current batch before partition ownership is released.
 - franz-go data-loss notifications are recorded as bounded metrics and consumption continues from the client's recovered cursor instead of restarting the group.
+- Worker processes continuously probe Kafka health so broker failure and recovery update the exported health gauge after startup.
 
 ## Validation
 

@@ -19,6 +19,7 @@ var (
 	ErrConsumerSession  = errors.New("kafka consumer session failed")
 	ErrCommitUncertain  = errors.New("kafka offset commit uncertain")
 	ErrShutdownDeadline = errors.New("kafka consumer shutdown deadline exceeded")
+	ErrRebalanceDrain   = errors.New("kafka consumer drained for rebalance")
 )
 
 type brokerRecord struct {
@@ -299,6 +300,7 @@ func (c *Consumer) processBatch(
 	eligible := make([]brokerRecord, 0, len(partitions))
 	var processErr error
 	drainExpired := false
+	rebalanceDrain := false
 	contextDone := ctx.Done()
 	rebalanceRequested := c.rebalance
 	var drainTimer *time.Timer
@@ -315,6 +317,9 @@ func (c *Consumer) processBatch(
 				if drainExpired {
 					return eligible, ErrShutdownDeadline
 				}
+				if rebalanceDrain {
+					return eligible, ErrRebalanceDrain
+				}
 				return eligible, processErr
 			}
 			if item.eligible != nil {
@@ -329,6 +334,7 @@ func (c *Consumer) processBatch(
 			drainDeadline = drainTimer.C
 		case <-rebalanceRequested:
 			rebalanceRequested = nil
+			rebalanceDrain = true
 			cancelProcess()
 		case <-drainDeadline:
 			cancelProcess()

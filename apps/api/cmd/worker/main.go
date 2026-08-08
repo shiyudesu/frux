@@ -97,6 +97,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go kafkaBackbone.RunHealthObserver(ctx, 15*time.Second, 2*time.Second)
 	go func() {
 		if err := inframetrics.RunServer(ctx, ":9091"); err != nil {
 			log.Printf("metrics server failed: %v", err)
