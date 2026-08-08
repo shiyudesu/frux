@@ -364,7 +364,7 @@ min-h-11 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-whi
 - 窄屏布局：保持紧凑电脑版侧栏、16:9 舞台和右侧评论抽屉，不提供独立手机布局。
 - 评论状态：加载/空/错误、根加载更多、回复加载更多、创建/点赞/删除独立 busy/error、作者墓碑、讨论不可用和 focused 高亮。
 - 状态：首屏骨架、视频加载、准备就绪、预加载失败后可见播放器重试、播放错误、Feed 空状态、接口错误、操作成功、操作回滚。
-- 播放控件：质量与速度使用原生可聚焦 select；连播按钮公开 pressed 状态；buffering/error 状态不抢焦点。
+- 播放控件：播放器外壳和按钮均由应用自定义，底层 video 不显示浏览器 controls、媒体右键菜单、画中画或远程播放入口；质量与速度使用原生可聚焦 select，连播按钮公开 pressed 状态，buffering/error 状态不抢焦点。
 
 ### 6.3 视频讨论
 

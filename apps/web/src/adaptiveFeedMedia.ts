@@ -39,6 +39,7 @@ const MEDIA_EVENTS: FeedPreloadMediaEvent[] = [
 
 export class AdaptiveFeedMediaResource implements FeedPreloadMediaResource {
   private readonly element = document.createElement("video");
+  private readonly preventNativeMediaMenu = (event: Event) => event.preventDefault();
   private readonly controller = new PlaybackFallbackController({
     createDash: () => new DashAdapter(this.element),
     createMP4: () => new NativeMP4Adapter(this.element)
@@ -65,6 +66,11 @@ export class AdaptiveFeedMediaResource implements FeedPreloadMediaResource {
     this.element.muted = true;
     this.element.playsInline = true;
     this.element.loop = !this.continuousPlay;
+    this.element.controls = false;
+    this.element.disablePictureInPicture = true;
+    this.element.disableRemotePlayback = true;
+    this.element.setAttribute("controlslist", "nodownload noremoteplayback");
+    this.element.addEventListener("contextmenu", this.preventNativeMediaMenu);
     for (const eventType of MEDIA_EVENTS) {
       const handler: EventListener = () => this.emitMedia(eventType);
       this.eventHandlers.set(eventType, handler);
@@ -234,6 +240,7 @@ export class AdaptiveFeedMediaResource implements FeedPreloadMediaResource {
     this.unmount();
     this.mediaSubscribers.clear();
     this.playerSubscribers.clear();
+    this.element.removeEventListener("contextmenu", this.preventNativeMediaMenu);
     for (const [eventType, handler] of this.eventHandlers) {
       this.element.removeEventListener(eventType, handler);
     }

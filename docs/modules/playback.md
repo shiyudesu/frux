@@ -66,6 +66,7 @@
 | 播放源保持兼容 | 响应保留 `media_url`、`cover_url`，生产媒体附加有序 `playback_sources` 和 `media_status` |
 | 基线优先 | `media_url` 始终投影浏览器兼容 H.264/AAC faststart MP4；DASH 和其他 MP4 清晰度作为增量来源 |
 | 适配器边界 | Web 通过统一状态机和 `NativeMP4Adapter` / 懒加载 `DashAdapter` 播放，不引入第三方播放器 UI |
+| 自定义播放器外壳 | Feed 和个人内容库使用自定义控制栏；底层 video 不启用原生 controls，并禁用浏览器媒体右键菜单、画中画和远程播放入口，避免出现翻译音频等浏览器扩展操作 |
 | DASH 安全回退 | manifest、网络或可恢复 DASH 错误会保留位置、静音、速度和播放意图并切换兼容 MP4 |
 | 三槽播放器池 | Feed 只保留 previous/current/next，按 generation、video ID 和 source revision 复用，离开窗口立即销毁 |
 | 能力感知选源 | codec、MediaSource、MediaCapabilities、网络、save-data、视口和用户偏好共同决定初始源与码率边界 |
@@ -129,3 +130,4 @@
 - `dashjs@5.2.0` 固定版本，只通过动态 import 进入独立 DASH chunk；MP4 首屏主 chunk 不包含 DASH runtime。
 - 当前构建主 JS 约 330 KiB（gzip 100 KiB），DASH 独立 chunk 约 854 KiB（gzip 257 KiB），只在选中 DASH manifest 时请求。
 - 活动视频首次有声自动播放被浏览器策略拒绝时，播放器自动切为静音并重试；用户仍可通过播放器控制恢复声音。
+- Feed 的 `HTMLVideoElement` 只作为解码和渲染引擎，不暴露浏览器原生 controls 或媒体右键菜单；`disablePictureInPicture`、`disableRemotePlayback` 和 `controlsList` 是体验约束，不是 DRM，媒体访问控制仍由服务端 URL 与权限策略负责。
