@@ -169,7 +169,6 @@ export function useSwipe({ index, itemsCount, onIndexChange, stageRef }: UseSwip
       height: 0,
       target: event.currentTarget
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLElement>) {
@@ -182,6 +181,9 @@ export function useSwipe({ index, itemsCount, onIndexChange, stageRef }: UseSwip
       const toIndex = direction === "next" ? drag.fromIndex + 1 : drag.fromIndex - 1;
       if (toIndex < 0 || toIndex >= itemsCount) {
         return;
+      }
+      if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.setPointerCapture(event.pointerId);
       }
       const height = getStageHeight();
       dragRef.current = {
@@ -219,6 +221,9 @@ export function useSwipe({ index, itemsCount, onIndexChange, stageRef }: UseSwip
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     dragRef.current = null;
+    if (drag.target.hasPointerCapture(drag.pointerId)) {
+      drag.target.releasePointerCapture(drag.pointerId);
+    }
     const active = swipeRef.current;
     if (!drag.active || !active) return;
     const threshold = Math.min(active.height * 0.24, 220);
