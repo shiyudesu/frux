@@ -77,9 +77,11 @@ type ConsumerGroupSpec struct {
 }
 
 type MigrationSpec struct {
-	Responsibility  ResponsibilityID
-	DefaultProducer ProducerMode
-	DefaultConsumer ConsumerMode
+	Responsibility         ResponsibilityID
+	DefaultProducer        ProducerMode
+	DefaultConsumer        ConsumerMode
+	KafkaProducerAvailable bool
+	KafkaConsumerAvailable bool
 }
 
 var topics = [...]TopicSpec{

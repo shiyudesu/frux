@@ -278,6 +278,9 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 		{name: "unbounded poll", cfg: KafkaConfig{
 			Consumer: KafkaConsumerConfig{MaxPollRecords: 1001},
 		}},
+		{name: "runtime-invalid topic prefix", cfg: KafkaConfig{
+			TopicPrefix: "Frux_Test",
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := normalizeAndValidateKafkaConfig(&test.cfg); !errors.Is(err, ErrInvalidKafkaConfig) {

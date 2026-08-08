@@ -259,7 +259,7 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 	cfg.ClientID = defaultValue(cfg.ClientID, "frux")
 	cfg.TopicPrefix = strings.TrimSpace(strings.TrimSuffix(cfg.TopicPrefix, "."))
 	if !validKafkaName(cfg.ClientID, 128) ||
-		(cfg.TopicPrefix != "" && !validKafkaName(cfg.TopicPrefix, 64)) {
+		(cfg.TopicPrefix != "" && !validKafkaTopicPrefix(cfg.TopicPrefix)) {
 		return ErrInvalidKafkaConfig
 	}
 	if len(cfg.Brokers) > 16 {
@@ -438,6 +438,27 @@ func validKafkaName(value string, max int) bool {
 		return false
 	}
 	return true
+}
+
+func validKafkaTopicPrefix(value string) bool {
+	if value == "" || len(value) > 64 || !lowerAlphaNumeric(value[0]) {
+		return false
+	}
+	last := value[len(value)-1]
+	if !lowerAlphaNumeric(last) {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func lowerAlphaNumeric(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
 }
 
 func normalizeAndValidateJWTConfig(cfg *JWTConfig) error {

@@ -169,6 +169,14 @@ func (KafkaObserver) ObserveContract(
 	).Inc()
 }
 
+func (KafkaObserver) ObserveLag(
+	topic infrakafka.TopicID,
+	group infrakafka.ConsumerGroupID,
+	lag int64,
+) {
+	ObserveKafkaLag(topic, group, lag)
+}
+
 func (KafkaObserver) ObserveTopology(topic infrakafka.TopicID, result string) {
 	KafkaTopologyValidationTotal.WithLabelValues(
 		kafkaTopicLabel(topic), kafkaTopologyResultLabel(result),

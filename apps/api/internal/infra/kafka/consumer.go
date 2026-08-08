@@ -24,6 +24,7 @@ type brokerRecord struct {
 	Topic     string
 	Partition int32
 	Offset    int64
+	Lag       int64
 	Timestamp time.Time
 	Key       []byte
 	Value     []byte
@@ -47,6 +48,7 @@ type ConsumerObserver interface {
 	ObserveCommit(topic TopicID, group ConsumerGroupID, result string)
 	ObserveRebalance(group ConsumerGroupID, result string)
 	ObserveContract(topic TopicID, group ConsumerGroupID, code ContractFailureCode)
+	ObserveLag(topic TopicID, group ConsumerGroupID, lag int64)
 }
 
 type Consumer struct {
@@ -188,6 +190,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 				return fmt.Errorf("%w: %s", ErrCommitUncertain, sanitizeKafkaError(err))
 			}
 			c.observeCommit("success")
+			c.observeLag(eligible)
 		}
 		c.source.AllowRebalance()
 		if processErr != nil {
@@ -217,20 +220,6 @@ func (c *Consumer) processBatch(
 	sort.Ints(partitions)
 	processContext, cancelProcess := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelProcess()
-	drainFinished := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			timer := time.NewTimer(c.drainTimeout)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-				cancelProcess()
-			case <-drainFinished:
-			}
-		case <-drainFinished:
-		}
-	}()
 	jobs := make(chan []brokerRecord)
 	results := make(chan result, len(partitions))
 	workerCount := c.concurrency
@@ -247,27 +236,51 @@ func (c *Consumer) processBatch(
 			}
 		}()
 	}
-	for _, partition := range partitions {
-		jobs <- partitionRecords[int32(partition)]
-	}
-	close(jobs)
-	workers.Wait()
-	close(drainFinished)
-	close(results)
+	go func() {
+		defer close(jobs)
+		for _, partition := range partitions {
+			select {
+			case jobs <- partitionRecords[int32(partition)]:
+			case <-processContext.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
 	eligible := make([]brokerRecord, 0, len(partitions))
 	var processErr error
-	for result := range results {
-		if result.eligible != nil {
-			eligible = append(eligible, *result.eligible)
+	contextDone := ctx.Done()
+	var drainTimer *time.Timer
+	var drainDeadline <-chan time.Time
+	defer func() {
+		if drainTimer != nil {
+			drainTimer.Stop()
 		}
-		if result.err != nil && processErr == nil {
-			processErr = result.err
+	}()
+	for {
+		select {
+		case item, open := <-results:
+			if !open {
+				return eligible, processErr
+			}
+			if item.eligible != nil {
+				eligible = append(eligible, *item.eligible)
+			}
+			if item.err != nil && processErr == nil {
+				processErr = item.err
+			}
+		case <-contextDone:
+			contextDone = nil
+			drainTimer = time.NewTimer(c.drainTimeout)
+			drainDeadline = drainTimer.C
+		case <-drainDeadline:
+			cancelProcess()
+			return eligible, ErrShutdownDeadline
 		}
 	}
-	if errors.Is(processContext.Err(), context.Canceled) && ctx.Err() != nil {
-		return eligible, ErrShutdownDeadline
-	}
-	return eligible, processErr
 }
 
 func (c *Consumer) processPartition(
@@ -351,25 +364,53 @@ func (c *Consumer) observeContract(code ContractFailureCode) {
 	}
 }
 
+func (c *Consumer) observeLag(records []brokerRecord) {
+	if c.observer == nil {
+		return
+	}
+	partitionLag := make(map[int32]int64, len(records))
+	for _, record := range records {
+		lag := record.Lag
+		if lag < 0 {
+			lag = 0
+		}
+		current, exists := partitionLag[record.Partition]
+		if !exists || lag < current {
+			partitionLag[record.Partition] = lag
+		}
+	}
+	var total int64
+	for _, lag := range partitionLag {
+		total += lag
+	}
+	c.observer.ObserveLag(c.topicID, c.groupID, total)
+}
+
 func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]brokerRecord, error) {
 	fetches := s.client.PollRecords(ctx, maxRecords)
 	if err := fetches.Err(); err != nil {
 		return nil, err
 	}
 	records := make([]brokerRecord, 0, fetches.NumRecords())
-	fetches.EachRecord(func(record *kgo.Record) {
-		headers := make([]applicationeventstream.Header, 0, len(record.Headers))
-		for _, header := range record.Headers {
-			headers = append(headers, applicationeventstream.Header{
-				Key: header.Key, Value: append([]byte(nil), header.Value...),
+	fetches.EachPartition(func(partition kgo.FetchTopicPartition) {
+		for _, record := range partition.Records {
+			headers := make([]applicationeventstream.Header, 0, len(record.Headers))
+			for _, header := range record.Headers {
+				headers = append(headers, applicationeventstream.Header{
+					Key: header.Key, Value: append([]byte(nil), header.Value...),
+				})
+			}
+			lag := partition.HighWatermark - record.Offset - 1
+			if lag < 0 {
+				lag = 0
+			}
+			records = append(records, brokerRecord{
+				Topic: record.Topic, Partition: record.Partition, Offset: record.Offset,
+				Lag: lag, Timestamp: record.Timestamp,
+				Key: append([]byte(nil), record.Key...), Value: append([]byte(nil), record.Value...),
+				Headers: headers, original: record,
 			})
 		}
-		records = append(records, brokerRecord{
-			Topic: record.Topic, Partition: record.Partition, Offset: record.Offset,
-			Timestamp: record.Timestamp, Key: append([]byte(nil), record.Key...),
-			Value: append([]byte(nil), record.Value...), Headers: headers,
-			original: record,
-		})
 	})
 	return records, nil
 }

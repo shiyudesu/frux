@@ -34,6 +34,20 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 		if !ValidProducerMode(producer) || !ValidConsumerMode(consumer) {
 			return nil, fmt.Errorf("%w: migration mode", ErrUnknownRegistryValue)
 		}
+		if producer != ProducerModeRabbit && !registered.KafkaProducerAvailable {
+			return nil, fmt.Errorf(
+				"%w: Kafka producer is not implemented for %s",
+				ErrUnknownRegistryValue,
+				registered.Responsibility,
+			)
+		}
+		if consumer != ConsumerModeRabbit && !registered.KafkaConsumerAvailable {
+			return nil, fmt.Errorf(
+				"%w: Kafka consumer is not implemented for %s",
+				ErrUnknownRegistryValue,
+				registered.Responsibility,
+			)
+		}
 		if !cfg.Enabled && (producer != ProducerModeRabbit || consumer != ConsumerModeRabbit) {
 			return nil, fmt.Errorf("%w: Kafka migration while disabled", ErrUnknownRegistryValue)
 		}

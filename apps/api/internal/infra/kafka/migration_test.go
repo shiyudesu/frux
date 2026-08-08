@@ -29,3 +29,21 @@ func TestMigrationPlanRejectsUnregisteredDualActiveMode(t *testing.T) {
 		t.Fatal("dual-active consumer mode was accepted")
 	}
 }
+
+func TestFoundationRejectsKafkaModesUntilBusinessPathsAreImplemented(t *testing.T) {
+	for _, stream := range []infraconfig.KafkaStreamMigrationConfig{
+		{ProducerMode: "rabbit_with_kafka_mirror", ConsumerMode: "rabbit"},
+		{ProducerMode: "rabbit", ConsumerMode: "kafka_shadow"},
+		{ProducerMode: "kafka", ConsumerMode: "kafka"},
+	} {
+		_, err := MigrationPlan(infraconfig.KafkaConfig{
+			Enabled: true,
+			Migration: infraconfig.KafkaMigrationConfig{
+				ActionChanged: stream,
+			},
+		})
+		if err == nil {
+			t.Fatalf("unsupported foundation migration was accepted: %+v", stream)
+		}
+	}
+}
