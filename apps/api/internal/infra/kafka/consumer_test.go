@@ -14,16 +14,17 @@ import (
 )
 
 type fakeConsumerSource struct {
-	mu         sync.Mutex
-	batches    [][]brokerRecord
-	pollErrors []error
-	dataLosses []bool
-	commitErr  error
-	commits    [][]brokerRecord
-	lag        int64
-	lagErr     error
-	allows     int
-	closed     bool
+	mu            sync.Mutex
+	batches       [][]brokerRecord
+	pollErrors    []error
+	errorDataLoss []bool
+	dataLosses    []bool
+	commitErr     error
+	commits       [][]brokerRecord
+	lag           int64
+	lagErr        error
+	allows        int
+	closed        bool
 }
 
 func (f *fakeConsumerSource) Poll(ctx context.Context, _ int) ([]brokerRecord, bool, error) {
@@ -31,8 +32,13 @@ func (f *fakeConsumerSource) Poll(ctx context.Context, _ int) ([]brokerRecord, b
 	if len(f.pollErrors) > 0 {
 		err := f.pollErrors[0]
 		f.pollErrors = f.pollErrors[1:]
+		dataLoss := false
+		if len(f.errorDataLoss) > 0 {
+			dataLoss = f.errorDataLoss[0]
+			f.errorDataLoss = f.errorDataLoss[1:]
+		}
 		f.mu.Unlock()
-		return nil, false, err
+		return nil, dataLoss, err
 	}
 	if len(f.batches) > 0 {
 		batch := f.batches[0]
@@ -151,6 +157,74 @@ func TestConsumerContinuesAfterRecoveredDataLoss(t *testing.T) {
 	}
 	if observer.dataLoss != 1 || len(source.commits) != 1 {
 		t.Fatalf("dataLoss=%d commits=%d", observer.dataLoss, len(source.commits))
+	}
+}
+
+func TestConsumerReleasesRebalanceGateAfterDataLossOnlyPoll(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	source := &fakeConsumerSource{
+		batches:    [][]brokerRecord{{}, {probeRecord(t, 0, 4)}},
+		dataLosses: []bool{true, false},
+	}
+	observer := &consumerObserver{}
+	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		cancel()
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	}))
+	consumer.observer = observer
+	if err := consumer.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if observer.dataLoss != 1 || source.allows != 2 {
+		t.Fatalf("dataLoss=%d allows=%d", observer.dataLoss, source.allows)
+	}
+}
+
+func TestConsumerObservesDataLossAlongsideFatalFetchError(t *testing.T) {
+	source := &fakeConsumerSource{
+		pollErrors:    []error{errors.New("authorization failed")},
+		errorDataLoss: []bool{true},
+	}
+	observer := &consumerObserver{}
+	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	}))
+	consumer.observer = observer
+	err := consumer.Run(context.Background())
+	if !errors.Is(err, ErrConsumerSession) || observer.dataLoss != 1 {
+		t.Fatalf("error=%v dataLoss=%d", err, observer.dataLoss)
+	}
+}
+
+func TestShadowGroupsRequireShadowOnlyHandlers(t *testing.T) {
+	shadowGroup, err := ConsumerGroup(GroupBackboneProbeShadow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generic := handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	})
+	if err := validateGroupHandler(shadowGroup, generic); err == nil {
+		t.Fatal("shadow group accepted generic handler")
+	}
+	shadow, err := applicationeventstream.NewShadowHandler(
+		"frux.platform.backbone_probe.shadow.v1",
+		time.Hour,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGroupHandler(shadowGroup, shadow); err != nil {
+		t.Fatalf("shadow handler rejected: %v", err)
+	}
+	activeGroup, err := ConsumerGroup(GroupBackboneProbeActive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGroupHandler(activeGroup, shadow); err == nil {
+		t.Fatal("active group accepted shadow-only handler")
 	}
 }
 

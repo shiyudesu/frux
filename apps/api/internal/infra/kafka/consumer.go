@@ -95,6 +95,9 @@ func NewConsumer(
 	if !groupAllowed(topicSpec, groupID) {
 		return nil, fmt.Errorf("%w: group is not registered for topic", ErrConsumerSession)
 	}
+	if err := validateGroupHandler(groupSpec, handler); err != nil {
+		return nil, err
+	}
 	topicName, err := TopicName(cfg.TopicPrefix, groupSpec.Topic)
 	if err != nil {
 		return nil, err
@@ -188,16 +191,18 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		c.sampleLag(ctx, false)
 		records, dataLoss, err := c.source.Poll(ctx, c.maxPollRecords)
+		if dataLoss {
+			c.observeDataLoss()
+		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil
 			}
 			return fmt.Errorf("%w: poll", ErrConsumerSession)
 		}
-		if dataLoss {
-			c.observeDataLoss()
-		}
 		if len(records) == 0 {
+			c.source.AllowRebalance()
+			c.clearRebalanceRequest()
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -229,6 +234,17 @@ func (c *Consumer) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func validateGroupHandler(
+	group ConsumerGroupSpec,
+	handler applicationeventstream.Handler,
+) error {
+	_, shadow := handler.(applicationeventstream.ShadowOnlyHandler)
+	if shadow != group.Shadow {
+		return fmt.Errorf("%w: shadow handler mismatch", ErrConsumerSession)
+	}
+	return nil
 }
 
 func (c *Consumer) processBatch(
@@ -439,13 +455,19 @@ func (c *Consumer) sampleLag(ctx context.Context, force bool) {
 func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]brokerRecord, bool, error) {
 	fetches := s.client.PollRecords(ctx, maxRecords)
 	recoveredDataLoss := false
+	var fatalErr error
 	for _, fetchErr := range fetches.Errors() {
 		var dataLoss *kgo.ErrDataLoss
 		if errors.As(fetchErr.Err, &dataLoss) {
 			recoveredDataLoss = true
 			continue
 		}
-		return nil, recoveredDataLoss, fetchErr.Err
+		if fatalErr == nil {
+			fatalErr = fetchErr.Err
+		}
+	}
+	if fatalErr != nil {
+		return nil, recoveredDataLoss, fatalErr
 	}
 	records := make([]brokerRecord, 0, fetches.NumRecords())
 	fetches.EachPartition(func(partition kgo.FetchTopicPartition) {

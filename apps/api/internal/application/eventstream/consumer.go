@@ -48,6 +48,11 @@ type Handler interface {
 	Handle(ctx context.Context, event Event) (Outcome, error)
 }
 
+type ShadowOnlyHandler interface {
+	Handler
+	ShadowOnly()
+}
+
 func CommitEligible(outcome Outcome) bool {
 	return outcome == OutcomeDurableSuccess || outcome == OutcomeTerminal
 }
@@ -135,6 +140,8 @@ func (h *ShadowHandler) Handle(ctx context.Context, event Event) (Outcome, error
 	}
 	return OutcomeDurableSuccess, nil
 }
+
+func (*ShadowHandler) ShadowOnly() {}
 
 func (h *ShadowHandler) observe(result string) {
 	if h != nil && h.observer != nil {

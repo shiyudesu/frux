@@ -60,7 +60,7 @@ Frux SHALL support registered primary/mirror producer modes and active/shadow co
 
 #### Scenario: Kafka shadow validation runs
 - **WHEN** a stream remains RabbitMQ-active and its Kafka consumer is in shadow mode
-- **THEN** the Kafka consumer validates contracts and records parity metrics without mutating business state or using the future active group offset
+- **THEN** the registered shadow group accepts only the non-mutating shadow handler, validates contracts, and records parity metrics without mutating business state or using the future active group offset
 
 #### Scenario: Invalid dual-active configuration is loaded
 - **WHEN** configuration would let RabbitMQ and Kafka consumers both invoke the same mutating responsibility
