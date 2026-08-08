@@ -59,6 +59,7 @@ fails on missing or incompatible topology.
 - Controller listeners isolated from application networks.
 - Alerts for broker health, topology failures, commit uncertainty, contract failures, lag, and delay.
 - Rebalance timeout covers handler cancellation and offset commit; a blocked rebalance cancels the current batch before partition ownership is released.
+- franz-go data-loss notifications are recorded as bounded metrics and consumption continues from the client's recovered cursor instead of restarting the group.
 
 ## Validation
 

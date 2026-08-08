@@ -76,6 +76,13 @@ var (
 		},
 		[]string{"topic", "group", "code"},
 	)
+	KafkaDataLossTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux", Name: "kafka_data_loss_total",
+			Help: "Kafka client data-loss notifications recovered by cursor reset.",
+		},
+		[]string{"topic", "group"},
+	)
 	KafkaTopologyValidationTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "frux", Name: "kafka_topology_validation_total",
@@ -102,6 +109,7 @@ func init() {
 		KafkaConsumerLag,
 		KafkaDeliveryDelay,
 		KafkaContractFailuresTotal,
+		KafkaDataLossTotal,
 		KafkaTopologyValidationTotal,
 		KafkaBrokerHealthy,
 	)
@@ -175,6 +183,16 @@ func (KafkaObserver) ObserveLag(
 	lag int64,
 ) {
 	ObserveKafkaLag(topic, group, lag)
+}
+
+func (KafkaObserver) ObserveDataLoss(
+	topic infrakafka.TopicID,
+	group infrakafka.ConsumerGroupID,
+) {
+	KafkaDataLossTotal.WithLabelValues(
+		kafkaTopicLabel(topic),
+		kafkaGroupLabel(group),
+	).Inc()
 }
 
 func (KafkaObserver) ObserveTopology(topic infrakafka.TopicID, result string) {

@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	ErrConsumerSession  = errors.New("kafka consumer session failed")
-	ErrCommitUncertain  = errors.New("kafka offset commit uncertain")
-	ErrShutdownDeadline = errors.New("kafka consumer shutdown deadline exceeded")
+	ErrConsumerSession   = errors.New("kafka consumer session failed")
+	ErrCommitUncertain   = errors.New("kafka offset commit uncertain")
+	ErrShutdownDeadline  = errors.New("kafka consumer shutdown deadline exceeded")
+	ErrRecoveredDataLoss = errors.New("kafka consumer recovered from data loss")
 )
 
 type brokerRecord struct {
@@ -51,6 +52,7 @@ type ConsumerObserver interface {
 	ObserveRebalance(group ConsumerGroupID, result string)
 	ObserveContract(topic TopicID, group ConsumerGroupID, code ContractFailureCode)
 	ObserveLag(topic TopicID, group ConsumerGroupID, lag int64)
+	ObserveDataLoss(topic TopicID, group ConsumerGroupID)
 }
 
 type Consumer struct {
@@ -190,6 +192,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil
+			}
+			if errors.Is(err, ErrRecoveredDataLoss) {
+				c.observeDataLoss()
+				continue
 			}
 			return fmt.Errorf("%w: poll", ErrConsumerSession)
 		}
@@ -405,6 +411,12 @@ func (c *Consumer) observeContract(code ContractFailureCode) {
 	}
 }
 
+func (c *Consumer) observeDataLoss() {
+	if c.observer != nil {
+		c.observer.ObserveDataLoss(c.topicID, c.groupID)
+	}
+}
+
 func (c *Consumer) sampleLag(ctx context.Context, force bool) {
 	if c.observer == nil || c.source == nil {
 		return
@@ -429,6 +441,10 @@ func (c *Consumer) sampleLag(ctx context.Context, force bool) {
 func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]brokerRecord, error) {
 	fetches := s.client.PollRecords(ctx, maxRecords)
 	if err := fetches.Err(); err != nil {
+		var dataLoss *kgo.ErrDataLoss
+		if errors.As(err, &dataLoss) {
+			return nil, fmt.Errorf("%w", ErrRecoveredDataLoss)
+		}
 		return nil, err
 	}
 	records := make([]brokerRecord, 0, fetches.NumRecords())

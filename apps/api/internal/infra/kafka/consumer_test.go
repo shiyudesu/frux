@@ -14,18 +14,25 @@ import (
 )
 
 type fakeConsumerSource struct {
-	mu        sync.Mutex
-	batches   [][]brokerRecord
-	commitErr error
-	commits   [][]brokerRecord
-	lag       int64
-	lagErr    error
-	allows    int
-	closed    bool
+	mu         sync.Mutex
+	batches    [][]brokerRecord
+	pollErrors []error
+	commitErr  error
+	commits    [][]brokerRecord
+	lag        int64
+	lagErr     error
+	allows     int
+	closed     bool
 }
 
 func (f *fakeConsumerSource) Poll(ctx context.Context, _ int) ([]brokerRecord, error) {
 	f.mu.Lock()
+	if len(f.pollErrors) > 0 {
+		err := f.pollErrors[0]
+		f.pollErrors = f.pollErrors[1:]
+		f.mu.Unlock()
+		return nil, err
+	}
 	if len(f.batches) > 0 {
 		batch := f.batches[0]
 		f.batches = f.batches[1:]
@@ -67,9 +74,10 @@ func (f handlerFunc) Handle(ctx context.Context, event applicationeventstream.Ev
 }
 
 type consumerObserver struct {
-	lag    int64
-	calls  int
-	cancel context.CancelFunc
+	lag      int64
+	calls    int
+	dataLoss int
+	cancel   context.CancelFunc
 }
 
 func TestConsumerCancelsBlockedRebalanceBeforeReleasingOwnership(t *testing.T) {
@@ -114,6 +122,29 @@ func (o *consumerObserver) ObserveLag(_ TopicID, _ ConsumerGroupID, lag int64) {
 	o.calls++
 	if o.cancel != nil {
 		o.cancel()
+	}
+}
+func (o *consumerObserver) ObserveDataLoss(TopicID, ConsumerGroupID) {
+	o.dataLoss++
+}
+
+func TestConsumerContinuesAfterRecoveredDataLoss(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	source := &fakeConsumerSource{
+		pollErrors: []error{ErrRecoveredDataLoss},
+		batches:    [][]brokerRecord{{probeRecord(t, 0, 3)}},
+	}
+	observer := &consumerObserver{}
+	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		cancel()
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	}))
+	consumer.observer = observer
+	if err := consumer.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if observer.dataLoss != 1 || len(source.commits) != 1 {
+		t.Fatalf("dataLoss=%d commits=%d", observer.dataLoss, len(source.commits))
 	}
 }
 
