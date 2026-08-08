@@ -51,6 +51,7 @@ type Handler interface {
 type ShadowOnlyHandler interface {
 	Handler
 	ShadowOnly()
+	ExpectedGroup() string
 }
 
 func CommitEligible(outcome Outcome) bool {
@@ -142,6 +143,13 @@ func (h *ShadowHandler) Handle(ctx context.Context, event Event) (Outcome, error
 }
 
 func (*ShadowHandler) ShadowOnly() {}
+
+func (h *ShadowHandler) ExpectedGroup() string {
+	if h == nil {
+		return ""
+	}
+	return h.expectedGroup
+}
 
 func (h *ShadowHandler) observe(result string) {
 	if h != nil && h.observer != nil {

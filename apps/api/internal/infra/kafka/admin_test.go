@@ -60,3 +60,15 @@ func TestAdministratorRejectsProductionMutationAndUnsafeTopology(t *testing.T) {
 		t.Fatalf("unsafe topology error = %v", err)
 	}
 }
+
+func TestValidateTopicStateRejectsImpossibleMinimumISR(t *testing.T) {
+	spec, err := Topic(TopicBackboneProbe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := desiredTopicState("frux.platform.backbone_probe.v1", spec, 1, 1)
+	state.MinInSyncReplicas = 2
+	if err := validateTopicState(state, spec, true, 1, 1); !errors.Is(err, ErrTopicTopologyInvalid) {
+		t.Fatalf("error = %v, want ErrTopicTopologyInvalid", err)
+	}
+}

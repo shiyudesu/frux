@@ -204,7 +204,11 @@ func TestShadowGroupsRequireShadowOnlyHandlers(t *testing.T) {
 	generic := handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
 		return applicationeventstream.OutcomeDurableSuccess, nil
 	})
-	if err := validateGroupHandler(shadowGroup, generic); err == nil {
+	if err := validateGroupHandler(
+		shadowGroup,
+		"frux.platform.backbone_probe.shadow.v1",
+		generic,
+	); err == nil {
 		t.Fatal("shadow group accepted generic handler")
 	}
 	shadow, err := applicationeventstream.NewShadowHandler(
@@ -216,14 +220,29 @@ func TestShadowGroupsRequireShadowOnlyHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateGroupHandler(shadowGroup, shadow); err != nil {
+	if err := validateGroupHandler(
+		shadowGroup,
+		"frux.platform.backbone_probe.shadow.v1",
+		shadow,
+	); err != nil {
 		t.Fatalf("shadow handler rejected: %v", err)
+	}
+	if err := validateGroupHandler(
+		shadowGroup,
+		"test.frux.platform.backbone_probe.shadow.v1",
+		shadow,
+	); err == nil {
+		t.Fatal("shadow handler accepted mismatched resolved group")
 	}
 	activeGroup, err := ConsumerGroup(GroupBackboneProbeActive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateGroupHandler(activeGroup, shadow); err == nil {
+	if err := validateGroupHandler(
+		activeGroup,
+		"frux.platform.backbone_probe.active.v1",
+		shadow,
+	); err == nil {
 		t.Fatal("active group accepted shadow-only handler")
 	}
 }

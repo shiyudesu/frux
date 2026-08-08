@@ -146,6 +146,7 @@ func validateTopicState(
 	}
 	if !partitionValid || state.ReplicationFactor < requiredReplication ||
 		state.MinInSyncReplicas < requiredISR ||
+		state.MinInSyncReplicas > state.ReplicationFactor ||
 		state.CleanupPolicy != spec.CleanupPolicy ||
 		state.Retention != spec.Retention ||
 		state.MaxRecordBytes < brokerMaxMessageBytes(spec) {

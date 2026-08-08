@@ -95,15 +95,15 @@ func NewConsumer(
 	if !groupAllowed(topicSpec, groupID) {
 		return nil, fmt.Errorf("%w: group is not registered for topic", ErrConsumerSession)
 	}
-	if err := validateGroupHandler(groupSpec, handler); err != nil {
-		return nil, err
-	}
 	topicName, err := TopicName(cfg.TopicPrefix, groupSpec.Topic)
 	if err != nil {
 		return nil, err
 	}
 	groupName, err := GroupName(cfg.TopicPrefix, groupID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateGroupHandler(groupSpec, groupName, handler); err != nil {
 		return nil, err
 	}
 	options, err := clientOptions(cfg)
@@ -238,11 +238,15 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 func validateGroupHandler(
 	group ConsumerGroupSpec,
+	resolvedGroup string,
 	handler applicationeventstream.Handler,
 ) error {
-	_, shadow := handler.(applicationeventstream.ShadowOnlyHandler)
+	shadowHandler, shadow := handler.(applicationeventstream.ShadowOnlyHandler)
 	if shadow != group.Shadow {
 		return fmt.Errorf("%w: shadow handler mismatch", ErrConsumerSession)
+	}
+	if shadow && shadowHandler.ExpectedGroup() != resolvedGroup {
+		return fmt.Errorf("%w: shadow group identity mismatch", ErrConsumerSession)
 	}
 	return nil
 }
