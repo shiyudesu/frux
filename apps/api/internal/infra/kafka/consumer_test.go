@@ -9,6 +9,8 @@ import (
 	"time"
 
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
+
+	"github.com/twmb/franz-go/pkg/kadm"
 )
 
 type fakeConsumerSource struct {
@@ -132,6 +134,23 @@ func TestConsumerForcesLagSampleOnHandlerFailure(t *testing.T) {
 	}
 	if observer.lag != 9 || observer.calls != 2 {
 		t.Fatalf("lag=%d calls=%d, want lag 9 and initial+failure samples", observer.lag, observer.calls)
+	}
+}
+
+func TestTotalGroupLagRejectsPartialPartitionFailures(t *testing.T) {
+	lag := kadm.GroupLag{
+		"frux.platform.backbone_probe.v1": {
+			0: {Lag: 4},
+			1: {Lag: -1, Err: errors.New("offset unavailable")},
+		},
+	}
+	if _, err := totalGroupLag(lag); !errors.Is(err, ErrKafkaUnavailable) {
+		t.Fatalf("error = %v, want ErrKafkaUnavailable", err)
+	}
+	delete(lag["frux.platform.backbone_probe.v1"], 1)
+	total, err := totalGroupLag(lag)
+	if err != nil || total != 4 {
+		t.Fatalf("total=%d error=%v", total, err)
 	}
 }
 

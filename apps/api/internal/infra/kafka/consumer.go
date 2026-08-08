@@ -478,7 +478,18 @@ func (s *franzConsumerSource) Lag(ctx context.Context, groupName string) (int64,
 	if err := group.Error(); err != nil {
 		return 0, err
 	}
-	return group.Lag.Total(), nil
+	return totalGroupLag(group.Lag)
+}
+
+func totalGroupLag(lag kadm.GroupLag) (int64, error) {
+	var total int64
+	for _, partition := range lag.Sorted() {
+		if partition.Err != nil || partition.Lag < 0 {
+			return 0, fmt.Errorf("%w: incomplete group lag", ErrKafkaUnavailable)
+		}
+		total += partition.Lag
+	}
+	return total, nil
 }
 
 func (s *franzConsumerSource) AllowRebalance() {
