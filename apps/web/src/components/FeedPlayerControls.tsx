@@ -108,7 +108,7 @@ export function FeedPlayerControls({
           className={`player-continuous-toggle ${continuousPlay ? "active" : ""}`}
           onClick={onToggleContinuousPlay}
         >
-          <span>自动连播</span>
+          <span className="player-continuous-label">自动连播</span>
           <span className="player-toggle-track" aria-hidden="true"><i /></span>
         </button>
         <button type="button" onClick={onToggleMute} aria-label={state.muted ? "打开声音" : "静音"}>

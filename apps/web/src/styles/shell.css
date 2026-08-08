@@ -168,12 +168,14 @@
   right: 0;
   left: var(--frux-sidebar-width);
   display: grid;
-  grid-template-columns: minmax(280px, 560px) auto;
+  grid-template-columns:
+    minmax(0, clamp(var(--frux-search-min-width), 42vw, var(--frux-search-max-width)))
+    max-content;
   height: var(--frux-header-height);
   align-items: center;
   justify-content: end;
-  gap: 24px;
-  padding: 0 16px 0 24px;
+  gap: var(--frux-shell-gap);
+  padding: 0 var(--frux-shell-padding-end) 0 var(--frux-shell-padding-start);
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   background: rgba(22, 24, 35, 0.96);
   backdrop-filter: blur(18px);
@@ -226,6 +228,7 @@
 
 .top-actions {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
@@ -241,7 +244,11 @@
 }
 
 .top-action-button {
+  display: inline-flex;
   min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   padding: 0 12px;
   color: var(--frux-muted-strong);
   background: transparent;
@@ -279,6 +286,50 @@
 
 .avatar-button.guest:hover {
   background: var(--frux-rose-hover);
+}
+
+.top-overflow {
+  position: relative;
+  display: none;
+}
+
+.top-overflow-menu {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  min-width: 132px;
+  padding: 5px;
+  border: 1px solid var(--frux-line);
+  border-radius: 10px;
+  background: rgba(25, 25, 28, 0.98);
+  box-shadow: var(--frux-shadow-panel);
+  backdrop-filter: blur(18px);
+}
+
+.top-overflow-menu button {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  color: var(--frux-muted-strong);
+  border-radius: 7px;
+  background: transparent;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.top-overflow-menu button:hover:not(:disabled),
+.top-overflow-menu button:focus-visible {
+  color: var(--frux-text-strong);
+  background: var(--frux-control);
+}
+
+.top-overflow-menu button:disabled {
+  opacity: 0.55;
 }
 
 .app-body {

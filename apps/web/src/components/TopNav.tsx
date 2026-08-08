@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { logoutSession } from "../api/account";
 import { image } from "../constants";
 import { useNavigate, useSearchRoute } from "../router";
@@ -58,7 +58,7 @@ export function TopNav() {
       <div className="top-actions">
         <button className="top-action-button upload-button" onClick={() => navigate(authenticated ? "/upload" : "/auth")}>
           <Icon name="upload" size={18} />
-          投稿
+          <span>投稿</span>
         </button>
         <button className="icon-button badge-button" type="button" aria-label="通知" onClick={() => navigate(authenticated ? "/messages" : "/auth")}>
           <Icon name="bell" />
@@ -89,9 +89,75 @@ export function TopNav() {
             >
               <Icon name="logout" />
             </button>
+            <TopNavOverflow busy={logoutBusy} onLogout={() => void handleLogout()} />
           </>
         )}
       </div>
     </header>
+  );
+}
+
+interface TopNavOverflowProps {
+  busy: boolean;
+  onLogout: () => void;
+}
+
+function TopNavOverflow({ busy, onLogout }: TopNavOverflowProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const logoutRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    logoutRef.current?.focus();
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="top-overflow" ref={rootRef}>
+      <button
+        ref={triggerRef}
+        className="icon-button"
+        type="button"
+        aria-label="更多账户操作"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Icon name="more" />
+      </button>
+      {open && (
+        <div className="top-overflow-menu" role="menu" aria-label="账户操作">
+          <button
+            ref={logoutRef}
+            disabled={busy}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onLogout();
+            }}
+          >
+            <Icon name="logout" size={17} />
+            <span>{busy ? "正在退出登录" : "退出登录"}</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

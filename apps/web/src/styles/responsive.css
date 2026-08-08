@@ -1,4 +1,20 @@
 @media (max-width: 1279px) {
+  :root {
+    --frux-shell-gap: 16px;
+    --frux-shell-padding-start: 18px;
+    --frux-shell-padding-end: 12px;
+    --frux-search-min-width: 240px;
+    --frux-search-max-width: 480px;
+    --frux-feed-copy-left: 20px;
+    --frux-feed-copy-bottom: 64px;
+    --frux-feed-action-inset: 88px;
+    --frux-feed-action-right: 14px;
+    --frux-feed-action-gap: 10px;
+    --frux-feed-action-icon-size: 42px;
+    --frux-player-control-gap: 6px;
+    --frux-player-control-padding: 10px;
+  }
+
   .side-nav {
     width: var(--frux-sidebar-compact);
     padding-right: 8px;
@@ -81,7 +97,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    width: min(var(--frux-detail-width), 42vw);
+    width: var(--frux-details-drawer-width);
     min-width: 320px;
     border-radius: 0 var(--frux-radius-stage) var(--frux-radius-stage) 0;
     opacity: 1;
@@ -116,6 +132,160 @@
   .profile-stats {
     grid-column: 2 / -1;
     justify-self: start;
+  }
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --frux-shell-gap: 10px;
+    --frux-shell-padding-start: 10px;
+    --frux-shell-padding-end: 10px;
+    --frux-search-min-width: 180px;
+    --frux-search-max-width: 360px;
+    --frux-feed-copy-left: 16px;
+    --frux-feed-copy-bottom: 60px;
+    --frux-feed-action-inset: 78px;
+    --frux-feed-action-right: 10px;
+    --frux-feed-action-gap: 8px;
+    --frux-feed-action-icon-size: 38px;
+    --frux-player-control-gap: 4px;
+    --frux-player-control-padding: 8px;
+    --frux-details-drawer-width: min(var(--frux-detail-width), calc(100vw - 24px));
+  }
+
+  .top-actions {
+    gap: 4px;
+  }
+
+  .upload-button {
+    width: 38px;
+    padding: 0;
+  }
+
+  .upload-button > span,
+  .avatar-button.guest > span {
+    display: none;
+  }
+
+  .avatar-button.guest {
+    width: 38px;
+    padding: 0;
+    border-radius: var(--frux-radius-control);
+  }
+
+  .desktop-logout {
+    display: none;
+  }
+
+  .top-overflow {
+    display: block;
+  }
+
+  .stage-copy {
+    gap: 7px;
+  }
+
+  .stage-copy h1 {
+    font-size: clamp(17px, 2.2vw, 22px);
+  }
+
+  .stage-copy > p:not(.stage-notice) {
+    font-size: 13px;
+    -webkit-line-clamp: 1;
+  }
+
+  .metadata-author {
+    font-size: 14px;
+  }
+
+  .rail-author {
+    width: 44px;
+    height: 44px;
+  }
+
+  .rail-button strong {
+    font-size: 11px;
+  }
+
+  .player-choice-trigger {
+    min-width: 44px;
+    padding-right: 5px;
+    padding-left: 5px;
+  }
+
+  .player-controls-row > .player-continuous-toggle {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .player-continuous-label {
+    display: none;
+  }
+
+  .details-panel {
+    min-width: min(320px, calc(100vw - 24px));
+    max-width: calc(100% - 24px);
+  }
+
+  .collection-queue-layout.feed-layout {
+    padding: 10px;
+  }
+
+  .collection-queue-close {
+    top: 18px;
+    left: 18px;
+  }
+
+  .collection-queue-nav {
+    left: 12px;
+  }
+
+  .creator-work-tabs {
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+
+  .creator-work-toolbar {
+    min-height: 0;
+    justify-content: flex-start;
+    margin: 0 0 12px;
+    flex-wrap: wrap;
+  }
+
+  .profile-search-field {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .profile-date-field {
+    min-height: 44px;
+    flex: 1 1 180px;
+  }
+
+  .profile-date-field input {
+    width: 100%;
+  }
+
+  .profile-filter-button,
+  .profile-manage-button,
+  .profile-batch-actions button {
+    min-height: 40px;
+  }
+
+  .profile-video-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .profile-collection-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .upload-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .preview-frame {
+    min-height: 360px;
   }
 }
 

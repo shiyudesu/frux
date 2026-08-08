@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TOKEN_KEY, USER_KEY, emptyProfile } from "../constants";
 import { RouterProvider } from "../router";
 import { SessionProvider } from "../session";
 import { TopNav } from "./TopNav";
@@ -41,6 +42,43 @@ describe("top navigation search", () => {
     });
     expect(input.value).toBe("用户");
   });
+
+  it("keeps compact primary actions accessible for guests", () => {
+    render();
+    expect(required<HTMLButtonElement>("button.upload-button").textContent).toContain("投稿");
+    expect(required<HTMLButtonElement>('button[aria-label="通知"]')).toBeTruthy();
+    expect(required<HTMLButtonElement>('button[aria-label="登录"]')).toBeTruthy();
+    expect(required<HTMLInputElement>('input[aria-label="搜索"]')).toBeTruthy();
+  });
+
+  it("dismisses the authenticated overflow menu and restores focus on Escape", () => {
+    authenticate();
+    render();
+    const trigger = required<HTMLButtonElement>('button[aria-label="更多账户操作"]');
+    act(() => trigger.click());
+    const logout = required<HTMLButtonElement>('[role="menuitem"]');
+    expect(document.activeElement).toBe(logout);
+
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("dismisses the authenticated overflow menu on outside pointer input", () => {
+    authenticate();
+    render();
+    const trigger = required<HTMLButtonElement>('button[aria-label="更多账户操作"]');
+    act(() => trigger.click());
+    expect(required<HTMLElement>('[role="menu"]')).toBeTruthy();
+
+    act(() => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  function authenticate() {
+    localStorage.setItem(TOKEN_KEY, "token");
+    localStorage.setItem(USER_KEY, JSON.stringify({ ...emptyProfile, id: 7, account: "owner", nickname: "Owner" }));
+  }
 
   function render() {
     act(() => root.render(

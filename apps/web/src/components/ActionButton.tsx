@@ -10,14 +10,29 @@ interface ActionButtonProps {
   compact?: boolean;
   dataUI?: string;
   buttonRef?: Ref<HTMLButtonElement>;
+  ariaExpanded?: boolean;
+  ariaHasPopup?: "menu";
   onClick?: () => void;
 }
 
-export function ActionButton({ icon, label, ariaLabel, active, compact, dataUI, buttonRef, onClick }: ActionButtonProps) {
+export function ActionButton({
+  icon,
+  label,
+  ariaLabel,
+  active,
+  compact,
+  dataUI,
+  buttonRef,
+  ariaExpanded,
+  ariaHasPopup,
+  onClick
+}: ActionButtonProps) {
   return (
     <button
       aria-label={ariaLabel}
       aria-pressed={active === undefined ? undefined : active}
+      aria-expanded={ariaExpanded}
+      aria-haspopup={ariaHasPopup}
       className={`rail-button ${active ? "active" : ""} ${compact ? "compact" : ""}`}
       data-ui={dataUI}
       ref={buttonRef}

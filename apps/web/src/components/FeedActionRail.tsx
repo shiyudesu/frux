@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiErrorMessage } from "../api/client";
 import type { RecommendationFeedbackType } from "../types";
 import type { FeedVideo } from "../types";
@@ -52,6 +52,28 @@ export function FeedActionRail({
   const [feedbackError, setFeedbackError] = useState("");
   const [watchLaterState, setWatchLaterState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [watchLaterError, setWatchLaterError] = useState("");
+  const moreRootRef = useRef<HTMLDivElement | null>(null);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    moreMenuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!moreRootRef.current?.contains(event.target as Node)) setMoreOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMoreOpen(false);
+      moreButtonRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [moreOpen]);
   const submitFeedback = async (type: RecommendationFeedbackType) => {
     if (!onRecommendationFeedback || feedbackState === "loading") return;
     setFeedbackState("loading");
@@ -60,6 +82,7 @@ export function FeedActionRail({
       await onRecommendationFeedback(type);
       setFeedbackState("success");
       setMoreOpen(false);
+      moreButtonRef.current?.focus();
     } catch (error) {
       setFeedbackState("error");
       setFeedbackError(apiErrorMessage(error, "操作未完成，请重试"));
@@ -74,7 +97,10 @@ export function FeedActionRail({
     try {
       await onWatchLater();
       setWatchLaterState("success");
-      if (watchLaterAction === "remove") setMoreOpen(false);
+      if (watchLaterAction === "remove") {
+        setMoreOpen(false);
+        moreButtonRef.current?.focus();
+      }
     } catch (error) {
       setWatchLaterState("error");
       setWatchLaterError(apiErrorMessage(error, "操作未完成，请重试"));
@@ -130,10 +156,19 @@ export function FeedActionRail({
             onClick={onFavorite}
           />
           <ActionButton icon="share" label="分享" ariaLabel="分享视频" compact />
-          <div className="rail-more">
-            <ActionButton icon="more" label="" ariaLabel="更多操作" compact onClick={() => setMoreOpen((open) => !open)} />
+          {(showRecommendationFeedback || showWatchLater) && <div className="rail-more" ref={moreRootRef}>
+            <ActionButton
+              icon="more"
+              label=""
+              ariaLabel="更多操作"
+              compact
+              buttonRef={moreButtonRef}
+              ariaExpanded={moreOpen}
+              ariaHasPopup="menu"
+              onClick={() => setMoreOpen((open) => !open)}
+            />
             {moreOpen && (showRecommendationFeedback || showWatchLater) && (
-              <div className="recommendation-feedback-menu" role="menu" aria-label="更多操作">
+              <div ref={moreMenuRef} className="recommendation-feedback-menu" role="menu" aria-label="更多操作">
                 <p role="status" aria-live="polite">
                   {watchLaterState === "loading"
                     ? "正在更新稍后再看…"
@@ -164,7 +199,7 @@ export function FeedActionRail({
                 )}
               </div>
             )}
-          </div>
+          </div>}
         </>
       )}
     </div>

@@ -158,11 +158,11 @@ video.stage-media {
 .stage-copy {
   position: absolute;
   z-index: 5;
-  right: 96px;
-  bottom: 68px;
-  left: 24px;
+  right: var(--frux-feed-action-inset);
+  bottom: var(--frux-feed-copy-bottom);
+  left: var(--frux-feed-copy-left);
   display: grid;
-  max-width: 720px;
+  max-width: min(720px, calc(100% - var(--frux-feed-action-inset) - var(--frux-feed-copy-left)));
   gap: 9px;
   pointer-events: none;
 }
@@ -220,11 +220,11 @@ video.stage-media {
 .action-rail {
   position: absolute;
   z-index: 7;
-  right: 17px;
-  bottom: 66px;
+  right: var(--frux-feed-action-right);
+  bottom: calc(var(--frux-feed-copy-bottom) - 2px);
   display: grid;
   justify-items: center;
-  gap: 12px;
+  gap: var(--frux-feed-action-gap);
 }
 
 .rail-author-group {
@@ -278,9 +278,10 @@ video.stage-media {
 
 .rail-button {
   display: grid;
+  min-height: 44px;
   justify-items: center;
   gap: 4px;
-  min-width: 52px;
+  min-width: var(--frux-feed-action-hit-size);
   padding: 0;
   color: #fff;
   background: transparent;
@@ -290,8 +291,8 @@ video.stage-media {
 
 .rail-icon {
   display: inline-flex;
-  width: 44px;
-  height: 38px;
+  width: var(--frux-feed-action-icon-size);
+  height: calc(var(--frux-feed-action-icon-size) - 6px);
   align-items: center;
   justify-content: center;
   color: #fff;
@@ -373,8 +374,8 @@ video.stage-media {
   display: flex;
   height: 100%;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px 0;
+  gap: var(--frux-player-control-gap);
+  padding: 6px var(--frux-player-control-padding) 0;
 }
 
 .player-controls-row > button,
@@ -428,7 +429,9 @@ video.stage-media {
   bottom: calc(100% + 9px);
   display: grid;
   min-width: 112px;
-  overflow: hidden;
+  max-width: min(180px, calc(100vw - 24px));
+  max-height: min(320px, calc(100dvh - var(--frux-header-height) - 80px));
+  overflow: auto;
   padding: 5px;
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 10px;
@@ -509,8 +512,9 @@ video.stage-media {
 
 .player-status {
   position: absolute;
-  right: 14px;
+  right: var(--frux-feed-action-inset);
   bottom: 52px;
+  max-width: calc(100% - var(--frux-feed-action-inset) - var(--frux-feed-copy-left));
   display: inline-flex;
   min-height: 30px;
   align-items: center;
@@ -1169,10 +1173,12 @@ video.stage-media {
 .rail-more { position: relative; }
 .recommendation-feedback-menu {
   position: absolute;
-  right: 48px;
+  right: calc(var(--frux-feed-action-icon-size) + 8px);
   bottom: 0;
   display: grid;
-  width: 176px;
+  width: min(220px, calc(100vw - var(--frux-sidebar-compact) - 32px));
+  max-height: min(320px, calc(100dvh - var(--frux-header-height) - 40px));
+  overflow-y: auto;
   gap: 4px;
   padding: 8px;
   color: var(--frux-text);
