@@ -55,13 +55,23 @@ describe("FeedActionRail menus", () => {
     expect([...container.querySelectorAll("button")].some((button) => button.getAttribute("aria-label") === "更多操作")).toBe(false);
   });
 
-  function render(overrides: { onRecommendationFeedback?: (type: "not_interested" | "reduce_author" | "already_seen") => Promise<void> }) {
+  it("removes the follow marker after the author is followed", () => {
+    render({}, { following: true });
+    expect(container.querySelector('button[aria-label="关注作者"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="取消关注"]')).toBeNull();
+    expect(container.textContent).not.toContain("✓");
+  });
+
+  function render(
+    overrides: { onRecommendationFeedback?: (type: "not_interested" | "reduce_author" | "already_seen") => Promise<void> },
+    state: { following?: boolean } = {}
+  ) {
     act(() => root.render(
       <FeedActionRail
         item={video()}
         liked={false}
         favorited={false}
-        following={false}
+        following={Boolean(state.following)}
         followBusy={false}
         ownVideo={false}
         onLike={() => {}}

@@ -1450,6 +1450,20 @@ func TestPostgreSQLRepositorySemantics(t *testing.T) {
 	} else if userStat.FollowingCount != 1 || targetStat.FollowerCount != 1 {
 		t.Fatalf("repeated follow changed stats: user=%+v target=%+v", userStat, targetStat)
 	}
+	followingMatches, err := relationRepo.ListFollowing(ctx, alice.ID, "bo", nil, 10)
+	if err != nil {
+		t.Fatalf("search following by account: %v", err)
+	}
+	if len(followingMatches) != 1 || followingMatches[0].UserID != bob.ID || followingMatches[0].Account != "bob" {
+		t.Fatalf("unexpected following search results: %+v", followingMatches)
+	}
+	noFollowingMatches, err := relationRepo.ListFollowing(ctx, alice.ID, "missing", nil, 10)
+	if err != nil {
+		t.Fatalf("search missing following: %v", err)
+	}
+	if len(noFollowingMatches) != 0 {
+		t.Fatalf("missing query returned following users: %+v", noFollowingMatches)
+	}
 
 	videoRepo := infravideo.New(db)
 	video, err := domainvideo.NewPublished(alice.ID, "PostgreSQL", "", "/uploads/postgres.mp4", "/uploads/postgres.jpg", "")

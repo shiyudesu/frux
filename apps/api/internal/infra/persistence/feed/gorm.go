@@ -139,6 +139,18 @@ func (r *Repository) ListFollowingPage(ctx context.Context, viewerID int64, curs
 	return feedPageItemsFromModels(models), nil
 }
 
+func (r *Repository) ListFollowingAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
+	var authorIDs []int64
+	err := r.db.WithContext(ctx).
+		Table("user_follow").
+		Select("target_user_id").
+		Where("user_id = ? AND status = ?", viewerID, domainrelation.FollowStatusActive).
+		Order("target_user_id ASC").
+		Scan(&authorIDs).
+		Error
+	return authorIDs, err
+}
+
 func (r *Repository) ListFollowingPullAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
 	var authorIDs []int64
 	err := r.db.WithContext(ctx).

@@ -12,7 +12,9 @@ import {
 import { favoriteVideo, followUser, likeVideo, loadFollowingMap } from "../api/social";
 import { setWatchLater } from "../api/library";
 import { FeedDetailsPanel } from "../components/FeedDetailsPanel";
+import { FollowingFeedDirectory } from "../components/FollowingFeedDirectory";
 import { FeedMessage } from "../components/StatusMessages";
+import { Icon } from "../components/Icon";
 import { VideoStage } from "../components/VideoStage";
 import type { VideoStageHandle } from "../components/VideoStage";
 import { emptyProfile, getFeedSceneMeta } from "../constants";
@@ -23,7 +25,8 @@ import { getFeedTrackStyle, useSwipe } from "../hooks/useSwipe";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
 import { usePlayerPreferences } from "../hooks/usePlayerPreferences";
-import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch, RecommendationFeedbackType } from "../types";
+import { useFollowingDirectory } from "../hooks/useFollowingDirectory";
+import type { CreateViewEventRequest, FeedVideo, PlaybackTelemetryBatch, RecommendationFeedbackType, RelationUser } from "../types";
 import type { PlaybackQoSMetrics } from "../utils";
 import { buildPlaybackQoSPayload, createPlaybackQoSKey, openPublicProfile } from "../utils";
 import { enqueuePendingViewEvent, listPendingViewEvents, removePendingViewEvent } from "../viewEventDelivery";
@@ -107,6 +110,13 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const [followBusyID, setFollowBusyID] = useState(0);
   const [followError, setFollowError] = useState("");
   const currentFeedScene = getFeedSceneMeta(feedScene);
+  const followingScene = feedScene === "following" && Boolean(session.token && session.user);
+  const [followingDirectoryOpen, setFollowingDirectoryOpen] = useState(true);
+  const followingDirectory = useFollowingDirectory({
+    token: session.token,
+    enabled: followingScene
+  });
+  const setDirectoryUserActive = followingDirectory.setUserActive;
   const { preferences: playerPreferences, updatePreferences: updatePlayerPreferences } = usePlayerPreferences();
 
   useEffect(() => {
@@ -290,12 +300,16 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     if (current.author_id === session.user?.id) return;
 
     const authorID = current.author_id;
-    const nextFollowing = !Boolean(following[authorID]);
+    if (following[authorID]) return;
+    const nextFollowing = true;
     setFollowBusyID(authorID);
     setFollowError("");
     try {
       const data = await followUser(session.token, authorID, nextFollowing, "web-follow", recommendationOutcomeContext(current));
       setFollowing((state) => ({ ...state, [authorID]: Boolean(data.following) }));
+      if (followingScene) {
+        setDirectoryUserActive(relationUserFromFeedItem(current), Boolean(data.following));
+      }
       updateSessionRelationCount(session, data.following_count);
     } catch (error) {
       if (isUnauthorized(error)) {
@@ -307,7 +321,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     } finally {
       setFollowBusyID(0);
     }
-  }, [current, following, navigate, requireLogin, session, swipe]);
+  }, [current, following, followingScene, navigate, requireLogin, session, setDirectoryUserActive, swipe]);
 
   const addWatchLater = useCallback(async () => {
     if (!current || swipe || !requireLogin()) return;
@@ -376,11 +390,15 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const visibleCurrent = swipe ? items[swipe.fromIndex] : current;
   const visibleNext = swipe ? items[swipe.toIndex] : null;
   const trackStyle = getFeedTrackStyle(swipe);
+  const directoryLayoutClass = followingScene
+    ? followingDirectoryOpen ? "following-directory-open" : "following-directory-collapsed"
+    : "";
 
   return (
     <main
-      className={`feed-layout ${commentsOpen ? "details-open" : ""}`}
+      className={`feed-layout ${commentsOpen ? "details-open" : ""} ${directoryLayoutClass}`}
       data-ui="feed-layout"
+      data-active-video-id={current?.video_id || 0}
       data-preload-network={preloadPolicy.networkClass}
       data-preload-resources={preloadDebug.activeResources}
       data-preload-ready={preloadDebug.ready}
@@ -388,6 +406,14 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
       data-preload-cancellations={preloadDebug.cancellations}
       data-preload-failures={preloadDebug.failures}
     >
+      {followingScene && (
+        <FollowingFeedDirectory
+          directory={followingDirectory}
+          collapsed={!followingDirectoryOpen}
+          onCollapse={() => setFollowingDirectoryOpen(false)}
+          onOpenUser={(user) => openPublicProfile(user, navigate)}
+        />
+      )}
       <section
         className="feed-main"
         data-ui="feed-main"
@@ -398,6 +424,17 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
         onPointerUp={handlePointerEnd}
         onPointerCancel={handlePointerEnd}
       >
+        {followingScene && !followingDirectoryOpen && (
+          <button
+            className="following-directory-reopen"
+            type="button"
+            aria-label="展开关注列表"
+            onClick={() => setFollowingDirectoryOpen(true)}
+          >
+            <Icon name="users" size={18} />
+            <span>关注列表</span>
+          </button>
+        )}
         {feedState === "loading" && <FeedMessage icon="hourglass" title={`正在加载${currentFeedScene.label}`} />}
         {feedState === "auth" && (
           <FeedMessage icon="lock" title={`登录后查看${currentFeedScene.label}`} action="登录" onAction={() => navigate("/auth")} />
@@ -540,6 +577,17 @@ function recommendationOutcomeContext(item: FeedVideo) {
 function feedSwipeTransitionTarget(item: FeedVideo | undefined) {
   if (!item) return undefined;
   return { videoID: item.video_id, authorID: item.author_id };
+}
+
+function relationUserFromFeedItem(item: FeedVideo): RelationUser {
+  return {
+    user_id: item.author_id,
+    account: "",
+    nickname: item.author,
+    avatar_url: item.avatar_url,
+    bio: "",
+    followed_at: new Date().toISOString()
+  };
 }
 
 function isPermanentViewEventError(status: number): boolean {

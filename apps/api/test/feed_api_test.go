@@ -62,6 +62,7 @@ type memoryFeedRepo struct {
 	viewerActions            map[int64]map[int64]*domainfeed.ViewerActionState
 	publicVideoIDs           map[int64]struct{}
 	followingCalls           int
+	followingAuthorCalls     int
 	followingPullAuthorCalls int
 }
 
@@ -203,6 +204,12 @@ func (r *memoryFeedRepo) FollowingPullAuthorCalls() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.followingPullAuthorCalls
+}
+
+func (r *memoryFeedRepo) FollowingAuthorCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.followingAuthorCalls
 }
 
 func (r *memoryFeedRepo) FollowForTest(viewerID int64, authorID int64) {
@@ -372,13 +379,32 @@ func (c *memoryFeedCache) ListHotWindowPage(ctx context.Context, windowEnd time.
 	return items[offset:end], nil
 }
 
-func (c *memoryFeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, authorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error) {
+func (c *memoryFeedCache) ListFollowingIndexPage(
+	ctx context.Context,
+	viewerID int64,
+	followedAuthorIDs []int64,
+	pullAuthorIDs []int64,
+	cursor *domainfeed.TimelineCursor,
+	limit int,
+) ([]*domainfeed.FeedPageItem, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	followedAuthors := make(map[int64]struct{}, len(followedAuthorIDs))
+	for _, authorID := range followedAuthorIDs {
+		followedAuthors[authorID] = struct{}{}
+	}
 	items := make([]*domainfeed.FeedPageItem, 0)
-	items = append(items, cloneFeedPageItems(c.followingInbox[viewerID])...)
-	for _, authorID := range authorIDs {
+	for _, item := range c.followingInbox[viewerID] {
+		if item == nil || item.AuthorID <= 0 {
+			return nil, false, nil
+		}
+		if _, followed := followedAuthors[item.AuthorID]; !followed {
+			return nil, false, nil
+		}
+		items = append(items, cloneFeedPageItems([]*domainfeed.FeedPageItem{item})...)
+	}
+	for _, authorID := range pullAuthorIDs {
 		items = append(items, cloneFeedPageItems(c.authorOutbox[authorID])...)
 	}
 	if len(items) == 0 {
@@ -469,6 +495,18 @@ func (r *memoryFeedRepo) ListFollowingPage(ctx context.Context, viewerID int64, 
 		limit = len(items)
 	}
 	return items[:limit], nil
+}
+
+func (r *memoryFeedRepo) ListFollowingAuthorIDs(_ context.Context, viewerID int64) ([]int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.followingAuthorCalls++
+	authorIDs := make([]int64, 0, len(r.following[viewerID]))
+	for authorID := range r.following[viewerID] {
+		authorIDs = append(authorIDs, authorID)
+	}
+	sort.Slice(authorIDs, func(i, j int) bool { return authorIDs[i] < authorIDs[j] })
+	return authorIDs, nil
 }
 
 func (r *memoryFeedRepo) ListFollowingPullAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
@@ -825,14 +863,17 @@ func TestFollowingFeedUsesRedisIndex(t *testing.T) {
 	cache := newMemoryFeedCache()
 	cache.AddInboxItemsForTest([]int64{42}, &domainfeed.FeedPageItem{
 		VideoID:     2,
+		AuthorID:    200,
 		PublishedAt: seedFollowingFeedItems()[1].PublishedAt,
 	})
 	cache.AddAuthorOutboxItemForTest(100, &domainfeed.FeedPageItem{
 		VideoID:     4,
+		AuthorID:    100,
 		PublishedAt: seedFollowingFeedItems()[3].PublishedAt,
 	})
 	cache.AddAuthorOutboxItemForTest(100, &domainfeed.FeedPageItem{
 		VideoID:     1,
+		AuthorID:    100,
 		PublishedAt: seedFollowingFeedItems()[0].PublishedAt,
 	})
 
@@ -847,8 +888,49 @@ func TestFollowingFeedUsesRedisIndex(t *testing.T) {
 	if len(page.Items) != 2 || page.Items[0].VideoID != 4 || page.Items[1].VideoID != 2 || !page.HasMore {
 		t.Fatalf("unexpected following index page: %+v", page)
 	}
-	if repo.FollowingCalls() != 0 || repo.FollowingPullAuthorCalls() != 1 {
-		t.Fatalf("unexpected following repo calls: page=%d authors=%d", repo.FollowingCalls(), repo.FollowingPullAuthorCalls())
+	if repo.FollowingCalls() != 0 || repo.FollowingAuthorCalls() != 1 || repo.FollowingPullAuthorCalls() != 1 {
+		t.Fatalf(
+			"unexpected following repo calls: page=%d followed=%d pull=%d",
+			repo.FollowingCalls(),
+			repo.FollowingAuthorCalls(),
+			repo.FollowingPullAuthorCalls(),
+		)
+	}
+}
+
+func TestFollowingFeedFallsBackWhenInboxContainsUnfollowedAuthor(t *testing.T) {
+	items := seedFollowingFeedItems()
+	repo := newMemoryFeedRepo(items)
+	repo.FollowForTest(42, 200)
+	cache := newMemoryFeedCache()
+	cache.AddInboxItemsForTest([]int64{42}, &domainfeed.FeedPageItem{
+		VideoID:     3,
+		AuthorID:    300,
+		PublishedAt: items[2].PublishedAt,
+	})
+	cache.AddInboxItemsForTest([]int64{42}, &domainfeed.FeedPageItem{
+		VideoID:     2,
+		AuthorID:    200,
+		PublishedAt: items[1].PublishedAt,
+	})
+
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t, applicationfeed.New(repo, applicationfeed.WithFeedCache(cache)))
+	response := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/feed-items?scene=following&limit=10",
+		"",
+		signTestToken(t, jwtManager, 42),
+	)
+	requireStatus(t, response, http.StatusOK)
+
+	var page feedAPIResponse
+	decodeJSON(t, response, &page)
+	if len(page.Items) != 1 || page.Items[0].VideoID != 2 || page.Items[0].AuthorID != 200 {
+		t.Fatalf("stale unfollowed inbox item leaked into following feed: %+v", page)
+	}
+	if repo.FollowingCalls() != 1 {
+		t.Fatalf("expected PostgreSQL truth-source fallback, calls=%d", repo.FollowingCalls())
 	}
 }
 

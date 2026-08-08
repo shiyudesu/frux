@@ -21,17 +21,21 @@ export interface RecommendationOutcomeContext {
   videoID?: number;
 }
 
-export function relationListPath(tab: RelationTab, cursor = "", limit = 20): string {
+export function relationListPath(tab: RelationTab, cursor = "", limit = 20, query = ""): string {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) {
     params.set("cursor", cursor);
+  }
+  const normalizedQuery = query.trim();
+  if (normalizedQuery) {
+    params.set("q", normalizedQuery);
   }
   const resource = tab === "followers" ? "followers" : "following";
   return `/api/users/me/${resource}?${params.toString()}`;
 }
 
-export function fetchRelationList(tab: RelationTab, token: string, cursor = "", limit = 20): Promise<RelationListResponse> {
-  return apiRequest<RelationListResponse>(relationListPath(tab, cursor, limit), { token });
+export function fetchRelationList(tab: RelationTab, token: string, cursor = "", limit = 20, query = ""): Promise<RelationListResponse> {
+  return apiRequest<RelationListResponse>(relationListPath(tab, cursor, limit, query), { token });
 }
 
 /** 拉取当前用户关注集合（最多翻 20 页），输出 user_id -> true 的映射 */

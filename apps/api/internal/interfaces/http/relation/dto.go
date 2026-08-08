@@ -21,6 +21,7 @@ type followStateResponse struct {
 // relationUserResponse 是关注列表和粉丝列表中的用户项。
 type relationUserResponse struct {
 	UserID     int64     `json:"user_id"`
+	Account    string    `json:"account"`
 	Nickname   string    `json:"nickname"`
 	AvatarURL  string    `json:"avatar_url"`
 	Bio        string    `json:"bio"`

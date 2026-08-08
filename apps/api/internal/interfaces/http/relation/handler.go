@@ -71,7 +71,7 @@ func (h *Handler) ListFollowing(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	result, err := h.service.ListFollowing(ctx, userID, c.Query("cursor"), limit)
+	result, err := h.service.ListFollowing(ctx, userID, c.Query("q"), c.Query("cursor"), limit)
 	if err != nil {
 		writeRelationError(c, err)
 		return
@@ -190,6 +190,7 @@ func relationListResponseFromResult(result *applicationrelation.ListResult) rela
 	for _, item := range result.Items {
 		items = append(items, relationUserResponse{
 			UserID:     item.UserID,
+			Account:    item.Account,
 			Nickname:   item.Nickname,
 			AvatarURL:  item.AvatarURL,
 			Bio:        item.Bio,
@@ -225,6 +226,7 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainrelation.ErrFollowSelfForbidden) ||
 		errors.Is(err, domainrelation.ErrInvalidLimit) ||
 		errors.Is(err, domainrelation.ErrInvalidCursor) ||
+		errors.Is(err, domainrelation.ErrInvalidListQuery) ||
 		errors.Is(err, domainrelation.ErrIdempotencyKeyTooLong) ||
 		errors.Is(err, domainrelation.ErrRecommendationRequestIDTooLong) ||
 		errors.Is(err, domainrelation.ErrInvalidRecommendationVideoID)

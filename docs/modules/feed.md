@@ -149,6 +149,8 @@ video:stat:v1:{video_id}
 
 页缓存只保存 `video_id` 和排序字段。Feed Service 读取页后使用 Redis MGET 批量读取 `video:card` 和 `video:stat`，缓存缺失时批量回源 PostgreSQL。即使卡片来自 Redis，也会批量查询数据库重新确认 `status=published AND visibility=public`，因此旧页或旧卡片中的私密/下架 ID 会在组装阶段被丢弃。可见性、删除或生命周期变化会删除对应卡片和统计缓存；页缓存中的旧 ID 依靠上述校验安全失效。
 
+关注流 Redis inbox 还必须绑定当前有效关注作者集合。读取时若发现取关作者的陈旧条目或缺少作者 ID 的旧格式条目，整页回退 PostgreSQL 关注关系真相源，不能把历史扇出内容继续返回给已取关用户。
+
 ## 5. Hot 访问优化
 
 `scene=hot` 使用 Redis ZSET 维护一小时滑动热榜，粒度为 1 分钟。互动写入时按权重写入当前分钟桶：点赞 3 分，收藏 4 分，评论 5 分；取消点赞、取消收藏、删除评论写入对应负分。
@@ -163,6 +165,11 @@ feed:hot:window:v1:{windowEndUnix}
 读取热榜时，Feed Service 合并窗口结束分钟前 60 个分钟桶，移除汇总分小于等于 0 的条目，再按分数倒序读取当前页。分钟桶 TTL 为 2 小时，窗口临时 key TTL 为 2 分钟。
 
 ## 6. Web Feed 顺序预加载
+
+关注场景在 Web 中额外展示 208px 关注目录。目录数据来自关系模块
+`GET /api/users/me/following`，拥有独立的 query、cursor、loading 和 error 状态；目录滚轮与指针
+不进入 Feed 切换处理器。点击用户进入公开主页，不产生作者过滤 Feed。目录可收起释放舞台宽度，
+且不得展示关系 API 未提供的直播或未看作品事实。
 
 Web 以当前场景已经返回的 `items` 数组作为唯一预加载顺序来源。`timeline`、`hot`、`following` 和 `recommend` 都从活动索引向后截取有效窗口，不再通过 `/api/preload-videos` 重新生成另一套候选顺序。
 

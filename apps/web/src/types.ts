@@ -737,6 +737,7 @@ export interface FollowStateResponse {
 
 export interface RelationUser {
   user_id: number;
+  account: string;
   nickname: string;
   avatar_url: string;
   bio: string;

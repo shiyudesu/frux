@@ -1,14 +1,14 @@
 package infracache
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
-	"context"
-	"encoding/json"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,12 +295,19 @@ func (c *FeedCache) AddAuthorOutboxItem(ctx context.Context, authorID int64, ite
 	return err
 }
 
-func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, authorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error) {
+func (c *FeedCache) ListFollowingIndexPage(
+	ctx context.Context,
+	viewerID int64,
+	followedAuthorIDs []int64,
+	pullAuthorIDs []int64,
+	cursor *domainfeed.TimelineCursor,
+	limit int,
+) ([]*domainfeed.FeedPageItem, bool, error) {
 	if viewerID <= 0 || limit <= 0 {
 		return []*domainfeed.FeedPageItem{}, false, nil
 	}
 	keys := []string{followingInboxKey(viewerID)}
-	for _, authorID := range authorIDs {
+	for _, authorID := range pullAuthorIDs {
 		if authorID > 0 {
 			keys = append(keys, followingAuthorOutboxKey(authorID))
 		}
@@ -342,6 +349,8 @@ func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, 
 	}
 
 	seen := map[int64]struct{}{}
+	allowedAuthors := int64Set(followedAuthorIDs)
+	staleInbox := false
 	items := make([]*domainfeed.FeedPageItem, 0, limit*len(rangeCommands))
 	for commandIndex, cmd := range rangeCommands {
 		members, err := cmd.Result()
@@ -353,8 +362,23 @@ func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, 
 			if !ok {
 				continue
 			}
-			if commandIndex > 0 && item.AuthorID > 0 {
-				allowedAuthors := int64Set(authorIDs)
+			if commandIndex == 0 {
+				if item.AuthorID <= 0 {
+					staleInbox = true
+					continue
+				}
+				if _, followed := allowedAuthors[item.AuthorID]; !followed {
+					staleInbox = true
+					continue
+				}
+			} else {
+				expectedAuthorID := pullAuthorIDs[commandIndex-1]
+				if item.AuthorID <= 0 {
+					item.AuthorID = expectedAuthorID
+				}
+				if item.AuthorID != expectedAuthorID {
+					continue
+				}
 				if _, followed := allowedAuthors[item.AuthorID]; !followed {
 					continue
 				}
@@ -365,6 +389,9 @@ func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, 
 			seen[item.VideoID] = struct{}{}
 			items = append(items, item)
 		}
+	}
+	if staleInbox {
+		return nil, false, nil
 	}
 	sortFeedPageItemsByTimeline(items)
 	if len(items) > limit {

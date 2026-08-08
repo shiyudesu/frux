@@ -1,12 +1,13 @@
 package infrarelation
 
 import (
-	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
-	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
-	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	"context"
 	"errors"
 	"fmt"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type Repository struct {
 
 type relationUserModel struct {
 	UserID     int64
+	Account    string
 	Nickname   string
 	AvatarURL  string
 	Bio        string
@@ -222,12 +224,20 @@ func (r *Repository) IsFollowing(ctx context.Context, userID int64, targetUserID
 }
 
 // ListFollowing 查询当前用户关注的人。
-func (r *Repository) ListFollowing(ctx context.Context, userID int64, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.UserItem, error) {
+func (r *Repository) ListFollowing(ctx context.Context, userID int64, listQuery string, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.UserItem, error) {
 	query := r.db.WithContext(ctx).
 		Table("user_follow AS f").
-		Select("a.id AS user_id, a.nickname, a.avatar_url, a.bio, f.updated_at AS followed_at").
+		Select("a.id AS user_id, a.account, a.nickname, a.avatar_url, a.bio, f.updated_at AS followed_at").
 		Joins("LEFT JOIN account AS a ON a.id = f.target_user_id").
 		Where("f.user_id = ? AND f.status = ? AND a.status = ?", userID, domainrelation.FollowStatusActive, domainaccount.StatusNormal)
+	if listQuery != "" {
+		pattern := "%" + domainsearch.EscapeLikeLiteral(listQuery) + "%"
+		query = query.Where(
+			"(a.account ILIKE ? ESCAPE '\\' OR a.nickname ILIKE ? ESCAPE '\\')",
+			pattern,
+			pattern,
+		)
+	}
 
 	if cursor != nil {
 		query = query.Where(
@@ -245,7 +255,7 @@ func (r *Repository) ListFollowing(ctx context.Context, userID int64, cursor *do
 func (r *Repository) ListFollowers(ctx context.Context, userID int64, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.UserItem, error) {
 	query := r.db.WithContext(ctx).
 		Table("user_follow AS f").
-		Select("a.id AS user_id, a.nickname, a.avatar_url, a.bio, f.updated_at AS followed_at").
+		Select("a.id AS user_id, a.account, a.nickname, a.avatar_url, a.bio, f.updated_at AS followed_at").
 		Joins("LEFT JOIN account AS a ON a.id = f.user_id").
 		Where("f.target_user_id = ? AND f.status = ? AND a.status = ?", userID, domainrelation.FollowStatusActive, domainaccount.StatusNormal)
 
@@ -286,6 +296,7 @@ func scanUserItems(query *gorm.DB) ([]*domainrelation.UserItem, error) {
 	for _, model := range models {
 		items = append(items, domainrelation.RestoreUserItem(
 			model.UserID,
+			model.Account,
 			model.Nickname,
 			model.AvatarURL,
 			model.Bio,

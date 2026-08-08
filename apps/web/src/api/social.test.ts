@@ -6,6 +6,7 @@ import {
   fetchCommentReplies,
   fetchComments,
   fetchCommentThread,
+  relationListPath,
   setCommentLike
 } from "./social";
 
@@ -35,6 +36,15 @@ describe("threaded comment API", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/videos/3/comments?sort=hot&limit=20&cursor=root-cursor");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/comments/7/replies?limit=10&cursor=reply-cursor");
     expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/comments/9/thread?limit=15");
+  });
+
+  describe("relation list API", () => {
+    it("binds optional following search without changing existing callers", () => {
+      expect(relationListPath("following", "cursor", 50, " maker "))
+        .toBe("/api/users/me/following?limit=50&cursor=cursor&q=maker");
+      expect(relationListPath("followers"))
+        .toBe("/api/users/me/followers?limit=20");
+    });
   });
 
   it("sends retry-safe create, like, unlike, and delete mutations", async () => {

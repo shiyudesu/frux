@@ -40,6 +40,7 @@
   --frux-player-control-gap: 8px;
   --frux-player-control-padding: 12px;
   --frux-details-drawer-width: min(var(--frux-detail-width), 42vw);
+  --frux-following-directory-width: 208px;
   --frux-radius-stage: 16px;
   --frux-radius-panel: 18px;
   --frux-radius-control: 10px;

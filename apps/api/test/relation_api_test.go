@@ -2,7 +2,10 @@ package test
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -44,6 +47,7 @@ type relationListAPIResponse struct {
 
 type relationUserAPIResponse struct {
 	UserID     int64     `json:"user_id"`
+	Account    string    `json:"account"`
 	Nickname   string    `json:"nickname"`
 	AvatarURL  string    `json:"avatar_url"`
 	Bio        string    `json:"bio"`
@@ -52,6 +56,7 @@ type relationUserAPIResponse struct {
 
 type memoryRelationUser struct {
 	ID        int64
+	Account   string
 	Nickname  string
 	AvatarURL string
 	Bio       string
@@ -103,10 +108,10 @@ func newMemoryRelationRepo() *memoryRelationRepo {
 	return &memoryRelationRepo{
 		nextID: 1,
 		users: map[int64]memoryRelationUser{
-			42: {ID: 42, Nickname: "viewer", AvatarURL: "https://example.com/42.jpg", Bio: "viewer bio", Active: true},
-			77: {ID: 77, Nickname: "creator", AvatarURL: "https://example.com/77.jpg", Bio: "creator bio", Active: true},
-			88: {ID: 88, Nickname: "maker", AvatarURL: "https://example.com/88.jpg", Bio: "maker bio", Active: true},
-			99: {ID: 99, Nickname: "guest", AvatarURL: "https://example.com/99.jpg", Bio: "guest bio", Active: true},
+			42: {ID: 42, Account: "viewer42", Nickname: "viewer", AvatarURL: "https://example.com/42.jpg", Bio: "viewer bio", Active: true},
+			77: {ID: 77, Account: "creator77", Nickname: "creator", AvatarURL: "https://example.com/77.jpg", Bio: "creator bio", Active: true},
+			88: {ID: 88, Account: "maker88", Nickname: "maker", AvatarURL: "https://example.com/88.jpg", Bio: "maker bio", Active: true},
+			99: {ID: 99, Account: "guest99", Nickname: "guest", AvatarURL: "https://example.com/99.jpg", Bio: "guest bio", Active: true},
 		},
 		follows: map[string]*domainrelation.Follow{},
 		stats:   map[int64]*domainrelation.RelationStat{},
@@ -196,7 +201,7 @@ func (r *memoryRelationRepo) IsFollowing(ctx context.Context, userID int64, targ
 }
 
 // ListFollowing 模拟关注列表游标分页。
-func (r *memoryRelationRepo) ListFollowing(ctx context.Context, userID int64, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.UserItem, error) {
+func (r *memoryRelationRepo) ListFollowing(ctx context.Context, userID int64, query string, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.UserItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -209,7 +214,12 @@ func (r *memoryRelationRepo) ListFollowing(ctx context.Context, userID int64, cu
 			continue
 		}
 		user := r.users[follow.TargetUserID]
-		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
+		if !user.Active || (query != "" &&
+			!strings.Contains(strings.ToLower(user.Account), query) &&
+			!strings.Contains(strings.ToLower(user.Nickname), query)) {
+			continue
+		}
+		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Account, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
 	}
 	sortRelationItems(items)
 	return limitRelationItems(items, limit), nil
@@ -229,7 +239,7 @@ func (r *memoryRelationRepo) ListFollowers(ctx context.Context, userID int64, cu
 			continue
 		}
 		user := r.users[follow.UserID]
-		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
+		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Account, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
 	}
 	sortRelationItems(items)
 	return limitRelationItems(items, limit), nil
@@ -398,7 +408,11 @@ func TestRelationListFlow(t *testing.T) {
 
 	var firstFollowing relationListAPIResponse
 	decodeJSON(t, firstFollowingResponse, &firstFollowing)
-	if len(firstFollowing.Items) != 1 || firstFollowing.Items[0].UserID != 88 || !firstFollowing.HasMore || firstFollowing.NextCursor == "" {
+	if len(firstFollowing.Items) != 1 ||
+		firstFollowing.Items[0].UserID != 88 ||
+		firstFollowing.Items[0].Account != "maker88" ||
+		!firstFollowing.HasMore ||
+		firstFollowing.NextCursor == "" {
 		t.Fatalf("unexpected first following page: %+v", firstFollowing)
 	}
 
@@ -421,6 +435,120 @@ func TestRelationListFlow(t *testing.T) {
 	}
 }
 
+func TestRelationFollowingSearchAndCursorBinding(t *testing.T) {
+	router, jwtManager, repo := newRelationRouterWithRepo(t)
+	token := signTestToken(t, jwtManager, 42)
+	for _, target := range []int64{77, 88, 99} {
+		requireStatus(
+			t,
+			performVideoJSONRequest(
+				router,
+				http.MethodPut,
+				"/api/users/me/following/"+int64String(target),
+				"",
+				token,
+				"follow-search-"+int64String(target),
+			),
+			http.StatusOK,
+		)
+	}
+	repo.mu.Lock()
+	user99 := repo.users[99]
+	user99.Active = false
+	repo.users[99] = user99
+	repo.mu.Unlock()
+
+	first := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/following?q=e&limit=1",
+		"",
+		token,
+	)
+	requireStatus(t, first, http.StatusOK)
+	var firstPage relationListAPIResponse
+	decodeJSON(t, first, &firstPage)
+	if len(firstPage.Items) != 1 || firstPage.Items[0].UserID != 88 || firstPage.NextCursor == "" || !firstPage.HasMore {
+		t.Fatalf("unexpected searched first page: %+v", firstPage)
+	}
+
+	second := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/following?q=e&limit=1&cursor="+url.QueryEscape(firstPage.NextCursor),
+		"",
+		token,
+	)
+	requireStatus(t, second, http.StatusOK)
+	var secondPage relationListAPIResponse
+	decodeJSON(t, second, &secondPage)
+	if len(secondPage.Items) != 1 || secondPage.Items[0].UserID != 77 || secondPage.HasMore {
+		t.Fatalf("unexpected searched second page: %+v", secondPage)
+	}
+
+	byAccount := performJSONRequest(router, http.MethodGet, "/api/users/me/following?q=CREATOR77", "", token)
+	requireStatus(t, byAccount, http.StatusOK)
+	var accountPage relationListAPIResponse
+	decodeJSON(t, byAccount, &accountPage)
+	if len(accountPage.Items) != 1 || accountPage.Items[0].UserID != 77 {
+		t.Fatalf("account search mismatch: %+v", accountPage)
+	}
+
+	crossQuery := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/following?q=creator&cursor="+url.QueryEscape(firstPage.NextCursor),
+		"",
+		token,
+	)
+	assertAPIError(
+		t,
+		crossQuery,
+		http.StatusBadRequest,
+		interfaceshttpapierror.CodeRelationValidationFailed,
+		domainrelation.ErrInvalidCursor.Error(),
+	)
+	crossKind := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/followers?cursor="+url.QueryEscape(firstPage.NextCursor),
+		"",
+		token,
+	)
+	assertAPIError(
+		t,
+		crossKind,
+		http.StatusBadRequest,
+		interfaceshttpapierror.CodeRelationValidationFailed,
+		domainrelation.ErrInvalidCursor.Error(),
+	)
+
+	legacy := legacyRelationCursor(firstPage.Items[0].FollowedAt, firstPage.Items[0].UserID)
+	legacyResponse := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/following?limit=1&cursor="+url.QueryEscape(legacy),
+		"",
+		token,
+	)
+	requireStatus(t, legacyResponse, http.StatusOK)
+
+	longQuery := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/following?q="+url.QueryEscape(strings.Repeat("界", domainrelation.MaxListQueryLength+1)),
+		"",
+		token,
+	)
+	assertAPIError(
+		t,
+		longQuery,
+		http.StatusBadRequest,
+		interfaceshttpapierror.CodeRelationValidationFailed,
+		domainrelation.ErrInvalidListQuery.Error(),
+	)
+}
+
 // TestRelationValidation 覆盖未登录、参数错误、自关注和目标用户缺失。
 func TestRelationValidation(t *testing.T) {
 	router, jwtManager := newRelationRouter(t)
@@ -428,6 +556,8 @@ func TestRelationValidation(t *testing.T) {
 
 	unauthorizedResponse := performJSONRequest(router, http.MethodPut, "/api/users/me/following/77", "", "")
 	assertAPIError(t, unauthorizedResponse, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
+	unauthorizedList := performJSONRequest(router, http.MethodGet, "/api/users/me/following", "", "")
+	assertAPIError(t, unauthorizedList, http.StatusUnauthorized, interfaceshttpapierror.CodeInvalidAccessToken, "invalid access token")
 
 	badTargetResponse := performJSONRequest(router, http.MethodPut, "/api/users/me/following/0", "", token)
 	assertAPIError(t, badTargetResponse, http.StatusBadRequest, interfaceshttpapierror.CodeRelationValidationFailed, domainrelation.ErrInvalidTargetUserID.Error())
@@ -443,6 +573,14 @@ func TestRelationValidation(t *testing.T) {
 
 	badCursorResponse := performJSONRequest(router, http.MethodGet, "/api/users/me/followers?cursor=bad", "", token)
 	assertAPIError(t, badCursorResponse, http.StatusBadRequest, interfaceshttpapierror.CodeRelationValidationFailed, domainrelation.ErrInvalidCursor.Error())
+}
+
+func legacyRelationCursor(followedAt time.Time, userID int64) string {
+	content, _ := json.Marshal(map[string]any{
+		"followed_at": followedAt.UTC().Format(time.RFC3339Nano),
+		"user_id":     userID,
+	})
+	return base64.RawURLEncoding.EncodeToString(content)
 }
 
 func newRelationRouter(t *testing.T) (*server.Hertz, *infrajwt.Manager) {

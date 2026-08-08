@@ -1,18 +1,47 @@
 package infracache
 
 import (
-	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestFollowingIndexFallsBackForStaleUnfollowedInboxAuthor(t *testing.T) {
+	cache := newActionReceiptTestCache(t)
+	ctx := context.Background()
+	base := time.Date(2026, 8, 8, 7, 0, 0, 0, time.UTC)
+	if err := cache.AddInboxItems(ctx, 200, []int64{42}, &domainfeed.FeedPageItem{
+		VideoID:     1,
+		AuthorID:    200,
+		PublishedAt: base,
+	}, 100); err != nil {
+		t.Fatalf("add followed inbox item: %v", err)
+	}
+	if err := cache.AddInboxItems(ctx, 300, []int64{42}, &domainfeed.FeedPageItem{
+		VideoID:     2,
+		AuthorID:    300,
+		PublishedAt: base.Add(time.Minute),
+	}, 100); err != nil {
+		t.Fatalf("add stale inbox item: %v", err)
+	}
+
+	items, ok, err := cache.ListFollowingIndexPage(ctx, 42, []int64{200}, nil, nil, 10)
+	if err != nil {
+		t.Fatalf("list following index: %v", err)
+	}
+	if ok || items != nil {
+		t.Fatalf("stale inbox should force truth-source fallback: ok=%t items=%+v", ok, items)
+	}
+}
 
 type actionStatFakeRedis struct {
 	hashes     map[string]map[string]string

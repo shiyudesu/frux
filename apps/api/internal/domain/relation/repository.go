@@ -9,7 +9,7 @@ type Repository interface {
 	// IsFollowing directly reads one authenticated user's relationship to one target.
 	IsFollowing(ctx context.Context, userID int64, targetUserID int64) (bool, error)
 	// ListFollowing 查询当前用户关注的人。
-	ListFollowing(ctx context.Context, userID int64, cursor *ListCursor, limit int) ([]*UserItem, error)
+	ListFollowing(ctx context.Context, userID int64, query string, cursor *ListCursor, limit int) ([]*UserItem, error)
 	// ListFollowers 查询关注当前用户的人。
 	ListFollowers(ctx context.Context, userID int64, cursor *ListCursor, limit int) ([]*UserItem, error)
 	// GetUserProfile 读取用户展示资料，用于关注通知。

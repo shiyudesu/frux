@@ -1,8 +1,8 @@
 package interfaceshttprouter
 
 import (
-	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	"context"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 )
 
 // followedAuthorRecallAdapter keeps recommendation application code independent
@@ -15,7 +15,7 @@ func (a followedAuthorRecallAdapter) ListFollowedAuthorIDs(ctx context.Context, 
 	if a.source == nil || limit <= 0 {
 		return []int64{}, nil
 	}
-	items, err := a.source.ListFollowing(ctx, userID, nil, limit)
+	items, err := a.source.ListFollowing(ctx, userID, "", nil, limit)
 	if err != nil {
 		return nil, err
 	}

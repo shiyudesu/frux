@@ -130,15 +130,17 @@ export function FeedActionRail({
             >
               <img src={publicUserAvatar(item.avatar_url)} alt="" />
             </button>
-            <button
-              aria-label={ownVideo ? "本人作品" : following ? "取消关注" : "关注作者"}
-              className={`rail-follow ${following ? "active" : ""}`}
-              type="button"
-              disabled={followBusy || ownVideo}
-              onClick={onFollow}
-            >
-              {ownVideo ? "我" : followBusy ? "…" : following ? "✓" : "+"}
-            </button>
+            {!following && (
+              <button
+                aria-label={ownVideo ? "本人作品" : "关注作者"}
+                className="rail-follow"
+                type="button"
+                disabled={followBusy || ownVideo}
+                onClick={onFollow}
+              >
+                {ownVideo ? "我" : followBusy ? "…" : "+"}
+              </button>
+            )}
           </div>
           <ActionButton
             icon="heart"

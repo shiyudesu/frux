@@ -1,14 +1,14 @@
 package applicationrelation
 
 import (
-	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
-	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
-	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	"strings"
 	"time"
 )
@@ -70,6 +70,9 @@ type ListResult struct {
 }
 
 type listCursorPayload struct {
+	Version    int    `json:"v,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	Query      string `json:"query,omitempty"`
 	FollowedAt string `json:"followed_at"`
 	UserID     int64  `json:"user_id"`
 }
@@ -129,21 +132,25 @@ func (s *Service) GetFollowState(ctx context.Context, userID int64, targetUserID
 }
 
 // ListFollowing 查询当前用户的关注列表。
-func (s *Service) ListFollowing(ctx context.Context, userID int64, cursor string, limit int) (*ListResult, error) {
+func (s *Service) ListFollowing(ctx context.Context, userID int64, query string, cursor string, limit int) (*ListResult, error) {
 	if userID <= 0 {
 		return nil, domainrelation.ErrInvalidUserID
 	}
-	parsedCursor, err := parseListCursor(cursor)
+	normalizedQuery, err := domainrelation.NormalizeListQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	parsedCursor, err := parseListCursor(cursor, domainrelation.ListKindFollowing, normalizedQuery)
 	if err != nil {
 		return nil, err
 	}
 	limit = normalizeLimit(limit)
 
-	items, err := s.repo.ListFollowing(ctx, userID, parsedCursor, limit+1)
+	items, err := s.repo.ListFollowing(ctx, userID, normalizedQuery, parsedCursor, limit+1)
 	if err != nil {
 		return nil, ErrLoadRelationFailed
 	}
-	return listResult(items, limit), nil
+	return listResult(items, limit, domainrelation.ListKindFollowing, normalizedQuery), nil
 }
 
 // ListFollowers 查询当前用户的粉丝列表。
@@ -151,7 +158,7 @@ func (s *Service) ListFollowers(ctx context.Context, userID int64, cursor string
 	if userID <= 0 {
 		return nil, domainrelation.ErrInvalidUserID
 	}
-	parsedCursor, err := parseListCursor(cursor)
+	parsedCursor, err := parseListCursor(cursor, domainrelation.ListKindFollowers, "")
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +168,7 @@ func (s *Service) ListFollowers(ctx context.Context, userID int64, cursor string
 	if err != nil {
 		return nil, ErrLoadRelationFailed
 	}
-	return listResult(items, limit), nil
+	return listResult(items, limit, domainrelation.ListKindFollowers, ""), nil
 }
 
 // setFollow 统一处理关注和取关，active 表示目标关系状态。
@@ -276,7 +283,7 @@ func (s *Service) backfillFollowFeed(ctx context.Context, userID int64, targetUs
 	return nil
 }
 
-func listResult(items []*domainrelation.UserItem, limit int) *ListResult {
+func listResult(items []*domainrelation.UserItem, limit int, kind domainrelation.ListKind, query string) *ListResult {
 	hasMore := len(items) > limit
 	if hasMore {
 		items = items[:limit]
@@ -286,6 +293,9 @@ func listResult(items []*domainrelation.UserItem, limit int) *ListResult {
 	if len(items) > 0 {
 		last := items[len(items)-1]
 		nextCursor = encodeListCursor(&domainrelation.ListCursor{
+			Version:    domainrelation.ListCursorVersion,
+			Kind:       kind,
+			Query:      query,
 			FollowedAt: last.FollowedAt,
 			UserID:     last.UserID,
 		})
@@ -308,7 +318,7 @@ func normalizeLimit(limit int) int {
 	return limit
 }
 
-func parseListCursor(raw string) (*domainrelation.ListCursor, error) {
+func parseListCursor(raw string, expectedKind domainrelation.ListKind, expectedQuery string) (*domainrelation.ListCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -326,6 +336,15 @@ func parseListCursor(raw string) (*domainrelation.ListCursor, error) {
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, domainrelation.ErrInvalidCursor
 	}
+	if payload.Version == 0 {
+		if expectedQuery != "" || payload.Kind != "" || payload.Query != "" {
+			return nil, domainrelation.ErrInvalidCursor
+		}
+	} else if payload.Version != domainrelation.ListCursorVersion ||
+		domainrelation.ListKind(payload.Kind) != expectedKind ||
+		payload.Query != expectedQuery {
+		return nil, domainrelation.ErrInvalidCursor
+	}
 
 	followedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.FollowedAt))
 	if err != nil || payload.UserID <= 0 {
@@ -333,6 +352,9 @@ func parseListCursor(raw string) (*domainrelation.ListCursor, error) {
 	}
 
 	return &domainrelation.ListCursor{
+		Version:    payload.Version,
+		Kind:       expectedKind,
+		Query:      expectedQuery,
 		FollowedAt: followedAt,
 		UserID:     payload.UserID,
 	}, nil
@@ -344,6 +366,9 @@ func encodeListCursor(cursor *domainrelation.ListCursor) string {
 	}
 
 	content, err := json.Marshal(listCursorPayload{
+		Version:    domainrelation.ListCursorVersion,
+		Kind:       string(cursor.Kind),
+		Query:      cursor.Query,
 		FollowedAt: cursor.FollowedAt.UTC().Format(time.RFC3339Nano),
 		UserID:     cursor.UserID,
 	})

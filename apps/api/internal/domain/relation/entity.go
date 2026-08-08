@@ -3,6 +3,7 @@ package domainrelation
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -12,6 +13,15 @@ const (
 	MaxIdempotencyKeyLength          = 128
 	MaxRecommendationRequestIDLength = 64
 	MaxLimit                         = 100
+	MaxListQueryLength               = 64
+	ListCursorVersion                = 1
+)
+
+type ListKind string
+
+const (
+	ListKindFollowing ListKind = "following"
+	ListKindFollowers ListKind = "followers"
 )
 
 // Follow 表示一个用户对另一个用户的关注关系，取关使用软状态保留历史。
@@ -42,6 +52,7 @@ type RelationStat struct {
 // UserItem 是关注列表或粉丝列表中的用户展示数据。
 type UserItem struct {
 	UserID     int64
+	Account    string
 	Nickname   string
 	AvatarURL  string
 	Bio        string
@@ -58,6 +69,9 @@ type UserProfile struct {
 
 // ListCursor 保存关系列表分页需要的排序字段。
 type ListCursor struct {
+	Version    int
+	Kind       ListKind
+	Query      string
 	FollowedAt time.Time
 	UserID     int64
 }
@@ -134,14 +148,23 @@ func RestoreRelationStat(userID int64, followingCount int, followerCount int, cr
 }
 
 // RestoreUserItem 从查询结果恢复列表展示用户。
-func RestoreUserItem(userID int64, nickname string, avatarURL string, bio string, followedAt time.Time) *UserItem {
+func RestoreUserItem(userID int64, account string, nickname string, avatarURL string, bio string, followedAt time.Time) *UserItem {
 	return &UserItem{
 		UserID:     userID,
+		Account:    strings.TrimSpace(account),
 		Nickname:   strings.TrimSpace(nickname),
 		AvatarURL:  strings.TrimSpace(avatarURL),
 		Bio:        strings.TrimSpace(bio),
 		FollowedAt: followedAt,
 	}
+}
+
+func NormalizeListQuery(raw string) (string, error) {
+	query := strings.ToLower(strings.TrimSpace(raw))
+	if utf8.RuneCountInString(query) > MaxListQueryLength {
+		return "", ErrInvalidListQuery
+	}
+	return query, nil
 }
 
 // RestoreUserProfile 从账号记录恢复通知展示资料。
