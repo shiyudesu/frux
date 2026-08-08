@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { creatorVideoStatusLabel, formatMetric } from "../utils";
 import { Icon } from "./Icon";
+import { ProtectedVideoCover } from "./ProtectedVideoCover";
 
 export interface ProfileHeroData {
   account: string;
@@ -331,6 +332,7 @@ interface ProfileVideoGridProps {
   itemAction?: (item: ProfileGridItem) => void;
   itemActionLabel?: string;
   targetVideoID?: number;
+  protectedCoverToken?: string;
 }
 
 export function ProfileVideoGrid({
@@ -349,7 +351,8 @@ export function ProfileVideoGrid({
   hasMore = false,
   itemAction,
   itemActionLabel,
-  targetVideoID = 0
+  targetVideoID = 0,
+  protectedCoverToken = ""
 }: ProfileVideoGridProps) {
   if (state === "loading" || state === "idle") {
     return (
@@ -398,7 +401,7 @@ export function ProfileVideoGrid({
                 }}
               >
                 <span className="profile-video-cover">
-                  <img src={video.cover_url || image.stage} alt="" />
+                  <ProtectedVideoCover video={video} token={protectedCoverToken} />
                   <span className="profile-video-like">
                     <Icon name="heart" size={17} />
                     {formatMetric(video.like_count)}

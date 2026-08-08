@@ -469,6 +469,7 @@ export function ProfilePage() {
           state={current.state}
           statusLabels
           targetVideoID={targetVideoID}
+          protectedCoverToken={token}
           onLoadMore={() => void creator.loadVideos(workTab)}
           onRetry={() => void creator.loadVideos(workTab, { reset: true })}
           onSelect={setSelectedWork}
