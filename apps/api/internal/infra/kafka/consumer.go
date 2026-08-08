@@ -11,6 +11,7 @@ import (
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 
+	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -24,7 +25,6 @@ type brokerRecord struct {
 	Topic     string
 	Partition int32
 	Offset    int64
-	Lag       int64
 	Timestamp time.Time
 	Key       []byte
 	Value     []byte
@@ -35,12 +35,14 @@ type brokerRecord struct {
 type consumerSource interface {
 	Poll(ctx context.Context, maxRecords int) ([]brokerRecord, error)
 	Commit(ctx context.Context, records []brokerRecord) error
+	Lag(ctx context.Context, groupName string) (int64, error)
 	AllowRebalance()
 	Close()
 }
 
 type franzConsumerSource struct {
 	client *kgo.Client
+	admin  *kadm.Client
 }
 
 type ConsumerObserver interface {
@@ -63,6 +65,8 @@ type Consumer struct {
 	drainTimeout   time.Duration
 	commitTimeout  time.Duration
 	observer       ConsumerObserver
+	lagSampleEvery time.Duration
+	lastLagSample  time.Time
 }
 
 func NewConsumer(
@@ -150,13 +154,13 @@ func NewConsumer(
 		return nil, err
 	}
 	return &Consumer{
-		source:  &franzConsumerSource{client: client},
+		source:  &franzConsumerSource{client: client, admin: kadm.NewClient(client)},
 		topicID: groupSpec.Topic, topicName: topicName,
 		groupID: groupID, groupName: groupName, handler: handler,
 		maxPollRecords: cfg.Consumer.MaxPollRecords,
 		concurrency:    cfg.Consumer.PartitionConcurrency,
 		drainTimeout:   drainTimeout, commitTimeout: commitTimeout,
-		observer: observer,
+		observer: observer, lagSampleEvery: 15 * time.Second,
 	}, nil
 }
 
@@ -177,6 +181,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
+			c.sampleLag(ctx)
 			continue
 		}
 		eligible, processErr := c.processBatch(ctx, records)
@@ -190,7 +195,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 				return fmt.Errorf("%w: %s", ErrCommitUncertain, sanitizeKafkaError(err))
 			}
 			c.observeCommit("success")
-			c.observeLag(eligible)
+			if ctx.Err() == nil {
+				c.sampleLag(ctx)
+			}
 		}
 		c.source.AllowRebalance()
 		if processErr != nil {
@@ -252,6 +259,7 @@ func (c *Consumer) processBatch(
 	}()
 	eligible := make([]brokerRecord, 0, len(partitions))
 	var processErr error
+	drainExpired := false
 	contextDone := ctx.Done()
 	var drainTimer *time.Timer
 	var drainDeadline <-chan time.Time
@@ -264,6 +272,9 @@ func (c *Consumer) processBatch(
 		select {
 		case item, open := <-results:
 			if !open {
+				if drainExpired {
+					return eligible, ErrShutdownDeadline
+				}
 				return eligible, processErr
 			}
 			if item.eligible != nil {
@@ -278,7 +289,8 @@ func (c *Consumer) processBatch(
 			drainDeadline = drainTimer.C
 		case <-drainDeadline:
 			cancelProcess()
-			return eligible, ErrShutdownDeadline
+			drainDeadline = nil
+			drainExpired = true
 		}
 	}
 }
@@ -364,26 +376,25 @@ func (c *Consumer) observeContract(code ContractFailureCode) {
 	}
 }
 
-func (c *Consumer) observeLag(records []brokerRecord) {
-	if c.observer == nil {
+func (c *Consumer) sampleLag(ctx context.Context) {
+	if c.observer == nil || c.source == nil {
 		return
 	}
-	partitionLag := make(map[int32]int64, len(records))
-	for _, record := range records {
-		lag := record.Lag
-		if lag < 0 {
-			lag = 0
-		}
-		current, exists := partitionLag[record.Partition]
-		if !exists || lag < current {
-			partitionLag[record.Partition] = lag
-		}
+	now := time.Now()
+	if c.lagSampleEvery > 0 && now.Sub(c.lastLagSample) < c.lagSampleEvery {
+		return
 	}
-	var total int64
-	for _, lag := range partitionLag {
-		total += lag
+	c.lastLagSample = now
+	lagContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.commitTimeout)
+	defer cancel()
+	lag, err := c.source.Lag(lagContext, c.groupName)
+	if err != nil {
+		return
 	}
-	c.observer.ObserveLag(c.topicID, c.groupID, total)
+	if lag < 0 {
+		lag = 0
+	}
+	c.observer.ObserveLag(c.topicID, c.groupID, lag)
 }
 
 func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]brokerRecord, error) {
@@ -400,15 +411,10 @@ func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]broke
 					Key: header.Key, Value: append([]byte(nil), header.Value...),
 				})
 			}
-			lag := partition.HighWatermark - record.Offset - 1
-			if lag < 0 {
-				lag = 0
-			}
 			records = append(records, brokerRecord{
 				Topic: record.Topic, Partition: record.Partition, Offset: record.Offset,
-				Lag: lag, Timestamp: record.Timestamp,
-				Key: append([]byte(nil), record.Key...), Value: append([]byte(nil), record.Value...),
-				Headers: headers, original: record,
+				Timestamp: record.Timestamp, Key: append([]byte(nil), record.Key...),
+				Value: append([]byte(nil), record.Value...), Headers: headers, original: record,
 			})
 		}
 	})
@@ -426,6 +432,24 @@ func (s *franzConsumerSource) Commit(ctx context.Context, records []brokerRecord
 		return nil
 	}
 	return s.client.CommitRecords(ctx, originals...)
+}
+
+func (s *franzConsumerSource) Lag(ctx context.Context, groupName string) (int64, error) {
+	if s == nil || s.admin == nil {
+		return 0, ErrKafkaUnavailable
+	}
+	lags, err := s.admin.Lag(ctx, groupName)
+	if err != nil {
+		return 0, err
+	}
+	group, exists := lags[groupName]
+	if !exists {
+		return 0, ErrKafkaUnavailable
+	}
+	if err := group.Error(); err != nil {
+		return 0, err
+	}
+	return group.Lag.Total(), nil
 }
 
 func (s *franzConsumerSource) AllowRebalance() {

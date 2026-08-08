@@ -27,7 +27,7 @@ Key fields:
 | `authentication.mechanism` | `none`, `plain`, `scram-sha-256`, or `scram-sha-512`. |
 | `tls` | TLS 1.2+, optional CA and paired client certificate/key; insecure verification only in local/test. |
 | `timeouts` | Bounded dial, request, produce, admin, and shutdown deadlines. |
-| `consumer` | Bounded poll records/bytes, partition concurrency, and drain deadline. |
+| `consumer` | Bounded poll records/bytes, partition concurrency, and drain grace before handler cancellation. Handlers must honor context cancellation and bound external calls. |
 | `production_validation` | Required replication factor and minimum ISR; optional mandatory auth/TLS. |
 
 Migration modes are closed:

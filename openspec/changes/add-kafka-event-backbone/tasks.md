@@ -24,8 +24,8 @@
 - [x] 4.1 Implement registered consumer groups with automatic commits disabled, cooperative rebalancing, bounded fetches, and context cancellation.
 - [x] 4.2 Define handler metadata and classified outcomes without exposing Kafka client types to Domain packages.
 - [x] 4.3 Commit offsets only after durable-success or registered terminal outcomes and stop the session on commit uncertainty.
-- [x] 4.4 Add bounded per-partition execution and shutdown draining without unbounded goroutines.
-- [x] 4.5 Add consumer tests for ordering, duplicate delivery after commit failure, rebalance revocation, restart, cancellation, and shutdown deadlines.
+- [x] 4.4 Add bounded per-partition execution and cancellation-aware shutdown that does not abandon in-flight handlers or start unbounded goroutines.
+- [x] 4.5 Add consumer tests for ordering, duplicate delivery after commit failure, rebalance revocation, restart, cancellation, and drain expiration.
 
 ## 5. Migration Controls
 

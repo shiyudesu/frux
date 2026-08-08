@@ -49,11 +49,11 @@ Frux SHALL run registered Kafka consumer groups with bounded batches, partition 
 
 #### Scenario: Consumer group rebalances
 - **WHEN** an instance joins, leaves, or loses a partition assignment
-- **THEN** Frux stops work for revoked partitions, completes only bounded in-flight durable work, and resumes assigned partitions without concurrent ownership
+- **THEN** Frux stops polling, cancels in-flight work when draining expires, and does not release the partition until those cancellation-aware handlers return
 
 #### Scenario: Worker shuts down
 - **WHEN** the process context is canceled
-- **THEN** consumers stop polling, finish or abandon work according to the durable boundary, commit eligible offsets, and close within the shutdown deadline
+- **THEN** consumers stop polling, allow a bounded drain grace period, cancel handler contexts, commit eligible offsets, and close only after in-flight handlers return so another group member cannot mutate the same record concurrently
 
 ### Requirement: Controlled Transport Migration
 Frux SHALL support registered primary/mirror producer modes and active/shadow consumer modes while ensuring that no migration configuration activates two uncontrolled business writers for one consumer responsibility.

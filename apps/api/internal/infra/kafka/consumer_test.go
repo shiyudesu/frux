@@ -16,6 +16,8 @@ type fakeConsumerSource struct {
 	batches   [][]brokerRecord
 	commitErr error
 	commits   [][]brokerRecord
+	lag       int64
+	lagErr    error
 	allows    int
 	closed    bool
 }
@@ -40,6 +42,10 @@ func (f *fakeConsumerSource) Commit(_ context.Context, records []brokerRecord) e
 	return f.commitErr
 }
 
+func (f *fakeConsumerSource) Lag(context.Context, string) (int64, error) {
+	return f.lag, f.lagErr
+}
+
 func (f *fakeConsumerSource) AllowRebalance() {
 	f.mu.Lock()
 	f.allows++
@@ -59,7 +65,8 @@ func (f handlerFunc) Handle(ctx context.Context, event applicationeventstream.Ev
 }
 
 type consumerObserver struct {
-	lag int64
+	lag    int64
+	cancel context.CancelFunc
 }
 
 func (*consumerObserver) ObserveConsume(TopicID, ConsumerGroupID, string, time.Duration, time.Duration) {
@@ -70,6 +77,9 @@ func (*consumerObserver) ObserveContract(TopicID, ConsumerGroupID, ContractFailu
 }
 func (o *consumerObserver) ObserveLag(_ TopicID, _ ConsumerGroupID, lag int64) {
 	o.lag = lag
+	if o.cancel != nil {
+		o.cancel()
+	}
 }
 
 func TestConsumerPreservesPartitionOrderingWithBoundedWorkers(t *testing.T) {
@@ -191,27 +201,33 @@ func TestConsumerCancellationAndShutdownDeadline(t *testing.T) {
 		cancel()
 		select {
 		case err := <-done:
+			t.Fatalf("consumer released partition while handler was active: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+		close(release)
+		select {
+		case err := <-done:
 			if !errors.Is(err, ErrShutdownDeadline) {
 				t.Fatalf("error = %v", err)
 			}
-			close(release)
 		case <-time.After(time.Second):
-			t.Fatal("consumer exceeded shutdown deadline")
+			t.Fatal("consumer did not finish after handler returned")
 		}
 	})
 }
 
 func TestConsumerReportsCommittedLag(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	record := probeRecord(t, 0, 3)
-	record.Lag = 7
-	source := &fakeConsumerSource{batches: [][]brokerRecord{{record}}}
-	observer := &consumerObserver{}
+	source := &fakeConsumerSource{
+		batches: [][]brokerRecord{{probeRecord(t, 0, 3)}},
+		lag:     7,
+	}
+	observer := &consumerObserver{cancel: cancel}
 	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
-		cancel()
 		return applicationeventstream.OutcomeDurableSuccess, nil
 	}))
 	consumer.observer = observer
+	consumer.lagSampleEvery = 0
 	if err := consumer.Run(ctx); err != nil {
 		t.Fatal(err)
 	}

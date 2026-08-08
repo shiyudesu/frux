@@ -16,7 +16,7 @@ It must not hide Kafka behind a lowest-common-denominator queue interface. Topic
 - Provide a typed Kafka producer, consumer-group runtime, administrator, and topic registry.
 - Establish stable versioned wire envelopes and topic names before business cutover.
 - Make partitioning, retention, cleanup, and consumer-group ownership code-reviewed decisions.
-- Support idempotent production, explicit offset commits, supervised reconnects, bounded shutdown, and safe metrics.
+- Support idempotent production, explicit offset commits, supervised reconnects, cancellation-aware shutdown, and safe metrics.
 - Support gradual RabbitMQ-to-Kafka migration without two active consumers mutating the same business state.
 - Keep local Compose reproducible while documenting stronger production settings.
 
@@ -89,7 +89,7 @@ Consumers disable automatic commits. A handler receives the decoded envelope plu
 
 Successful and terminally handled records become commit-eligible. Retryable failures remain uncommitted until a later recovery policy safely moves them away from the source partition. Commit failures stop the consumer session and rely on application idempotency after reassignment.
 
-The consumer runtime uses cooperative rebalancing, bounded poll batches, per-partition ordering, context cancellation, and explicit draining during shutdown. It does not start unbounded goroutines per record.
+The consumer runtime uses cooperative rebalancing, bounded poll batches, per-partition ordering, context cancellation, and explicit draining during shutdown. After the drain grace period it cancels handler contexts but does not release the partition or close the consumer until in-flight handlers return, because Go cannot safely terminate a non-cooperative goroutine. Application handlers are therefore required to honor context cancellation and bound every external call. The runtime does not start unbounded goroutines per record.
 
 Alternative: automatic periodic commits. Rejected because they can advance offsets before PostgreSQL or Redis work commits.
 
