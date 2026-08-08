@@ -49,7 +49,7 @@ Frux SHALL run registered Kafka consumer groups with bounded batches, partition 
 
 #### Scenario: Consumer group rebalances
 - **WHEN** an instance joins, leaves, or loses a partition assignment
-- **THEN** Frux stops polling, cancels in-flight work when draining expires, and does not release the partition until those cancellation-aware handlers return
+- **THEN** Frux stops polling, cancels the in-flight batch as soon as the rebalance is blocked, and does not release the partition until those cancellation-aware handlers return and eligible offsets are committed
 
 #### Scenario: Worker shuts down
 - **WHEN** the process context is canceled

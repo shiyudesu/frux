@@ -89,7 +89,7 @@ Consumers disable automatic commits. A handler receives the decoded envelope plu
 
 Successful and terminally handled records become commit-eligible. Retryable failures remain uncommitted until a later recovery policy safely moves them away from the source partition. Commit failures stop the consumer session and rely on application idempotency after reassignment.
 
-The consumer runtime uses cooperative rebalancing, bounded poll batches, per-partition ordering, context cancellation, and explicit draining during shutdown. After the drain grace period it cancels handler contexts but does not release the partition or close the consumer until in-flight handlers return, because Go cannot safely terminate a non-cooperative goroutine. Application handlers are therefore required to honor context cancellation and bound every external call. The runtime does not start unbounded goroutines per record.
+The consumer runtime uses cooperative rebalancing, bounded poll batches, per-partition ordering, context cancellation, and explicit draining during shutdown. A blocked rebalance immediately cancels the in-flight batch and the configured rebalance timeout covers cancellation, durable completion, and offset commit. After the shutdown drain grace period it also cancels handler contexts, but neither path releases the partition or closes the consumer until in-flight handlers return, because Go cannot safely terminate a non-cooperative goroutine. Application handlers are therefore required to honor context cancellation and bound every external call. The runtime does not start unbounded goroutines per record.
 
 Alternative: automatic periodic commits. Rejected because they can advance offsets before PostgreSQL or Redis work commits.
 

@@ -58,6 +58,7 @@ fails on missing or incompatible topology.
 - `acks=all`, idempotent producer permissions, and reviewed retention/cleanup/max-record settings.
 - Controller listeners isolated from application networks.
 - Alerts for broker health, topology failures, commit uncertainty, contract failures, lag, and delay.
+- Rebalance timeout covers handler cancellation and offset commit; a blocked rebalance cancels the current batch before partition ownership is released.
 
 ## Validation
 

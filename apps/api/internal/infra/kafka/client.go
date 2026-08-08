@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
@@ -31,6 +32,8 @@ type Client struct {
 	shutdownTimeout time.Duration
 	topicPrefix     string
 	environment     string
+	closeOnce       sync.Once
+	closeErr        error
 }
 
 func NewClient(ctx context.Context, cfg infraconfig.KafkaConfig) (*Client, error) {
@@ -173,19 +176,20 @@ func (c *Client) Close(ctx context.Context) error {
 	if c == nil || c.kgoClient == nil {
 		return nil
 	}
-	timeout := c.shutdownTimeout
-	if timeout <= 0 {
-		timeout = 15 * time.Second
-	}
-	closeContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	flushErr := c.kgoClient.Flush(closeContext)
-	c.kgoClient.Close()
-	c.kgoClient = nil
-	if flushErr != nil {
-		return fmt.Errorf("%w: %v", ErrKafkaShutdown, sanitizeKafkaError(flushErr))
-	}
-	return nil
+	c.closeOnce.Do(func() {
+		timeout := c.shutdownTimeout
+		if timeout <= 0 {
+			timeout = 15 * time.Second
+		}
+		closeContext, cancel := context.WithTimeout(ctx, timeout)
+		flushErr := c.kgoClient.Flush(closeContext)
+		cancel()
+		c.kgoClient.Close()
+		if flushErr != nil {
+			c.closeErr = fmt.Errorf("%w: %v", ErrKafkaShutdown, sanitizeKafkaError(flushErr))
+		}
+	})
+	return c.closeErr
 }
 
 func sanitizeKafkaError(err error) string {

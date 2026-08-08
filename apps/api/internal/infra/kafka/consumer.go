@@ -67,6 +67,7 @@ type Consumer struct {
 	observer       ConsumerObserver
 	lagSampleEvery time.Duration
 	lastLagSample  time.Time
+	rebalance      <-chan struct{}
 }
 
 func NewConsumer(
@@ -105,13 +106,33 @@ func NewConsumer(
 	if err != nil {
 		return nil, err
 	}
+	drainTimeout, err := time.ParseDuration(cfg.Consumer.DrainTimeout)
+	if err != nil {
+		return nil, err
+	}
+	commitTimeout, err := time.ParseDuration(cfg.Timeouts.Request)
+	if err != nil {
+		return nil, err
+	}
+	rebalanceTimeout := drainTimeout + commitTimeout + 10*time.Second
+	if rebalanceTimeout < time.Minute {
+		rebalanceTimeout = time.Minute
+	}
+	rebalanceRequested := make(chan struct{}, 1)
 	options = append(options,
 		kgo.ConsumerGroup(groupName),
 		kgo.ConsumeTopics(topicName),
 		kgo.DisableAutoCommit(),
 		kgo.Balancers(kgo.CooperativeStickyBalancer()),
 		kgo.BlockRebalanceOnPoll(),
+		kgo.RebalanceTimeout(rebalanceTimeout),
 		kgo.FetchMaxBytes(int32(cfg.Consumer.MaxPollBytes)),
+		kgo.OnPartitionsCallbackBlocked(func(context.Context, *kgo.Client) {
+			select {
+			case rebalanceRequested <- struct{}{}:
+			default:
+			}
+		}),
 		kgo.OnPartitionsAssigned(func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
 			if observer != nil && len(partitions) > 0 {
 				observer.ObserveRebalance(groupID, "assigned")
@@ -143,16 +164,6 @@ func NewConsumer(
 		client.CloseAllowingRebalance()
 		return nil, fmt.Errorf("%w: broker ping", ErrKafkaUnavailable)
 	}
-	drainTimeout, err := time.ParseDuration(cfg.Consumer.DrainTimeout)
-	if err != nil {
-		client.CloseAllowingRebalance()
-		return nil, err
-	}
-	commitTimeout, err := time.ParseDuration(cfg.Timeouts.Request)
-	if err != nil {
-		client.CloseAllowingRebalance()
-		return nil, err
-	}
 	return &Consumer{
 		source:  &franzConsumerSource{client: client, admin: kadm.NewClient(client)},
 		topicID: groupSpec.Topic, topicName: topicName,
@@ -161,6 +172,7 @@ func NewConsumer(
 		concurrency:    cfg.Consumer.PartitionConcurrency,
 		drainTimeout:   drainTimeout, commitTimeout: commitTimeout,
 		observer: observer, lagSampleEvery: 15 * time.Second,
+		rebalance: rebalanceRequested,
 	}, nil
 }
 
@@ -170,6 +182,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 	defer c.source.Close()
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		c.sampleLag(ctx, false)
 		records, err := c.source.Poll(ctx, c.maxPollRecords)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -181,7 +197,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			c.sampleLag(ctx)
 			continue
 		}
 		eligible, processErr := c.processBatch(ctx, records)
@@ -192,15 +207,15 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if err != nil {
 				c.observeCommit("uncertain")
 				c.source.AllowRebalance()
+				c.sampleLag(ctx, true)
 				return fmt.Errorf("%w: %s", ErrCommitUncertain, sanitizeKafkaError(err))
 			}
 			c.observeCommit("success")
-			if ctx.Err() == nil {
-				c.sampleLag(ctx)
-			}
 		}
 		c.source.AllowRebalance()
+		c.clearRebalanceRequest()
 		if processErr != nil {
+			c.sampleLag(ctx, true)
 			if errors.Is(processErr, ErrShutdownDeadline) {
 				return processErr
 			}
@@ -261,6 +276,7 @@ func (c *Consumer) processBatch(
 	var processErr error
 	drainExpired := false
 	contextDone := ctx.Done()
+	rebalanceRequested := c.rebalance
 	var drainTimer *time.Timer
 	var drainDeadline <-chan time.Time
 	defer func() {
@@ -287,11 +303,24 @@ func (c *Consumer) processBatch(
 			contextDone = nil
 			drainTimer = time.NewTimer(c.drainTimeout)
 			drainDeadline = drainTimer.C
+		case <-rebalanceRequested:
+			rebalanceRequested = nil
+			cancelProcess()
 		case <-drainDeadline:
 			cancelProcess()
 			drainDeadline = nil
 			drainExpired = true
 		}
+	}
+}
+
+func (c *Consumer) clearRebalanceRequest() {
+	if c == nil || c.rebalance == nil {
+		return
+	}
+	select {
+	case <-c.rebalance:
+	default:
 	}
 }
 
@@ -376,12 +405,12 @@ func (c *Consumer) observeContract(code ContractFailureCode) {
 	}
 }
 
-func (c *Consumer) sampleLag(ctx context.Context) {
+func (c *Consumer) sampleLag(ctx context.Context, force bool) {
 	if c.observer == nil || c.source == nil {
 		return
 	}
 	now := time.Now()
-	if c.lagSampleEvery > 0 && now.Sub(c.lastLagSample) < c.lagSampleEvery {
+	if !force && c.lagSampleEvery > 0 && now.Sub(c.lastLagSample) < c.lagSampleEvery {
 		return
 	}
 	c.lastLagSample = now

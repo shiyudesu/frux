@@ -66,7 +66,39 @@ func (f handlerFunc) Handle(ctx context.Context, event applicationeventstream.Ev
 
 type consumerObserver struct {
 	lag    int64
+	calls  int
 	cancel context.CancelFunc
+}
+
+func TestConsumerCancelsBlockedRebalanceBeforeReleasingOwnership(t *testing.T) {
+	source := &fakeConsumerSource{}
+	rebalance := make(chan struct{}, 1)
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	consumer := testConsumer(source, handlerFunc(func(ctx context.Context, _ applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		close(started)
+		<-ctx.Done()
+		close(finished)
+		return applicationeventstream.OutcomeRetryable, ctx.Err()
+	}))
+	consumer.rebalance = rebalance
+	done := make(chan struct{})
+	go func() {
+		_, _ = consumer.processBatch(context.Background(), []brokerRecord{probeRecord(t, 0, 0)})
+		close(done)
+	}()
+	<-started
+	rebalance <- struct{}{}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("rebalance did not cancel in-flight handler")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("batch did not drain after rebalance cancellation")
+	}
 }
 
 func (*consumerObserver) ObserveConsume(TopicID, ConsumerGroupID, string, time.Duration, time.Duration) {
@@ -77,8 +109,29 @@ func (*consumerObserver) ObserveContract(TopicID, ConsumerGroupID, ContractFailu
 }
 func (o *consumerObserver) ObserveLag(_ TopicID, _ ConsumerGroupID, lag int64) {
 	o.lag = lag
+	o.calls++
 	if o.cancel != nil {
 		o.cancel()
+	}
+}
+
+func TestConsumerForcesLagSampleOnHandlerFailure(t *testing.T) {
+	source := &fakeConsumerSource{
+		batches: [][]brokerRecord{{probeRecord(t, 0, 3)}},
+		lag:     9,
+	}
+	observer := &consumerObserver{}
+	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		return applicationeventstream.OutcomeRetryable, errors.New("database unavailable")
+	}))
+	consumer.observer = observer
+	consumer.lagSampleEvery = time.Hour
+	err := consumer.Run(context.Background())
+	if !errors.Is(err, ErrConsumerSession) {
+		t.Fatalf("error = %v", err)
+	}
+	if observer.lag != 9 || observer.calls != 2 {
+		t.Fatalf("lag=%d calls=%d, want lag 9 and initial+failure samples", observer.lag, observer.calls)
 	}
 }
 
@@ -222,8 +275,9 @@ func TestConsumerReportsCommittedLag(t *testing.T) {
 		batches: [][]brokerRecord{{probeRecord(t, 0, 3)}},
 		lag:     7,
 	}
-	observer := &consumerObserver{cancel: cancel}
+	observer := &consumerObserver{}
 	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		cancel()
 		return applicationeventstream.OutcomeDurableSuccess, nil
 	}))
 	consumer.observer = observer
