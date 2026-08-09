@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
-	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"strings"
 	"time"
+
+	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 )
 
 const defaultCommentLimit = 20
@@ -443,6 +445,19 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			}
 			if persistErr := s.repo.PersistAcceptedActionEvent(recoveryCtx, accepted); persistErr != nil {
 				s.observeActionFallback("failure")
+				if applicationeventstream.AnyTransportAcknowledged(publishErr) {
+					confirmErr := s.confirmActionStateHandoff(recoveryCtx, state)
+					cancelRecovery()
+					if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
+						return nil, errors.Join(
+							domaininteraction.ErrVideoNotFound,
+							publishErr,
+							persistErr,
+							confirmErr,
+						)
+					}
+					return nil, actionUpdateError(publishErr, persistErr, confirmErr)
+				}
 				_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
 				cancelRecovery()
 				if rollbackErr != nil {

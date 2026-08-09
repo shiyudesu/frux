@@ -48,9 +48,16 @@ profile/outcome handoffs, so the request does not need a later broker repair pub
 correctness. If publication and fallback both fail, the existing conditional Redis rollback remains.
 
 During migration, both transports in either mirror mode are required delivery paths. The publisher
-attempts both and returns an error when either acknowledgement fails or is uncertain. The action
-service therefore enters its existing synchronous PostgreSQL fallback and conditional rollback
-path; stable event IDs absorb a later duplicate from the transport that already acknowledged.
+attempts both and returns a structured application-visible error when either acknowledgement fails
+or is uncertain. That error preserves each transport's durable acknowledgement state without making
+the Application layer import infrastructure types.
+
+The action service always enters synchronous PostgreSQL fallback when dual publication is incomplete.
+If fallback also fails but either transport durably acknowledged the stable event, the service
+confirms the Redis handoff, returns the normal visible update failure, and does not roll Redis back.
+This keeps the acknowledged event and Redis version aligned when broker delivery occurs later.
+Conditional rollback is permitted only when no transport acknowledged and fallback failed. Stable
+event IDs absorb duplicates from retrying the already-acknowledged side.
 
 Alternative: add a database outbox to every Redis action. Rejected for this migration because it would put a new mandatory PostgreSQL transaction on the optimized action path and duplicate the existing synchronous fallback guarantee.
 
@@ -141,9 +148,17 @@ Consumer supervisors expose bounded session lifecycle metrics, preserve underlyi
 errors for classification, retry transient broker/session failures, and terminate required active
 consumer runtime on non-retryable authentication, configuration, or handler-contract failures.
 
+A consumer session is not started or healthy merely because its client was constructed. Each
+consumer exposes a readiness signal that closes only after `OnPartitionsAssigned` receives at least
+one partition. The supervisor reports `started` only after that signal. Worker startup waits for the
+first supervised assignment with a bounded `consumer.assignment_timeout`; timeout or fatal
+supervisor exit cancels that consumer startup. Because behavior consumers are started sequentially,
+the view assignment is therefore complete before action startup begins. Later supervised sessions
+repeat assignment-aware metrics while the one-time startup readiness remains satisfied.
+
 ## Risks / Trade-offs
 
-- [One transition transport acknowledges and the other fails] -> Return failure, retain/recover through the owning fallback or outbox, and rely on stable event IDs for duplicate delivery.
+- [One transition transport acknowledges and the other fails] -> Return structured acknowledgement state, retain/recover through the owning fallback or outbox, never roll back an acknowledged action version, and rely on stable event IDs for duplicate delivery.
 - [Action Kafka outage increases synchronous PostgreSQL fallback] -> Alert on fallback rate and retain conditional Redis rollback when both durable paths fail.
 - [Key changes would reorder state transitions] -> Freeze key encodings in fixtures and require a new topic version for changes.
 - [A consumer crash after PostgreSQL commit duplicates delivery] -> Preserve event receipts, payload conflict checks, and monotonic version application.
@@ -152,6 +167,8 @@ consumer runtime on non-retryable authentication, configuration, or handler-cont
 - [Concurrent cutover initialization] -> Require an inactive group, recheck committed offsets before
   committing, and use deterministic timestamp offsets so concurrent initializers either preserve an
   existing commit or write the same boundary.
+- [Consumer client connects but owns no partitions] -> Keep the session unhealthy and fail bounded
+  worker startup rather than allowing the later action consumer to start.
 
 ## Migration Plan
 

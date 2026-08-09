@@ -17,11 +17,12 @@ import (
 )
 
 var (
-	ErrConsumerSession       = errors.New("kafka consumer session failed")
-	ErrConsumerConfiguration = errors.New("kafka consumer configuration invalid")
-	ErrCommitUncertain       = errors.New("kafka offset commit uncertain")
-	ErrShutdownDeadline      = errors.New("kafka consumer shutdown deadline exceeded")
-	ErrRebalanceDrain        = errors.New("kafka consumer drained for rebalance")
+	ErrConsumerSession        = errors.New("kafka consumer session failed")
+	ErrConsumerConfiguration  = errors.New("kafka consumer configuration invalid")
+	ErrCommitUncertain        = errors.New("kafka offset commit uncertain")
+	ErrShutdownDeadline       = errors.New("kafka consumer shutdown deadline exceeded")
+	ErrRebalanceDrain         = errors.New("kafka consumer drained for rebalance")
+	ErrConsumerStartupTimeout = errors.New("kafka consumer assignment startup timeout")
 )
 
 type brokerRecord struct {
@@ -57,6 +58,34 @@ type ConsumerObserver interface {
 	ObserveDataLoss(topic TopicID, group ConsumerGroupID)
 }
 
+type assignmentReadiness struct {
+	ready chan struct{}
+	once  sync.Once
+}
+
+func newAssignmentReadiness() *assignmentReadiness {
+	return &assignmentReadiness{ready: make(chan struct{})}
+}
+
+func (r *assignmentReadiness) assigned(partitions map[string][]int32) {
+	if r == nil {
+		return
+	}
+	hasPartitions := false
+	for _, assigned := range partitions {
+		if len(assigned) > 0 {
+			hasPartitions = true
+			break
+		}
+	}
+	if !hasPartitions {
+		return
+	}
+	r.once.Do(func() {
+		close(r.ready)
+	})
+}
+
 type Consumer struct {
 	source         consumerSource
 	topicID        TopicID
@@ -73,6 +102,7 @@ type Consumer struct {
 	lagSampleEvery time.Duration
 	lastLagSample  time.Time
 	rebalance      <-chan struct{}
+	assignment     *assignmentReadiness
 }
 
 func NewConsumer(
@@ -131,6 +161,7 @@ func NewConsumer(
 		rebalanceTimeout = time.Minute
 	}
 	rebalanceRequested := make(chan struct{}, 1)
+	assignment := newAssignmentReadiness()
 	options = append(options,
 		kgo.ConsumerGroup(groupName),
 		kgo.ConsumeTopics(topicName),
@@ -146,7 +177,11 @@ func NewConsumer(
 			}
 		}),
 		kgo.OnPartitionsAssigned(func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
-			if observer != nil && len(partitions) > 0 {
+			if len(partitions) == 0 {
+				return
+			}
+			assignment.assigned(partitions)
+			if observer != nil {
 				observer.ObserveRebalance(groupID, "assigned")
 			}
 		}),
@@ -185,8 +220,15 @@ func NewConsumer(
 		drainTimeout:   drainTimeout, commitTimeout: commitTimeout,
 		closeTimeout: closeTimeout,
 		observer:     observer, lagSampleEvery: 15 * time.Second,
-		rebalance: rebalanceRequested,
+		rebalance: rebalanceRequested, assignment: assignment,
 	}, nil
+}
+
+func (c *Consumer) AssignmentReady() <-chan struct{} {
+	if c == nil || c.assignment == nil {
+		return make(chan struct{})
+	}
+	return c.assignment.ready
 }
 
 func (c *Consumer) Run(ctx context.Context) error {
@@ -611,6 +653,7 @@ type Supervisor struct {
 	NewConsumer ConsumerFactory
 	Group       ConsumerGroupID
 	Observer    ConsumerSessionObserver
+	Ready       chan<- struct{}
 	MinBackoff  time.Duration
 	MaxBackoff  time.Duration
 }
@@ -627,12 +670,36 @@ func (s Supervisor) Run(ctx context.Context) error {
 	if maxBackoff <= 0 {
 		maxBackoff = 30 * time.Second
 	}
+	var readyOnce sync.Once
 	for {
 		sessionStarted := time.Now()
 		consumer, err := s.NewConsumer(ctx)
 		if err == nil {
-			s.observe("started")
-			err = consumer.Run(ctx)
+			sessionDone := make(chan error, 1)
+			go func() {
+				sessionDone <- consumer.Run(ctx)
+			}()
+			select {
+			case <-consumer.AssignmentReady():
+				s.observe("started")
+				readyOnce.Do(func() {
+					if s.Ready != nil {
+						close(s.Ready)
+					}
+				})
+				err = <-sessionDone
+			case err = <-sessionDone:
+				select {
+				case <-consumer.AssignmentReady():
+					s.observe("started")
+					readyOnce.Do(func() {
+						if s.Ready != nil {
+							close(s.Ready)
+						}
+					})
+				default:
+				}
+			}
 		}
 		if ctx.Err() != nil {
 			s.observe("stopped")

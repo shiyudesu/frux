@@ -13,6 +13,8 @@ import (
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
+
+	"github.com/twmb/franz-go/pkg/kerr"
 )
 
 type publicationReadinessStub struct {
@@ -214,6 +216,140 @@ func TestBehaviorKafkaConsumersStartViewBeforeAction(t *testing.T) {
 				started[0] != want[0] ||
 				started[1] != want[1] {
 				t.Fatalf("startup order=%v want=%v", started, want)
+			}
+		})
+	}
+}
+
+func TestBehaviorKafkaConsumersWaitForViewReadinessBeforeAction(t *testing.T) {
+	viewRelease := make(chan struct{})
+	viewStarted := make(chan struct{})
+	actionStarted := make(chan struct{})
+	starter := func(
+		_ context.Context,
+		_ *infrakafka.Backbone,
+		_ infraconfig.KafkaConfig,
+		group infrakafka.ConsumerGroupID,
+		_ string,
+		_ applicationeventstream.Handler,
+		_ chan<- error,
+	) error {
+		switch group {
+		case infrakafka.GroupConsumeViewActive:
+			close(viewStarted)
+			<-viewRelease
+		case infrakafka.GroupPersistActionActive:
+			close(actionStarted)
+		}
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- startBehaviorKafkaConsumers(
+			context.Background(),
+			nil,
+			infraconfig.KafkaConfig{},
+			orderedBehaviorKafkaConsumers(
+				behaviorKafkaConsumer{
+					migration:   infrakafka.StreamMigration{Consumer: infrakafka.ConsumerModeKafka},
+					activeGroup: infrakafka.GroupConsumeViewActive,
+				},
+				behaviorKafkaConsumer{
+					migration:   infrakafka.StreamMigration{Consumer: infrakafka.ConsumerModeKafka},
+					activeGroup: infrakafka.GroupPersistActionActive,
+				},
+			),
+			nil,
+			starter,
+		)
+	}()
+	<-viewStarted
+	select {
+	case <-actionStarted:
+		t.Fatal("action startup began before view readiness")
+	default:
+	}
+	close(viewRelease)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("behavior consumer startup did not finish")
+	}
+}
+
+func TestWaitForKafkaConsumerStartup(t *testing.T) {
+	t.Run("assignment ready", func(t *testing.T) {
+		consumerCtx, cancel := context.WithCancel(context.Background())
+		ready := make(chan struct{})
+		close(ready)
+		err := waitForKafkaConsumerStartup(
+			context.Background(),
+			cancel,
+			infrakafka.GroupConsumeViewActive,
+			ready,
+			make(chan error),
+			time.Second,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-consumerCtx.Done():
+			t.Fatal("successful startup canceled consumer")
+		default:
+		}
+		cancel()
+	})
+
+	t.Run("timeout cancels consumer", func(t *testing.T) {
+		consumerCtx, cancel := context.WithCancel(context.Background())
+		err := waitForKafkaConsumerStartup(
+			context.Background(),
+			cancel,
+			infrakafka.GroupConsumeViewActive,
+			make(chan struct{}),
+			make(chan error),
+			time.Millisecond,
+		)
+		if !errors.Is(err, infrakafka.ErrConsumerStartupTimeout) {
+			t.Fatalf("error=%v", err)
+		}
+		select {
+		case <-consumerCtx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("timed out startup did not cancel consumer")
+		}
+	})
+
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "fatal init", err: infrakafka.ErrConsumerConfiguration},
+		{name: "fatal runtime", err: kerr.GroupAuthorizationFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			consumerCtx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			done <- test.err
+			err := waitForKafkaConsumerStartup(
+				context.Background(),
+				cancel,
+				infrakafka.GroupConsumeViewActive,
+				make(chan struct{}),
+				done,
+				time.Second,
+			)
+			if !errors.Is(err, test.err) {
+				t.Fatalf("error=%v", err)
+			}
+			select {
+			case <-consumerCtx.Done():
+			case <-time.After(time.Second):
+				t.Fatal("fatal startup did not cancel consumer")
 			}
 		})
 	}

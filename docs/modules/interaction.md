@@ -140,7 +140,7 @@ apps/api/internal/interfaces/http/interaction/
 
 推荐流操作可选传入 `X-Recommendation-Request-ID`（最长 64）。该归因字段是不可信输入，随 durable action event 传递后，Worker 仅在耐久推荐证据绑定当前用户、request 和视频时幂等保存 `like` 或 `favorite` outcome；缺失或伪造归因会跳过 outcome，不改变已接受互动或画像信号。
 
-每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。Single 主投递失败、dual/mirror 任一传输失败或 Kafka acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
+每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。Single 主投递失败、dual/mirror 任一传输失败或 Kafka acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。Dual publisher 的结构化错误通过 Application 窄接口报告 RabbitMQ/Kafka 各自是否已 durable acknowledgement。若 fallback 也失败但任一传输已确认，API 确认 Redis handoff、返回可见更新失败且不回滚；后续 broker delivery 按同一事件版本落库。只有两个传输都未确认且 fallback 失败才允许条件回滚。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
 
 发布与同步持久化都失败时，回滚只可撤销仍未确认、仍匹配 `state_version + event_id`、且没有后续依赖回执的版本；版本计数器不回退，因此可重试的撤销会分配更高版本。已确认的版本、依赖该版本的并发 no-op 或更高版本都会让回滚条件不命中，避免旧失败路径撤销已报告的成功。Redis 事务提交后若响应计数读取失败，缓存层会把版本和原事件元数据一并返回给应用层，以同一条件恢复或回滚；恢复失败时未确认事件保留在 Redis，后续重试可再次交接。
 
@@ -184,7 +184,8 @@ RabbitMQ 内部仍可使用 `dual` Queue 试点：相同 Event ID 会同时进�
 观察后，配置切到 `new` 移除旧 Binding。
 
 Kafka 迁移顺序为双 acknowledgement mirror + shadow、显式 broker append-time cutover boundary、
-active Group；action boundary 必须严格晚于 view boundary，且 Worker 先启动 view Kafka group。
+active Group；action boundary 必须严格晚于 view boundary。Consumer 只有拿到非空 Partition assignment
+后才健康，Worker 在有界 `assignment_timeout` 内等待 view Group ready，之后才启动 action Group。
 回滚先停 Kafka active Group，再恢复 RabbitMQ Consumer 和 Rabbit 主投递。Kafka 与 RabbitMQ
 不会同时调用 mutating Worker。
 

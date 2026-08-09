@@ -40,6 +40,43 @@ type PublicationObserver interface {
 	ObserveBehaviorPublication(stream, role, transport, result string)
 }
 
+type PublicationError struct {
+	primaryTransport string
+	primaryErr       error
+	mirrorTransport  string
+	mirrorErr        error
+}
+
+func (e *PublicationError) Error() string {
+	return errors.Join(e.primaryErr, e.mirrorErr).Error()
+}
+
+func (e *PublicationError) Unwrap() []error {
+	errs := make([]error, 0, 2)
+	if e.primaryErr != nil {
+		errs = append(errs, e.primaryErr)
+	}
+	if e.mirrorErr != nil {
+		errs = append(errs, e.mirrorErr)
+	}
+	return errs
+}
+
+func (e *PublicationError) TransportAcknowledged(transport string) bool {
+	switch transport {
+	case e.primaryTransport:
+		return e.primaryErr == nil
+	case e.mirrorTransport:
+		return e.mirrorErr == nil
+	default:
+		return false
+	}
+}
+
+func (e *PublicationError) AnyTransportAcknowledged() bool {
+	return e.primaryErr == nil || e.mirrorErr == nil
+}
+
 type ActionPublisher struct {
 	mode     infrakafka.ProducerMode
 	rabbit   RabbitActionPublisher
@@ -80,7 +117,15 @@ func (p *ActionPublisher) PublishActionChanged(
 	p.observe(StreamAction, "mirror", mirror, mirrorErr)
 	combinedErr := errors.Join(primaryErr, mirrorErr)
 	p.observe(StreamAction, "combined", "dual", combinedErr)
-	return combinedErr
+	if combinedErr == nil {
+		return nil
+	}
+	return &PublicationError{
+		primaryTransport: primary,
+		primaryErr:       primaryErr,
+		mirrorTransport:  mirror,
+		mirrorErr:        mirrorErr,
+	}
 }
 
 func (p *ActionPublisher) publish(
@@ -155,7 +200,15 @@ func (p *ViewPublisher) PublishViewEventRecorded(
 	p.observe(StreamView, "mirror", mirror, mirrorErr)
 	combinedErr := errors.Join(primaryErr, mirrorErr)
 	p.observe(StreamView, "combined", "dual", combinedErr)
-	return combinedErr
+	if combinedErr == nil {
+		return nil
+	}
+	return &PublicationError{
+		primaryTransport: primary,
+		primaryErr:       primaryErr,
+		mirrorTransport:  mirror,
+		mirrorErr:        mirrorErr,
+	}
 }
 
 func (p *ViewPublisher) publish(

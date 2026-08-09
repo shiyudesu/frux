@@ -32,7 +32,7 @@ Frux SHALL maintain per-user public-work, private-work, received-like, and colle
 - **THEN** its event receipt, action fact, video count, and author received-like aggregate remain exactly-once
 
 #### Scenario: Publish and fallback persistence both fail
-- **WHEN** Redis accepts an action mutation but Kafka publication and synchronous PostgreSQL fallback both fail
+- **WHEN** Redis accepts an action mutation, no broker durably acknowledges it, and synchronous PostgreSQL fallback fails
 - **THEN** the API conditionally rolls back only that still-current Redis version, and a retry emits a higher persistable version instead of silently succeeding with `delta=0`
 
 #### Scenario: Publish acknowledgement is uncertain
@@ -41,7 +41,11 @@ Frux SHALL maintain per-user public-work, private-work, received-like, and colle
 
 #### Scenario: One action transition transport fails
 - **WHEN** either RabbitMQ or Kafka does not acknowledge an action event in a dual transition mode
-- **THEN** publication fails into synchronous PostgreSQL fallback and conditional Redis rollback remains available if fallback also fails
+- **THEN** publication exposes per-transport acknowledgement state and fails into synchronous PostgreSQL fallback
+
+#### Scenario: Partial action acknowledgement survives fallback failure
+- **WHEN** fallback fails after exactly one transition transport durably acknowledges the stable action event
+- **THEN** the API reports failure but confirms the Redis handoff and does not roll back state that the broker can later persist
 
 #### Scenario: Failed mutation is superseded
 - **WHEN** a newer Redis action version replaces a failed mutation before its recovery rollback

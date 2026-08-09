@@ -194,6 +194,7 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 			t.Fatalf("disabled Kafka config: %v", err)
 		}
 		if cfg.Environment != "local" || cfg.ClientID != "frux" ||
+			cfg.Consumer.AssignmentTimeout != "15s" ||
 			cfg.Migration.ActionChanged.ProducerMode != "rabbit" ||
 			cfg.Migration.ActionChanged.ConsumerMode != "rabbit" {
 			t.Fatalf("unexpected defaults: %+v", cfg)
@@ -316,6 +317,9 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 		}},
 		{name: "unbounded poll", cfg: KafkaConfig{
 			Consumer: KafkaConsumerConfig{MaxPollRecords: 1001},
+		}},
+		{name: "unbounded assignment startup", cfg: KafkaConfig{
+			Consumer: KafkaConsumerConfig{AssignmentTimeout: "61s"},
 		}},
 		{name: "runtime-invalid topic prefix", cfg: KafkaConfig{
 			TopicPrefix: "Frux_Test",

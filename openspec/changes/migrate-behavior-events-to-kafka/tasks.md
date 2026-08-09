@@ -64,3 +64,12 @@
 - [x] 9.3 Require the action cutover boundary to be strictly after the view boundary and start view Kafka active/shadow groups before action groups.
 - [x] 9.4 Synchronize metrics, OpenSpec artifacts, and operational/module documentation with the corrected semantics.
 - [x] 9.5 Run targeted and full validation, Compose config, strict OpenSpec validation, and final diff review.
+
+## 10. Latest Behavior Kafka Review Remediation
+
+- [x] 10.1 Expose structured per-transport acknowledgement state from dual behavior publishers through an application-visible contract.
+- [x] 10.2 Preserve acknowledged action versions when synchronous fallback fails, confirm their Redis handoff, and restrict rollback to zero-acknowledgement failures.
+- [x] 10.3 Keep partially acknowledged view outbox rows pending and add primary-only, mirror-only, neither, fallback, rollback, and retention tests.
+- [x] 10.4 Gate consumer session health and worker startup on the first non-empty partition assignment with bounded cancellation.
+- [x] 10.5 Prove readiness success, timeout, fatal initialization/runtime handling, supervised restart behavior, and view-before-action startup.
+- [x] 10.6 Synchronize specifications and documentation, then run formatting, targeted/full tests, builds, Compose config, strict OpenSpec validation, and final diff review.

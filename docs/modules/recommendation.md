@@ -148,7 +148,9 @@ deadline 约束。服务实例还以 16 个全局 provider slots 限制忽略取
 
 观看行为 Worker 通过 `frux.recommendation.consume-view.v1` 在 raw fact 与 profile/outcome
 handoff 同事务提交后才允许 Kafka offset commit；不等待 embedding 或后续画像投影。Worker
-在 action Kafka active/shadow Group 之前初始化并启动该 view Group；cutover 使用 Broker
+在 action Kafka active/shadow Group 之前初始化该 view Group，并等待其收到非空 Partition assignment
+且 Supervisor 标记 healthy 后才继续 action startup；首次 assignment 有界超时或 fatal exit 会取消
+Consumer 并使 Worker 启动失败。Cutover 使用 Broker
 `LogAppendTime`，并要求 action boundary 严格晚于 view boundary。画像 Worker 用稳定事件 ID
 消费 progress、complete、skip、like、favorite、follow 与反馈，
 将画像物化在稳定时间点：先把累计分量衰减至下一个物化时间，再加入原始有界信号；乱序/延迟事件

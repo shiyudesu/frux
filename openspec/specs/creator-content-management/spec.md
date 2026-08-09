@@ -125,12 +125,16 @@ Frux SHALL maintain per-user public-work, private-work, received-like, and colle
 - **THEN** its event receipt, action fact, video count, and author received-like aggregate remain exactly-once
 
 #### Scenario: Publish and fallback persistence both fail
-- **WHEN** Redis accepts an action mutation but broker publication and synchronous PostgreSQL fallback both fail
+- **WHEN** Redis accepts an action mutation, no broker durably acknowledges it, and synchronous PostgreSQL fallback fails
 - **THEN** the API conditionally rolls back only that still-current Redis version, and a retry emits a higher persistable version instead of silently succeeding with `delta=0`
 
 #### Scenario: Publish acknowledgement is uncertain
 - **WHEN** the broker may have accepted an event but publisher confirmation is unavailable or times out
 - **THEN** synchronous fallback may persist the same version and any later broker delivery is an exactly-once duplicate
+
+#### Scenario: Partial dual acknowledgement survives fallback failure
+- **WHEN** fallback fails after exactly one transition transport durably acknowledges the stable action event
+- **THEN** the API reports failure but confirms the Redis handoff and does not roll back state that the broker can later persist
 
 #### Scenario: Failed mutation is superseded
 - **WHEN** a newer Redis action version replaces a failed mutation before its recovery rollback

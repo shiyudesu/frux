@@ -60,6 +60,7 @@ type KafkaConsumerConfig struct {
 	MaxPollBytes         int    `yaml:"max_poll_bytes"`
 	PartitionConcurrency int    `yaml:"partition_concurrency"`
 	DrainTimeout         string `yaml:"drain_timeout"`
+	AssignmentTimeout    string `yaml:"assignment_timeout"`
 }
 
 type KafkaProductionValidationConfig struct {

@@ -53,7 +53,15 @@ Frux SHALL validate each Kafka behavior stream with mirror production and a non-
 
 #### Scenario: One transition transport fails
 - **WHEN** either RabbitMQ or Kafka fails or cannot confirm publication in a dual transition mode
-- **THEN** publication returns an error so action fallback or view outbox retry remains responsible, even if the other transport acknowledged
+- **THEN** publication returns an error that exposes each transport's durable acknowledgement state so action fallback or view outbox retry remains responsible
+
+#### Scenario: One action transport acknowledged but fallback fails
+- **WHEN** dual action publication is incomplete, synchronous PostgreSQL fallback fails, and either transport durably acknowledged the stable event
+- **THEN** Frux confirms the Redis handoff, returns a visible update failure, and does not roll back the acknowledged action version
+
+#### Scenario: No action transport acknowledged and fallback fails
+- **WHEN** dual action publication and synchronous PostgreSQL fallback fail without any durable broker acknowledgement
+- **THEN** Frux may conditionally roll back only the still-current Redis version
 
 #### Scenario: Shadow action consumer receives a record
 - **WHEN** RabbitMQ remains the active action transport
@@ -77,7 +85,19 @@ Frux SHALL validate each Kafka behavior stream with mirror production and a non-
 
 #### Scenario: Worker starts behavior Kafka groups
 - **WHEN** view and action Kafka active or shadow groups are enabled in one worker
-- **THEN** the worker initializes and starts the view group before the action group
+- **THEN** the worker waits for a non-empty view partition assignment before starting the action group
+
+#### Scenario: Consumer client has no assignment
+- **WHEN** a Kafka consumer client is constructed but has not received any non-empty partition assignment
+- **THEN** its supervised session is not marked started or healthy
+
+#### Scenario: First assignment times out
+- **WHEN** the first non-empty assignment does not arrive within the configured startup timeout
+- **THEN** worker startup cancels that consumer and fails visibly
+
+#### Scenario: Consumer fails before first assignment
+- **WHEN** the supervisor exits fatally during initialization or runtime before a non-empty assignment
+- **THEN** worker startup cancels the consumer and returns the fatal cause
 
 #### Scenario: Active Kafka group restarts
 - **WHEN** the group already has committed offsets

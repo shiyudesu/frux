@@ -502,29 +502,16 @@ func startKafkaConsumer(
 		}
 		log.Printf("kafka consumer %s cutover offsets: %s", group, result)
 	}
-	first, err := infrakafka.NewConsumer(
-		ctx,
-		cfg,
-		group,
-		handler,
-		observer,
-	)
-	if err != nil {
-		result := "retryable_failure"
-		if !infrakafka.RetryableConsumerError(err) {
-			result = "fatal_failure"
-		}
-		observer.ObserveConsumerSession(group, result)
-		return err
+	assignmentTimeout, err := time.ParseDuration(cfg.Consumer.AssignmentTimeout)
+	if err != nil || assignmentTimeout <= 0 {
+		return fmt.Errorf("%w: invalid assignment timeout", infrakafka.ErrConsumerConfiguration)
 	}
-	firstSession := true
+	consumerCtx, cancelConsumer := context.WithCancel(ctx)
+	ready := make(chan struct{})
+	supervisorDone := make(chan error, 1)
 	supervisor := infrakafka.Supervisor{
-		Group: group, Observer: observer,
+		Group: group, Observer: observer, Ready: ready,
 		NewConsumer: func(sessionContext context.Context) (*infrakafka.Consumer, error) {
-			if firstSession {
-				firstSession = false
-				return first, nil
-			}
 			return infrakafka.NewConsumer(
 				sessionContext,
 				cfg,
@@ -535,7 +522,9 @@ func startKafkaConsumer(
 		},
 	}
 	go func() {
-		if err := supervisor.Run(ctx); err != nil {
+		err := supervisor.Run(consumerCtx)
+		supervisorDone <- err
+		if err != nil {
 			log.Printf("kafka consumer %s stopped: %v", group, err)
 			spec, specErr := infrakafka.ConsumerGroup(group)
 			if specErr == nil && !spec.Shadow && runtimeFailures != nil {
@@ -546,7 +535,42 @@ func startKafkaConsumer(
 			}
 		}
 	}()
-	return nil
+	return waitForKafkaConsumerStartup(
+		ctx,
+		cancelConsumer,
+		group,
+		ready,
+		supervisorDone,
+		assignmentTimeout,
+	)
+}
+
+func waitForKafkaConsumerStartup(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	group infrakafka.ConsumerGroupID,
+	ready <-chan struct{},
+	supervisorDone <-chan error,
+	timeout time.Duration,
+) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		return nil
+	case err := <-supervisorDone:
+		cancel()
+		if err == nil {
+			return fmt.Errorf("%w: %s exited before assignment", infrakafka.ErrConsumerSession, group)
+		}
+		return err
+	case <-timer.C:
+		cancel()
+		return fmt.Errorf("%w: %s after %s", infrakafka.ErrConsumerStartupTimeout, group, timeout)
+	case <-ctx.Done():
+		cancel()
+		return ctx.Err()
+	}
 }
 
 func startModerationWorker(

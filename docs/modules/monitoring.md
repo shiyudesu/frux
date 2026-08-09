@@ -251,7 +251,9 @@ event/user/video/key/partition/offset/payload/raw error 作为标签。`commit r
 lag 增长时按注册 Topic/Group 定位，不要添加动态 Partition/Offset 标签。
 `consumer_session result=fatal_failure` 表示认证、配置或 Handler 契约错误；active Group 会让
 Worker 明确失败，不能只观察 broker health。`retryable_failure` 表示暂时 Broker/DB/Parity
-依赖失败并按有界退避重建 Session。
+依赖失败并按有界退避重建 Session。`started` 和 healthy gauge 只在
+`OnPartitionsAssigned` 返回至少一个 Partition 后出现；Client 已创建但尚未分配不能视为 ready。
+Worker 首次 assignment 超过配置的有界 timeout 会取消该 Consumer 并启动失败。
 
 ## 15. Behavior stream migration observability
 

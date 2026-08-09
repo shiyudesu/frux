@@ -57,7 +57,8 @@
 与观看事实同事务写入待发布事件，保存 `event_id`、载荷、尝试次数、租约、下次重试时间、已分发时间和错误摘要。Worker 获得租约后按迁移模式向 single 或 dual 传输发布并等待确认；Kafka 路径使用
 `frux.exposure.view-event-recorded.v1`、`user:{user_id}` key 和幂等 acknowledged production，
 dual/mirror 模式同时要求 RabbitMQ acknowledgement。只有所有所需传输确认后才标记 dispatched；
-部分成功仍保留 pending，重复投递由下游按 `event_id` 去重。
+结构化发布错误保留每个传输的 acknowledgement；部分成功仍保留 pending，重试可再次投递已确认侧，
+重复投递由下游按 `event_id` 去重。
 
 ### 3.5 `video_view_history_deletion`
 
@@ -95,6 +96,8 @@ dual/mirror 模式同时要求 RabbitMQ acknowledgement。只有所有所需传�
 `frux.recommendation.consume-view.v1.shadow.<deployment>`，只做契约、age 和耐久 fact parity。
 View stream 必须先于 action stream cutover；action boundary 必须严格更晚，且 Worker 先启动
 view active/shadow Group。Boundary 使用 Broker `LogAppendTime`，不使用 producer clock。
+Worker 只有在 view Group 收到非空 Partition assignment 后才继续 action Group startup；首次分配超过
+有界 `assignment_timeout` 或 Supervisor 提前 fatal 会取消该 Consumer 并让启动失败。
 | 上报自己的私密已发布视频 | 允许写入 |
 | 上报他人的私密视频 | 返回 404 |
 | 清理观看历史 | 原始事件和曝光聚合保持不变 |

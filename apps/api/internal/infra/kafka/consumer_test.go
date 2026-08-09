@@ -428,6 +428,72 @@ func TestSupervisorRedeliversAfterCommitFailureAndRestarts(t *testing.T) {
 	}
 }
 
+func TestConsumerAssignmentReadinessRequiresNonEmptyPartitions(t *testing.T) {
+	consumer := testConsumer(&fakeConsumerSource{}, handlerFunc(func(
+		context.Context,
+		applicationeventstream.Event,
+	) (applicationeventstream.Outcome, error) {
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	}))
+	consumer.assignment = newAssignmentReadiness()
+	consumer.assignment.assigned(nil)
+	consumer.assignment.assigned(map[string][]int32{"topic": nil})
+	select {
+	case <-consumer.AssignmentReady():
+		t.Fatal("empty assignment marked consumer ready")
+	default:
+	}
+	consumer.assignment.assigned(map[string][]int32{"topic": {0}})
+	select {
+	case <-consumer.AssignmentReady():
+	case <-time.After(time.Second):
+		t.Fatal("non-empty assignment did not mark consumer ready")
+	}
+}
+
+func TestSupervisorReportsStartedOnlyAfterAssignment(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	observer := &sessionObserver{}
+	consumer := testConsumer(&fakeConsumerSource{}, handlerFunc(func(
+		context.Context,
+		applicationeventstream.Event,
+	) (applicationeventstream.Outcome, error) {
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	}))
+	consumer.assignment = newAssignmentReadiness()
+	ready := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- (Supervisor{
+			Group: GroupBackboneProbeActive, Observer: observer, Ready: ready,
+			NewConsumer: func(context.Context) (*Consumer, error) {
+				return consumer, nil
+			},
+		}).Run(ctx)
+	}()
+	time.Sleep(10 * time.Millisecond)
+	observer.mu.Lock()
+	if len(observer.results) != 0 {
+		t.Fatalf("session healthy before assignment: %v", observer.results)
+	}
+	observer.mu.Unlock()
+	consumer.assignment.assigned(map[string][]int32{"topic": {0}})
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not report readiness")
+	}
+	observer.mu.Lock()
+	if len(observer.results) != 1 || observer.results[0] != "started" {
+		t.Fatalf("session results=%v", observer.results)
+	}
+	observer.mu.Unlock()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSupervisorReportsFailuresAndStopsOnNonRetryableInitialization(t *testing.T) {
 	observer := &sessionObserver{}
 	var attempts atomic.Int32
@@ -442,6 +508,33 @@ func TestSupervisorReportsFailuresAndStopsOnNonRetryableInitialization(t *testin
 	err := supervisor.Run(context.Background())
 	if !errors.Is(err, ErrConsumerConfiguration) || attempts.Load() != 1 {
 		t.Fatalf("error=%v attempts=%d", err, attempts.Load())
+	}
+	if len(observer.results) != 1 || observer.results[0] != "fatal_failure" {
+		t.Fatalf("results=%v", observer.results)
+	}
+}
+
+func TestSupervisorFatalRuntimeBeforeAssignmentIsNotHealthy(t *testing.T) {
+	observer := &sessionObserver{}
+	supervisor := Supervisor{
+		Group: GroupPersistActionActive, Observer: observer,
+		NewConsumer: func(context.Context) (*Consumer, error) {
+			consumer := testConsumer(
+				&fakeConsumerSource{pollErrors: []error{kerr.GroupAuthorizationFailed}},
+				handlerFunc(func(
+					context.Context,
+					applicationeventstream.Event,
+				) (applicationeventstream.Outcome, error) {
+					return applicationeventstream.OutcomeDurableSuccess, nil
+				}),
+			)
+			consumer.assignment = newAssignmentReadiness()
+			return consumer, nil
+		},
+	}
+	err := supervisor.Run(context.Background())
+	if !errors.Is(err, kerr.GroupAuthorizationFailed) {
+		t.Fatalf("error=%v", err)
 	}
 	if len(observer.results) != 1 || observer.results[0] != "fatal_failure" {
 		t.Fatalf("results=%v", observer.results)
@@ -544,6 +637,8 @@ func TestConsumerReportsCommittedLag(t *testing.T) {
 }
 
 func testConsumer(source consumerSource, handler applicationeventstream.Handler) *Consumer {
+	assignment := newAssignmentReadiness()
+	assignment.assigned(map[string][]int32{"topic": {0}})
 	return &Consumer{
 		source: source, topicID: TopicBackboneProbe,
 		topicName: "frux.platform.backbone_probe.v1",
@@ -552,6 +647,7 @@ func testConsumer(source consumerSource, handler applicationeventstream.Handler)
 		handler:   handler, maxPollRecords: 100, concurrency: 2,
 		drainTimeout: 50 * time.Millisecond, commitTimeout: time.Second,
 		closeTimeout: time.Second,
+		assignment:   assignment,
 	}
 }
 

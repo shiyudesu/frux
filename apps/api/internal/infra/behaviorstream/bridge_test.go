@@ -136,6 +136,59 @@ func TestDualPublishRequiresBothTransportAcknowledgements(t *testing.T) {
 	}
 }
 
+func TestDualPublishFailureExposesTransportAcknowledgements(t *testing.T) {
+	failure := errors.New("transport unavailable")
+	tests := []struct {
+		name      string
+		rabbitErr error
+		kafkaErr  error
+		rabbitAck bool
+		kafkaAck  bool
+		anyAck    bool
+	}{
+		{
+			name:     "primary only acknowledged",
+			kafkaErr: failure, rabbitAck: true, anyAck: true,
+		},
+		{
+			name:      "mirror only acknowledged",
+			rabbitErr: failure, kafkaAck: true, anyAck: true,
+		},
+		{
+			name:      "neither acknowledged",
+			rabbitErr: failure, kafkaErr: failure,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			publisher, err := NewActionPublisher(
+				infrakafka.ProducerModeRabbitWithKafkaMirror,
+				&rabbitPublisherStub{actionErr: test.rabbitErr},
+				&kafkaPublisherStub{err: test.kafkaErr},
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = publisher.PublishActionChanged(context.Background(), actionFixture())
+			var publicationErr applicationeventstream.PublicationAcknowledgementError
+			if !errors.As(err, &publicationErr) {
+				t.Fatalf("error %T does not expose acknowledgements: %v", err, err)
+			}
+			if publicationErr.TransportAcknowledged("rabbit") != test.rabbitAck ||
+				publicationErr.TransportAcknowledged("kafka") != test.kafkaAck ||
+				publicationErr.AnyTransportAcknowledged() != test.anyAck {
+				t.Fatalf(
+					"rabbit=%t kafka=%t any=%t",
+					publicationErr.TransportAcknowledged("rabbit"),
+					publicationErr.TransportAcknowledged("kafka"),
+					publicationErr.AnyTransportAcknowledged(),
+				)
+			}
+		})
+	}
+}
+
 func TestViewPublisherUsesUserKeyAndPrimaryAcknowledgement(t *testing.T) {
 	rabbit := &rabbitPublisherStub{}
 	kafka := &kafkaPublisherStub{}
@@ -156,6 +209,45 @@ func TestViewPublisherUsesUserKeyAndPrimaryAcknowledgement(t *testing.T) {
 		string(kafka.key) != "user:7" ||
 		rabbit.viewCalls != 1 {
 		t.Fatalf("topic=%s key=%q rabbit=%d", kafka.topic, kafka.key, rabbit.viewCalls)
+	}
+}
+
+func TestDualViewPublishFailureExposesTransportAcknowledgements(t *testing.T) {
+	failure := errors.New("transport unavailable")
+	for _, test := range []struct {
+		name      string
+		rabbitErr error
+		kafkaErr  error
+		rabbitAck bool
+		kafkaAck  bool
+	}{
+		{name: "primary only", kafkaErr: failure, rabbitAck: true},
+		{name: "mirror only", rabbitErr: failure, kafkaAck: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			publisher, err := NewViewPublisher(
+				infrakafka.ProducerModeRabbitWithKafkaMirror,
+				&rabbitPublisherStub{viewErr: test.rabbitErr},
+				&kafkaPublisherStub{err: test.kafkaErr},
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = publisher.PublishViewEventRecorded(context.Background(), viewFixture())
+			var publicationErr applicationeventstream.PublicationAcknowledgementError
+			if !errors.As(err, &publicationErr) {
+				t.Fatalf("error %T does not expose acknowledgements: %v", err, err)
+			}
+			if publicationErr.TransportAcknowledged("rabbit") != test.rabbitAck ||
+				publicationErr.TransportAcknowledged("kafka") != test.kafkaAck {
+				t.Fatalf(
+					"rabbit=%t kafka=%t",
+					publicationErr.TransportAcknowledged("rabbit"),
+					publicationErr.TransportAcknowledged("kafka"),
+				)
+			}
+		})
 	}
 }
 
@@ -320,6 +412,38 @@ func TestDualViewPublishFailureLeavesOutboxPending(t *testing.T) {
 	if !errors.Is(err, kafkaErr) || dispatched != 0 || !store.pending ||
 		store.dispatched != 0 || store.failed != 1 {
 		t.Fatalf("dispatched=%d err=%v store=%+v", dispatched, err, store)
+	}
+}
+
+func TestDualViewPartialAcknowledgementsLeaveOutboxPending(t *testing.T) {
+	failure := errors.New("transport unavailable")
+	for _, test := range []struct {
+		name      string
+		rabbitErr error
+		kafkaErr  error
+	}{
+		{name: "primary only", kafkaErr: failure},
+		{name: "mirror only", rabbitErr: failure},
+		{name: "neither", rabbitErr: failure, kafkaErr: failure},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			publisher, err := NewViewPublisher(
+				infrakafka.ProducerModeRabbitWithKafkaMirror,
+				&rabbitPublisherStub{viewErr: test.rabbitErr},
+				&kafkaPublisherStub{err: test.kafkaErr},
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := &dualViewOutboxStore{pending: true, event: viewFixture()}
+			dispatched, err := applicationexposure.NewOutboxDispatcher(store, publisher).
+				DispatchOnce(context.Background())
+			if err == nil || dispatched != 0 || !store.pending ||
+				store.dispatched != 0 || store.failed != 1 {
+				t.Fatalf("dispatched=%d err=%v store=%+v", dispatched, err, store)
+			}
+		})
 	}
 }
 

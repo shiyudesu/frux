@@ -354,8 +354,11 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 		cfg.Consumer.PartitionConcurrency = 8
 	}
 	cfg.Consumer.DrainTimeout = defaultDuration(cfg.Consumer.DrainTimeout, "10s")
+	cfg.Consumer.AssignmentTimeout = defaultDuration(cfg.Consumer.AssignmentTimeout, "15s")
 	drainTimeout, err := time.ParseDuration(cfg.Consumer.DrainTimeout)
+	assignmentTimeout, assignmentErr := time.ParseDuration(cfg.Consumer.AssignmentTimeout)
 	if err != nil || drainTimeout < time.Second || drainTimeout > time.Minute ||
+		assignmentErr != nil || assignmentTimeout < time.Second || assignmentTimeout > time.Minute ||
 		cfg.Consumer.MaxPollRecords < 1 || cfg.Consumer.MaxPollRecords > 1000 ||
 		cfg.Consumer.MaxPollBytes < 1<<20 || cfg.Consumer.MaxPollBytes > 32<<20 ||
 		cfg.Consumer.PartitionConcurrency < 1 || cfg.Consumer.PartitionConcurrency > 64 {

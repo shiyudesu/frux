@@ -3,9 +3,10 @@ package applicationinteraction
 import (
 	"context"
 	"errors"
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"testing"
 	"time"
+
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 )
 
 type synchronousActionRepositoryStub struct {
@@ -57,6 +58,25 @@ type actionPublisherStub struct{ err error }
 
 func (p actionPublisherStub) PublishActionChanged(context.Context, *ActionChangedEvent) error {
 	return p.err
+}
+
+type acknowledgedPublicationError struct {
+	err          error
+	acknowledged map[string]bool
+}
+
+func (e acknowledgedPublicationError) Error() string { return e.err.Error() }
+func (e acknowledgedPublicationError) Unwrap() error { return e.err }
+func (e acknowledgedPublicationError) TransportAcknowledged(transport string) bool {
+	return e.acknowledged[transport]
+}
+func (e acknowledgedPublicationError) AnyTransportAcknowledged() bool {
+	for _, acknowledged := range e.acknowledged {
+		if acknowledged {
+			return true
+		}
+	}
+	return false
 }
 
 type actionDeliveryObserverStub struct {
@@ -167,6 +187,36 @@ func TestKafkaUncertainAcknowledgementFallsBackToDurableReceipt(t *testing.T) {
 	}
 }
 
+func TestDualPublicationFailuresAlwaysAttemptSuccessfulFallback(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		acknowledged map[string]bool
+	}{
+		{name: "primary only", acknowledged: map[string]bool{"rabbit": true}},
+		{name: "mirror only", acknowledged: map[string]bool{"kafka": true}},
+		{name: "neither", acknowledged: map[string]bool{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &synchronousActionRepositoryStub{}
+			store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
+			service := New(
+				repo,
+				WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
+					err: errors.New("dual publication incomplete"), acknowledged: test.acknowledged,
+				}}),
+			)
+			result, err := service.Like(context.Background(), 7, 11, "like-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result == nil || repo.persistCalls != 1 ||
+				store.rollbackCalls != 0 || store.confirmCalls != 1 {
+				t.Fatalf("result=%#v repo=%#v store=%#v", result, repo, store)
+			}
+		})
+	}
+}
+
 func TestKafkaAndFallbackFailureConditionallyRollBackRedis(t *testing.T) {
 	repo := &synchronousActionRepositoryStub{persistErr: errors.New("database unavailable")}
 	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
@@ -181,6 +231,59 @@ func TestKafkaAndFallbackFailureConditionallyRollBackRedis(t *testing.T) {
 	}
 	if store.rollbackCalls != 1 || len(observer.rollback) != 1 || observer.rollback[0] != "success" {
 		t.Fatalf("store=%#v observer=%#v", store, observer)
+	}
+}
+
+func TestPartialDualAcknowledgementAndFallbackFailureConfirmHandoffWithoutRollback(t *testing.T) {
+	for _, acknowledged := range []string{"rabbit", "kafka"} {
+		t.Run(acknowledged, func(t *testing.T) {
+			persistErr := errors.New("database unavailable")
+			publishErr := errors.New("dual publication incomplete")
+			repo := &synchronousActionRepositoryStub{persistErr: persistErr}
+			store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
+			observer := &actionDeliveryObserverStub{}
+			service := New(
+				repo,
+				WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
+					err: publishErr, acknowledged: map[string]bool{acknowledged: true},
+				}}),
+				WithActionDeliveryObserver(observer),
+			)
+
+			if _, err := service.Like(context.Background(), 7, 11, "like-1"); !errors.Is(err, ErrUpdateInteractionFailed) ||
+				!errors.Is(err, publishErr) ||
+				!errors.Is(err, persistErr) {
+				t.Fatalf("error = %v", err)
+			}
+			if repo.persistCalls != 1 || store.rollbackCalls != 0 || store.confirmCalls != 1 {
+				t.Fatalf("repo=%#v store=%#v", repo, store)
+			}
+			if len(observer.fallback) != 1 || observer.fallback[0] != "failure" ||
+				len(observer.rollback) != 0 {
+				t.Fatalf("observer=%#v", observer)
+			}
+		})
+	}
+}
+
+func TestNoDualAcknowledgementAndFallbackFailureRollsBack(t *testing.T) {
+	repo := &synchronousActionRepositoryStub{persistErr: errors.New("database unavailable")}
+	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
+	service := New(
+		repo,
+		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
+			err: errors.New("dual publication failed"),
+			acknowledged: map[string]bool{
+				"rabbit": false,
+				"kafka":  false,
+			},
+		}}),
+	)
+	if _, err := service.Like(context.Background(), 7, 11, "like-1"); !errors.Is(err, ErrUpdateInteractionFailed) {
+		t.Fatalf("error = %v", err)
+	}
+	if store.rollbackCalls != 1 || store.confirmCalls != 0 {
+		t.Fatalf("store=%#v", store)
 	}
 }
 
