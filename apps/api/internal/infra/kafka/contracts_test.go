@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 )
 
 func TestProbeKeyCodecStableFixture(t *testing.T) {
@@ -199,6 +201,7 @@ func TestViewContractAcceptsDomainCompatibleEventIDCharacters(t *testing.T) {
 		UserID: 42, VideoID: 99, Scene: "recommend", EventType: "play",
 		RecordedAt: now, OccurredAt: now,
 	}
+
 	key, err := EncodeKey(KeyKindUserID, UserKey{UserID: payload.UserID})
 	if err != nil {
 		t.Fatal(err)
@@ -210,6 +213,44 @@ func TestViewContractAcceptsDomainCompatibleEventIDCharacters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("domain-compatible event ID rejected: %v", err)
 	}
+}
+
+func TestViewContractRejectsDomainInvalidPayloads(t *testing.T) {
+	now := time.Now().UTC()
+	duration := 1000
+	base := ViewEventRecordedPayload{
+		EventID: "view-domain-validation", ViewEventID: 101,
+		UserID: 42, VideoID: 99, Scene: "recommend", EventType: "play",
+		PlaybackSessionID: "session-1", Sequence: 1,
+		DurationMs: &duration, RecordedAt: now, OccurredAt: now,
+	}
+	key, err := EncodeKey(KeyKindUserID, UserKey{UserID: base.UserID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*ViewEventRecordedPayload){
+		func(value *ViewEventRecordedPayload) { value.Scene = "" },
+		func(value *ViewEventRecordedPayload) { value.Scene = "Recommend" },
+		func(value *ViewEventRecordedPayload) { value.EventType = "unknown" },
+		func(value *ViewEventRecordedPayload) { value.DurationMs = ptrInt(0) },
+		func(value *ViewEventRecordedPayload) { value.PositionMs = 1001 },
+		func(value *ViewEventRecordedPayload) { value.Sequence = domainexposure.MaxSequence + 1 },
+	} {
+		value := base
+		mutate(&value)
+		_, err := EncodeEvent(TopicViewEventRecorded, key, EventMetadata{
+			EventID: value.EventID, Type: EventTypeViewEventRecorded, SchemaVersion: 1,
+			OccurredAt: now, ProducedAt: now, Producer: ProducerExposureWorker,
+		}, value)
+		var contract *ContractError
+		if !errors.As(err, &contract) || contract.Code != ContractInvalidPayload {
+			t.Fatalf("payload=%+v error=%v", value, err)
+		}
+	}
+}
+
+func ptrInt(value int) *int {
+	return &value
 }
 
 func TestEnvelopeVersionOneRoundTrip(t *testing.T) {

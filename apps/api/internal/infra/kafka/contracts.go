@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 )
 
 type EventType string
@@ -395,13 +397,24 @@ func validateActionChangedPayload(metadata EventMetadata, key []byte, payload an
 func validateViewEventRecordedPayload(metadata EventMetadata, key []byte, payload any) error {
 	event, ok := payload.(*ViewEventRecordedPayload)
 	if !ok || event.EventID != metadata.EventID || event.ViewEventID <= 0 ||
-		event.UserID <= 0 || event.VideoID <= 0 || event.EventType == "" ||
+		event.UserID <= 0 || event.VideoID <= 0 ||
+		event.Scene == "" || strings.TrimSpace(strings.ToLower(event.Scene)) != event.Scene ||
+		!supportedViewEventType(event.EventType) ||
 		event.RecordedAt.IsZero() || event.OccurredAt.IsZero() ||
 		!event.OccurredAt.UTC().Equal(metadata.OccurredAt.UTC()) ||
 		len(event.EventID) > 128 || len(event.Scene) > 32 || len(event.RequestID) > 64 ||
 		len(event.PlaybackSessionID) > 128 || event.Sequence < 0 ||
-		event.PositionMs < 0 || event.WatchMs < 0 ||
-		(event.DurationMs != nil && *event.DurationMs < 0) {
+		(event.PlaybackSessionID == "" && event.Sequence != 0) ||
+		(event.PlaybackSessionID != "" &&
+			(event.Sequence <= 0 || event.Sequence > domainexposure.MaxSequence)) ||
+		event.PositionMs < 0 || event.PositionMs > domainexposure.MaxMediaDurationMs ||
+		event.WatchMs < 0 || event.WatchMs > domainexposure.MaxMediaDurationMs ||
+		(event.DurationMs != nil &&
+			(*event.DurationMs <= 0 ||
+				*event.DurationMs > domainexposure.MaxMediaDurationMs ||
+				event.PositionMs > *event.DurationMs)) ||
+		event.ExposureCount < 0 ||
+		(event.EventType == domainexposure.EventTypeComplete && !event.Completed) {
 		return errors.New("invalid view payload")
 	}
 	decoded, err := DecodeKey(KeyKindUserID, key)
@@ -409,4 +422,17 @@ func validateViewEventRecordedPayload(metadata EventMetadata, key []byte, payloa
 		return errors.New("view key mismatch")
 	}
 	return nil
+}
+
+func supportedViewEventType(eventType string) bool {
+	switch eventType {
+	case domainexposure.EventTypeExposed,
+		domainexposure.EventTypePlay,
+		domainexposure.EventTypeProgress,
+		domainexposure.EventTypeComplete,
+		domainexposure.EventTypeSkip:
+		return true
+	default:
+		return false
+	}
 }
