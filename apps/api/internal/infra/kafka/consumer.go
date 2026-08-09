@@ -23,6 +23,7 @@ var (
 	ErrCommitUncertain        = errors.New("kafka offset commit uncertain")
 	ErrShutdownDeadline       = errors.New("kafka consumer shutdown deadline exceeded")
 	ErrRebalanceDrain         = errors.New("kafka consumer drained for rebalance")
+	ErrConsumerDataLoss       = errors.New("kafka consumer detected data loss")
 	ErrConsumerStartupTimeout = errors.New("kafka consumer assignment startup timeout")
 )
 
@@ -250,6 +251,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		records, dataLoss, err := c.source.Poll(ctx, c.maxPollRecords)
 		if dataLoss {
 			c.observeDataLoss()
+			return ErrConsumerDataLoss
 		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -801,7 +803,8 @@ func RetryableConsumerError(err error) bool {
 		errors.Is(err, kerr.TopicAuthorizationFailed) ||
 		errors.Is(err, kerr.GroupAuthorizationFailed) ||
 		errors.Is(err, kerr.ClusterAuthorizationFailed) ||
-		errors.Is(err, kerr.OffsetOutOfRange) {
+		errors.Is(err, kerr.OffsetOutOfRange) ||
+		errors.Is(err, ErrConsumerDataLoss) {
 		return false
 	}
 	return true

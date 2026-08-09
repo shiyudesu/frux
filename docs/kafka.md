@@ -92,7 +92,7 @@ including `CreateTime`.
 - Alerts for broker health, topology failures, commit uncertainty, contract failures, lag, and delay.
 - Consumers disable automatic offset reset; retention loss and out-of-range committed offsets are fatal rather than silently skipping behavior facts.
 - Rebalance timeout covers handler cancellation and offset commit; a blocked rebalance cancels the current batch before partition ownership is released.
-- franz-go data-loss notifications are recorded as bounded metrics and consumption continues from the client's recovered cursor instead of restarting the group.
+- franz-go data-loss notifications are recorded as bounded metrics and stop the active consumer before any accompanying records are processed or committed.
 - Worker processes continuously probe Kafka health so broker failure and recovery update the exported health gauge after startup.
 - Consumer supervisors export bounded session lifecycle counters and a per-registered-group health
   gauge. Transient broker/session failures restart with bounded backoff; authentication,

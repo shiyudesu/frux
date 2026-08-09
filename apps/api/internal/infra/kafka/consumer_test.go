@@ -195,42 +195,47 @@ func (o *consumerObserver) ObserveDataLoss(TopicID, ConsumerGroupID) {
 	o.dataLoss++
 }
 
-func TestConsumerContinuesAfterRecoveredDataLoss(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+func TestConsumerFailsBeforeProcessingRecoveredDataLoss(t *testing.T) {
 	source := &fakeConsumerSource{
 		batches:    [][]brokerRecord{{probeRecord(t, 0, 3)}},
 		dataLosses: []bool{true},
 	}
 	observer := &consumerObserver{}
+	var calls atomic.Int32
 	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
-		cancel()
+		calls.Add(1)
 		return applicationeventstream.OutcomeDurableSuccess, nil
 	}))
 	consumer.observer = observer
-	if err := consumer.Run(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if observer.dataLoss != 1 || len(source.commits) != 1 {
-		t.Fatalf("dataLoss=%d commits=%d", observer.dataLoss, len(source.commits))
+	err := consumer.Run(context.Background())
+	if !errors.Is(err, ErrConsumerDataLoss) ||
+		observer.dataLoss != 1 || len(source.commits) != 0 ||
+		calls.Load() != 0 {
+		t.Fatalf(
+			"error=%v dataLoss=%d commits=%d calls=%d",
+			err,
+			observer.dataLoss,
+			len(source.commits),
+			calls.Load(),
+		)
 	}
 }
 
-func TestConsumerReleasesRebalanceGateAfterDataLossOnlyPoll(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+func TestConsumerDataLossOnlyPollStopsBeforeRebalanceRelease(t *testing.T) {
 	source := &fakeConsumerSource{
-		batches:    [][]brokerRecord{{}, {probeRecord(t, 0, 4)}},
-		dataLosses: []bool{true, false},
+		batches:    [][]brokerRecord{{}},
+		dataLosses: []bool{true},
 	}
 	observer := &consumerObserver{}
 	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
-		cancel()
+		t.Fatal("handler should not run")
 		return applicationeventstream.OutcomeDurableSuccess, nil
 	}))
 	consumer.observer = observer
-	if err := consumer.Run(ctx); err != nil {
-		t.Fatal(err)
+	if err := consumer.Run(context.Background()); !errors.Is(err, ErrConsumerDataLoss) {
+		t.Fatalf("error = %v", err)
 	}
-	if observer.dataLoss != 1 || source.allows != 2 {
+	if observer.dataLoss != 1 || source.allows != 0 {
 		t.Fatalf("dataLoss=%d allows=%d", observer.dataLoss, source.allows)
 	}
 }
@@ -246,7 +251,7 @@ func TestConsumerObservesDataLossAlongsideFatalFetchError(t *testing.T) {
 	}))
 	consumer.observer = observer
 	err := consumer.Run(context.Background())
-	if !errors.Is(err, ErrConsumerSession) || observer.dataLoss != 1 {
+	if !errors.Is(err, ErrConsumerDataLoss) || observer.dataLoss != 1 {
 		t.Fatalf("error=%v dataLoss=%d", err, observer.dataLoss)
 	}
 }
@@ -439,6 +444,13 @@ func TestCommitAuthorizationFailureRemainsFatal(t *testing.T) {
 func TestOffsetOutOfRangeIsFatal(t *testing.T) {
 	if RetryableConsumerError(kerr.OffsetOutOfRange) {
 		t.Fatal("offset out of range was retryable")
+	}
+
+}
+
+func TestConsumerDataLossIsFatal(t *testing.T) {
+	if RetryableConsumerError(ErrConsumerDataLoss) {
+		t.Fatal("consumer data loss was retryable")
 	}
 }
 
