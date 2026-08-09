@@ -108,6 +108,7 @@ func TestCutoverPreservesExistingGroupCommitsAcrossRestarts(t *testing.T) {
 			},
 		},
 	}
+
 	admin := &CutoverAdministrator{backend: backend, timeout: time.Second}
 	result, err := admin.Apply(
 		context.Background(),
@@ -120,6 +121,41 @@ func TestCutoverPreservesExistingGroupCommitsAcrossRestarts(t *testing.T) {
 	}
 	if backend.offsetCalls != 0 || backend.commitCalls != 0 || backend.inactiveCall != 0 {
 		t.Fatalf("offsets=%d commits=%d inactive=%d", backend.offsetCalls, backend.commitCalls, backend.inactiveCall)
+	}
+}
+
+func TestCutoverInitializedReportsExistingOffsets(t *testing.T) {
+	topic := "frux.exposure.view-event-recorded.v1"
+	backend := &fakeCutoverBackend{
+		fetches: []kadm.OffsetResponses{
+			{
+				topic: {
+					0: {Offset: kadm.Offset{Topic: topic, Partition: 0, At: 99}},
+				},
+			},
+		},
+	}
+	admin := &CutoverAdministrator{backend: backend, timeout: time.Second}
+	initialized, err := admin.Initialized(
+		context.Background(),
+		GroupConsumeViewActive,
+	)
+	if err != nil || !initialized {
+		t.Fatalf("initialized=%t error=%v", initialized, err)
+	}
+}
+
+func TestCutoverInitializedReportsMissingOffsets(t *testing.T) {
+	admin := &CutoverAdministrator{
+		backend: &fakeCutoverBackend{fetches: []kadm.OffsetResponses{{}}},
+		timeout: time.Second,
+	}
+	initialized, err := admin.Initialized(
+		context.Background(),
+		GroupConsumeViewActive,
+	)
+	if err != nil || initialized {
+		t.Fatalf("initialized=%t error=%v", initialized, err)
 	}
 }
 

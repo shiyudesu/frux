@@ -63,6 +63,7 @@ func (a *CutoverAdministrator) Apply(
 	if a == nil || a.backend == nil {
 		return "", ErrKafkaUnavailable
 	}
+
 	group, err := ConsumerGroup(groupID)
 	if err != nil || group.Shadow {
 		return "", fmt.Errorf("%w: active group is required", ErrConsumerCutover)
@@ -135,6 +136,38 @@ func (a *CutoverAdministrator) Apply(
 		return CutoverReset, nil
 	}
 	return CutoverInitialized, nil
+}
+
+func (a *CutoverAdministrator) Initialized(
+	ctx context.Context,
+	groupID ConsumerGroupID,
+) (bool, error) {
+	if a == nil || a.backend == nil {
+		return false, ErrKafkaUnavailable
+	}
+	group, err := ConsumerGroup(groupID)
+	if err != nil || group.Shadow {
+		return false, fmt.Errorf("%w: active group is required", ErrConsumerCutover)
+	}
+	topicName, err := TopicName(a.prefix, group.Topic)
+	if err != nil {
+		return false, err
+	}
+	groupName, err := ResolvedGroupName(a.prefix, "", groupID)
+	if err != nil {
+		return false, err
+	}
+	timeout := a.timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	adminContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	committed, err := a.backend.FetchOffsets(adminContext, groupName, topicName)
+	if err != nil || committed.Error() != nil {
+		return false, fmt.Errorf("%w: fetch committed offsets", ErrConsumerCutover)
+	}
+	return allPartitionsCommitted(committed, topicName), nil
 }
 
 func (a *CutoverAdministrator) currentTime() time.Time {

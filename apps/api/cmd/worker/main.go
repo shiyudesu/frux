@@ -181,6 +181,37 @@ func startWorkers(
 	if err != nil {
 		return err
 	}
+	viewMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityViewEventRecorded,
+	)
+	if err != nil {
+		return err
+	}
+	drainInspector := inframq.NewDeadLetterManager(rabbitMQ, cfg.RabbitMQ)
+	initializedCutovers, err := initializeBehaviorKafkaCutovers(
+		ctx,
+		gormDB,
+		kafkaBackbone,
+		drainInspector,
+		orderedBehaviorKafkaConsumers(
+			behaviorKafkaConsumer{
+				migration:      viewMigration,
+				activeGroup:    infrakafka.GroupConsumeViewActive,
+				rabbitConsumer: inframq.ConsumerViewEventRecorded,
+			},
+			behaviorKafkaConsumer{
+				migration:      actionMigration,
+				activeGroup:    infrakafka.GroupPersistActionActive,
+				rabbitConsumer: inframq.ConsumerActionChanged,
+			},
+		),
+	)
+	if err != nil {
+		return err
+	}
+	viewMigration = initializedCutovers[0].migration
+	actionMigration = initializedCutovers[1].migration
 	var actionSource applicationinteraction.ActionEventConsumer
 	if actionMigration.Consumer != infrakafka.ConsumerModeKafka {
 		actionSource = rabbitMQ
@@ -196,13 +227,6 @@ func startWorkers(
 	}
 
 	exposureRepo := infraexposure.New(gormDB)
-	viewMigration, err := infrakafka.MigrationFor(
-		kafkaBackbone.MigrationPlan(),
-		infrakafka.ResponsibilityViewEventRecorded,
-	)
-	if err != nil {
-		return err
-	}
 	viewPublisher, err := infrabehaviorstream.NewViewPublisher(
 		viewMigration.Producer,
 		rabbitMQ,
@@ -258,17 +282,6 @@ func startWorkers(
 			rabbitConsumer: inframq.ConsumerActionChanged,
 		},
 	)
-	drainInspector := inframq.NewDeadLetterManager(rabbitMQ, cfg.RabbitMQ)
-	behaviorConsumers, err = initializeBehaviorKafkaCutovers(
-		ctx,
-		gormDB,
-		kafkaBackbone,
-		drainInspector,
-		behaviorConsumers,
-	)
-	if err != nil {
-		return err
-	}
 	if err := startBehaviorKafkaConsumers(
 		ctx,
 		kafkaBackbone,
@@ -440,14 +453,23 @@ func initializeBehaviorKafkaCutovers(
 			).Error; err != nil {
 				return err
 			}
-			if drainInspector == nil {
-				return inframq.ErrConsumerNotDrained
-			}
-			if err := drainInspector.VerifyConsumerDrained(
+			initialized, err := backbone.ConsumerCutoverInitialized(
 				ctx,
-				consumer.rabbitConsumer,
-			); err != nil {
+				consumer.activeGroup,
+			)
+			if err != nil {
 				return err
+			}
+			if !initialized {
+				if drainInspector == nil {
+					return inframq.ErrConsumerNotDrained
+				}
+				if err := drainInspector.VerifyConsumerDrained(
+					ctx,
+					consumer.rabbitConsumer,
+				); err != nil {
+					return err
+				}
 			}
 			applied, err := backbone.ApplyConsumerCutover(
 				ctx,

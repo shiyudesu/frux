@@ -99,6 +99,16 @@ func (b *Backbone) ApplyConsumerCutover(
 	return b.cutover.Apply(ctx, group, boundary, mode)
 }
 
+func (b *Backbone) ConsumerCutoverInitialized(
+	ctx context.Context,
+	group ConsumerGroupID,
+) (bool, error) {
+	if b == nil || b.cutover == nil {
+		return false, ErrKafkaUnavailable
+	}
+	return b.cutover.Initialized(ctx, group)
+}
+
 func (b *Backbone) Publisher() *Publisher {
 	if b == nil {
 		return nil
