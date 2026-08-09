@@ -49,23 +49,24 @@ type StatCache interface {
 type Option func(*Service)
 
 type ActionStateResult struct {
-	UserID                   int64
-	VideoID                  int64
-	ActionType               string
-	Active                   bool
-	LikeCount                int
-	FavoriteCount            int
-	Delta                    int
-	IdempotencyKey           string
-	RecommendationRequestID  string
-	Version                  int64
-	EventID                  string
-	OccurredAt               time.Time
-	ShouldPublish            bool
-	CanRollback              bool
-	Previous                 domaininteraction.ActionStateSnapshot
-	PreviousHandoffConfirmed bool
-	PreviousHasDependency    bool
+	UserID                     int64
+	VideoID                    int64
+	ActionType                 string
+	Active                     bool
+	LikeCount                  int
+	FavoriteCount              int
+	Delta                      int
+	IdempotencyKey             string
+	RecommendationRequestID    string
+	Version                    int64
+	EventID                    string
+	OccurredAt                 time.Time
+	ShouldPublish              bool
+	CanRollback                bool
+	Previous                   domaininteraction.ActionStateSnapshot
+	PreviousHandoffConfirmed   bool
+	PreviousHasDependency      bool
+	PreviousDeliveryIncomplete bool
 }
 
 type ActionMutation struct {
@@ -84,6 +85,10 @@ type ActionStateStore interface {
 // reached a durable handoff. Older ActionStateStore implementations may omit it.
 type ActionStateHandoffConfirmer interface {
 	ConfirmActionStateHandoff(ctx context.Context, state *ActionStateResult) error
+}
+
+type ActionStateDeliveryTracker interface {
+	MarkActionStateDeliveryIncomplete(ctx context.Context, state *ActionStateResult) error
 }
 
 // ActionEventPublisher 投递点赞收藏变更事件。
@@ -479,7 +484,8 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			s.observeActionFallback("success")
 			cancelRecovery()
 			if applicationeventstream.IsMultiTransportPublicationError(publishErr) {
-				return nil, actionUpdateError(publishErr)
+				markErr := s.markActionDeliveryIncomplete(ctx, state)
+				return nil, actionUpdateError(publishErr, markErr)
 			}
 		}
 		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {
@@ -592,6 +598,17 @@ func (s *Service) observeActionRollback(result string) {
 	if s.actionObserver != nil {
 		s.actionObserver.ObserveActionRollback(result)
 	}
+}
+
+func (s *Service) markActionDeliveryIncomplete(
+	ctx context.Context,
+	state *ActionStateResult,
+) error {
+	tracker, ok := s.actionStateStore.(ActionStateDeliveryTracker)
+	if !ok {
+		return ErrUpdateInteractionFailed
+	}
+	return tracker.MarkActionStateDeliveryIncomplete(ctx, state)
 }
 
 func (s *Service) confirmActionStateHandoff(ctx context.Context, state *ActionStateResult) error {

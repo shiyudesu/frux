@@ -23,11 +23,12 @@ func (r *synchronousActionRepositoryStub) PersistAcceptedActionEvent(context.Con
 }
 
 type actionStateStoreStub struct {
-	state          *ActionStateResult
-	rollbackResult bool
-	rollbackErr    error
-	rollbackCalls  int
-	confirmCalls   int
+	state           *ActionStateResult
+	rollbackResult  bool
+	rollbackErr     error
+	rollbackCalls   int
+	confirmCalls    int
+	incompleteCalls int
 }
 
 func (s *actionStateStoreStub) SetActionState(
@@ -51,6 +52,14 @@ func (s *actionStateStoreStub) RollbackActionState(context.Context, *ActionState
 
 func (s *actionStateStoreStub) ConfirmActionStateHandoff(context.Context, *ActionStateResult) error {
 	s.confirmCalls++
+	return nil
+}
+
+func (s *actionStateStoreStub) MarkActionStateDeliveryIncomplete(
+	context.Context,
+	*ActionStateResult,
+) error {
+	s.incompleteCalls++
 	return nil
 }
 
@@ -230,7 +239,8 @@ func TestDualPublicationFailuresAttemptFallbackButRemainUnconfirmed(t *testing.T
 				t.Fatalf("error = %v", err)
 			}
 			if result != nil || repo.persistCalls != 1 ||
-				store.rollbackCalls != 0 || store.confirmCalls != 0 {
+				store.rollbackCalls != 0 || store.confirmCalls != 0 ||
+				store.incompleteCalls != 1 {
 				t.Fatalf("result=%#v repo=%#v store=%#v", result, repo, store)
 			}
 		})

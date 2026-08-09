@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 var (
+	ErrProduceFailed    = errors.New("kafka produce failed")
 	ErrProduceUncertain = errors.New("kafka produce result uncertain")
 	ErrProduceCanceled  = errors.New("kafka produce canceled")
 )
@@ -25,8 +27,8 @@ func (e *UncertainProduceError) Error() string {
 	return fmt.Sprintf("%s: %v", ErrProduceUncertain, e.cause)
 }
 
-func (e *UncertainProduceError) Unwrap() error {
-	return ErrProduceUncertain
+func (e *UncertainProduceError) Unwrap() []error {
+	return []error{ErrProduceUncertain, e.cause}
 }
 
 func (*UncertainProduceError) MayHaveAcknowledged() bool {
@@ -114,10 +116,18 @@ func (p *Publisher) Publish(
 				cause: errors.New("canceled or deadline"),
 			}
 		default:
-			resultLabel = "uncertain"
-			return ProduceMetadata{}, &UncertainProduceError{
-				cause: errors.New(sanitizeKafkaError(result.Err)),
+			if produceResultMayHaveAcknowledged(result.Err) {
+				resultLabel = "uncertain"
+				return ProduceMetadata{}, &UncertainProduceError{
+					cause: result.Err,
+				}
 			}
+			resultLabel = "failed"
+			return ProduceMetadata{}, fmt.Errorf(
+				"%w: %w",
+				ErrProduceFailed,
+				result.Err,
+			)
 		}
 	}
 	resultLabel = "acknowledged"
@@ -125,6 +135,22 @@ func (p *Publisher) Publish(
 		Topic: topicID, Partition: result.Record.Partition,
 		Offset: result.Record.Offset, Timestamp: result.Record.Timestamp,
 	}, nil
+}
+
+func produceResultMayHaveAcknowledged(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, kerr.RequestTimedOut) ||
+		errors.Is(err, kerr.NotEnoughReplicasAfterAppend) ||
+		errors.Is(err, kerr.DuplicateSequenceNumber) {
+		return true
+	}
+	var kafkaError *kerr.Error
+	if errors.As(err, &kafkaError) {
+		return false
+	}
+	return true
 }
 
 func boundedContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -62,8 +63,11 @@ func TestPublisherClassifiesFailureCancellationAndUncertainty(t *testing.T) {
 		want error
 	}{
 		{name: "broker error", ctx: context.Background, fake: &fakeSyncProducer{
-			results: kgo.ProduceResults{{Err: errors.New("broker rejected")}},
+			results: kgo.ProduceResults{{Err: kerr.RequestTimedOut}},
 		}, want: ErrProduceUncertain},
+		{name: "definite broker rejection", ctx: context.Background, fake: &fakeSyncProducer{
+			results: kgo.ProduceResults{{Err: kerr.TopicAuthorizationFailed}},
+		}, want: ErrProduceFailed},
 		{name: "missing result", ctx: context.Background, fake: &fakeSyncProducer{
 			results: kgo.ProduceResults{},
 		}, want: ErrProduceUncertain},
@@ -104,6 +108,24 @@ func TestUncertainProduceErrorMayHaveAcknowledged(t *testing.T) {
 	err := &UncertainProduceError{cause: errors.New("deadline")}
 	if !errors.Is(err, ErrProduceUncertain) || !err.MayHaveAcknowledged() {
 		t.Fatalf("uncertain error = %v", err)
+	}
+
+}
+
+func TestProduceResultAcknowledgementClassification(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want bool
+	}{
+		{err: kerr.RequestTimedOut, want: true},
+		{err: kerr.NotEnoughReplicasAfterAppend, want: true},
+		{err: kerr.TopicAuthorizationFailed, want: false},
+		{err: kerr.InvalidRecord, want: false},
+		{err: errors.New("connection reset"), want: true},
+	} {
+		if got := produceResultMayHaveAcknowledged(test.err); got != test.want {
+			t.Fatalf("error=%v got=%v want=%v", test.err, got, test.want)
+		}
 	}
 }
 

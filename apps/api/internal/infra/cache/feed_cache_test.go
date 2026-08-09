@@ -456,6 +456,67 @@ func TestActionReceiptRecognizesDurableMicrosecondBaseline(t *testing.T) {
 	}
 }
 
+func TestActionReceiptIncompleteDualDeliverySurvivesMatchingBaseline(t *testing.T) {
+	cache := newActionReceiptTestCache(t)
+	accepted := setActionReceiptTestState(
+		t,
+		cache,
+		"dual-key",
+		true,
+		actionReceiptTestMutation("event-dual"),
+	)
+	if err := cache.MarkActionStateDeliveryIncomplete(context.Background(), accepted); err != nil {
+		t.Fatalf("mark incomplete delivery: %v", err)
+	}
+	baseline := &domaininteraction.ActionStateSnapshot{
+		Exists: true, Active: true, Version: accepted.Version,
+		EventID: accepted.EventID, IdempotencyKey: accepted.IdempotencyKey,
+		OccurredAt: accepted.OccurredAt, UpdatedAt: accepted.OccurredAt,
+	}
+	retried, err := cache.SetActionState(
+		context.Background(),
+		accepted.UserID,
+		accepted.VideoID,
+		accepted.ActionType,
+		true,
+		accepted.IdempotencyKey,
+		&domaininteraction.VideoStat{VideoID: accepted.VideoID},
+		baseline,
+		actionReceiptTestMutation("event-unused"),
+	)
+	if err != nil {
+		t.Fatalf("retry incomplete delivery: %v", err)
+	}
+	if !retried.ShouldPublish || retried.EventID != accepted.EventID {
+		t.Fatalf("matching baseline suppressed repair: %#v", retried)
+	}
+	incomplete, err := cache.client.HGet(
+		context.Background(),
+		interactionActionKey(
+			accepted.UserID,
+			accepted.VideoID,
+			accepted.ActionType,
+		),
+		actionStateDeliveryIncompleteField,
+	).Result()
+	if err != nil || incomplete != "1" {
+		t.Fatalf("incomplete marker=%q error=%v", incomplete, err)
+	}
+	if err := cache.ConfirmActionStateHandoff(context.Background(), retried); err != nil {
+		t.Fatalf("confirm repaired delivery: %v", err)
+	}
+	replayed := setActionReceiptTestState(
+		t,
+		cache,
+		"dual-key",
+		true,
+		actionReceiptTestMutation("event-after-repair"),
+	)
+	if replayed.ShouldPublish {
+		t.Fatalf("repaired delivery still pending: %#v", replayed)
+	}
+}
+
 func TestActionReceiptDifferentKeyNoOpWaitsForHandoff(t *testing.T) {
 	cache := newActionReceiptTestCache(t)
 	accepted := setActionReceiptTestState(t, cache, "original-key", true, actionReceiptTestMutation("event-original"))
