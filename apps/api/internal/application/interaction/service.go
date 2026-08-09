@@ -477,6 +477,9 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			}
 			s.observeActionFallback("success")
 			cancelRecovery()
+			if applicationeventstream.IsMultiTransportPublicationError(publishErr) {
+				return nil, actionUpdateError(publishErr)
+			}
 		}
 		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {
 			return nil, actionUpdateError(confirmErr)

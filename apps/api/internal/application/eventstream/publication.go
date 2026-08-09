@@ -20,3 +20,8 @@ func PrimaryTransportAcknowledged(err error) bool {
 	var publicationErr PublicationAcknowledgementError
 	return errors.As(err, &publicationErr) && publicationErr.PrimaryTransportAcknowledged()
 }
+
+func IsMultiTransportPublicationError(err error) bool {
+	var publicationErr PublicationAcknowledgementError
+	return errors.As(err, &publicationErr)
+}

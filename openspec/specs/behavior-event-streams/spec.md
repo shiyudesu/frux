@@ -53,7 +53,11 @@ Frux SHALL validate each Kafka behavior stream with mirror production and a non-
 
 #### Scenario: One transition transport fails
 - **WHEN** either RabbitMQ or Kafka fails or cannot confirm publication in a dual transition mode
-- **THEN** publication returns an error that exposes each transport's durable acknowledgement state so action fallback or view outbox retry remains responsible
+- **THEN** publication returns an error that exposes each transport's durable acknowledgement state, action fallback may persist the business fact without confirming dual delivery, and view outbox retry remains pending until both transports acknowledge
+
+#### Scenario: Action fallback succeeds after incomplete dual publication
+- **WHEN** synchronous PostgreSQL fallback succeeds after only one or neither transition transport acknowledges
+- **THEN** the API reports a retryable update failure and leaves the Redis handoff unconfirmed so the same idempotency key republishes the missing transport
 
 #### Scenario: Active action transport acknowledged but fallback fails
 - **WHEN** dual action publication is incomplete, synchronous PostgreSQL fallback fails, and the active primary transport durably acknowledged the stable event

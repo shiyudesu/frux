@@ -192,7 +192,7 @@ func TestKafkaUncertainAcknowledgementFallsBackToDurableReceipt(t *testing.T) {
 	}
 }
 
-func TestDualPublicationFailuresAlwaysAttemptSuccessfulFallback(t *testing.T) {
+func TestDualPublicationFailuresAttemptFallbackButRemainUnconfirmed(t *testing.T) {
 	for _, test := range []struct {
 		name         string
 		acknowledged map[string]bool
@@ -212,11 +212,11 @@ func TestDualPublicationFailuresAlwaysAttemptSuccessfulFallback(t *testing.T) {
 				}}),
 			)
 			result, err := service.Like(context.Background(), 7, 11, "like-1")
-			if err != nil {
-				t.Fatal(err)
+			if !errors.Is(err, ErrUpdateInteractionFailed) {
+				t.Fatalf("error = %v", err)
 			}
-			if result == nil || repo.persistCalls != 1 ||
-				store.rollbackCalls != 0 || store.confirmCalls != 1 {
+			if result != nil || repo.persistCalls != 1 ||
+				store.rollbackCalls != 0 || store.confirmCalls != 0 {
 				t.Fatalf("result=%#v repo=%#v store=%#v", result, repo, store)
 			}
 		})
