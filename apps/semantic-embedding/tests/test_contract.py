@@ -3,19 +3,32 @@ from __future__ import annotations
 import math
 import os
 import asyncio
+from io import StringIO
 import json
+from pathlib import Path
+import subprocess
+import sys
 from threading import Event
 import time
 
 from fastapi.testclient import TestClient
+import pytest
 
 TOKEN = "Strong-Internal-Token-For-Frux-123!"
 os.environ.setdefault("FRUX_INTERNAL_TOKEN", TOKEN)
 
 from frux_embedding.app import Capacity, InferenceTimeout, OverCapacity, create_app
 from frux_embedding.constants import MODEL_DIMENSION, MODEL_NAME, MODEL_REVISION
+from frux_embedding.model import ModelRuntime
 from frux_embedding.normalization import canonical_text
 from frux_embedding.settings import Settings, load_settings
+from frux_embedding.startup import (
+    StartupFailure,
+    StartupFailureError,
+    preload_runtime,
+    report_failure,
+    run_server,
+)
 
 class FakeRuntime:
     ready = True
@@ -223,7 +236,7 @@ def test_exact_text_and_batch_boundaries():
         ).status_code == 400
 
 
-def test_health_not_ready_startup_failure_and_safe_routes():
+def test_health_not_ready_and_safe_routes():
     class NotReadyRuntime(FakeRuntime):
         ready = False
 
@@ -238,19 +251,6 @@ def test_health_not_ready_startup_failure_and_safe_routes():
         ).status_code == 503
         assert api.get("/missing").json() == {"code": "NOT_FOUND", "error": "not found"}
         assert api.post("/health/live").status_code == 405
-
-    class FailingRuntime(NotReadyRuntime):
-        def load(self):
-            raise RuntimeError("model failure")
-
-    try:
-        with TestClient(create_app(Settings(token=TOKEN), FailingRuntime())):
-            pass
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("startup model failure was ignored")
-
 
 async def test_capacity_bounds_and_late_native_completion():
     release = Event()
@@ -285,22 +285,81 @@ async def test_capacity_bounds_and_late_native_completion():
             request_timeout_ms=1_000,
         )
     )
+    calls = 0
+
+    def expired_call():
+        nonlocal calls
+        calls += 1
+        late_release.wait()
+        return [[1.0]]
+
     try:
-        await timeout_capacity.run(
-            lambda: (late_release.wait(), [[1.0]])[1],
-            time.monotonic() - 2,
-        )
+        await timeout_capacity.run(expired_call, time.monotonic() - 2)
     except InferenceTimeout:
         pass
     else:
         raise AssertionError("late inference did not time out")
-    assert timeout_capacity.admitted == 1
-    late_release.set()
-    for _ in range(20):
-        if timeout_capacity.admitted == 0:
-            break
-        await asyncio.sleep(0.01)
+    assert calls == 0
     assert timeout_capacity.admitted == 0
+    assert timeout_capacity.semaphore._value == 1
+
+    queued_release = Event()
+    queued_calls = 0
+    queued_capacity = Capacity(
+        Settings(
+            token=TOKEN,
+            max_concurrency=1,
+            max_queue=1,
+            queue_timeout_ms=1_000,
+            request_timeout_ms=200,
+        )
+    )
+    active = asyncio.create_task(
+        queued_capacity.run(
+            lambda: (queued_release.wait(), [[1.0]])[1],
+            time.monotonic(),
+        )
+    )
+    await asyncio.sleep(0.01)
+
+    def queued_call():
+        nonlocal queued_calls
+        queued_calls += 1
+        return [[1.0]]
+
+    with pytest.raises(InferenceTimeout):
+        await queued_capacity.run(queued_call, time.monotonic() - 0.15)
+    assert queued_calls == 0
+    assert queued_capacity.admitted == 1
+    assert queued_capacity.semaphore._value == 0
+    queued_release.set()
+    assert await active == [[1.0]]
+    assert queued_capacity.admitted == 0
+    assert queued_capacity.semaphore._value == 1
+
+    post_acquire_calls = 0
+    post_acquire = Capacity(
+        Settings(
+            token=TOKEN,
+            max_concurrency=1,
+            max_queue=0,
+            queue_timeout_ms=100,
+            request_timeout_ms=1_000,
+        )
+    )
+    remaining = iter((1.0, 1.0, 1.0, -1.0))
+    post_acquire._remaining = lambda _: next(remaining)
+
+    def post_acquire_call():
+        nonlocal post_acquire_calls
+        post_acquire_calls += 1
+        return [[1.0]]
+
+    with pytest.raises(InferenceTimeout):
+        await post_acquire.run(post_acquire_call, time.monotonic())
+    assert post_acquire_calls == 0
+    assert post_acquire.admitted == 0
+    assert post_acquire.semaphore._value == 1
 
     release_many = Event()
     bounded = Capacity(
@@ -329,3 +388,193 @@ async def test_capacity_bounds_and_late_native_completion():
     release_many.set()
     await asyncio.gather(*tasks)
     assert bounded.admitted == 0
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            StartupFailureError(StartupFailure.MODEL_ARTIFACT),
+            StartupFailure.MODEL_ARTIFACT,
+        ),
+        (
+            StartupFailureError(StartupFailure.MODEL_METADATA),
+            StartupFailure.MODEL_METADATA,
+        ),
+        (
+            StartupFailureError(StartupFailure.FIXTURE_CONTRACT),
+            StartupFailure.FIXTURE_CONTRACT,
+        ),
+        (RuntimeError("dependency detail"), StartupFailure.DEPENDENCY),
+    ],
+)
+def test_startup_failure_classification_and_output_are_bounded(error, expected):
+    class FailingRuntime:
+        def load(self):
+            raise error
+
+    result = preload_runtime(FailingRuntime(), 1)
+    assert result.failure is expected
+    output = StringIO()
+    report_failure(result, output)
+    logged = output.getvalue()
+    assert logged == f"semantic_embedding_startup_failed category={expected.value}\n"
+    assert "dependency detail" not in logged
+    assert "Traceback" not in logged
+
+
+def test_startup_preload_timeout_is_bounded():
+    release = Event()
+
+    class BlockingRuntime:
+        def load(self):
+            release.wait()
+
+    result = preload_runtime(BlockingRuntime(), 0.01)
+    release.set()
+    assert result.failure is StartupFailure.PRELOAD_TIMEOUT
+    output = StringIO()
+    report_failure(result, output)
+    assert output.getvalue() == (
+        "semantic_embedding_startup_failed category=preload_timeout\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        StartupFailureError(StartupFailure.MODEL_ARTIFACT),
+        StartupFailureError(StartupFailure.MODEL_METADATA),
+        StartupFailureError(StartupFailure.FIXTURE_CONTRACT),
+        RuntimeError("dependency secret detail"),
+    ],
+)
+def test_controlled_entrypoint_returns_nonzero_without_server_logs(
+    error, capsys
+):
+    class FailingRuntime:
+        def load(self):
+            raise error
+
+    code = run_server(
+        settings_loader=lambda: Settings(token=TOKEN),
+        runtime_factory=lambda *_: FailingRuntime(),
+        app_factory=lambda *_: pytest.fail("app must not be created"),
+        server_runner=lambda *_: pytest.fail("server must not start"),
+        startup_timeout_seconds=1,
+    )
+    output = capsys.readouterr()
+    assert code == 1
+    assert output.out == ""
+    assert output.err.startswith("semantic_embedding_startup_failed category=")
+    for forbidden in (
+        "Traceback",
+        "uvicorn",
+        "fastapi",
+        "dependency secret detail",
+        TOKEN,
+    ):
+        assert forbidden not in output.err
+
+
+def test_controlled_entrypoint_timeout_returns_nonzero(capsys):
+    release = Event()
+
+    class BlockingRuntime:
+        def load(self):
+            release.wait()
+
+    code = run_server(
+        settings_loader=lambda: Settings(token=TOKEN),
+        runtime_factory=lambda *_: BlockingRuntime(),
+        app_factory=lambda *_: pytest.fail("app must not be created"),
+        server_runner=lambda *_: pytest.fail("server must not start"),
+        startup_timeout_seconds=0.01,
+    )
+    release.set()
+    output = capsys.readouterr()
+    assert code == 1
+    assert output.err == (
+        "semantic_embedding_startup_failed category=preload_timeout\n"
+    )
+
+
+def test_model_runtime_classifies_artifact_metadata_and_fixture_failures(monkeypatch):
+    runtime = ModelRuntime("missing-model", "missing-fixture")
+    assert (
+        preload_runtime(runtime, 1).failure is StartupFailure.MODEL_ARTIFACT
+    )
+
+    monkeypatch.setattr(Path, "read_text", lambda _: "{")
+    assert (
+        preload_runtime(ModelRuntime("model", "fixture"), 1).failure
+        is StartupFailure.MODEL_ARTIFACT
+    )
+
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda _: json.dumps({"model": MODEL_NAME, "revision": "wrong"}),
+    )
+    assert (
+        preload_runtime(ModelRuntime("model", "fixture"), 1).failure
+        is StartupFailure.MODEL_METADATA
+    )
+
+    reads = iter(
+        (
+            json.dumps({"model": MODEL_NAME, "revision": MODEL_REVISION}),
+            json.dumps({"model": MODEL_NAME, "revision": MODEL_REVISION}),
+        )
+    )
+    monkeypatch.setattr(Path, "read_text", lambda _: next(reads))
+    monkeypatch.setattr(ModelRuntime, "_load_model", lambda _: object())
+    assert (
+        preload_runtime(ModelRuntime("model", "fixture"), 1).failure
+        is StartupFailure.FIXTURE_CONTRACT
+    )
+
+
+def test_startup_subprocess_redacts_model_failure_details():
+    service_root = Path(__file__).parents[1]
+    secret_path = service_root / "secret-model-path"
+    secret_token = "Secret-Internal-Token-For-Startup-123!"
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("FRUX_EMBEDDING_")
+    }
+    env.update(
+        {
+            "FRUX_INTERNAL_TOKEN": secret_token,
+            "FRUX_EMBEDDING_MODEL_PATH": str(secret_path),
+            "FRUX_EMBEDDING_FIXTURE_PATH": str(secret_path / "fixture.json"),
+            "OMP_NUM_THREADS": "2",
+            "MKL_NUM_THREADS": "2",
+            "OPENBLAS_NUM_THREADS": "2",
+            "NUMEXPR_NUM_THREADS": "2",
+            "TOKENIZERS_PARALLELISM": "false",
+            "PYTHONPATH": str(service_root / "src"),
+        }
+    )
+    completed = subprocess.run(
+        [sys.executable, "-m", "frux_embedding.main"],
+        cwd=service_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert output == "semantic_embedding_startup_failed category=model_artifact\n"
+    for forbidden in (
+        "Traceback",
+        "uvicorn",
+        "fastapi",
+        str(secret_path),
+        secret_token,
+        "FileNotFoundError",
+    ):
+        assert forbidden not in output
