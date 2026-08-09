@@ -6,10 +6,13 @@ import (
 	"testing"
 	"time"
 
+	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
+	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 )
 
 type publicationReadinessStub struct {
@@ -153,5 +156,65 @@ func TestModerationWorkerOwnerIsUniquePerProcessStart(t *testing.T) {
 	}
 	if first == second || len(first) > 128 || len(second) > 128 {
 		t.Fatalf("owners first=%q second=%q", first, second)
+	}
+}
+
+func TestBehaviorKafkaConsumersStartViewBeforeAction(t *testing.T) {
+	for _, mode := range []infrakafka.ConsumerMode{
+		infrakafka.ConsumerModeKafka,
+		infrakafka.ConsumerModeKafkaShadow,
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			started := make([]infrakafka.ConsumerGroupID, 0, 2)
+			starter := func(
+				_ context.Context,
+				_ *infrakafka.Backbone,
+				_ infraconfig.KafkaConfig,
+				group infrakafka.ConsumerGroupID,
+				_ string,
+				_ applicationeventstream.Handler,
+				_ chan<- error,
+			) error {
+				started = append(started, group)
+				return nil
+			}
+			err := startBehaviorKafkaConsumers(
+				context.Background(),
+				nil,
+				infraconfig.KafkaConfig{ShadowDeployment: "test"},
+				orderedBehaviorKafkaConsumers(
+					behaviorKafkaConsumer{
+						migration:   infrakafka.StreamMigration{Consumer: mode},
+						activeGroup: infrakafka.GroupConsumeViewActive,
+						shadowGroup: infrakafka.GroupConsumeViewShadow,
+					},
+					behaviorKafkaConsumer{
+						migration:   infrakafka.StreamMigration{Consumer: mode},
+						activeGroup: infrakafka.GroupPersistActionActive,
+						shadowGroup: infrakafka.GroupPersistActionShadow,
+					},
+				),
+				nil,
+				starter,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []infrakafka.ConsumerGroupID{
+				infrakafka.GroupConsumeViewActive,
+				infrakafka.GroupPersistActionActive,
+			}
+			if mode == infrakafka.ConsumerModeKafkaShadow {
+				want = []infrakafka.ConsumerGroupID{
+					infrakafka.GroupConsumeViewShadow,
+					infrakafka.GroupPersistActionShadow,
+				}
+			}
+			if len(started) != len(want) ||
+				started[0] != want[0] ||
+				started[1] != want[1] {
+				t.Fatalf("startup order=%v want=%v", started, want)
+			}
+		})
 	}
 }

@@ -51,8 +51,12 @@ Delivery Limit 和 Replay timeout 必须在发布前压测。
 - Producer 保持 idempotence 与 `acks=all`；Broker/ACL 必须允许幂等写，不能通过降低 Ack 绕过。
 - 客户端使用 TLS 1.2+；生产通常同时启用 SASL/SCRAM（SHA-256 或 SHA-512）或平台批准的认证，
   凭据和 CA/client key 由 Secret 挂载，不能写入 YAML 或日志。
-- Topic 的 partition 下限、`cleanup.policy`、`retention.ms`、`max.message.bytes` 和
-  `min.insync.replicas` 与代码注册表一致。Retention 变更需要兼容性评审，不能依赖 Broker 默认值。
+- Topic 的 partition 下限、`cleanup.policy`、`retention.ms`、`message.timestamp.type=LogAppendTime`、
+  `max.message.bytes` 和 `min.insync.replicas` 与代码注册表一致。Retention 或 timestamp policy
+  变更需要兼容性评审，不能依赖 Broker 默认值。
+- 行为迁移的 dual producer 模式必须同时取得 RabbitMQ 与 Kafka acknowledgement；任一失败都应触发
+  action fallback/conditional rollback 或保留 view outbox。Action cutover boundary 必须严格晚于
+  view boundary，Worker 必须先启动 view Kafka group。
 - 网络策略只开放 Broker Listener；Controller Listener 不暴露给 API/Worker。滚动升级前验证 ISR
   和 under-replicated partition 为零。
 

@@ -196,9 +196,13 @@ GORM Repository 规则：
   当前 Session，由稳定 Event ID 和耐久幂等边界承受重投。
 - Kafka 迁移只允许 registered primary/mirror Producer 与 active/shadow Consumer。Shadow Group
   必须使用独立 Group ID，只做 Envelope、Key、Age 和可选 Parity 校验，不调用变更业务状态的
-  Handler。Primary acknowledgement 必须属于 active mutating Consumer 使用的传输；Rabbit active
-  或 Kafka shadow 阶段不得使用 Kafka primary/Rabbit mirror。Active Group 启动前按 cutover
-  timestamp 用 kadm 一次性初始化各 Partition Offset；已有 Commit 必须保留，不得在重启时回绕。
+  Handler。Single 模式要求对应传输 acknowledgement；任一 dual/mirror 模式必须同时取得 RabbitMQ
+  与 Kafka acknowledgement，部分成功仍返回失败并进入业务 fallback/outbox retry。Primary
+  acknowledgement 仍必须属于 active mutating Consumer 使用的传输；Rabbit active 或 Kafka shadow
+  阶段不得使用 Kafka primary/Rabbit mirror。Retained event Topic 必须注册并验证
+  `message.timestamp.type=LogAppendTime`；Active Group 启动前按 broker append-time cutover timestamp
+  用 kadm 一次性初始化各 Partition Offset，不能使用 producer clock；已有 Commit 必须保留，不得在
+  重启时回绕。Action boundary 必须严格晚于 view boundary，且 Worker 先启动 view Kafka group。
   Shadow 未查到事实记为 pending 并有界延迟重试，只有已存在但冲突的事实记为 mismatch。
 - Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
 - DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
@@ -352,10 +356,11 @@ protected baseline/cover variant，无匹配 variant 时才回退 original；授
 
 播放技术遥测使用独立版本化批次，不进入观看历史或推荐行为投影。批次和事件载荷先规范化再计算哈希；同一 reporter 的写入用事务 advisory lock 串行，安全重放只计 duplicate，同 ID 异载荷回滚整批。原始遥测按 `created_at` 有界清理。
 
-需要可靠投递到外部传输、但不能让 broker 决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和主传输 acknowledgement 分发，下游继续按业务事件 ID 去重。`view_event_recorded` 可选择 Kafka/RabbitMQ primary 与 mirror，mirror 失败不改变主传输结果。
+需要可靠投递到外部传输、但不能让 broker 决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和注册传输 acknowledgement 分发，下游继续按业务事件 ID 去重。`view_event_recorded` 的 single 模式等待单一传输；dual/mirror 模式必须同时等待 Kafka 与 RabbitMQ，任一失败都保留 Outbox pending。
 
-`action_changed` 保留 Redis 单调版本快速路径。Kafka primary 失败或 acknowledgement 不确定时
-同步执行 `PersistAcceptedActionEvent`；双失败只条件回滚仍由该版本拥有的 Redis 状态。Kafka
+`action_changed` 保留 Redis 单调版本快速路径。Single Kafka 或 dual/mirror 中任一所需传输失败、
+acknowledgement 不确定时同步执行 `PersistAcceptedActionEvent`；发布与 fallback 双失败只条件回滚
+仍由该版本拥有的 Redis 状态。Kafka
 active action/view Handler 只有在 PostgreSQL receipt/fact 与 downstream outbox 边界提交后才返回
 durable success；注册 terminal 结果可推进 offset，基础设施错误结束 Consumer Session 并重投。
 

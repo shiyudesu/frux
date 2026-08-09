@@ -29,14 +29,25 @@ func TestKafkaBackboneProvisionsProducesAndConsumesAfterClientRestart(t *testing
 		t.Fatalf("start first Kafka client: %v", err)
 	}
 	now := time.Now().UTC()
+	producerClock := now.Add(4 * time.Minute)
 	key := []byte("probe:persisted")
-	_, err = first.Publisher().Publish(ctx, TopicBackboneProbe, key, EventMetadata{
+	produced, err := first.Publisher().Publish(ctx, TopicBackboneProbe, key, EventMetadata{
 		EventID: "event-persisted", Type: EventTypeBackboneProbe, SchemaVersion: 1,
-		OccurredAt: now, ProducedAt: now, Producer: ProducerPlatformWorker,
+		OccurredAt: now, ProducedAt: producerClock, Producer: ProducerPlatformWorker,
 	}, BackboneProbePayload{ProbeID: "persisted", Source: "integration"})
 	if err != nil {
 		_ = first.Close(context.Background())
 		t.Fatalf("produce probe: %v", err)
+	}
+	if produced.Timestamp.Before(now.Add(-time.Minute)) ||
+		produced.Timestamp.After(time.Now().UTC().Add(time.Minute)) ||
+		produced.Timestamp.After(producerClock.Add(-time.Minute)) {
+		_ = first.Close(context.Background())
+		t.Fatalf(
+			"record timestamp %s did not use broker append time; producer clock=%s",
+			produced.Timestamp,
+			producerClock,
+		)
 	}
 	if err := first.Close(ctx); err != nil {
 		t.Fatalf("close first Kafka client: %v", err)

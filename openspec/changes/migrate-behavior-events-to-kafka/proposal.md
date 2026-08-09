@@ -8,7 +8,8 @@ Interaction and playback behavior are Frux's highest-value replayable signals fo
 - Publish committed view events from the existing PostgreSQL outbox to a versioned Kafka topic keyed by user identity so recommendation behavior processing can preserve per-user stream order.
 - Run interaction persistence and recommendation behavior consumers under registered Kafka consumer groups and commit offsets only after their existing durable receipts/outboxes commit.
 - Preserve stable event IDs, version ordering, payload conflict checks, synchronous PostgreSQL fallback for action publication failures, and idempotent duplicate handling.
-- Introduce dual-publish plus shadow-consume validation before each active consumer cuts over; shadow consumers validate envelopes and parity without writing business state.
+- Introduce dual-publish plus shadow-consume validation before each active consumer cuts over; both transition transports must acknowledge each event, while shadow consumers validate envelopes and parity without writing business state.
+- Resolve cutover boundaries from broker-assigned append timestamps and require the action boundary to be strictly after the view boundary.
 - Retain behavior events for replay and future independent consumers instead of deleting them after successful consumption.
 - Remove RabbitMQ from these behavior paths only after Kafka lag, parity, duplicate, fallback, and rollback gates pass.
 

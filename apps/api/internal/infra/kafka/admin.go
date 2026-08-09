@@ -25,6 +25,7 @@ type TopicState struct {
 	MinInSyncReplicas int
 	Retention         time.Duration
 	CleanupPolicy     CleanupPolicy
+	MessageTimestamp  MessageTimestampType
 	MaxRecordBytes    int
 }
 
@@ -129,7 +130,8 @@ func desiredTopicState(
 		ReplicationFactor: replicationFactor,
 		MinInSyncReplicas: minInSyncReplicas,
 		Retention:         spec.Retention, CleanupPolicy: spec.CleanupPolicy,
-		MaxRecordBytes: brokerMaxMessageBytes(spec),
+		MessageTimestamp: spec.MessageTimestamp,
+		MaxRecordBytes:   brokerMaxMessageBytes(spec),
 	}
 }
 
@@ -148,6 +150,7 @@ func validateTopicState(
 		state.MinInSyncReplicas < requiredISR ||
 		state.MinInSyncReplicas > state.ReplicationFactor ||
 		state.CleanupPolicy != spec.CleanupPolicy ||
+		state.MessageTimestamp != spec.MessageTimestamp ||
 		state.Retention != spec.Retention ||
 		state.MaxRecordBytes < brokerMaxMessageBytes(spec) {
 		return fmt.Errorf("%w: registered policy mismatch", ErrTopicTopologyInvalid)
@@ -225,9 +228,10 @@ func (b *franzAdminBackend) TopicStates(
 		states[name] = TopicState{
 			Name: name, Partitions: len(detail.Partitions),
 			ReplicationFactor: replication, MinInSyncReplicas: minISR,
-			Retention:      time.Duration(retentionMillis) * time.Millisecond,
-			CleanupPolicy:  CleanupPolicy(values["cleanup.policy"]),
-			MaxRecordBytes: maxBytes,
+			Retention:        time.Duration(retentionMillis) * time.Millisecond,
+			CleanupPolicy:    CleanupPolicy(values["cleanup.policy"]),
+			MessageTimestamp: MessageTimestampType(values["message.timestamp.type"]),
+			MaxRecordBytes:   maxBytes,
 		}
 	}
 	return states, nil
@@ -236,13 +240,15 @@ func (b *franzAdminBackend) TopicStates(
 func (b *franzAdminBackend) CreateTopic(ctx context.Context, state TopicState) error {
 	retention := strconv.FormatInt(state.Retention.Milliseconds(), 10)
 	cleanup := string(state.CleanupPolicy)
+	messageTimestamp := string(state.MessageTimestamp)
 	maxBytes := strconv.Itoa(state.MaxRecordBytes)
 	minISR := strconv.Itoa(state.MinInSyncReplicas)
 	responses, err := b.client.CreateTopics(
 		ctx, int32(state.Partitions), int16(state.ReplicationFactor),
 		map[string]*string{
 			"retention.ms": &retention, "cleanup.policy": &cleanup,
-			"max.message.bytes": &maxBytes, "min.insync.replicas": &minISR,
+			"message.timestamp.type": &messageTimestamp,
+			"max.message.bytes":      &maxBytes, "min.insync.replicas": &minISR,
 		},
 		state.Name,
 	)

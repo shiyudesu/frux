@@ -75,7 +75,7 @@ func (p *Publisher) Publish(
 	defer cancel()
 	record := &kgo.Record{
 		Topic: topicName, Key: append([]byte(nil), key...),
-		Value: value, Timestamp: metadata.ProducedAt.UTC(),
+		Value: value,
 	}
 	results := p.producer.ProduceSync(produceContext, record)
 	if len(results) != 1 || results[0].Record == nil {

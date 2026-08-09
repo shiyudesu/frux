@@ -13,10 +13,12 @@ type fakeSyncProducer struct {
 	calls   int
 	results kgo.ProduceResults
 	wait    <-chan struct{}
+	record  *kgo.Record
 }
 
 func (f *fakeSyncProducer) ProduceSync(ctx context.Context, records ...*kgo.Record) kgo.ProduceResults {
 	f.calls++
+	f.record = records[0]
 	if f.wait != nil {
 		select {
 		case <-f.wait:
@@ -46,6 +48,9 @@ func TestPublisherReportsAcknowledgedRecord(t *testing.T) {
 	}
 	if result.Partition != 2 || result.Offset != 42 || fake.calls != 1 {
 		t.Fatalf("result=%+v calls=%d", result, fake.calls)
+	}
+	if !fake.record.Timestamp.IsZero() {
+		t.Fatalf("producer set record timestamp from its own clock: %s", fake.record.Timestamp)
 	}
 }
 

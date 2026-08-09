@@ -18,7 +18,7 @@ Frux SHALL encode every Kafka event in a bounded versioned envelope with a stabl
 - **THEN** Frux classifies the record as a contract failure and does not pass a partially decoded payload to the business handler
 
 ### Requirement: Code-Owned Topic Governance
-Frux SHALL define topic names, versions, event-or-command classification, partition-key kind, retention, cleanup policy, record-size bound, producers, and consumer groups in a closed code-owned registry.
+Frux SHALL define topic names, versions, event-or-command classification, partition-key kind, retention, cleanup policy, message timestamp type, record-size bound, producers, and consumer groups in a closed code-owned registry.
 
 #### Scenario: Local topic is missing
 - **WHEN** local development starts with a registered topic absent
@@ -27,6 +27,10 @@ Frux SHALL define topic names, versions, event-or-command classification, partit
 #### Scenario: Production topic is incompatible
 - **WHEN** production validation finds an unsafe replication setting or an incompatible registered topic policy
 - **THEN** startup fails explicitly instead of silently accepting or mutating the topology
+
+#### Scenario: Timestamp-cutover topic uses create time
+- **WHEN** a retained event topic is configured with `message.timestamp.type=CreateTime`
+- **THEN** startup rejects it because cutover boundaries require broker `LogAppendTime`
 
 ### Requirement: Acknowledged Idempotent Production
 Frux Kafka producers SHALL use idempotent acknowledged production with bounded deadlines and SHALL report success only after the broker acknowledges the record.
@@ -63,6 +67,10 @@ Frux SHALL run registered Kafka consumer groups with bounded batches, partition 
 
 ### Requirement: Controlled Transport Migration
 Frux SHALL support registered primary/mirror producer modes and active/shadow consumer modes while ensuring that no migration configuration activates two uncontrolled business writers for one consumer responsibility.
+
+#### Scenario: Dual transition publication partially succeeds
+- **WHEN** one required transport acknowledges and the other fails or is uncertain
+- **THEN** the registered publisher reports failure and the owning fallback or outbox retry remains active
 
 #### Scenario: Kafka shadow validation runs
 - **WHEN** a stream remains RabbitMQ-active and its Kafka consumer is in shadow mode

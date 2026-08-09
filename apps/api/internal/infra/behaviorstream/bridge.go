@@ -73,11 +73,14 @@ func (p *ActionPublisher) PublishActionChanged(
 	primary, mirror := transports(p.mode)
 	primaryErr := p.publish(ctx, primary, event)
 	p.observe(StreamAction, "primary", primary, primaryErr)
-	if mirror != "" {
-		mirrorErr := p.publish(ctx, mirror, event)
-		p.observe(StreamAction, "mirror", mirror, mirrorErr)
+	if mirror == "" {
+		return primaryErr
 	}
-	return primaryErr
+	mirrorErr := p.publish(ctx, mirror, event)
+	p.observe(StreamAction, "mirror", mirror, mirrorErr)
+	combinedErr := errors.Join(primaryErr, mirrorErr)
+	p.observe(StreamAction, "combined", "dual", combinedErr)
+	return combinedErr
 }
 
 func (p *ActionPublisher) publish(
@@ -145,11 +148,14 @@ func (p *ViewPublisher) PublishViewEventRecorded(
 	primary, mirror := transports(p.mode)
 	primaryErr := p.publish(ctx, primary, event)
 	p.observe(StreamView, "primary", primary, primaryErr)
-	if mirror != "" {
-		mirrorErr := p.publish(ctx, mirror, event)
-		p.observe(StreamView, "mirror", mirror, mirrorErr)
+	if mirror == "" {
+		return primaryErr
 	}
-	return primaryErr
+	mirrorErr := p.publish(ctx, mirror, event)
+	p.observe(StreamView, "mirror", mirror, mirrorErr)
+	combinedErr := errors.Join(primaryErr, mirrorErr)
+	p.observe(StreamView, "combined", "dual", combinedErr)
+	return combinedErr
 }
 
 func (p *ViewPublisher) publish(

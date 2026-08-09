@@ -39,15 +39,20 @@ Migration modes are closed:
 - Consumer: `rabbit`, `kafka_shadow`, `kafka`.
 
 Checked-in modes remain `rabbit`; action and view may independently select the four producer modes
-and three consumer modes. The acknowledged producer transport must be the active mutating consumer's
-transport: Rabbit-active and Kafka-shadow phases use Rabbit primary, while
-`kafka_with_rabbit_mirror` is allowed only after Kafka becomes active.
+and three consumer modes. A single-transport mode succeeds after that transport acknowledges. Either
+dual transition mode succeeds only after both RabbitMQ and Kafka acknowledge; a partial or uncertain
+result enters the action PostgreSQL fallback/conditional rollback path or leaves the view outbox
+pending. Stable event IDs absorb duplicates from retrying the transport that already acknowledged.
+The configured primary must still match the active mutating consumer.
 
 An active Kafka consumer requires an RFC3339 `cutover_boundary`. Before the group starts, the worker
-uses kadm to resolve the timestamp to every partition offset and commits the boundary while the group
-is inactive. Existing group commits are preserved on restart; the boundary is not reapplied. The
+uses kadm to resolve the broker append timestamp to every partition offset and commits the boundary
+while the group is inactive. Registered retained event topics require
+`message.timestamp.type=LogAppendTime`; envelope `produced_at` is not used for offset resolution.
+Existing group commits are preserved on restart; the boundary is not reapplied. The
 explicit `Backbone.ApplyConsumerCutover(..., CutoverForceReset)` operation may reset only an inactive group.
-View production/consumption cuts over before action; rollback reverses that dependency. A shadow
+The action boundary must be strictly later than the view boundary, and each worker initializes/starts
+the view active/shadow group before the action active/shadow group. Rollback reverses that dependency. A shadow
 consumer uses `<active-group>.shadow.<deployment>`, never invokes a mutating handler, and never
 commits the future active Group's offsets.
 
@@ -58,7 +63,7 @@ Registered behavior contracts:
 | `frux.interaction.action-changed.v1` | `action:{user}:{video}:{LIKE\|FAVORITE}` | `interaction_api` | `frux.interaction.persist-action.v1` |
 | `frux.exposure.view-event-recorded.v1` | `user:{user}` | `exposure_worker` | `frux.recommendation.consume-view.v1` |
 
-Both retain immutable records for seven days with delete cleanup.
+Both retain immutable records for seven days with delete cleanup and broker-assigned append timestamps.
 
 ## Contracts and topology
 
@@ -69,16 +74,17 @@ JSON, unknown versions/types, invalid keys/timestamps/IDs, and oversized records
 contract failures. Action and user keys must also equal their decode/re-encode canonical bytes;
 leading-zero, signed, and action-case aliases are rejected.
 
-Local startup creates missing topics with registered partitions, retention, cleanup policy, maximum
-record size, replication, and minimum ISR. Production startup never creates or changes topics; it
-fails on missing or incompatible topology.
+Local startup creates missing topics with registered partitions, retention, cleanup policy,
+`message.timestamp.type=LogAppendTime`, maximum record size, replication, and minimum ISR.
+Production startup never creates or changes topics; it fails on missing or incompatible topology,
+including `CreateTime`.
 
 ## Production baseline
 
 - At least 3 brokers across failure domains; replication factor >= 3 and minimum ISR >= 2.
 - TLS 1.2+ and authenticated clients; mount secrets/keys instead of embedding them in YAML.
 - Broker auto topic creation disabled.
-- `acks=all`, idempotent producer permissions, and reviewed retention/cleanup/max-record settings.
+- `acks=all`, idempotent producer permissions, and reviewed retention/cleanup/append-time/max-record settings.
 - In-flight produce cancellation is enabled to enforce deadlines; every error after submission is classified as uncertain and must be handled through stable event IDs and application fallback.
 - Controller listeners isolated from application networks.
 - Alerts for broker health, topology failures, commit uncertainty, contract failures, lag, and delay.

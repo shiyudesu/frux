@@ -16,9 +16,9 @@
 ## 3. View Event Outbox Publication
 
 - [x] 3.1 Extend the view-event outbox dispatcher to select registered primary and optional mirror transports.
-- [x] 3.2 Mark outbox rows dispatched only after the primary transport acknowledges publication and observe mirror results separately.
+- [x] 3.2 Mark outbox rows dispatched only after every transport required by the selected single/dual mode acknowledges publication.
 - [x] 3.3 Preserve accepted HTTP behavior and retry leases when Kafka is unavailable.
-- [x] 3.4 Add outbox tests for Kafka cutover, restart, duplicate dispatch, mirror gaps, and pending-row recovery.
+- [x] 3.4 Add outbox tests for Kafka cutover, restart, duplicate dispatch, partial dual acknowledgement, and pending-row recovery.
 
 ## 4. Active Kafka Consumers
 
@@ -56,3 +56,11 @@
 - [x] 8.4 Reject non-canonical action and user key aliases by exact decode/re-encode equality.
 - [x] 8.5 Expose consumer supervisor session health and fail visibly on non-retryable active-group initialization/runtime errors.
 - [x] 8.6 Update Kafka migration documentation and complete the required validation matrix.
+
+## 9. Final Review Remediation
+
+- [x] 9.1 Require both RabbitMQ and Kafka acknowledgements in dual transition publisher modes, preserving action fallback/rollback and pending view outbox recovery.
+- [x] 9.2 Require and validate broker `LogAppendTime` topology for retained event topics and prevent producer clocks from defining timestamp cutover boundaries.
+- [x] 9.3 Require the action cutover boundary to be strictly after the view boundary and start view Kafka active/shadow groups before action groups.
+- [x] 9.4 Synchronize metrics, OpenSpec artifacts, and operational/module documentation with the corrected semantics.
+- [x] 9.5 Run targeted and full validation, Compose config, strict OpenSpec validation, and final diff review.

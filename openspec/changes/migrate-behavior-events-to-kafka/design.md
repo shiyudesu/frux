@@ -42,15 +42,24 @@ Alternative: one shared `behavior-events` topic. Rejected because the events hav
 
 The interaction service will publish the same typed event through a transport-aware publisher after Redis assigns its monotonic version. Kafka production uses the backbone's acknowledged idempotent producer.
 
-If the primary Kafka result fails or is uncertain, the service calls `PersistAcceptedActionEvent` synchronously exactly as it does for RabbitMQ uncertainty. Successful fallback also creates the durable profile/outcome handoffs, so the request does not need a later Kafka repair publication for correctness. If both Kafka and fallback fail, the existing conditional Redis rollback remains.
+If a single required transport or either transport in a dual mode fails or is uncertain, the service
+calls `PersistAcceptedActionEvent` synchronously. Successful fallback also creates the durable
+profile/outcome handoffs, so the request does not need a later broker repair publication for
+correctness. If publication and fallback both fail, the existing conditional Redis rollback remains.
 
-During migration, mirror failure does not fail a request whose primary transport or PostgreSQL fallback succeeded. Mirror gaps are acceptable because the shadow stream is diagnostic and Kafka activation starts at an explicit cutover boundary.
+During migration, both transports in either mirror mode are required delivery paths. The publisher
+attempts both and returns an error when either acknowledgement fails or is uncertain. The action
+service therefore enters its existing synchronous PostgreSQL fallback and conditional rollback
+path; stable event IDs absorb a later duplicate from the transport that already acknowledged.
 
 Alternative: add a database outbox to every Redis action. Rejected for this migration because it would put a new mandatory PostgreSQL transaction on the optimized action path and duplicate the existing synchronous fallback guarantee.
 
 ### Reuse and extend the view-event outbox dispatcher
 
-The existing outbox payload is already the authoritative Kafka event payload. The dispatcher selects its primary and optional mirror publisher from the stream migration mode. An outbox row is marked dispatched after the primary transport acknowledges it; mirror results are observed separately.
+The existing outbox payload is already the authoritative Kafka event payload. The dispatcher selects
+its registered single or dual transport set from the stream migration mode. In a dual mode, an outbox
+row is marked dispatched only after both transports acknowledge it. A partial acknowledgement leaves
+the row pending for retry; stable event IDs absorb duplicates on the transport that already accepted it.
 
 At Kafka cutover, rows not yet dispatched use Kafka as primary. Already dispatched RabbitMQ rows are not backfilled into Kafka because durable behavior facts already exist and the migration has no historical-stream requirement.
 
@@ -67,7 +76,10 @@ The consumers do not keep offsets open while waiting for embeddings or attributi
 
 Shadow consumers use distinct group IDs suffixed with `.shadow.<deployment>` and a handler that only validates envelope, key, event fields, age, and optional durable-fact parity. They never call the mutating worker.
 
-Cutover creates or enables the registered active group at a recorded Kafka timestamp/offset boundary after producer health has remained acceptable for an observation window. The old RabbitMQ consumer remains available but stopped; rollback stops Kafka and restores RabbitMQ before changing the primary producer.
+Cutover creates or enables the registered active group at a recorded Kafka broker append-time/offset
+boundary after producer health has remained acceptable for an observation window. The old RabbitMQ
+consumer remains available but stopped; rollback stops Kafka and restores RabbitMQ before changing
+the primary producer.
 
 ### Measure event-specific correctness
 
@@ -75,6 +87,7 @@ Metrics add registered results for:
 
 - action primary/mirror production and synchronous fallback;
 - view outbox primary/mirror dispatch;
+- combined dual-transport publication success, failure, and uncertainty;
 - shadow decode and fact-parity results;
 - active group lag and delivery age;
 - duplicate receipts, action-version supersession, and view-event duplicate application.
@@ -88,6 +101,22 @@ transport used by the active mutating consumer. `kafka_with_rabbit_mirror` is th
 with an active Kafka consumer; Rabbit-active and Kafka-shadow phases require
 `rabbit_with_kafka_mirror`. A successful Kafka primary result cannot hide a failed Rabbit mirror
 while Rabbit still owns business mutation.
+
+### Require broker append time for cutover topics
+
+Every registered retained event topic uses `message.timestamp.type=LogAppendTime`. Local topic
+provisioning sets the policy explicitly, while non-local compatibility validation rejects a missing
+or `CreateTime` topic. The Kafka record timestamp is not populated from the envelope's producer
+clock. `produced_at` remains application metadata, but timestamp-to-offset cutover resolution uses
+the broker-assigned append timestamp returned and stored by Kafka.
+
+### Enforce view-first cutover in configuration and startup
+
+When both behavior active groups use Kafka, the action cutover boundary must be strictly later than
+the view boundary. Equality is rejected. The worker constructs Rabbit action and outbox dependencies
+as needed, but initializes and starts the view Kafka active/shadow group before the action Kafka
+active/shadow group. This prevents one process in a rolling deployment from making action mutation
+active before the prerequisite view path is ready.
 
 ### Apply active cutover boundaries as durable group offsets
 
@@ -114,7 +143,7 @@ consumer runtime on non-retryable authentication, configuration, or handler-cont
 
 ## Risks / Trade-offs
 
-- [Mirror publication can miss records] -> Treat mirror data as validation only and begin active consumption at a documented cutover boundary.
+- [One transition transport acknowledges and the other fails] -> Return failure, retain/recover through the owning fallback or outbox, and rely on stable event IDs for duplicate delivery.
 - [Action Kafka outage increases synchronous PostgreSQL fallback] -> Alert on fallback rate and retain conditional Redis rollback when both durable paths fail.
 - [Key changes would reorder state transitions] -> Freeze key encodings in fixtures and require a new topic version for changes.
 - [A consumer crash after PostgreSQL commit duplicates delivery] -> Preserve event receipts, payload conflict checks, and monotonic version application.
@@ -130,8 +159,9 @@ consumer runtime on non-retryable authentication, configuration, or handler-cont
 2. Enable Kafka mirrors and shadow consumers while RabbitMQ remains primary and active.
 3. Observe production success, decode parity, partition distribution, delivery delay, and durable-fact matches.
 4. Cut over `view_event_recorded` first because its PostgreSQL outbox already isolates HTTP success from broker availability.
-5. Cut over `action_changed`, monitor Kafka failures and synchronous fallback load, then stop its RabbitMQ consumer.
-6. Retain per-stream rollback modes until the RabbitMQ retirement change.
+5. Choose an `action_changed` broker append-time boundary strictly after the view boundary; worker startup initializes/starts the view Kafka group before the action Kafka group.
+6. Cut over `action_changed`, monitor Kafka failures and synchronous fallback load, then stop its RabbitMQ consumer.
+7. Retain per-stream rollback modes until the RabbitMQ retirement change.
 
 Rollback stops the Kafka active group, restores the RabbitMQ consumer, and returns the primary producer to RabbitMQ. Stable event IDs make records delivered around the boundary idempotent.
 

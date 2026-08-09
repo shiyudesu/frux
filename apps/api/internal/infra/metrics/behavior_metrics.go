@@ -10,7 +10,7 @@ var (
 	BehaviorPublicationTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "frux", Name: "behavior_publication_total",
-			Help: "Behavior stream primary and mirror publication outcomes.",
+			Help: "Behavior stream per-transport and required combined dual-publication outcomes.",
 		},
 		[]string{"stream", "role", "transport", "result"},
 	)
@@ -59,8 +59,8 @@ type BehaviorObserver struct{}
 func (BehaviorObserver) ObserveBehaviorPublication(stream, role, transport, result string) {
 	BehaviorPublicationTotal.WithLabelValues(
 		behaviorStreamLabel(stream),
-		boundedBehaviorLabel(role, "primary", "mirror"),
-		boundedBehaviorLabel(transport, "rabbit", "kafka"),
+		boundedBehaviorLabel(role, "primary", "mirror", "combined"),
+		boundedBehaviorLabel(transport, "rabbit", "kafka", "dual"),
 		boundedBehaviorLabel(result, "success", "failure", "uncertain"),
 	).Inc()
 }

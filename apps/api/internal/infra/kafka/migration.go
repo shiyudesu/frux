@@ -82,8 +82,8 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 	if action.Consumer == ConsumerModeKafka && view.Consumer == ConsumerModeKafka {
 		actionBoundary, actionErr := time.Parse(time.RFC3339, action.CutoverBoundary)
 		viewBoundary, viewErr := time.Parse(time.RFC3339, view.CutoverBoundary)
-		if actionErr != nil || viewErr != nil || actionBoundary.Before(viewBoundary) {
-			return nil, fmt.Errorf("%w: view cutover boundary must precede action", ErrUnknownRegistryValue)
+		if actionErr != nil || viewErr != nil || !actionBoundary.After(viewBoundary) {
+			return nil, fmt.Errorf("%w: action cutover boundary must be strictly after view", ErrUnknownRegistryValue)
 		}
 	}
 	if kafkaPrimaryMode(action.Producer) && !kafkaPrimaryMode(view.Producer) {

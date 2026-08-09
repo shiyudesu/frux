@@ -148,8 +148,8 @@ HTTP Handler
 | 异常 | 处理 |
 | --- | --- |
 | Redis 不可用 | 降级为 PostgreSQL 路径或返回可识别错误 |
-| Kafka 主投递失败或确认不确定 | 同步 PostgreSQL receipt/outbox fallback；双失败条件回滚 Redis |
-| RabbitMQ mirror 投递失败 | 主路径成功不受影响，记录 mirror gap |
+| Single Kafka 或 dual/mirror 任一投递失败/确认不确定 | 同步 PostgreSQL receipt/outbox fallback；发布与 fallback 双失败条件回滚 Redis |
+| View dual/mirror 任一传输失败 | Outbox 保留 pending 并重试；稳定 event ID 吸收已成功传输上的重复 |
 | Worker 重复消费 | 使用唯一键和幂等键保证安全 |
 | 缓存计数偏差 | TTL 过期后回源修正 |
 

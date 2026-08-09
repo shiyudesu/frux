@@ -8,7 +8,7 @@ RabbitMQ-to-Kafka migration for accepted action changes and committed view event
 ## Requirements
 
 ### Requirement: Versioned Behavior Topics
-Frux SHALL publish accepted action changes and committed view events to separate registered Kafka topics with stable event IDs, versioned envelopes, bounded payloads, and delete-based retention.
+Frux SHALL publish accepted action changes and committed view events to separate registered Kafka topics with stable event IDs, versioned envelopes, bounded payloads, delete-based retention, and broker-assigned append timestamps.
 
 #### Scenario: Action event is published
 - **WHEN** Redis accepts a valid action mutation and assigns its monotonic version
@@ -21,6 +21,10 @@ Frux SHALL publish accepted action changes and committed view events to separate
 #### Scenario: Behavior key has an equivalent non-canonical spelling
 - **WHEN** an action or user key contains leading zeroes, a numeric sign, or a non-canonical action-type case
 - **THEN** Frux rejects the record as an invalid key instead of accepting an alias for the same identity
+
+#### Scenario: Behavior topic uses producer create time
+- **WHEN** topology validation finds `message.timestamp.type` other than `LogAppendTime`
+- **THEN** startup rejects the topic as incompatible for timestamp cutover
 
 ### Requirement: Behavior Consumer Group Ownership
 Each behavior responsibility SHALL use one registered active Kafka consumer group and SHALL commit its offset only after the existing durable receipt, fact, and downstream outbox boundary commits.
@@ -47,6 +51,10 @@ Frux SHALL preserve action-version ordering, deterministic compatibility tie-bre
 ### Requirement: Behavior Stream Cutover
 Frux SHALL validate each Kafka behavior stream with mirror production and a non-mutating shadow group before enabling its active group, and SHALL record an explicit cutover boundary.
 
+#### Scenario: One transition transport fails
+- **WHEN** either RabbitMQ or Kafka fails or cannot confirm publication in a dual transition mode
+- **THEN** publication returns an error so action fallback or view outbox retry remains responsible, even if the other transport acknowledged
+
 #### Scenario: Shadow action consumer receives a record
 - **WHEN** RabbitMQ remains the active action transport
 - **THEN** the Kafka shadow consumer validates the record and optional fact parity without invoking action persistence
@@ -57,7 +65,19 @@ Frux SHALL validate each Kafka behavior stream with mirror production and a non-
 
 #### Scenario: Active Kafka group starts at cutover
 - **WHEN** an active group has no committed offsets and starts with a cutover boundary
-- **THEN** Frux resolves the boundary timestamp per partition and durably initializes the group before consumption
+- **THEN** Frux resolves the broker append-time boundary per partition and durably initializes the group before consumption
+
+#### Scenario: Producer clock differs from broker clock
+- **WHEN** an event envelope carries a producer timestamp before or after the broker clock
+- **THEN** timestamp cutover resolution uses the broker-assigned record append time rather than the producer timestamp
+
+#### Scenario: Action and view boundaries are equal
+- **WHEN** both Kafka active groups are configured with equal cutover boundaries
+- **THEN** startup rejects the configuration because the action boundary must be strictly after the view boundary
+
+#### Scenario: Worker starts behavior Kafka groups
+- **WHEN** view and action Kafka active or shadow groups are enabled in one worker
+- **THEN** the worker initializes and starts the view group before the action group
 
 #### Scenario: Active Kafka group restarts
 - **WHEN** the group already has committed offsets

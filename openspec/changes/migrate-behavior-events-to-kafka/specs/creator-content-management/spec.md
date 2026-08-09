@@ -39,6 +39,10 @@ Frux SHALL maintain per-user public-work, private-work, received-like, and colle
 - **WHEN** Kafka may have accepted an event but the producer acknowledgement is unavailable or times out
 - **THEN** synchronous fallback may persist the same version and any later Kafka delivery is an exactly-once duplicate
 
+#### Scenario: One action transition transport fails
+- **WHEN** either RabbitMQ or Kafka does not acknowledge an action event in a dual transition mode
+- **THEN** publication fails into synchronous PostgreSQL fallback and conditional Redis rollback remains available if fallback also fails
+
 #### Scenario: Failed mutation is superseded
 - **WHEN** a newer Redis action version replaces a failed mutation before its recovery rollback
 - **THEN** recovery does not roll back the newer state

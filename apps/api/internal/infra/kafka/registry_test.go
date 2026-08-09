@@ -40,7 +40,8 @@ func TestBehaviorRegistryContractsAreStable(t *testing.T) {
 	if action.BaseName != "frux.interaction.action-changed.v1" ||
 		action.KeyKind != KeyKindActionState ||
 		action.Retention != 7*24*time.Hour ||
-		action.CleanupPolicy != CleanupDelete {
+		action.CleanupPolicy != CleanupDelete ||
+		action.MessageTimestamp != MessageTimestampLogAppendTime {
 		t.Fatalf("action topic = %+v", action)
 	}
 	view, err := Topic(TopicViewEventRecorded)
@@ -49,7 +50,8 @@ func TestBehaviorRegistryContractsAreStable(t *testing.T) {
 	}
 	if view.BaseName != "frux.exposure.view-event-recorded.v1" ||
 		view.KeyKind != KeyKindUserID ||
-		view.Retention != 7*24*time.Hour {
+		view.Retention != 7*24*time.Hour ||
+		view.MessageTimestamp != MessageTimestampLogAppendTime {
 		t.Fatalf("view topic = %+v", view)
 	}
 	actionGroup, _ := ResolvedGroupName("", "green", GroupPersistActionShadow)
@@ -57,6 +59,15 @@ func TestBehaviorRegistryContractsAreStable(t *testing.T) {
 	if actionGroup != "frux.interaction.persist-action.v1.shadow.green" ||
 		viewGroup != "frux.recommendation.consume-view.v1.shadow.green" {
 		t.Fatalf("shadow groups = %q %q", actionGroup, viewGroup)
+	}
+}
+
+func TestRetainedEventTopicsUseBrokerAppendTime(t *testing.T) {
+	for _, topic := range Topics() {
+		if topic.Class == TopicClassEvent &&
+			topic.MessageTimestamp != MessageTimestampLogAppendTime {
+			t.Fatalf("topic %s timestamp type = %q", topic.ID, topic.MessageTimestamp)
+		}
 	}
 }
 

@@ -157,6 +157,22 @@ func TestMigrationPlanEnforcesViewFirstAndCutoverBoundary(t *testing.T) {
 	if err == nil {
 		t.Fatal("action boundary before view boundary was accepted")
 	}
+	_, err = MigrationPlan(infraconfig.KafkaConfig{
+		Enabled: true,
+		Migration: infraconfig.KafkaMigrationConfig{
+			ViewEventRecorded: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode: "kafka", ConsumerMode: "kafka",
+				CutoverBoundary: "2026-08-09T01:00:00Z",
+			},
+			ActionChanged: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode: "kafka", ConsumerMode: "kafka",
+				CutoverBoundary: "2026-08-09T01:00:00Z",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("equal action and view cutover boundaries were accepted")
+	}
 	plan, err := MigrationPlan(infraconfig.KafkaConfig{
 		Enabled: true,
 		Migration: infraconfig.KafkaMigrationConfig{

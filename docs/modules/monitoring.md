@@ -262,10 +262,13 @@ Worker 明确失败，不能只观察 broker health。`retryable_failure` 表示
 - `frux_behavior_shadow_total{stream,result}`；
 - `frux_behavior_consumption_total{stream,result}`。
 
-`stream` 仅为 action/view，`role` 仅为 primary/mirror，`transport` 仅为 rabbit/kafka；
+`stream` 仅为 action/view，`role` 仅为 primary/mirror/combined，`transport` 仅为
+rabbit/kafka/dual；dual 模式的 `combined` 只有两种传输都 acknowledgement 才为 success，
+部分失败或不确定必须触发 action fallback 或保留 view outbox；
 result 使用封闭 success/failure/uncertain、parity_match/parity_mismatch/parity_pending/
 parity_pending_exhausted、
 duplicate/superseded 等集合。不得加入
-event、user、video、key、partition、offset 或错误正文。View 先 cutover；任一 stream 出现持续
+event、user、video、key、partition、offset 或错误正文。View 先 cutover，action boundary 必须严格
+更晚且 Worker 先启动 view Kafka group；任一 stream 出现持续
 primary failure、fallback/rollback 增长、shadow mismatch、lag 或 delivery age 超门槛时按该
 stream 独立回滚。

@@ -33,7 +33,8 @@ func TestAdministratorProvisionsOnlyLocalTopics(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(results) != len(Topics()) || len(backend.created) != len(Topics()) ||
-		backend.created[0].Name != "frux.platform.backbone_probe.v1" {
+		backend.created[0].Name != "frux.platform.backbone_probe.v1" ||
+		backend.created[0].MessageTimestamp != MessageTimestampLogAppendTime {
 		t.Fatalf("results=%+v created=%+v", results, backend.created)
 	}
 }
@@ -53,11 +54,24 @@ func TestAdministratorRejectsProductionMutationAndUnsafeTopology(t *testing.T) {
 		name: {
 			Name: name, Partitions: 3, ReplicationFactor: 1, MinInSyncReplicas: 1,
 			Retention: spec.Retention, CleanupPolicy: spec.CleanupPolicy,
-			MaxRecordBytes: spec.MaxRecordBytes,
+			MessageTimestamp: spec.MessageTimestamp,
+			MaxRecordBytes:   spec.MaxRecordBytes,
 		},
 	}}
 	if _, err := admin.EnsureTopics(context.Background()); !errors.Is(err, ErrTopicTopologyInvalid) {
 		t.Fatalf("unsafe topology error = %v", err)
+	}
+}
+
+func TestValidateTopicStateRejectsProducerCreateTime(t *testing.T) {
+	spec, err := Topic(TopicActionChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := desiredTopicState(spec.BaseName, spec, 1, 1)
+	state.MessageTimestamp = MessageTimestampCreateTime
+	if err := validateTopicState(state, spec, true, 1, 1); !errors.Is(err, ErrTopicTopologyInvalid) {
+		t.Fatalf("error = %v, want ErrTopicTopologyInvalid", err)
 	}
 }
 

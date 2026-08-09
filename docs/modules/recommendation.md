@@ -60,7 +60,7 @@
 | 观看反馈可重试 | 推荐画像消费带稳定 `event_id` 的播放、进度、完播和跳过事件；重复投递只应用一次 |
 | 观看 outcome 独立于画像 | durable view outbox 在投影前按服务端 `recorded_at` 验证并幂等保存 outcome；缺少 embedding 只让画像投影退避，不延迟已验证的曝光、进度、完播或跳过归因 |
 | 进度参与兴趣权重 | 有效前台播放进度和完播提升内容兴趣，过短跳过不作为正反馈 |
-| 发布与 HTTP 解耦 | 曝光模块通过事务 Outbox 向 Kafka behavior stream 可靠投递，Kafka 短暂不可用不丢失已接受反馈；RabbitMQ 保留 mirror/rollback |
+| 发布与 HTTP 解耦 | 曝光模块通过事务 Outbox 向 behavior stream 可靠投递；dual/mirror 模式只有 Kafka 与 RabbitMQ 都确认才 dispatched，任一失败保留 pending，短暂不可用不丢失已接受反馈 |
 | 画像投影不影响写入结果 | 反馈和关注事实在各自事务内写入可租约重试的画像 Outbox；Worker 以稳定事件 ID 幂等投影，失败保留待重试 |
 
 ## 5. 测试建议
@@ -147,8 +147,10 @@ deadline 约束。服务实例还以 16 个全局 provider slots 限制忽略取
 是可替换模型接口的保底实现。
 
 观看行为 Worker 通过 `frux.recommendation.consume-view.v1` 在 raw fact 与 profile/outcome
-handoff 同事务提交后才允许 Kafka offset commit；不等待 embedding 或后续画像投影。画像 Worker
-用稳定事件 ID 消费 progress、complete、skip、like、favorite、follow 与反馈，
+handoff 同事务提交后才允许 Kafka offset commit；不等待 embedding 或后续画像投影。Worker
+在 action Kafka active/shadow Group 之前初始化并启动该 view Group；cutover 使用 Broker
+`LogAppendTime`，并要求 action boundary 严格晚于 view boundary。画像 Worker 用稳定事件 ID
+消费 progress、complete、skip、like、favorite、follow 与反馈，
 将画像物化在稳定时间点：先把累计分量衰减至下一个物化时间，再加入原始有界信号；乱序/延迟事件
 确定性地衰减至当前物化时间。长期/近期向量、正负作者亲和和负向主题在排序读取时从最后物化时间
 按可配置半衰期（默认长期 30 天、近期 24 小时）衰减，并以同一年龄因子保留陈旧画像置信度，避免

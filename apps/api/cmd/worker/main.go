@@ -194,41 +194,6 @@ func startWorkers(
 	if err := actionWorker.Start(ctx); err != nil {
 		return err
 	}
-	switch actionMigration.Consumer {
-	case infrakafka.ConsumerModeKafka:
-		if err := startKafkaConsumer(
-			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupPersistActionActive,
-			actionMigration.CutoverBoundary,
-			infrabehaviorstream.NewActionHandler(actionWorker),
-			runtimeFailures,
-		); err != nil {
-			return err
-		}
-	case infrakafka.ConsumerModeKafkaShadow:
-		groupName, err := infrakafka.ResolvedGroupName(
-			cfg.Kafka.TopicPrefix,
-			cfg.Kafka.ShadowDeployment,
-			infrakafka.GroupPersistActionShadow,
-		)
-		if err != nil {
-			return err
-		}
-		shadow, err := applicationeventstream.NewShadowHandler(
-			groupName,
-			7*24*time.Hour,
-			infrabehaviorstream.ActionParityChecker{Reader: interactionRepo},
-			inframetrics.BehaviorShadowObserver{Stream: infrabehaviorstream.StreamAction},
-		)
-		if err != nil {
-			return err
-		}
-		if err := startKafkaConsumer(
-			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupPersistActionShadow, "", shadow,
-			runtimeFailures,
-		); err != nil {
-			return err
-		}
-	}
 
 	exposureRepo := infraexposure.New(gormDB)
 	viewMigration, err := infrakafka.MigrationFor(
@@ -273,40 +238,32 @@ func startWorkers(
 	if err := behaviorWorker.Start(ctx); err != nil {
 		return err
 	}
-	switch viewMigration.Consumer {
-	case infrakafka.ConsumerModeKafka:
-		if err := startKafkaConsumer(
-			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupConsumeViewActive,
-			viewMigration.CutoverBoundary,
-			infrabehaviorstream.NewViewHandler(behaviorWorker),
-			runtimeFailures,
-		); err != nil {
-			return err
-		}
-	case infrakafka.ConsumerModeKafkaShadow:
-		groupName, err := infrakafka.ResolvedGroupName(
-			cfg.Kafka.TopicPrefix,
-			cfg.Kafka.ShadowDeployment,
-			infrakafka.GroupConsumeViewShadow,
-		)
-		if err != nil {
-			return err
-		}
-		shadow, err := applicationeventstream.NewShadowHandler(
-			groupName,
-			7*24*time.Hour,
-			infrabehaviorstream.ViewParityChecker{Reader: recommendationRepo},
-			inframetrics.BehaviorShadowObserver{Stream: infrabehaviorstream.StreamView},
-		)
-		if err != nil {
-			return err
-		}
-		if err := startKafkaConsumer(
-			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupConsumeViewShadow, "", shadow,
-			runtimeFailures,
-		); err != nil {
-			return err
-		}
+	if err := startBehaviorKafkaConsumers(
+		ctx,
+		kafkaBackbone,
+		cfg.Kafka,
+		orderedBehaviorKafkaConsumers(
+			behaviorKafkaConsumer{
+				migration:     viewMigration,
+				activeGroup:   infrakafka.GroupConsumeViewActive,
+				shadowGroup:   infrakafka.GroupConsumeViewShadow,
+				activeHandler: infrabehaviorstream.NewViewHandler(behaviorWorker),
+				parity:        infrabehaviorstream.ViewParityChecker{Reader: recommendationRepo},
+				stream:        infrabehaviorstream.StreamView,
+			},
+			behaviorKafkaConsumer{
+				migration:     actionMigration,
+				activeGroup:   infrakafka.GroupPersistActionActive,
+				shadowGroup:   infrakafka.GroupPersistActionShadow,
+				activeHandler: infrabehaviorstream.NewActionHandler(actionWorker),
+				parity:        infrabehaviorstream.ActionParityChecker{Reader: interactionRepo},
+				stream:        infrabehaviorstream.StreamAction,
+			},
+		),
+		runtimeFailures,
+		startKafkaConsumer,
+	); err != nil {
+		return err
 	}
 	profileOutboxWorker := applicationrecommendation.NewProfileOutboxWorker(
 		applicationrecommendation.NewProfileProjector(recommendationRepo),
@@ -441,6 +398,88 @@ func startWorkers(
 		}),
 	)
 	return mediaWorker.Start(ctx)
+}
+
+type behaviorKafkaConsumer struct {
+	migration     infrakafka.StreamMigration
+	activeGroup   infrakafka.ConsumerGroupID
+	shadowGroup   infrakafka.ConsumerGroupID
+	activeHandler applicationeventstream.Handler
+	parity        applicationeventstream.ParityChecker
+	stream        string
+}
+
+type kafkaConsumerStarter func(
+	context.Context,
+	*infrakafka.Backbone,
+	infraconfig.KafkaConfig,
+	infrakafka.ConsumerGroupID,
+	string,
+	applicationeventstream.Handler,
+	chan<- error,
+) error
+
+func orderedBehaviorKafkaConsumers(
+	view behaviorKafkaConsumer,
+	action behaviorKafkaConsumer,
+) []behaviorKafkaConsumer {
+	return []behaviorKafkaConsumer{view, action}
+}
+
+func startBehaviorKafkaConsumers(
+	ctx context.Context,
+	backbone *infrakafka.Backbone,
+	cfg infraconfig.KafkaConfig,
+	consumers []behaviorKafkaConsumer,
+	runtimeFailures chan<- error,
+	starter kafkaConsumerStarter,
+) error {
+	for _, consumer := range consumers {
+		switch consumer.migration.Consumer {
+		case infrakafka.ConsumerModeKafka:
+			if err := starter(
+				ctx,
+				backbone,
+				cfg,
+				consumer.activeGroup,
+				consumer.migration.CutoverBoundary,
+				consumer.activeHandler,
+				runtimeFailures,
+			); err != nil {
+				return err
+			}
+		case infrakafka.ConsumerModeKafkaShadow:
+			groupName, err := infrakafka.ResolvedGroupName(
+				cfg.TopicPrefix,
+				cfg.ShadowDeployment,
+				consumer.shadowGroup,
+			)
+			if err != nil {
+				return err
+			}
+			shadow, err := applicationeventstream.NewShadowHandler(
+				groupName,
+				7*24*time.Hour,
+				consumer.parity,
+				inframetrics.BehaviorShadowObserver{Stream: consumer.stream},
+			)
+			if err != nil {
+				return err
+			}
+			if err := starter(
+				ctx,
+				backbone,
+				cfg,
+				consumer.shadowGroup,
+				"",
+				shadow,
+				runtimeFailures,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func startKafkaConsumer(

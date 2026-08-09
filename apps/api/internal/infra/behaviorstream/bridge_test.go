@@ -98,7 +98,7 @@ func TestActionPublisherSupportsAllMigrationModes(t *testing.T) {
 	}
 }
 
-func TestPrimaryFailureReturnsButMirrorFailureDoesNot(t *testing.T) {
+func TestDualPublishRequiresBothTransportAcknowledgements(t *testing.T) {
 	event := actionFixture()
 	rabbit := &rabbitPublisherStub{}
 	kafka := &kafkaPublisherStub{err: errors.New("mirror unavailable")}
@@ -111,8 +111,8 @@ func TestPrimaryFailureReturnsButMirrorFailureDoesNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := publisher.PublishActionChanged(context.Background(), event); err != nil {
-		t.Fatalf("mirror failure failed primary request: %v", err)
+	if err := publisher.PublishActionChanged(context.Background(), event); !errors.Is(err, kafka.err) {
+		t.Fatalf("Kafka mirror failure = %v", err)
 	}
 
 	kafka.err = infrakafka.ErrProduceUncertain
@@ -127,6 +127,12 @@ func TestPrimaryFailureReturnsButMirrorFailureDoesNot(t *testing.T) {
 	}
 	if err := publisher.PublishActionChanged(context.Background(), event); !errors.Is(err, infrakafka.ErrProduceUncertain) {
 		t.Fatalf("primary uncertainty = %v", err)
+	}
+
+	rabbit.actionErr = errors.New("Rabbit mirror unavailable")
+	kafka.err = nil
+	if err := publisher.PublishActionChanged(context.Background(), event); !errors.Is(err, rabbit.actionErr) {
+		t.Fatalf("Rabbit mirror failure = %v", err)
 	}
 }
 
@@ -199,6 +205,122 @@ func TestRabbitActiveBehaviorPathsRequireRabbitAcknowledgement(t *testing.T) {
 			t.Fatalf("Kafka mirror calls=%d", kafka.calls)
 		}
 	})
+}
+
+type publicationObservation struct {
+	stream    string
+	role      string
+	transport string
+	result    string
+}
+
+type publicationObserverStub struct {
+	observations []publicationObservation
+}
+
+func (o *publicationObserverStub) ObserveBehaviorPublication(stream, role, transport, result string) {
+	o.observations = append(o.observations, publicationObservation{
+		stream: stream, role: role, transport: transport, result: result,
+	})
+}
+
+func TestDualPublishObservesCombinedOutcome(t *testing.T) {
+	observer := &publicationObserverStub{}
+	rabbit := &rabbitPublisherStub{}
+	kafka := &kafkaPublisherStub{err: infrakafka.ErrProduceUncertain}
+	publisher, err := NewViewPublisher(
+		infrakafka.ProducerModeRabbitWithKafkaMirror,
+		rabbit,
+		kafka,
+		observer,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.PublishViewEventRecorded(
+		context.Background(),
+		viewFixture(),
+	); !errors.Is(err, infrakafka.ErrProduceUncertain) {
+		t.Fatalf("error=%v", err)
+	}
+	last := observer.observations[len(observer.observations)-1]
+	if last.stream != StreamView || last.role != "combined" ||
+		last.transport != "dual" || last.result != "uncertain" {
+		t.Fatalf("combined observation=%+v", last)
+	}
+}
+
+type dualViewOutboxStore struct {
+	pending    bool
+	leased     bool
+	dispatched int
+	failed     int
+	event      *applicationexposure.ViewEventRecordedEvent
+}
+
+func (s *dualViewOutboxStore) ClaimViewEventOutbox(
+	context.Context,
+	int,
+	time.Time,
+	time.Time,
+) ([]applicationexposure.OutboxItem, error) {
+	if !s.pending || s.leased {
+		return nil, nil
+	}
+	s.leased = true
+	return []applicationexposure.OutboxItem{{ID: 1, Event: s.event, Attempts: 1}}, nil
+}
+
+func (s *dualViewOutboxStore) MarkViewEventOutboxDispatched(
+	context.Context,
+	int64,
+	time.Time,
+) error {
+	s.pending = false
+	s.leased = false
+	s.dispatched++
+	return nil
+}
+
+func (s *dualViewOutboxStore) MarkViewEventOutboxFailed(
+	context.Context,
+	int64,
+	time.Time,
+	string,
+) error {
+	s.leased = false
+	s.failed++
+	return nil
+}
+
+func (s *dualViewOutboxStore) ViewEventOutboxStats(
+	context.Context,
+	time.Time,
+) (applicationexposure.OutboxStats, error) {
+	if s.pending {
+		return applicationexposure.OutboxStats{Pending: 1}, nil
+	}
+	return applicationexposure.OutboxStats{}, nil
+}
+
+func TestDualViewPublishFailureLeavesOutboxPending(t *testing.T) {
+	kafkaErr := errors.New("Kafka unavailable")
+	publisher, err := NewViewPublisher(
+		infrakafka.ProducerModeRabbitWithKafkaMirror,
+		&rabbitPublisherStub{},
+		&kafkaPublisherStub{err: kafkaErr},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &dualViewOutboxStore{pending: true, event: viewFixture()}
+	dispatched, err := applicationexposure.NewOutboxDispatcher(store, publisher).
+		DispatchOnce(context.Background())
+	if !errors.Is(err, kafkaErr) || dispatched != 0 || !store.pending ||
+		store.dispatched != 0 || store.failed != 1 {
+		t.Fatalf("dispatched=%d err=%v store=%+v", dispatched, err, store)
+	}
 }
 
 type actionWorkerStub struct{ err error }

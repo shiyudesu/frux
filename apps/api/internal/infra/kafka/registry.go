@@ -11,6 +11,7 @@ import (
 type TopicID string
 type TopicClass string
 type CleanupPolicy string
+type MessageTimestampType string
 type KeyKind string
 type ProducerID string
 type ConsumerGroupID string
@@ -28,6 +29,9 @@ const (
 
 	CleanupDelete  CleanupPolicy = "delete"
 	CleanupCompact CleanupPolicy = "compact"
+
+	MessageTimestampCreateTime    MessageTimestampType = "CreateTime"
+	MessageTimestampLogAppendTime MessageTimestampType = "LogAppendTime"
 
 	KeyKindProbeID     KeyKind = "probe_id"
 	KeyKindActionState KeyKind = "action_state"
@@ -72,6 +76,7 @@ type TopicSpec struct {
 	LocalPartitions    int
 	Retention          time.Duration
 	CleanupPolicy      CleanupPolicy
+	MessageTimestamp   MessageTimestampType
 	MaxRecordBytes     int
 	AllowedProducers   []ProducerID
 	AllowedGroups      []ConsumerGroupID
@@ -99,6 +104,7 @@ var topics = [...]TopicSpec{
 		ID: TopicBackboneProbe, BaseName: "frux.platform.backbone_probe.v1",
 		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindProbeID,
 		LocalPartitions: 3, Retention: time.Hour, CleanupPolicy: CleanupDelete,
+		MessageTimestamp: MessageTimestampLogAppendTime,
 		MaxRecordBytes:   900 << 10,
 		AllowedProducers: []ProducerID{ProducerPlatformAPI, ProducerPlatformWorker},
 		AllowedGroups:    []ConsumerGroupID{GroupBackboneProbeActive, GroupBackboneProbeShadow},
@@ -107,6 +113,7 @@ var topics = [...]TopicSpec{
 		ID: TopicActionChanged, BaseName: "frux.interaction.action-changed.v1",
 		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindActionState,
 		LocalPartitions: 12, Retention: 7 * 24 * time.Hour, CleanupPolicy: CleanupDelete,
+		MessageTimestamp: MessageTimestampLogAppendTime,
 		MaxRecordBytes:   256 << 10,
 		AllowedProducers: []ProducerID{ProducerInteractionAPI},
 		AllowedGroups:    []ConsumerGroupID{GroupPersistActionActive, GroupPersistActionShadow},
@@ -115,6 +122,7 @@ var topics = [...]TopicSpec{
 		ID: TopicViewEventRecorded, BaseName: "frux.exposure.view-event-recorded.v1",
 		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindUserID,
 		LocalPartitions: 12, Retention: 7 * 24 * time.Hour, CleanupPolicy: CleanupDelete,
+		MessageTimestamp: MessageTimestampLogAppendTime,
 		MaxRecordBytes:   256 << 10,
 		AllowedProducers: []ProducerID{ProducerExposureWorker},
 		AllowedGroups:    []ConsumerGroupID{GroupConsumeViewActive, GroupConsumeViewShadow},

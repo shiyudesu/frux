@@ -136,11 +136,11 @@ apps/api/internal/interfaces/http/interaction/
 
 ### 3.3 异步落库
 
-点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本。传输层按迁移模式选择 RabbitMQ 或 Kafka 主投递，并可镜像到另一传输；Kafka 使用 `frux.interaction.action-changed.v1`、规范 action-state key、幂等生产和 broker acknowledgement。Worker 只启动一个 active mutation 路径。
+点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本。传输层按迁移模式选择 RabbitMQ 或 Kafka single 投递，或同时向两者 transition 投递；dual/mirror 模式只有两者都 acknowledgement 才成功。Kafka 使用 `frux.interaction.action-changed.v1`、规范 action-state key、幂等生产和 broker acknowledgement。Worker 只启动一个 active mutation 路径。
 
 推荐流操作可选传入 `X-Recommendation-Request-ID`（最长 64）。该归因字段是不可信输入，随 durable action event 传递后，Worker 仅在耐久推荐证据绑定当前用户、request 和视频时幂等保存 `like` 或 `favorite` outcome；缺失或伪造归因会跳过 outcome，不改变已接受互动或画像信号。
 
-每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。主投递失败或 Kafka acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
+每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。Single 主投递失败、dual/mirror 任一传输失败或 Kafka acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
 
 发布与同步持久化都失败时，回滚只可撤销仍未确认、仍匹配 `state_version + event_id`、且没有后续依赖回执的版本；版本计数器不回退，因此可重试的撤销会分配更高版本。已确认的版本、依赖该版本的并发 no-op 或更高版本都会让回滚条件不命中，避免旧失败路径撤销已报告的成功。Redis 事务提交后若响应计数读取失败，缓存层会把版本和原事件元数据一并返回给应用层，以同一条件恢复或回滚；恢复失败时未确认事件保留在 Redis，后续重试可再次交接。
 
@@ -183,8 +183,10 @@ RabbitMQ 内部仍可使用 `dual` Queue 试点：相同 Event ID 会同时进�
 `interaction_action_event.event_id` receipt 吸收重复。旧 Queue ready/unacked 连续归零并完成
 观察后，配置切到 `new` 移除旧 Binding。
 
-Kafka 迁移顺序为 mirror + shadow、显式 cutover boundary、active Group；回滚先停 Kafka active
-Group，再恢复 RabbitMQ Consumer 和 Rabbit 主投递。Kafka 与 RabbitMQ 不会同时调用 mutating Worker。
+Kafka 迁移顺序为双 acknowledgement mirror + shadow、显式 broker append-time cutover boundary、
+active Group；action boundary 必须严格晚于 view boundary，且 Worker 先启动 view Kafka group。
+回滚先停 Kafka active Group，再恢复 RabbitMQ Consumer 和 Rabbit 主投递。Kafka 与 RabbitMQ
+不会同时调用 mutating Worker。
 
 ### 3.4 两级评论模型和通用响应
 
