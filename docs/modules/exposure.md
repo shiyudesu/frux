@@ -54,7 +54,10 @@
 
 ### 3.4 `view_event_outbox`
 
-与观看事实同事务写入待发布事件，保存 `event_id`、载荷、尝试次数、租约、下次重试时间、已分发时间和错误摘要。Worker 获得租约后发布 RabbitMQ 并等待确认；重复投递由下游按 `event_id` 去重。
+与观看事实同事务写入待发布事件，保存 `event_id`、载荷、尝试次数、租约、下次重试时间、已分发时间和错误摘要。Worker 获得租约后按迁移模式向主传输发布并等待确认；Kafka 主路径使用
+`frux.exposure.view-event-recorded.v1`、`user:{user_id}` key 和幂等 acknowledged production，
+可选 RabbitMQ mirror 单独观测。只有主传输确认后才标记 dispatched；重复投递由下游按
+`event_id` 去重。
 
 ### 3.5 `video_view_history_deletion`
 
@@ -73,7 +76,7 @@
 | 最近状态覆盖 | 最近场景、事件和时间按同会话非递减时间/更高序号或跨会话 `(occurred_at, event_id)` 更新；位置和有效观看时长始终取最大值，完播状态做 OR，因此迟到事件不能回退投影也不会丢失已发生的更高进度/完播 |
 | 幂等冲突 | 相同事件 ID 和相同载荷返回已有事实；相同 ID 不同载荷返回 409 |
 | 曝光重放快照 | exposed 事件保存首次曝光时间和当次曝光计数快照；后续曝光不会改变旧事件重放的响应 |
-| 可靠发布 | 事实、历史/曝光投影与 Outbox 同事务提交；RabbitMQ 暂时不可用不丢失已接受反馈 |
+| 可靠发布 | 事实、历史/曝光投影与 Outbox 同事务提交；Kafka 或 RabbitMQ 主传输暂时不可用不丢失已接受反馈 |
 | 历史迁移 | 统一迁移从现有三类观看事件按最新 `created_at, id` 补齐投影，并在同一事务写入 `app_migration` 持久标记；后续启动跳过回填，避免恢复用户已删除的历史 |
 | 删除语义 | 删除观看历史只删除投影，不删除原始事件或 `exposures`；单项/清空删除水位阻止迟到旧事件恢复投影，删除后真实发生的新播放仍可重建历史 |
 
@@ -86,7 +89,11 @@
 | 重放相同 event_id | 返回已有结果，不重复投影或入队 |
 | 同 event_id 不同载荷 | 返回 409 |
 | 旧事件晚于新事件提交 | 历史仍保留确定性较新的会话序号或 `(occurred_at, event_id)` 状态 |
-| RabbitMQ 暂时不可用 | Outbox 保留事件并在恢复后发布 |
+| Kafka 主传输暂时不可用 | HTTP 仍接受事实，Outbox 保留事件、释放租约并在恢复后发布 |
+
+推荐 active Group 为 `frux.recommendation.consume-view.v1`；shadow Group 为
+`frux.recommendation.consume-view.v1.shadow.<deployment>`，只做契约、age 和耐久 fact parity。
+View stream 必须先于 action stream cutover，并可独立回滚。
 | 上报自己的私密已发布视频 | 允许写入 |
 | 上报他人的私密视频 | 返回 404 |
 | 清理观看历史 | 原始事件和曝光聚合保持不变 |

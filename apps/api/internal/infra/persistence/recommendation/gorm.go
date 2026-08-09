@@ -1,6 +1,10 @@
 package infrarecommendation
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
@@ -9,10 +13,6 @@ import (
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -672,16 +672,82 @@ func (r *Repository) ApplyBehaviorEvent(ctx context.Context, event *applicatione
 	if event == nil || event.EventID == "" {
 		return false, nil
 	}
-	model := BehaviorEventModel{
+	model := behaviorEventModel(event)
+	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&model)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected > 0 {
+		return true, nil
+	}
+	var existing BehaviorEventModel
+	err := r.db.WithContext(ctx).
+		Where("(user_id = ? AND event_id = ?) OR view_event_id = ?", event.UserID, event.EventID, event.ViewEventID).
+		Take(&existing).Error
+	if err != nil {
+		return false, err
+	}
+	if !sameBehaviorEvent(existing, model) {
+		return false, applicationrecommendation.ErrBehaviorEventConflict
+	}
+	return false, nil
+}
+
+func (r *Repository) CompareBehaviorEvent(
+	ctx context.Context,
+	event *applicationexposure.ViewEventRecordedEvent,
+) (bool, bool, error) {
+	if event == nil || event.EventID == "" {
+		return false, false, applicationrecommendation.ErrBehaviorEventConflict
+	}
+	var existing BehaviorEventModel
+	err := r.db.WithContext(ctx).
+		Where("(user_id = ? AND event_id = ?) OR view_event_id = ?", event.UserID, event.EventID, event.ViewEventID).
+		Take(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return true, sameBehaviorEvent(existing, behaviorEventModel(event)), nil
+}
+
+func behaviorEventModel(event *applicationexposure.ViewEventRecordedEvent) BehaviorEventModel {
+	return BehaviorEventModel{
 		EventID: event.EventID, ViewEventID: event.ViewEventID, UserID: event.UserID, VideoID: event.VideoID,
 		Scene: strings.ToLower(strings.TrimSpace(event.Scene)), RequestID: strings.TrimSpace(event.RequestID),
 		EventType: event.EventType, PlaybackSessionID: stringPtr(event.PlaybackSessionID),
 		Sequence: int64Ptr(event.Sequence), PositionMs: event.PositionMs, WatchMs: event.WatchMs,
-		DurationMs: cloneInt(event.DurationMs), Completed: event.Completed, OccurredAt: event.OccurredAt,
-		RecordedAt: recordedAtFromViewEvent(event),
+		DurationMs: cloneInt(event.DurationMs), Completed: event.Completed,
+		OccurredAt: event.OccurredAt.UTC(), RecordedAt: recordedAtFromViewEvent(event),
 	}
-	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&model)
-	return result.RowsAffected > 0, result.Error
+}
+
+func sameBehaviorEvent(left, right BehaviorEventModel) bool {
+	return left.EventID == right.EventID &&
+		left.ViewEventID == right.ViewEventID &&
+		left.UserID == right.UserID &&
+		left.VideoID == right.VideoID &&
+		left.Scene == right.Scene &&
+		left.RequestID == right.RequestID &&
+		left.EventType == right.EventType &&
+		stringValue(left.PlaybackSessionID) == stringValue(right.PlaybackSessionID) &&
+		int64Value(left.Sequence) == int64Value(right.Sequence) &&
+		left.PositionMs == right.PositionMs &&
+		left.WatchMs == right.WatchMs &&
+		intValue(left.DurationMs) == intValue(right.DurationMs) &&
+		(left.DurationMs == nil) == (right.DurationMs == nil) &&
+		left.Completed == right.Completed &&
+		left.OccurredAt.Equal(right.OccurredAt) &&
+		left.RecordedAt.Equal(right.RecordedAt)
+}
+
+func intValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func (r *Repository) ClaimBehaviorProfileProjections(ctx context.Context, limit int, now, leasedUntil time.Time) ([]applicationrecommendation.BehaviorProfileProjectionItem, error) {

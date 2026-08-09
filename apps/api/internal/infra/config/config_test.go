@@ -232,6 +232,28 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("ordered behavior cutover", func(t *testing.T) {
+		cfg := KafkaConfig{
+			Enabled: true, Brokers: []string{"localhost:9092"},
+			Migration: KafkaMigrationConfig{
+				ViewEventRecorded: KafkaStreamMigrationConfig{
+					ProducerMode: "kafka", ConsumerMode: "kafka",
+					CutoverBoundary: "2026-08-09T00:00:00Z",
+				},
+				ActionChanged: KafkaStreamMigrationConfig{
+					ProducerMode: "kafka_with_rabbit_mirror", ConsumerMode: "kafka",
+					CutoverBoundary: "2026-08-09T01:00:00Z",
+				},
+			},
+		}
+		if err := normalizeAndValidateKafkaConfig(&cfg); err != nil {
+			t.Fatalf("ordered cutover: %v", err)
+		}
+		if cfg.ShadowDeployment != "local" {
+			t.Fatalf("shadow deployment = %q", cfg.ShadowDeployment)
+		}
+	})
+
 	for _, test := range []struct {
 		name string
 		cfg  KafkaConfig
@@ -273,6 +295,23 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 			Enabled: true, Brokers: []string{"localhost:9092"},
 			Migration: KafkaMigrationConfig{
 				ActionChanged: KafkaStreamMigrationConfig{ConsumerMode: "rabbit_and_kafka"},
+			},
+		}},
+		{name: "active without boundary", cfg: KafkaConfig{
+			Enabled: true, Brokers: []string{"localhost:9092"},
+			Migration: KafkaMigrationConfig{
+				ViewEventRecorded: KafkaStreamMigrationConfig{
+					ProducerMode: "kafka", ConsumerMode: "kafka",
+				},
+			},
+		}},
+		{name: "action before view", cfg: KafkaConfig{
+			Enabled: true, Brokers: []string{"localhost:9092"},
+			Migration: KafkaMigrationConfig{
+				ActionChanged: KafkaStreamMigrationConfig{
+					ProducerMode: "kafka", ConsumerMode: "kafka",
+					CutoverBoundary: "2026-08-09T01:00:00Z",
+				},
 			},
 		}},
 		{name: "unbounded poll", cfg: KafkaConfig{

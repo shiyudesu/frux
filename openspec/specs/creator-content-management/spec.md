@@ -121,7 +121,7 @@ Frux SHALL maintain per-user public-work, private-work, received-like, and colle
 - **THEN** the request is rejected as not found and no event is accepted
 
 #### Scenario: Accepted interaction event is redelivered
-- **WHEN** RabbitMQ redelivers the same accepted action event
+- **WHEN** Kafka redelivers or replays the same accepted action event
 - **THEN** its event receipt, action fact, video count, and author received-like aggregate remain exactly-once
 
 #### Scenario: Publish and fallback persistence both fail

@@ -136,17 +136,17 @@ apps/api/internal/interfaces/http/interaction/
 
 ### 3.3 异步落库
 
-点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本，随后使用 RabbitMQ publisher confirm 投递 `ActionChangedEvent`。Worker 消费事件并调用仓储写入 PostgreSQL 行为表和 `video_stat`。
+点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本。传输层按迁移模式选择 RabbitMQ 或 Kafka 主投递，并可镜像到另一传输；Kafka 使用 `frux.interaction.action-changed.v1`、规范 action-state key、幂等生产和 broker acknowledgement。Worker 只启动一个 active mutation 路径。
 
 推荐流操作可选传入 `X-Recommendation-Request-ID`（最长 64）。该归因字段是不可信输入，随 durable action event 传递后，Worker 仅在耐久推荐证据绑定当前用户、request 和视频时幂等保存 `like` 或 `favorite` outcome；缺失或伪造归因会跳过 outcome，不改变已接受互动或画像信号。
 
-每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。发布确认失败或结果不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
+每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。主投递失败或 Kafka acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
 
 发布与同步持久化都失败时，回滚只可撤销仍未确认、仍匹配 `state_version + event_id`、且没有后续依赖回执的版本；版本计数器不回退，因此可重试的撤销会分配更高版本。已确认的版本、依赖该版本的并发 no-op 或更高版本都会让回滚条件不命中，避免旧失败路径撤销已报告的成功。Redis 事务提交后若响应计数读取失败，缓存层会把版本和原事件元数据一并返回给应用层，以同一条件恢复或回滚；恢复失败时未确认事件保留在 Redis，后续重试可再次交接。
 
 同步请求和已接收事件使用不同的持久化入口：
 
-- `SetActionWithAcceptedEvent` 服务于 Redis/RabbitMQ 不可用时的新 HTTP 请求，必须在事务内再次锁定并验证视频仍为 `published + public`。每个非空 `Idempotency-Key` 都在 `interaction_action_idempotency_receipt` 中绑定目标 active 状态和首次响应计数：同键同目标返回首次结果，同键相反目标返回 409。状态未改变（包括不存在的行为收到取消）只写该回执；只有真实状态转换才创建 action event、画像投影 handoff 和推荐 outcome handoff。
+- `SetActionWithAcceptedEvent` 服务于 Redis 或异步传输不可用时的新 HTTP 请求，必须在事务内再次锁定并验证视频仍为 `published + public`。每个非空 `Idempotency-Key` 都在 `interaction_action_idempotency_receipt` 中绑定目标 active 状态和首次响应计数：同键同目标返回首次结果，同键相反目标返回 409。状态未改变（包括不存在的行为收到取消）只写该回执；只有真实状态转换才创建 action event、画像投影 handoff 和推荐 outcome handoff。
 - `PersistAcceptedActionEvent` 仅供 Worker 使用，表示事件已在入队前通过公开可读校验；视频之后变为私密或下架时仍写入互动事实和统计，但已删除或不存在的视频作为终止事件丢弃。
 - `interaction_action_event` 按 `event_id` 保存版本和完整已处理载荷。同一事件重复投递不再次改变 `interaction_action`、`video_stat` 或作者 `received_like_count`；相同事件 ID 携带不同载荷视为终止冲突。
 - `interaction_action` 为每个 `user_id + video_id + action_type` 保存最新 `latest_event_version + latest_event_occurred_at + latest_event_id`。Worker 首先比较版本；仅在版本相同的兼容事件中使用时间和事件 ID 确定顺序。任何较新事件（即使目标 active/canceled 状态未变）都推进这组顺序字段和推荐 request 归因，而状态相同的事件不改变统计增量；延迟旧事件与精确重复事件写入/命中回执后成功确认，但不改变物化状态或聚合。
@@ -170,15 +170,21 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | 用户行为状态 | `interaction:action:v1:{user_id}:{video_id}:{action}` |
 | 实时计数 Hash | `video:stat:counter:v1:{video_id}` |
 | Feed 计数 JSON | `video:stat:v1:{video_id}` |
-| Exchange | `frux.interaction` |
+| Kafka Topic | `frux.interaction.action-changed.v1` |
+| Kafka active Group | `frux.interaction.persist-action.v1` |
+| Kafka shadow Group | `frux.interaction.persist-action.v1.shadow.<deployment>` |
+| RabbitMQ Exchange | `frux.interaction` |
 | Legacy Queue | `frux.interaction.action_changed` |
 | Quorum pilot Queue | `frux.interaction.action_changed.q2` |
 | DLQ | `frux.interaction.action_changed.dlq.q2` |
 | Routing key | `interaction.action_changed` |
 
-当前使用 `dual` 试点：相同 Event ID 会同时进入旧 Queue 和 Quorum Queue，Worker 的
+RabbitMQ 内部仍可使用 `dual` Queue 试点：相同 Event ID 会同时进入旧 Queue 和 Quorum Queue，Worker 的
 `interaction_action_event.event_id` receipt 吸收重复。旧 Queue ready/unacked 连续归零并完成
 观察后，配置切到 `new` 移除旧 Binding。
+
+Kafka 迁移顺序为 mirror + shadow、显式 cutover boundary、active Group；回滚先停 Kafka active
+Group，再恢复 RabbitMQ Consumer 和 Rabbit 主投递。Kafka 与 RabbitMQ 不会同时调用 mutating Worker。
 
 ### 3.4 两级评论模型和通用响应
 

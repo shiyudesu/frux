@@ -6,8 +6,10 @@ Kafka is a retained event-stream foundation alongside RabbitMQ. This foundation 
 registries, strict JSON contracts, franz-go clients, explicit offset commits, migration controls,
 metrics, diagnostics, and local KRaft provisioning.
 
-It does **not** migrate a business event, remove AMQP, provide cross-system exactly-once semantics,
-or add retry topics, DLQ inspection, replay, Kafka Connect, CDC, Flink, or a schema registry.
+The first business streams are `action_changed` and `view_event_recorded`. RabbitMQ remains available
+as primary/mirror and rollback transport. This foundation does **not** remove AMQP, provide
+cross-system exactly-once semantics, or add retry topics, DLQ inspection, replay, Kafka Connect, CDC,
+Flink, or a schema registry.
 
 ## Configuration
 
@@ -23,6 +25,7 @@ Key fields:
 | `environment` | `local`, `test`, `staging`, or `production`. |
 | `brokers` | 1–16 explicit `host:port` seeds; no URL scheme or credentials. |
 | `client_id`, `topic_prefix` | Bounded names; prefix isolates integration environments. |
+| `shadow_deployment` | Bounded deployment suffix used in the exact registered shadow Group name. |
 | `allow_local_provisioning` | Allowed only in `local`/`test`; production is validation-only. |
 | `authentication.mechanism` | `none`, `plain`, `scram-sha-256`, or `scram-sha-512`. |
 | `tls` | TLS 1.2+, optional CA and paired client certificate/key; insecure verification only in local/test. |
@@ -35,8 +38,20 @@ Migration modes are closed:
 - Producer: `rabbit`, `rabbit_with_kafka_mirror`, `kafka_with_rabbit_mirror`, `kafka`.
 - Consumer: `rabbit`, `kafka_shadow`, `kafka`.
 
-All checked-in business stream modes are `rabbit`. A shadow consumer has a distinct Group ID and
-never invokes a mutating handler or commits the future active Group's offsets.
+Checked-in modes remain `rabbit`; action and view may independently select the four producer modes
+and three consumer modes. An active Kafka consumer requires an RFC3339 `cutover_boundary`. View
+production/consumption cuts over before action; rollback reverses that dependency. A shadow consumer
+uses `<active-group>.shadow.<deployment>`, never invokes a mutating handler, and never commits the
+future active Group's offsets.
+
+Registered behavior contracts:
+
+| Topic | Key | Producer | Active group |
+| --- | --- | --- | --- |
+| `frux.interaction.action-changed.v1` | `action:{user}:{video}:{LIKE\|FAVORITE}` | `interaction_api` | `frux.interaction.persist-action.v1` |
+| `frux.exposure.view-event-recorded.v1` | `user:{user}` | `exposure_worker` | `frux.recommendation.consume-view.v1` |
+
+Both retain immutable records for seven days with delete cleanup.
 
 ## Contracts and topology
 

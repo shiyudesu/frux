@@ -219,7 +219,8 @@ func kafkaTopicLabel(value infrakafka.TopicID) string {
 
 func kafkaProducerLabel(value infrakafka.ProducerID) string {
 	switch value {
-	case infrakafka.ProducerPlatformAPI, infrakafka.ProducerPlatformWorker:
+	case infrakafka.ProducerPlatformAPI, infrakafka.ProducerPlatformWorker,
+		infrakafka.ProducerInteractionAPI, infrakafka.ProducerExposureWorker:
 		return string(value)
 	default:
 		return "unknown"

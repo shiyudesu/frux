@@ -33,8 +33,8 @@ flowchart LR
   PostgreSQL[("PostgreSQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
-  RabbitMQ[("RabbitMQ<br/>当前异步任务与业务事件")]
-  Kafka[("Kafka<br/>保留事件流基础")]
+  RabbitMQ[("RabbitMQ<br/>异步任务与行为回滚")]
+  Kafka[("Kafka<br/>Action / View 保留事件流")]
   ObjectStorage[("对象存储<br/>媒体文件")]
 
   Web -->|"调用管理与浏览接口"| API
@@ -42,8 +42,8 @@ flowchart LR
   API -->|"读写业务事实、投影和聚合"| PostgreSQL
   API -->|"保存和读取本地文件"| Uploads
   API -->|"缓存 Feed、互动状态与计数；原子协调部分限流"| Redis
-  API -->|"当前投递互动、发布和曝光事件"| RabbitMQ
-  API -.->|"仅连接、校验 Topic；尚未切换业务流"| Kafka
+  API -->|"投递视频、媒体等任务；保留行为 mirror/rollback"| RabbitMQ
+  API -->|"投递 action_changed；Worker 投递 view_event_recorded"| Kafka
   API -.->|"迁移媒体文件"| ObjectStorage
 
   class Web,Client client;
@@ -137,8 +137,8 @@ Management Adapter 提供脱敏摘要/Preview；Replay Service 验证 allowlist 
 
 Kafka 是并行存在的事件流基础，不是 RabbitMQ 的重命名适配层。代码注册 Topic、Partition Key、
 Producer 和 Consumer Group；franz-go Producer 使用 idempotence + `acks=all`，Consumer 禁用自动
-提交并在耐久结果后提交 Offset。当前变更只启动连接、Topic provisioning/validation、健康诊断和
-迁移控制；互动、视频、曝光、媒体处理等业务发布与消费仍全部走 RabbitMQ。
+提交并在耐久结果后提交 Offset。`action_changed` 与 `view_event_recorded` 已接入独立 Topic、
+active/shadow Group 和 per-stream migration mode；视频、媒体等其他流程仍走 RabbitMQ。
 
 ## 3. 核心请求链路
 
@@ -239,14 +239,14 @@ sequenceDiagram
   R->>H: Interaction.Like
   H->>S: 校验当前 published + public
   S->>Redis: 原子更新状态、计数和单调 action version
-  S->>MQ: 发布 ActionChangedEvent 并等待 publisher confirm
-  alt 发布失败或确认不确定
+  S->>MQ: 按迁移模式发布 ActionChangedEvent 并等待主传输确认
+  alt Kafka 失败或确认不确定
     S->>Repo: 同步持久化同一版本事件
     alt 同步持久化也失败
       S->>Redis: 仅当前版本未被更新时条件回滚
     end
   end
-  MQ->>Worker: 投递已接收互动事件
+  MQ->>Worker: Kafka active Group 或 Rabbit rollback Consumer 投递
   Worker->>Repo: PersistAcceptedActionEvent
   Repo->>DB: 按 event_id 去重并优先应用最大的 version
   Repo->>DB: 同版本仅用 occurred_at + event_id 兼容定序

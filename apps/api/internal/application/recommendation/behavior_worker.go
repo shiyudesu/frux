@@ -1,13 +1,34 @@
 package applicationrecommendation
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
-	"context"
 	"strings"
 	"time"
 )
+
+var (
+	ErrBehaviorEventConflict = errors.New("behavior event payload conflict")
+	ErrTerminalBehaviorEvent = errors.New("terminal behavior event")
+)
+
+type terminalBehaviorEventError struct{ cause error }
+
+func (e terminalBehaviorEventError) Error() string {
+	return fmt.Sprintf("%v: %v", ErrTerminalBehaviorEvent, e.cause)
+}
+
+func (e terminalBehaviorEventError) Unwrap() error  { return e.cause }
+func (e terminalBehaviorEventError) Terminal() bool { return true }
+
+func IsTerminalBehaviorEventError(err error) bool {
+	var terminal interface{ Terminal() bool }
+	return errors.As(err, &terminal) && terminal.Terminal()
+}
 
 type BehaviorEventSource interface {
 	ConsumeViewEventRecorded(ctx context.Context, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) error
@@ -24,12 +45,32 @@ type BehaviorEventWorker struct {
 	repo      BehaviorEventRepository
 	source    BehaviorEventSource
 	projector *ProfileProjector
+	observer  BehaviorConsumerObserver
 }
 
-func NewBehaviorEventWorker(repo BehaviorEventRepository, source BehaviorEventSource) *BehaviorEventWorker {
+type BehaviorConsumerObserver interface {
+	ObserveViewConsumption(result string)
+}
+
+type BehaviorWorkerOption func(*BehaviorEventWorker)
+
+func WithBehaviorConsumerObserver(observer BehaviorConsumerObserver) BehaviorWorkerOption {
+	return func(worker *BehaviorEventWorker) {
+		worker.observer = observer
+	}
+}
+
+func NewBehaviorEventWorker(
+	repo BehaviorEventRepository,
+	source BehaviorEventSource,
+	options ...BehaviorWorkerOption,
+) *BehaviorEventWorker {
 	worker := &BehaviorEventWorker{repo: repo, source: source}
 	if projectionRepo, ok := repo.(ProfileProjectionRepository); ok {
 		worker.projector = NewProfileProjector(projectionRepo)
+	}
+	for _, option := range options {
+		option(worker)
 	}
 	return worker
 }
@@ -46,12 +87,23 @@ func (w *BehaviorEventWorker) Start(ctx context.Context) error {
 
 func (w *BehaviorEventWorker) Handle(ctx context.Context, event *applicationexposure.ViewEventRecordedEvent) error {
 	if event == nil || event.EventID == "" {
-		return nil
+		w.observeViewConsumption("terminal")
+		return terminalBehaviorEventError{cause: ErrBehaviorEventConflict}
 	}
 	stored, err := w.repo.ApplyBehaviorEvent(ctx, event)
 	if err != nil {
 		inframetrics.ObserveProfileWorker(event.OccurredAt, false, err)
+		if errors.Is(err, ErrBehaviorEventConflict) {
+			w.observeViewConsumption("terminal")
+			return terminalBehaviorEventError{cause: err}
+		}
+		w.observeViewConsumption("retryable")
 		return err
+	}
+	if stored {
+		w.observeViewConsumption("applied")
+	} else {
+		w.observeViewConsumption("duplicate")
 	}
 	if _, durable := w.repo.(BehaviorProfileOutboxStore); durable {
 		// The raw fact and its projection handoff committed together. Profile
@@ -94,6 +146,12 @@ func (w *BehaviorEventWorker) Handle(ctx context.Context, event *applicationexpo
 	applied, err := w.projector.ApplyView(ctx, event)
 	inframetrics.ObserveProfileWorker(event.OccurredAt, !stored && !applied && err == nil, err)
 	return err
+}
+
+func (w *BehaviorEventWorker) observeViewConsumption(result string) {
+	if w != nil && w.observer != nil {
+		w.observer.ObserveViewConsumption(result)
+	}
 }
 
 func recordedAtForOutcome(recordedAt time.Time) time.Time {

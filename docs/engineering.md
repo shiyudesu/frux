@@ -147,7 +147,7 @@ Application 层负责用例编排。
 - 默认分页大小和最大分页裁剪。
 - 基础设施能力的最小接口，例如 `TokenSigner`。
 
-Service 依赖 Domain 的 `Repository` 接口，构造函数注入依赖。Redis、RabbitMQ、JWT 这类能力通过小接口注入，便于测试。
+Service 依赖 Domain 的 `Repository` 接口，构造函数注入依赖。Redis、RabbitMQ、Kafka、JWT 这类能力通过小接口注入，便于测试。
 
 可选基础设施继续使用 functional option，例如账户资料设置仓储和视频缓存失效器。必需的聚合依赖应在构造函数中显式传入，避免运行时缺少核心数据源。
 
@@ -349,7 +349,12 @@ protected baseline/cover variant，无匹配 variant 时才回退 original；授
 
 播放技术遥测使用独立版本化批次，不进入观看历史或推荐行为投影。批次和事件载荷先规范化再计算哈希；同一 reporter 的写入用事务 advisory lock 串行，安全重放只计 duplicate，同 ID 异载荷回滚整批。原始遥测按 `created_at` 有界清理。
 
-需要可靠投递到 RabbitMQ、但不能让外部队列决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和 publisher confirm 分发，下游继续按业务事件 ID 去重。
+需要可靠投递到外部传输、但不能让 broker 决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和主传输 acknowledgement 分发，下游继续按业务事件 ID 去重。`view_event_recorded` 可选择 Kafka/RabbitMQ primary 与 mirror，mirror 失败不改变主传输结果。
+
+`action_changed` 保留 Redis 单调版本快速路径。Kafka primary 失败或 acknowledgement 不确定时
+同步执行 `PersistAcceptedActionEvent`；双失败只条件回滚仍由该版本拥有的 Redis 状态。Kafka
+active action/view Handler 只有在 PostgreSQL receipt/fact 与 downstream outbox 边界提交后才返回
+durable success；注册 terminal 结果可推进 offset，基础设施错误结束 Consumer Session 并重投。
 
 Outbox 不要求最终目标一定是 RabbitMQ。评论通知 Outbox 由 Worker 直接调用 message Application 窄接口：互动事务只提交 durable event，消息写入失败后按租约重试，`recipient + event_id` 去重；历史迁移不得合成旧通知。
 

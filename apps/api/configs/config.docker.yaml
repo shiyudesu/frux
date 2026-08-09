@@ -64,6 +64,7 @@ kafka:
     - "kafka:9092"
   client_id: "frux-compose"
   topic_prefix: ""
+  shadow_deployment: "compose"
   allow_local_provisioning: true
   authentication:
     mechanism: "none"

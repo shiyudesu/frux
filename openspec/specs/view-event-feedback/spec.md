@@ -63,11 +63,19 @@ The Web client SHALL flush terminal lifecycle events before player teardown and 
 - **THEN** the stable event ID prevents duplicate behavior facts
 
 ### Requirement: Reliable Recommendation Event Publication
-Accepted playback behavior events SHALL be published to recommendation consumers through a retryable, idempotent delivery mechanism that does not block the user-facing playback request on RabbitMQ availability.
+Accepted playback behavior events SHALL be published from the transactional PostgreSQL outbox to a registered Kafka event stream through retryable, idempotent delivery that does not block the user-facing playback request on Kafka availability.
 
-#### Scenario: RabbitMQ is temporarily unavailable
-- **WHEN** a view event is committed while event publication cannot be confirmed
-- **THEN** the event remains pending for retry and the accepted HTTP result is not lost
+#### Scenario: Kafka is temporarily unavailable
+- **WHEN** a view event is committed while Kafka publication cannot be acknowledged
+- **THEN** the event remains pending in the PostgreSQL outbox for retry and the accepted HTTP result is not lost
+
+#### Scenario: Kafka consumer receives a duplicate delivery
+- **WHEN** the same playback event is delivered more than once because an offset was not committed or a consumer group replays it
+- **THEN** the recommendation behavior fact and downstream projection handoff apply the event at most once by event ID
+
+#### Scenario: Kafka delivery is durably handed off
+- **WHEN** the recommendation consumer commits the raw behavior fact and its leased profile/outcome outbox
+- **THEN** it may commit the Kafka offset without waiting for embedding generation or later projection work
 
 #### Scenario: Consumer receives a duplicate delivery
 - **WHEN** the same playback event is delivered more than once

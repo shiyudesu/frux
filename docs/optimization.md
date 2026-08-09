@@ -17,8 +17,10 @@ flowchart LR
     Client["Web Client"] --> API["Hertz API"]
     API --> PostgreSQL["PostgreSQL"]
     API --> Redis["Redis"]
-    API --> RabbitMQ["RabbitMQ"]
-    RabbitMQ --> Worker["Worker"]
+    API --> Kafka["Kafka behavior streams"]
+    API --> RabbitMQ["RabbitMQ tasks / rollback"]
+    Kafka --> Worker["Worker"]
+    RabbitMQ --> Worker
     Worker --> PostgreSQL
     Worker --> Redis
 
@@ -28,7 +30,8 @@ flowchart LR
     FeedService --> StatCache["Video Stat Cache"]
 ```
 
-Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，PostgreSQL 保存最终事实。
+Redis 用于读性能和短期状态，Kafka 保留 action/view 行为流，RabbitMQ 保留其他任务及行为
+mirror/rollback，PostgreSQL 保存最终事实。
 
 推荐召回还使用每服务 16 个有限 provider slots：不响应取消的下游调用保持占位，后续请求降级而非继续创建 goroutine。
 
@@ -40,7 +43,7 @@ Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，Po
 | P0-02 | Feed 卡片组装慢 | 页缓存只存 ID，卡片和计数批量 MGET | 单页查询减少 N+1 回源 |
 | P0-03 | 分页重复和漏数 | 游标携带排序字段，稳定排序 | 翻页结果无重复且顺序稳定 |
 | P0-04 | 数据库缓存一致性偏差 | 写事实表，缓存短 TTL，异步更新 | 计数最终一致，缓存异常可回源 |
-| P0-05 | 并发点赞收藏评论 | Redis 快速状态、RabbitMQ 异步落库、幂等键 | 重复请求计数稳定 |
+| P0-05 | 并发点赞收藏评论 | Redis 快速状态、Kafka retained stream、PostgreSQL fallback、稳定事件 ID | 重复请求计数稳定 |
 | P0-06 | 大 V 发布放大 | 粉丝数阈值、异步 fanout、懒加载补偿 | 发布接口不被粉丝量线性拖慢 |
 | P0-07 | 热门视频热 key | 分钟桶 ZSET、窗口合并、短期窗口缓存 | Hot 查询避免集中打 PostgreSQL |
 
@@ -135,7 +138,7 @@ Redis 用于读性能和短期状态，RabbitMQ 用于削峰和异步落库，Po
 HTTP Handler
   -> Interaction Service
   -> Redis 行为状态和实时计数
-  -> RabbitMQ ActionChangedEvent
+  -> Kafka/RabbitMQ transport-aware ActionChangedEvent
   -> Worker
   -> PostgreSQL interaction_action / interaction_comment / video_stat
 ```
@@ -145,7 +148,8 @@ HTTP Handler
 | 异常 | 处理 |
 | --- | --- |
 | Redis 不可用 | 降级为 PostgreSQL 路径或返回可识别错误 |
-| RabbitMQ 投递失败 | 保留同步写入能力或记录失败任务 |
+| Kafka 主投递失败或确认不确定 | 同步 PostgreSQL receipt/outbox fallback；双失败条件回滚 Redis |
+| RabbitMQ mirror 投递失败 | 主路径成功不受影响，记录 mirror gap |
 | Worker 重复消费 | 使用唯一键和幂等键保证安全 |
 | 缓存计数偏差 | TTL 过期后回源修正 |
 

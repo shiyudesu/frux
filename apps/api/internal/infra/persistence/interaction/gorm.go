@@ -1,6 +1,8 @@
 package infrainteraction
 
 import (
+	"context"
+	"errors"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
@@ -8,8 +10,6 @@ import (
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
-	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -429,8 +429,23 @@ func (r *Repository) MarkRecommendationActionOutcomeFailed(ctx context.Context, 
 
 // PersistAcceptedActionEvent persists an interaction already accepted while the video was publicly readable.
 func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *domaininteraction.AcceptedActionEvent) error {
+	_, err := r.persistAcceptedActionEvent(ctx, event)
+	return err
+}
+
+func (r *Repository) PersistAcceptedActionEventWithOutcome(
+	ctx context.Context,
+	event *domaininteraction.AcceptedActionEvent,
+) (applicationinteraction.ActionPersistenceOutcome, error) {
+	return r.persistAcceptedActionEvent(ctx, event)
+}
+
+func (r *Repository) persistAcceptedActionEvent(
+	ctx context.Context,
+	event *domaininteraction.AcceptedActionEvent,
+) (applicationinteraction.ActionPersistenceOutcome, error) {
 	if event == nil {
-		return domaininteraction.ErrInvalidActionEvent
+		return "", domaininteraction.ErrInvalidActionEvent
 	}
 
 	normalized, err := domaininteraction.NewAcceptedActionEventWithRecommendation(
@@ -445,9 +460,10 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 		event.OccurredAt,
 	)
 	if err != nil {
-		return err
+		return "", err
 	}
 
+	outcome := applicationinteraction.ActionPersistenceApplied
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing ActionEventModel
 		existingErr := tx.Where("event_id = ?", normalized.EventID).Take(&existing).Error
@@ -455,6 +471,7 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 			if !sameAcceptedActionEvent(existing, actionEventModelFromDomain(normalized)) {
 				return domaininteraction.ErrActionEventConflict
 			}
+			outcome = applicationinteraction.ActionPersistenceDuplicate
 			return nil
 		}
 		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
@@ -482,6 +499,7 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 			if !sameAcceptedActionEvent(existing, receipt) {
 				return domaininteraction.ErrActionEventConflict
 			}
+			outcome = applicationinteraction.ActionPersistenceDuplicate
 			return nil
 		}
 
@@ -494,6 +512,7 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 			return currentErr
 		}
 		if !acceptedActionEventTransitionsState(current, currentErr == nil, normalized) {
+			outcome = applicationinteraction.ActionPersistenceSuperseded
 			return nil
 		}
 
@@ -511,7 +530,45 @@ func (r *Repository) PersistAcceptedActionEvent(ctx context.Context, event *doma
 		)
 		return err
 	})
-	return mapVideoError(err)
+	return outcome, mapVideoError(err)
+}
+
+func (r *Repository) CompareAcceptedActionEvent(
+	ctx context.Context,
+	event *applicationinteraction.ActionChangedEvent,
+) (bool, bool, error) {
+	accepted, err := applicationinteractionAcceptedEvent(event)
+	if err != nil {
+		return false, false, err
+	}
+	var existing ActionEventModel
+	err = r.db.WithContext(ctx).Where("event_id = ?", accepted.EventID).Take(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return true, sameAcceptedActionEvent(existing, actionEventModelFromDomain(accepted)), nil
+}
+
+func applicationinteractionAcceptedEvent(
+	event *applicationinteraction.ActionChangedEvent,
+) (*domaininteraction.AcceptedActionEvent, error) {
+	if event == nil {
+		return nil, domaininteraction.ErrInvalidActionEvent
+	}
+	return domaininteraction.NewAcceptedActionEventWithRecommendation(
+		event.EventID,
+		event.UserID,
+		event.VideoID,
+		event.ActionType,
+		event.Active,
+		event.IdempotencyKey,
+		event.RecommendationRequestID,
+		event.Version,
+		event.OccurredAt,
+	)
 }
 
 func acceptedActionEventTransitionsState(current ActionModel, found bool, event *domaininteraction.AcceptedActionEvent) bool {

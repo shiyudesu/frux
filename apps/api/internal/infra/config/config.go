@@ -240,7 +240,14 @@ func ValidateAPIConfig(cfg *Config) error {
 	if err := normalizeAndValidateRabbitMQConfig(&cfg.RabbitMQ); err != nil {
 		return err
 	}
-	return normalizeAndValidateKafkaConfig(&cfg.Kafka)
+	if err := normalizeAndValidateKafkaConfig(&cfg.Kafka); err != nil {
+		return err
+	}
+	if cfg.Kafka.Migration.ActionChanged.ProducerMode != "rabbit" &&
+		strings.TrimSpace(cfg.Redis.Addr) == "" {
+		return ErrInvalidKafkaConfig
+	}
+	return nil
 }
 
 func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
@@ -258,8 +265,13 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 	}
 	cfg.ClientID = defaultValue(cfg.ClientID, "frux")
 	cfg.TopicPrefix = strings.TrimSpace(strings.TrimSuffix(cfg.TopicPrefix, "."))
+	cfg.ShadowDeployment = strings.ToLower(strings.TrimSpace(cfg.ShadowDeployment))
+	if cfg.ShadowDeployment == "" {
+		cfg.ShadowDeployment = cfg.Environment
+	}
 	if !validKafkaName(cfg.ClientID, 128) ||
-		(cfg.TopicPrefix != "" && !validKafkaTopicPrefix(cfg.TopicPrefix)) {
+		(cfg.TopicPrefix != "" && !validKafkaTopicPrefix(cfg.TopicPrefix)) ||
+		!validKafkaTopicPrefix(cfg.ShadowDeployment) {
 		return ErrInvalidKafkaConfig
 	}
 	if len(cfg.Brokers) > 16 {
@@ -379,6 +391,7 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 	for _, stream := range streams {
 		stream.ProducerMode = strings.ToLower(strings.TrimSpace(stream.ProducerMode))
 		stream.ConsumerMode = strings.ToLower(strings.TrimSpace(stream.ConsumerMode))
+		stream.CutoverBoundary = strings.TrimSpace(stream.CutoverBoundary)
 		if stream.ProducerMode == "" {
 			stream.ProducerMode = "rabbit"
 		}
@@ -395,9 +408,25 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 		default:
 			return ErrInvalidKafkaConfig
 		}
+		if stream.CutoverBoundary != "" {
+			if _, err := time.Parse(time.RFC3339, stream.CutoverBoundary); err != nil {
+				return ErrInvalidKafkaConfig
+			}
+		}
+		if stream.ConsumerMode == "kafka" && stream.CutoverBoundary == "" {
+			return ErrInvalidKafkaConfig
+		}
 		if !cfg.Enabled && (stream.ProducerMode != "rabbit" || stream.ConsumerMode != "rabbit") {
 			return ErrInvalidKafkaConfig
 		}
+	}
+	if cfg.Migration.ActionChanged.ConsumerMode == "kafka" &&
+		cfg.Migration.ViewEventRecorded.ConsumerMode != "kafka" {
+		return ErrInvalidKafkaConfig
+	}
+	if kafkaPrimary(cfg.Migration.ActionChanged.ProducerMode) &&
+		!kafkaPrimary(cfg.Migration.ViewEventRecorded.ProducerMode) {
+		return ErrInvalidKafkaConfig
 	}
 	if !cfg.Enabled {
 		return nil
@@ -424,6 +453,10 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 		return ErrInvalidKafkaConfig
 	}
 	return nil
+}
+
+func kafkaPrimary(mode string) bool {
+	return mode == "kafka" || mode == "kafka_with_rabbit_mirror"
 }
 
 func validKafkaName(value string, max int) bool {

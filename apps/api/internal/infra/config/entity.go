@@ -22,6 +22,7 @@ type KafkaConfig struct {
 	Brokers                []string                        `yaml:"brokers"`
 	ClientID               string                          `yaml:"client_id"`
 	TopicPrefix            string                          `yaml:"topic_prefix"`
+	ShadowDeployment       string                          `yaml:"shadow_deployment"`
 	AllowLocalProvisioning bool                            `yaml:"allow_local_provisioning"`
 	Authentication         KafkaAuthenticationConfig       `yaml:"authentication"`
 	TLS                    KafkaTLSConfig                  `yaml:"tls"`
@@ -77,8 +78,9 @@ type KafkaMigrationConfig struct {
 }
 
 type KafkaStreamMigrationConfig struct {
-	ProducerMode string `yaml:"producer_mode"`
-	ConsumerMode string `yaml:"consumer_mode"`
+	ProducerMode    string `yaml:"producer_mode"`
+	ConsumerMode    string `yaml:"consumer_mode"`
+	CutoverBoundary string `yaml:"cutover_boundary"`
 }
 
 type ModerationConfig struct {

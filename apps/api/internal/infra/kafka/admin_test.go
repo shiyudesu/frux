@@ -32,7 +32,7 @@ func TestAdministratorProvisionsOnlyLocalTopics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 || len(backend.created) != 1 ||
+	if len(results) != len(Topics()) || len(backend.created) != len(Topics()) ||
 		backend.created[0].Name != "frux.platform.backbone_probe.v1" {
 		t.Fatalf("results=%+v created=%+v", results, backend.created)
 	}

@@ -101,7 +101,7 @@ func NewConsumer(
 	if err != nil {
 		return nil, err
 	}
-	groupName, err := GroupName(cfg.TopicPrefix, groupID)
+	groupName, err := ResolvedGroupName(cfg.TopicPrefix, cfg.ShadowDeployment, groupID)
 	if err != nil {
 		return nil, err
 	}

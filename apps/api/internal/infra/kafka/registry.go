@@ -19,7 +19,9 @@ type ProducerMode string
 type ConsumerMode string
 
 const (
-	TopicBackboneProbe TopicID = "backbone_probe"
+	TopicBackboneProbe     TopicID = "backbone_probe"
+	TopicActionChanged     TopicID = "action_changed"
+	TopicViewEventRecorded TopicID = "view_event_recorded"
 
 	TopicClassEvent   TopicClass = "event"
 	TopicClassCommand TopicClass = "command"
@@ -27,13 +29,21 @@ const (
 	CleanupDelete  CleanupPolicy = "delete"
 	CleanupCompact CleanupPolicy = "compact"
 
-	KeyKindProbeID KeyKind = "probe_id"
+	KeyKindProbeID     KeyKind = "probe_id"
+	KeyKindActionState KeyKind = "action_state"
+	KeyKindUserID      KeyKind = "user_id"
 
 	ProducerPlatformAPI    ProducerID = "platform_api"
 	ProducerPlatformWorker ProducerID = "platform_worker"
+	ProducerInteractionAPI ProducerID = "interaction_api"
+	ProducerExposureWorker ProducerID = "exposure_worker"
 
 	GroupBackboneProbeActive ConsumerGroupID = "backbone_probe_active"
 	GroupBackboneProbeShadow ConsumerGroupID = "backbone_probe_shadow"
+	GroupPersistActionActive ConsumerGroupID = "persist_action_active"
+	GroupPersistActionShadow ConsumerGroupID = "persist_action_shadow"
+	GroupConsumeViewActive   ConsumerGroupID = "consume_view_active"
+	GroupConsumeViewShadow   ConsumerGroupID = "consume_view_shadow"
 
 	ResponsibilityActionChanged     ResponsibilityID = "action_changed"
 	ResponsibilityVideoPublished    ResponsibilityID = "video_published"
@@ -93,18 +103,44 @@ var topics = [...]TopicSpec{
 		AllowedProducers: []ProducerID{ProducerPlatformAPI, ProducerPlatformWorker},
 		AllowedGroups:    []ConsumerGroupID{GroupBackboneProbeActive, GroupBackboneProbeShadow},
 	},
+	{
+		ID: TopicActionChanged, BaseName: "frux.interaction.action-changed.v1",
+		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindActionState,
+		LocalPartitions: 12, Retention: 7 * 24 * time.Hour, CleanupPolicy: CleanupDelete,
+		MaxRecordBytes:   256 << 10,
+		AllowedProducers: []ProducerID{ProducerInteractionAPI},
+		AllowedGroups:    []ConsumerGroupID{GroupPersistActionActive, GroupPersistActionShadow},
+	},
+	{
+		ID: TopicViewEventRecorded, BaseName: "frux.exposure.view-event-recorded.v1",
+		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindUserID,
+		LocalPartitions: 12, Retention: 7 * 24 * time.Hour, CleanupPolicy: CleanupDelete,
+		MaxRecordBytes:   256 << 10,
+		AllowedProducers: []ProducerID{ProducerExposureWorker},
+		AllowedGroups:    []ConsumerGroupID{GroupConsumeViewActive, GroupConsumeViewShadow},
+	},
 }
 
 var consumerGroups = [...]ConsumerGroupSpec{
 	{ID: GroupBackboneProbeActive, BaseName: "frux.platform.backbone_probe.active.v1", Topic: TopicBackboneProbe},
-	{ID: GroupBackboneProbeShadow, BaseName: "frux.platform.backbone_probe.shadow.v1", Topic: TopicBackboneProbe, Shadow: true},
+	{ID: GroupBackboneProbeShadow, BaseName: "frux.platform.backbone_probe.active.v1", Topic: TopicBackboneProbe, Shadow: true},
+	{ID: GroupPersistActionActive, BaseName: "frux.interaction.persist-action.v1", Topic: TopicActionChanged},
+	{ID: GroupPersistActionShadow, BaseName: "frux.interaction.persist-action.v1", Topic: TopicActionChanged, Shadow: true},
+	{ID: GroupConsumeViewActive, BaseName: "frux.recommendation.consume-view.v1", Topic: TopicViewEventRecorded},
+	{ID: GroupConsumeViewShadow, BaseName: "frux.recommendation.consume-view.v1", Topic: TopicViewEventRecorded, Shadow: true},
 }
 
 var migrations = [...]MigrationSpec{
-	{Responsibility: ResponsibilityActionChanged, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
+	{
+		Responsibility: ResponsibilityActionChanged, DefaultProducer: ProducerModeRabbit,
+		DefaultConsumer: ConsumerModeRabbit, KafkaProducerAvailable: true, KafkaConsumerAvailable: true,
+	},
 	{Responsibility: ResponsibilityVideoPublished, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
 	{Responsibility: ResponsibilityVideoEmbedding, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
-	{Responsibility: ResponsibilityViewEventRecorded, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
+	{
+		Responsibility: ResponsibilityViewEventRecorded, DefaultProducer: ProducerModeRabbit,
+		DefaultConsumer: ConsumerModeRabbit, KafkaProducerAvailable: true, KafkaConsumerAvailable: true,
+	},
 	{Responsibility: ResponsibilityMediaProcessing, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
 }
 
@@ -168,6 +204,25 @@ func GroupName(prefix string, id ConsumerGroupID) (string, error) {
 		return "", fmt.Errorf("%w: group prefix", ErrUnknownRegistryValue)
 	}
 	return prefix + "." + spec.BaseName, nil
+}
+
+func ResolvedGroupName(prefix, shadowDeployment string, id ConsumerGroupID) (string, error) {
+	spec, err := ConsumerGroup(id)
+	if err != nil {
+		return "", err
+	}
+	name, err := GroupName(prefix, id)
+	if err != nil {
+		return "", err
+	}
+	if !spec.Shadow {
+		return name, nil
+	}
+	shadowDeployment = strings.TrimSpace(shadowDeployment)
+	if !topicPrefixPattern.MatchString(shadowDeployment) {
+		return "", fmt.Errorf("%w: shadow deployment", ErrUnknownRegistryValue)
+	}
+	return name + ".shadow." + shadowDeployment, nil
 }
 
 func ValidProducerMode(mode ProducerMode) bool {

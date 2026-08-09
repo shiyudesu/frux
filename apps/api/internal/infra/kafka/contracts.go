@@ -16,7 +16,9 @@ type ContractFailureCode string
 const (
 	EnvelopeVersion1 = 1
 
-	EventTypeBackboneProbe EventType = "frux.platform.backbone_probe"
+	EventTypeBackboneProbe     EventType = "frux.platform.backbone_probe"
+	EventTypeActionChanged     EventType = "frux.interaction.action_changed"
+	EventTypeViewEventRecorded EventType = "frux.exposure.view_event_recorded"
 
 	ContractMalformedJSON      ContractFailureCode = "malformed_json"
 	ContractTrailingData       ContractFailureCode = "trailing_data"
@@ -40,6 +42,7 @@ type EventSpec struct {
 	KeyKind         KeyKind
 	MaxPayloadBytes int
 	NewPayload      func(version int) (any, bool)
+	ValidatePayload func(metadata EventMetadata, key []byte, payload any) error
 }
 
 type EventMetadata struct {
@@ -72,6 +75,37 @@ type DecodedEvent struct {
 type BackboneProbePayload struct {
 	ProbeID string `json:"probe_id"`
 	Source  string `json:"source"`
+}
+
+type ActionChangedPayload struct {
+	EventID                 string    `json:"event_id"`
+	UserID                  int64     `json:"user_id"`
+	VideoID                 int64     `json:"video_id"`
+	ActionType              string    `json:"action_type"`
+	Active                  bool      `json:"active"`
+	IdempotencyKey          string    `json:"idempotency_key"`
+	RecommendationRequestID string    `json:"recommendation_request_id,omitempty"`
+	Version                 int64     `json:"version"`
+	OccurredAt              time.Time `json:"occurred_at"`
+}
+
+type ViewEventRecordedPayload struct {
+	EventID           string    `json:"event_id"`
+	ViewEventID       int64     `json:"view_event_id"`
+	UserID            int64     `json:"user_id"`
+	VideoID           int64     `json:"video_id"`
+	Scene             string    `json:"scene"`
+	RequestID         string    `json:"request_id,omitempty"`
+	EventType         string    `json:"event_type"`
+	PlaybackSessionID string    `json:"playback_session_id,omitempty"`
+	Sequence          int64     `json:"sequence,omitempty"`
+	PositionMs        int       `json:"position_ms"`
+	WatchMs           int       `json:"watch_ms"`
+	DurationMs        *int      `json:"duration_ms,omitempty"`
+	Completed         bool      `json:"completed"`
+	RecordedAt        time.Time `json:"recorded_at"`
+	OccurredAt        time.Time `json:"occurred_at"`
+	ExposureCount     int       `json:"exposure_count,omitempty"`
 }
 
 type ContractError struct {
@@ -107,6 +141,29 @@ var events = [...]EventSpec{
 			}
 			return &BackboneProbePayload{}, true
 		},
+		ValidatePayload: validateProbePayload,
+	},
+	{
+		Type: EventTypeActionChanged, Topic: TopicActionChanged, SchemaVersions: []int{1},
+		KeyKind: KeyKindActionState, MaxPayloadBytes: 32 << 10,
+		NewPayload: func(version int) (any, bool) {
+			if version != 1 {
+				return nil, false
+			}
+			return &ActionChangedPayload{}, true
+		},
+		ValidatePayload: validateActionChangedPayload,
+	},
+	{
+		Type: EventTypeViewEventRecorded, Topic: TopicViewEventRecorded, SchemaVersions: []int{1},
+		KeyKind: KeyKindUserID, MaxPayloadBytes: 64 << 10,
+		NewPayload: func(version int) (any, bool) {
+			if version != 1 {
+				return nil, false
+			}
+			return &ViewEventRecordedPayload{}, true
+		},
+		ValidatePayload: validateViewEventRecordedPayload,
 	},
 }
 
@@ -142,6 +199,11 @@ func EncodeEvent(topicID TopicID, key []byte, metadata EventMetadata, payload an
 	}
 	if err := decodeStrict(payloadJSON, typedPayload); err != nil {
 		return nil, contractError(ContractInvalidPayload, err)
+	}
+	if spec.ValidatePayload != nil {
+		if err := spec.ValidatePayload(metadata, key, typedPayload); err != nil {
+			return nil, contractError(ContractInvalidPayload, err)
+		}
 	}
 	envelope := Envelope{
 		EnvelopeVersion: EnvelopeVersion1,
@@ -210,6 +272,11 @@ func DecodeEvent(topicID TopicID, key, record []byte, now time.Time) (DecodedEve
 	}
 	if err := decodeStrict(envelope.Payload, payload); err != nil {
 		return DecodedEvent{}, contractError(ContractInvalidPayload, err)
+	}
+	if spec.ValidatePayload != nil {
+		if err := spec.ValidatePayload(metadata, key, payload); err != nil {
+			return DecodedEvent{}, contractError(ContractInvalidPayload, err)
+		}
 	}
 	return DecodedEvent{Envelope: envelope, Payload: payload}, nil
 }
@@ -287,4 +354,56 @@ func producerAllowed(topicID TopicID, producer ProducerID) bool {
 		}
 	}
 	return false
+}
+
+func validateProbePayload(_ EventMetadata, key []byte, payload any) error {
+	probe, ok := payload.(*BackboneProbePayload)
+	if !ok || probe.ProbeID == "" || probe.Source == "" {
+		return errors.New("invalid probe payload")
+	}
+	decoded, err := DecodeKey(KeyKindProbeID, key)
+	if err != nil || decoded.(ProbeKey).ProbeID != probe.ProbeID {
+		return errors.New("probe key mismatch")
+	}
+	return nil
+}
+
+func validateActionChangedPayload(metadata EventMetadata, key []byte, payload any) error {
+	event, ok := payload.(*ActionChangedPayload)
+	if !ok || event.EventID != metadata.EventID || event.UserID <= 0 || event.VideoID <= 0 ||
+		event.Version <= 0 || event.OccurredAt.IsZero() ||
+		!event.OccurredAt.UTC().Equal(metadata.OccurredAt.UTC()) ||
+		(event.ActionType != "LIKE" && event.ActionType != "FAVORITE") ||
+		len(event.IdempotencyKey) > 128 || len(event.RecommendationRequestID) > 64 {
+		return errors.New("invalid action payload")
+	}
+	decoded, err := DecodeKey(KeyKindActionState, key)
+	if err != nil {
+		return err
+	}
+	actionKey := decoded.(ActionStateKey)
+	if actionKey.UserID != event.UserID || actionKey.VideoID != event.VideoID ||
+		actionKey.ActionType != event.ActionType {
+		return errors.New("action key mismatch")
+	}
+	return nil
+}
+
+func validateViewEventRecordedPayload(metadata EventMetadata, key []byte, payload any) error {
+	event, ok := payload.(*ViewEventRecordedPayload)
+	if !ok || event.EventID != metadata.EventID || event.ViewEventID <= 0 ||
+		event.UserID <= 0 || event.VideoID <= 0 || event.EventType == "" ||
+		event.RecordedAt.IsZero() || event.OccurredAt.IsZero() ||
+		!event.OccurredAt.UTC().Equal(metadata.OccurredAt.UTC()) ||
+		len(event.EventID) > 128 || len(event.Scene) > 32 || len(event.RequestID) > 64 ||
+		len(event.PlaybackSessionID) > 128 || event.Sequence < 0 ||
+		event.PositionMs < 0 || event.WatchMs < 0 ||
+		(event.DurationMs != nil && *event.DurationMs < 0) {
+		return errors.New("invalid view payload")
+	}
+	decoded, err := DecodeKey(KeyKindUserID, key)
+	if err != nil || decoded.(UserKey).UserID != event.UserID {
+		return errors.New("view key mismatch")
+	}
+	return nil
 }

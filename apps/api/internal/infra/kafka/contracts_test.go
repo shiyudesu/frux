@@ -26,6 +26,131 @@ func TestProbeKeyCodecStableFixture(t *testing.T) {
 	}
 }
 
+func TestBehaviorKeyCodecsStableFixtures(t *testing.T) {
+	action, err := EncodeKey(KeyKindActionState, ActionStateKey{
+		UserID: 42, VideoID: 99, ActionType: "LIKE",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(action) != "action:42:99:LIKE" {
+		t.Fatalf("action key = %q", action)
+	}
+	user, err := EncodeKey(KeyKindUserID, UserKey{UserID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(user) != "user:42" {
+		t.Fatalf("user key = %q", user)
+	}
+}
+
+func TestBehaviorEnvelopeRoundTripsExistingPayloads(t *testing.T) {
+	now := time.Date(2026, 8, 9, 2, 0, 0, 0, time.UTC)
+	actionKey := []byte("action:42:99:LIKE")
+	actionPayload := ActionChangedPayload{
+		EventID: "action-event-1", UserID: 42, VideoID: 99, ActionType: "LIKE",
+		Active: true, IdempotencyKey: "like-1", Version: 7, OccurredAt: now.Add(-time.Second),
+	}
+	actionRecord, err := EncodeEvent(TopicActionChanged, actionKey, EventMetadata{
+		EventID: actionPayload.EventID, Type: EventTypeActionChanged, SchemaVersion: 1,
+		OccurredAt: actionPayload.OccurredAt, ProducedAt: now, Producer: ProducerInteractionAPI,
+	}, actionPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedAction, err := DecodeEvent(TopicActionChanged, actionKey, actionRecord, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodedAction.Payload.(*ActionChangedPayload).Version != 7 {
+		t.Fatalf("action payload = %#v", decodedAction.Payload)
+	}
+
+	viewKey := []byte("user:42")
+	duration := 30_000
+	viewPayload := ViewEventRecordedPayload{
+		EventID: "view-event-1", ViewEventID: 101, UserID: 42, VideoID: 99,
+		Scene: "recommend", EventType: "progress", PositionMs: 10_000, WatchMs: 9_000,
+		DurationMs: &duration, RecordedAt: now, OccurredAt: now.Add(-2 * time.Second),
+	}
+	viewRecord, err := EncodeEvent(TopicViewEventRecorded, viewKey, EventMetadata{
+		EventID: viewPayload.EventID, Type: EventTypeViewEventRecorded, SchemaVersion: 1,
+		OccurredAt: viewPayload.OccurredAt, ProducedAt: now, Producer: ProducerExposureWorker,
+	}, viewPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedView, err := DecodeEvent(TopicViewEventRecorded, viewKey, viewRecord, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodedView.Payload.(*ViewEventRecordedPayload).ViewEventID != 101 {
+		t.Fatalf("view payload = %#v", decodedView.Payload)
+	}
+}
+
+func TestBehaviorContractsRejectMalformedIdentityVersionKeySizeAndTime(t *testing.T) {
+	now := time.Date(2026, 8, 9, 2, 0, 0, 0, time.UTC)
+	payload := ActionChangedPayload{
+		EventID: "action-event-1", UserID: 42, VideoID: 99, ActionType: "LIKE",
+		Active: true, Version: 1, OccurredAt: now.Add(-time.Second),
+	}
+	base := EventMetadata{
+		EventID: payload.EventID, Type: EventTypeActionChanged, SchemaVersion: 1,
+		OccurredAt: payload.OccurredAt, ProducedAt: now, Producer: ProducerInteractionAPI,
+	}
+	tests := []struct {
+		name     string
+		key      []byte
+		metadata EventMetadata
+		payload  ActionChangedPayload
+		code     ContractFailureCode
+	}{
+		{name: "malformed id", key: []byte("action:42:99:LIKE"), metadata: func() EventMetadata {
+			value := base
+			value.EventID = "bad id!"
+			return value
+		}(), payload: payload, code: ContractInvalidEnvelope},
+		{name: "unsupported version", key: []byte("action:42:99:LIKE"), metadata: func() EventMetadata {
+			value := base
+			value.SchemaVersion = 2
+			return value
+		}(), payload: payload, code: ContractUnsupportedVersion},
+		{name: "key mismatch", key: []byte("action:43:99:LIKE"), metadata: base, payload: payload, code: ContractInvalidPayload},
+		{name: "payload id mismatch", key: []byte("action:42:99:LIKE"), metadata: base, payload: func() ActionChangedPayload {
+			value := payload
+			value.EventID = "other-event"
+			return value
+		}(), code: ContractInvalidPayload},
+		{name: "future occurrence", key: []byte("action:42:99:LIKE"), metadata: func() EventMetadata {
+			value := base
+			value.OccurredAt = now.Add(6 * time.Minute)
+			return value
+		}(), payload: payload, code: ContractInvalidEnvelope},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := EncodeEvent(TopicActionChanged, test.key, test.metadata, test.payload)
+			var contract *ContractError
+			if !errors.As(err, &contract) || contract.Code != test.code {
+				t.Fatalf("error = %v, want %s", err, test.code)
+			}
+		})
+	}
+	topic, _ := Topic(TopicActionChanged)
+	_, err := DecodeEvent(
+		TopicActionChanged,
+		[]byte("action:42:99:LIKE"),
+		bytes.Repeat([]byte("x"), topic.MaxRecordBytes+1),
+		now,
+	)
+	var contract *ContractError
+	if !errors.As(err, &contract) || contract.Code != ContractOversizedRecord {
+		t.Fatalf("oversized error = %v", err)
+	}
+}
+
 func TestEnvelopeVersionOneRoundTrip(t *testing.T) {
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
 	key, _ := EncodeKey(KeyKindProbeID, ProbeKey{ProbeID: "probe-1"})

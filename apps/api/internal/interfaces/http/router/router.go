@@ -27,6 +27,7 @@ import (
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
+	infrabehaviorstream "github.com/shiyudesu/frux/internal/infra/behaviorstream"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
@@ -309,9 +310,37 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			log.Printf("rabbitmq disabled: %v", err)
 		} else {
 			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(rabbitMQ))
-			if feedCache != nil {
-				interactionOptions = append(interactionOptions, applicationinteraction.WithAsyncActionPipeline(feedCache, rabbitMQ))
-			}
+		}
+	}
+	actionMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityActionChanged,
+	)
+	if err != nil {
+		return err
+	}
+	interactionOptions = append(
+		interactionOptions,
+		applicationinteraction.WithActionDeliveryObserver(inframetrics.BehaviorObserver{}),
+	)
+	if feedCache != nil {
+		var rabbitActionPublisher infrabehaviorstream.RabbitActionPublisher
+		if rabbitMQ != nil {
+			rabbitActionPublisher = rabbitMQ
+		}
+		actionPublisher, publisherErr := infrabehaviorstream.NewActionPublisher(
+			actionMigration.Producer,
+			rabbitActionPublisher,
+			kafkaBackbone.Publisher(),
+			inframetrics.BehaviorObserver{},
+		)
+		if publisherErr == nil {
+			interactionOptions = append(
+				interactionOptions,
+				applicationinteraction.WithAsyncActionPipeline(feedCache, actionPublisher),
+			)
+		} else if actionMigration.Producer != infrakafka.ProducerModeRabbit {
+			return publisherErr
 		}
 	}
 	var deadLetterService *applicationdeadletter.Service

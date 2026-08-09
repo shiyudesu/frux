@@ -12,6 +12,7 @@ import (
 	"time"
 
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
+	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
@@ -25,6 +26,7 @@ import (
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infrabehaviorstream "github.com/shiyudesu/frux/internal/infra/behaviorstream"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
@@ -104,7 +106,7 @@ func main() {
 		}
 	}()
 
-	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ); err != nil {
+	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ, kafkaBackbone); err != nil {
 		log.Fatalf("start workers failed: %v", err)
 	}
 	log.Println("frux worker is running")
@@ -112,7 +114,13 @@ func main() {
 	log.Println("frux worker stopped")
 }
 
-func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB, rabbitMQ *inframq.RabbitMQ) error {
+func startWorkers(
+	ctx context.Context,
+	cfg *infraconfig.Config,
+	gormDB *gorm.DB,
+	rabbitMQ *inframq.RabbitMQ,
+	kafkaBackbone *infrakafka.Backbone,
+) error {
 	redisClient := infracache.NewRedisClient(cfg.Redis)
 	feedCache := infracache.NewFeedCache(redisClient)
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
@@ -160,19 +168,79 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	if err := commentNotificationWorker.Start(ctx); err != nil {
 		return err
 	}
+	actionMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityActionChanged,
+	)
+	if err != nil {
+		return err
+	}
+	var actionSource applicationinteraction.ActionEventConsumer
+	if actionMigration.Consumer != infrakafka.ConsumerModeKafka {
+		actionSource = rabbitMQ
+	}
 	actionWorker := applicationinteraction.NewActionWorker(
 		interactionRepo,
-		rabbitMQ,
+		actionSource,
 		applicationinteraction.WithRecommendationOutcomeRecorder(recommendationRepo),
+		applicationinteraction.WithActionConsumerObserver(inframetrics.BehaviorObserver{}),
 	)
 	if err := actionWorker.Start(ctx); err != nil {
 		return err
 	}
+	switch actionMigration.Consumer {
+	case infrakafka.ConsumerModeKafka:
+		if err := startKafkaConsumer(
+			ctx, cfg.Kafka, infrakafka.GroupPersistActionActive,
+			infrabehaviorstream.NewActionHandler(actionWorker),
+		); err != nil {
+			return err
+		}
+	case infrakafka.ConsumerModeKafkaShadow:
+		groupName, err := infrakafka.ResolvedGroupName(
+			cfg.Kafka.TopicPrefix,
+			cfg.Kafka.ShadowDeployment,
+			infrakafka.GroupPersistActionShadow,
+		)
+		if err != nil {
+			return err
+		}
+		shadow, err := applicationeventstream.NewShadowHandler(
+			groupName,
+			7*24*time.Hour,
+			infrabehaviorstream.ActionParityChecker{Reader: interactionRepo},
+			inframetrics.BehaviorShadowObserver{Stream: infrabehaviorstream.StreamAction},
+		)
+		if err != nil {
+			return err
+		}
+		if err := startKafkaConsumer(
+			ctx, cfg.Kafka, infrakafka.GroupPersistActionShadow, shadow,
+		); err != nil {
+			return err
+		}
+	}
 
 	exposureRepo := infraexposure.New(gormDB)
+	viewMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityViewEventRecorded,
+	)
+	if err != nil {
+		return err
+	}
+	viewPublisher, err := infrabehaviorstream.NewViewPublisher(
+		viewMigration.Producer,
+		rabbitMQ,
+		kafkaBackbone.Publisher(),
+		inframetrics.BehaviorObserver{},
+	)
+	if err != nil {
+		return err
+	}
 	outboxDispatcher := applicationexposure.NewOutboxDispatcher(
 		exposureRepo,
-		rabbitMQ,
+		viewPublisher,
 		applicationexposure.WithOutboxObserver(func(stats applicationexposure.OutboxStats, err error) {
 			inframetrics.ObserveViewEventOutbox(stats.Pending, stats.OldestPending, time.Now().UTC(), err)
 		}),
@@ -184,9 +252,49 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	if err := applicationrecommendation.NewRequestLogCleanupWorker(recommendationRepo, recommendationRepo).Start(ctx); err != nil {
 		return err
 	}
-	behaviorWorker := applicationrecommendation.NewBehaviorEventWorker(recommendationRepo, rabbitMQ)
+	var behaviorSource applicationrecommendation.BehaviorEventSource
+	if viewMigration.Consumer != infrakafka.ConsumerModeKafka {
+		behaviorSource = rabbitMQ
+	}
+	behaviorWorker := applicationrecommendation.NewBehaviorEventWorker(
+		recommendationRepo,
+		behaviorSource,
+		applicationrecommendation.WithBehaviorConsumerObserver(inframetrics.BehaviorObserver{}),
+	)
 	if err := behaviorWorker.Start(ctx); err != nil {
 		return err
+	}
+	switch viewMigration.Consumer {
+	case infrakafka.ConsumerModeKafka:
+		if err := startKafkaConsumer(
+			ctx, cfg.Kafka, infrakafka.GroupConsumeViewActive,
+			infrabehaviorstream.NewViewHandler(behaviorWorker),
+		); err != nil {
+			return err
+		}
+	case infrakafka.ConsumerModeKafkaShadow:
+		groupName, err := infrakafka.ResolvedGroupName(
+			cfg.Kafka.TopicPrefix,
+			cfg.Kafka.ShadowDeployment,
+			infrakafka.GroupConsumeViewShadow,
+		)
+		if err != nil {
+			return err
+		}
+		shadow, err := applicationeventstream.NewShadowHandler(
+			groupName,
+			7*24*time.Hour,
+			infrabehaviorstream.ViewParityChecker{Reader: recommendationRepo},
+			inframetrics.BehaviorShadowObserver{Stream: infrabehaviorstream.StreamView},
+		)
+		if err != nil {
+			return err
+		}
+		if err := startKafkaConsumer(
+			ctx, cfg.Kafka, infrakafka.GroupConsumeViewShadow, shadow,
+		); err != nil {
+			return err
+		}
 	}
 	profileOutboxWorker := applicationrecommendation.NewProfileOutboxWorker(
 		applicationrecommendation.NewProfileProjector(recommendationRepo),
@@ -321,6 +429,46 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 		}),
 	)
 	return mediaWorker.Start(ctx)
+}
+
+func startKafkaConsumer(
+	ctx context.Context,
+	cfg infraconfig.KafkaConfig,
+	group infrakafka.ConsumerGroupID,
+	handler applicationeventstream.Handler,
+) error {
+	first, err := infrakafka.NewConsumer(
+		ctx,
+		cfg,
+		group,
+		handler,
+		inframetrics.KafkaObserver{},
+	)
+	if err != nil {
+		return err
+	}
+	firstSession := true
+	supervisor := infrakafka.Supervisor{
+		NewConsumer: func(sessionContext context.Context) (*infrakafka.Consumer, error) {
+			if firstSession {
+				firstSession = false
+				return first, nil
+			}
+			return infrakafka.NewConsumer(
+				sessionContext,
+				cfg,
+				group,
+				handler,
+				inframetrics.KafkaObserver{},
+			)
+		},
+	}
+	go func() {
+		if err := supervisor.Run(ctx); err != nil {
+			log.Printf("kafka consumer %s stopped: %v", group, err)
+		}
+	}()
+	return nil
 }
 
 func startModerationWorker(

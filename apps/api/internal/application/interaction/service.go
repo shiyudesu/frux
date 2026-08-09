@@ -1,8 +1,6 @@
 package applicationinteraction
 
 import (
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
-	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -10,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"strings"
 	"time"
 )
@@ -30,6 +30,7 @@ type Service struct {
 	statCache        StatCache
 	actionStateStore ActionStateStore
 	actionPublisher  ActionEventPublisher
+	actionObserver   ActionDeliveryObserver
 	messageWriter    MessageWriter
 }
 
@@ -86,6 +87,11 @@ type ActionStateHandoffConfirmer interface {
 // ActionEventPublisher 投递点赞收藏变更事件。
 type ActionEventPublisher interface {
 	PublishActionChanged(ctx context.Context, event *ActionChangedEvent) error
+}
+
+type ActionDeliveryObserver interface {
+	ObserveActionFallback(result string)
+	ObserveActionRollback(result string)
 }
 
 // MessageWriter 写入互动触发的站内消息。
@@ -180,6 +186,12 @@ func WithAsyncActionPipeline(store ActionStateStore, publisher ActionEventPublis
 	return func(s *Service) {
 		s.actionStateStore = store
 		s.actionPublisher = publisher
+	}
+}
+
+func WithActionDeliveryObserver(observer ActionDeliveryObserver) Option {
+	return func(s *Service) {
+		s.actionObserver = observer
 	}
 }
 
@@ -421,6 +433,7 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			if acceptedErr != nil {
 				rolledBack, rollbackErr := s.rollbackActionState(recoveryCtx, state)
 				cancelRecovery()
+				s.observeActionFallback("invalid")
 				if rollbackErr != nil {
 					recoveryErr := s.ensureActionEventDurable(ctx, event)
 					return nil, actionUpdateError(publishErr, acceptedErr, rollbackErr, recoveryErr)
@@ -429,6 +442,7 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 				return nil, actionUpdateError(publishErr, acceptedErr)
 			}
 			if persistErr := s.repo.PersistAcceptedActionEvent(recoveryCtx, accepted); persistErr != nil {
+				s.observeActionFallback("failure")
 				_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
 				cancelRecovery()
 				if rollbackErr != nil {
@@ -443,6 +457,7 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 				}
 				return nil, actionUpdateError(publishErr, persistErr)
 			}
+			s.observeActionFallback("success")
 			cancelRecovery()
 		}
 		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {
@@ -530,9 +545,31 @@ func actionUpdateError(causes ...error) error {
 
 func (s *Service) rollbackActionState(ctx context.Context, state *ActionStateResult) (bool, error) {
 	if s.actionStateStore == nil || state == nil || !state.CanRollback {
+		s.observeActionRollback("not_applicable")
 		return false, nil
 	}
-	return s.actionStateStore.RollbackActionState(ctx, state)
+	rolledBack, err := s.actionStateStore.RollbackActionState(ctx, state)
+	switch {
+	case err != nil:
+		s.observeActionRollback("failure")
+	case rolledBack:
+		s.observeActionRollback("success")
+	default:
+		s.observeActionRollback("superseded")
+	}
+	return rolledBack, err
+}
+
+func (s *Service) observeActionFallback(result string) {
+	if s.actionObserver != nil {
+		s.actionObserver.ObserveActionFallback(result)
+	}
+}
+
+func (s *Service) observeActionRollback(result string) {
+	if s.actionObserver != nil {
+		s.actionObserver.ObserveActionRollback(result)
+	}
 }
 
 func (s *Service) confirmActionStateHandoff(ctx context.Context, state *ActionStateResult) error {

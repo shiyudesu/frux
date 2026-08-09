@@ -64,6 +64,7 @@ kafka:
     - "localhost:29092"
   client_id: "frux-local"
   topic_prefix: ""
+  shadow_deployment: "local"
   allow_local_provisioning: true
   authentication:
     mechanism: "none"

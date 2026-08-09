@@ -1,12 +1,12 @@
 package applicationinteraction
 
 import (
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
-	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"errors"
 	"fmt"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"time"
 )
 
@@ -28,6 +28,26 @@ type ActionWorker struct {
 	consumer ActionEventConsumer
 	outcomes RecommendationOutcomeRecorder
 	now      func() time.Time
+	observer ActionConsumerObserver
+}
+
+type ActionPersistenceOutcome string
+
+const (
+	ActionPersistenceApplied    ActionPersistenceOutcome = "applied"
+	ActionPersistenceDuplicate  ActionPersistenceOutcome = "duplicate"
+	ActionPersistenceSuperseded ActionPersistenceOutcome = "superseded"
+)
+
+type ActionPersistenceOutcomeRepository interface {
+	PersistAcceptedActionEventWithOutcome(
+		context.Context,
+		*domaininteraction.AcceptedActionEvent,
+	) (ActionPersistenceOutcome, error)
+}
+
+type ActionConsumerObserver interface {
+	ObserveActionConsumption(result string)
 }
 
 type RecommendationOutcomeRecorder interface {
@@ -77,6 +97,12 @@ func WithRecommendationOutcomeRecorder(outcomes RecommendationOutcomeRecorder) A
 	}
 }
 
+func WithActionConsumerObserver(observer ActionConsumerObserver) ActionWorkerOption {
+	return func(worker *ActionWorker) {
+		worker.observer = observer
+	}
+}
+
 func NewActionWorker(repo domaininteraction.AcceptedActionEventRepository, consumer ActionEventConsumer, options ...ActionWorkerOption) *ActionWorker {
 	worker := &ActionWorker{
 		repo:     repo,
@@ -90,11 +116,13 @@ func NewActionWorker(repo domaininteraction.AcceptedActionEventRepository, consu
 }
 
 func (w *ActionWorker) Start(ctx context.Context) error {
-	if w == nil || w.consumer == nil {
+	if w == nil {
 		return nil
 	}
-	if err := w.consumer.ConsumeActionChanged(ctx, w.HandleActionChanged); err != nil {
-		return err
+	if w.consumer != nil {
+		if err := w.consumer.ConsumeActionChanged(ctx, w.HandleActionChanged); err != nil {
+			return err
+		}
 	}
 	if _, ok := w.repo.(RecommendationActionOutcomeStore); ok && w.outcomes != nil {
 		go w.dispatchRecommendationOutcomes(ctx)
@@ -115,13 +143,24 @@ func (w *ActionWorker) HandleActionChanged(ctx context.Context, event *ActionCha
 	if err != nil {
 		return terminalActionEvent(err)
 	}
-	if err := w.repo.PersistAcceptedActionEvent(ctx, accepted); err != nil {
+	outcome := ActionPersistenceApplied
+	var persistErr error
+	if outcomeRepo, ok := w.repo.(ActionPersistenceOutcomeRepository); ok {
+		outcome, persistErr = outcomeRepo.PersistAcceptedActionEventWithOutcome(ctx, accepted)
+	} else {
+		persistErr = w.repo.PersistAcceptedActionEvent(ctx, accepted)
+	}
+	if persistErr != nil {
+		err := persistErr
 		if errors.Is(err, domaininteraction.ErrVideoNotFound) ||
 			errors.Is(err, domaininteraction.ErrActionEventConflict) {
+			w.observeActionConsumption("terminal")
 			return terminalActionEvent(err)
 		}
+		w.observeActionConsumption("retryable")
 		return err
 	}
+	w.observeActionConsumption(string(outcome))
 	// Production repositories create the outcome handoff in the same
 	// transaction as the accepted action. Acknowledge RabbitMQ after that
 	// transaction commits; the leased outbox owns delayed attribution retries.
@@ -136,6 +175,12 @@ func (w *ActionWorker) HandleActionChanged(ctx context.Context, event *ActionCha
 		return err
 	}
 	return nil
+}
+
+func (w *ActionWorker) observeActionConsumption(result string) {
+	if w != nil && w.observer != nil {
+		w.observer.ObserveActionConsumption(result)
+	}
 }
 
 func (w *ActionWorker) dispatchRecommendationOutcomes(ctx context.Context) {

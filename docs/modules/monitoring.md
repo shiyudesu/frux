@@ -247,3 +247,18 @@ event/user/video/key/partition/offset/payload/raw error 作为标签。`commit r
 当前 Consumer Session 已停止，后续可能重投；先检查 Consumer 幂等边界，再检查 Group Coordinator。
 `topology result=invalid/missing` 在生产会阻止启动，不能临时开启 auto creation。Delivery delay 或
 lag 增长时按注册 Topic/Group 定位，不要添加动态 Partition/Offset 标签。
+
+## 15. Behavior stream migration observability
+
+行为迁移额外暴露：
+
+- `frux_behavior_publication_total{stream,role,transport,result}`；
+- `frux_behavior_action_fallback_total{result}` 与 conditional rollback；
+- `frux_behavior_shadow_total{stream,result}`；
+- `frux_behavior_consumption_total{stream,result}`。
+
+`stream` 仅为 action/view，`role` 仅为 primary/mirror，`transport` 仅为 rabbit/kafka；
+result 使用封闭 success/failure/uncertain、match/mismatch、duplicate/superseded 等集合。不得加入
+event、user、video、key、partition、offset 或错误正文。View 先 cutover；任一 stream 出现持续
+primary failure、fallback/rollback 增长、shadow mismatch、lag 或 delivery age 超门槛时按该
+stream 独立回滚。

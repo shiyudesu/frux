@@ -2,14 +2,16 @@ package infrakafka
 
 import (
 	"fmt"
+	"time"
 
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 )
 
 type StreamMigration struct {
-	Responsibility ResponsibilityID
-	Producer       ProducerMode
-	Consumer       ConsumerMode
+	Responsibility  ResponsibilityID
+	Producer        ProducerMode
+	Consumer        ConsumerMode
+	CutoverBoundary string
 }
 
 func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
@@ -51,12 +53,77 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 		if !cfg.Enabled && (producer != ProducerModeRabbit || consumer != ConsumerModeRabbit) {
 			return nil, fmt.Errorf("%w: Kafka migration while disabled", ErrUnknownRegistryValue)
 		}
+		if stream.CutoverBoundary != "" {
+			if _, err := time.Parse(time.RFC3339, stream.CutoverBoundary); err != nil {
+				return nil, fmt.Errorf("%w: cutover boundary", ErrUnknownRegistryValue)
+			}
+		}
+		if consumer == ConsumerModeKafka && stream.CutoverBoundary == "" {
+			return nil, fmt.Errorf("%w: active Kafka consumer requires cutover boundary", ErrUnknownRegistryValue)
+		}
+		if registered.KafkaProducerAvailable && registered.KafkaConsumerAvailable &&
+			!validStreamPair(producer, consumer) {
+			return nil, fmt.Errorf(
+				"%w: producer and consumer modes do not share one active delivery path for %s",
+				ErrUnknownRegistryValue,
+				registered.Responsibility,
+			)
+		}
 		plan = append(plan, StreamMigration{
 			Responsibility: registered.Responsibility,
-			Producer:       producer, Consumer: consumer,
+			Producer:       producer, Consumer: consumer, CutoverBoundary: stream.CutoverBoundary,
 		})
 	}
+	action, _ := MigrationFor(plan, ResponsibilityActionChanged)
+	view, _ := MigrationFor(plan, ResponsibilityViewEventRecorded)
+	if action.Consumer == ConsumerModeKafka && view.Consumer != ConsumerModeKafka {
+		return nil, fmt.Errorf("%w: view consumer must cut over before action", ErrUnknownRegistryValue)
+	}
+	if action.Consumer == ConsumerModeKafka && view.Consumer == ConsumerModeKafka {
+		actionBoundary, actionErr := time.Parse(time.RFC3339, action.CutoverBoundary)
+		viewBoundary, viewErr := time.Parse(time.RFC3339, view.CutoverBoundary)
+		if actionErr != nil || viewErr != nil || actionBoundary.Before(viewBoundary) {
+			return nil, fmt.Errorf("%w: view cutover boundary must precede action", ErrUnknownRegistryValue)
+		}
+	}
+	if kafkaPrimaryMode(action.Producer) && !kafkaPrimaryMode(view.Producer) {
+		return nil, fmt.Errorf("%w: view producer must cut over before action", ErrUnknownRegistryValue)
+	}
 	return plan, nil
+}
+
+func kafkaPrimaryMode(mode ProducerMode) bool {
+	return mode == ProducerModeKafka || mode == ProducerModeKafkaWithRabbitMirror
+}
+
+func validStreamPair(producer ProducerMode, consumer ConsumerMode) bool {
+	switch consumer {
+	case ConsumerModeRabbit:
+		return producer == ProducerModeRabbit ||
+			producer == ProducerModeRabbitWithKafkaMirror ||
+			producer == ProducerModeKafkaWithRabbitMirror
+	case ConsumerModeKafkaShadow:
+		return producer == ProducerModeRabbitWithKafkaMirror ||
+			producer == ProducerModeKafkaWithRabbitMirror
+	case ConsumerModeKafka:
+		return producer == ProducerModeKafka ||
+			producer == ProducerModeKafkaWithRabbitMirror
+	default:
+		return false
+	}
+}
+
+func MigrationFor(plan []StreamMigration, responsibility ResponsibilityID) (StreamMigration, error) {
+	for _, stream := range plan {
+		if stream.Responsibility == responsibility {
+			return stream, nil
+		}
+	}
+	return StreamMigration{}, fmt.Errorf(
+		"%w: migration responsibility %q",
+		ErrUnknownRegistryValue,
+		responsibility,
+	)
 }
 
 func RabbitMQActiveFoundation(plan []StreamMigration) bool {
