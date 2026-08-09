@@ -1,8 +1,8 @@
 package infraexposure
 
 import (
-	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	"context"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	"strings"
 	"time"
 
@@ -17,9 +17,24 @@ func (r *Repository) ClaimViewEventOutbox(ctx context.Context, limit int, now, l
 	items := make([]applicationexposure.OutboxItem, 0, limit)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var models []ViewEventOutboxModel
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
-			Where("dispatched_at IS NULL AND available_at <= ? AND (leased_until IS NULL OR leased_until < ?)", now, now).
-			Order("id ASC").
+		if err := tx.Table("view_event_outbox AS current_outbox").
+			Select("current_outbox.*").
+			Joins("JOIN video_view_events AS current_event ON current_event.id = current_outbox.view_event_id").
+			Clauses(clause.Locking{
+				Strength: "UPDATE",
+				Table:    clause.Table{Name: "current_outbox"},
+				Options:  "SKIP LOCKED",
+			}).
+			Where("current_outbox.dispatched_at IS NULL AND current_outbox.available_at <= ? AND (current_outbox.leased_until IS NULL OR current_outbox.leased_until < ?)", now, now).
+			Where(`NOT EXISTS (
+				SELECT 1
+				FROM view_event_outbox AS earlier_outbox
+				JOIN video_view_events AS earlier_event ON earlier_event.id = earlier_outbox.view_event_id
+				WHERE earlier_outbox.dispatched_at IS NULL
+				  AND earlier_outbox.id < current_outbox.id
+				  AND earlier_event.user_id = current_event.user_id
+			)`).
+			Order("current_outbox.id ASC").
 			Limit(limit).
 			Find(&models).Error; err != nil {
 			return err

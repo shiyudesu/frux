@@ -195,6 +195,22 @@ func TestMigrationPlanEnforcesViewFirstAndCutoverBoundary(t *testing.T) {
 	}
 }
 
+func TestMigrationPlanRejectsSubMillisecondCutoverBoundary(t *testing.T) {
+	_, err := MigrationPlan(infraconfig.KafkaConfig{
+		Enabled: true,
+		Migration: infraconfig.KafkaMigrationConfig{
+			ViewEventRecorded: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode:    "kafka",
+				ConsumerMode:    "kafka",
+				CutoverBoundary: "2026-08-09T01:00:00.000000001Z",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("sub-millisecond cutover boundary was accepted")
+	}
+}
+
 func TestNonBehaviorKafkaMigrationRemainsUnavailable(t *testing.T) {
 	_, err := MigrationPlan(infraconfig.KafkaConfig{
 		Enabled: true,

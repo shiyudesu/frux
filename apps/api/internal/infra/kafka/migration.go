@@ -54,7 +54,8 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 			return nil, fmt.Errorf("%w: Kafka migration while disabled", ErrUnknownRegistryValue)
 		}
 		if stream.CutoverBoundary != "" {
-			if _, err := time.Parse(time.RFC3339, stream.CutoverBoundary); err != nil {
+			boundary, err := time.Parse(time.RFC3339, stream.CutoverBoundary)
+			if err != nil || !millisecondAligned(boundary) {
 				return nil, fmt.Errorf("%w: cutover boundary", ErrUnknownRegistryValue)
 			}
 		}
@@ -82,7 +83,8 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 	if action.Consumer == ConsumerModeKafka && view.Consumer == ConsumerModeKafka {
 		actionBoundary, actionErr := time.Parse(time.RFC3339, action.CutoverBoundary)
 		viewBoundary, viewErr := time.Parse(time.RFC3339, view.CutoverBoundary)
-		if actionErr != nil || viewErr != nil || !actionBoundary.After(viewBoundary) {
+		if actionErr != nil || viewErr != nil ||
+			actionBoundary.UnixMilli() <= viewBoundary.UnixMilli() {
 			return nil, fmt.Errorf("%w: action cutover boundary must be strictly after view", ErrUnknownRegistryValue)
 		}
 	}
@@ -90,6 +92,10 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 		return nil, fmt.Errorf("%w: view producer must cut over before action", ErrUnknownRegistryValue)
 	}
 	return plan, nil
+}
+
+func millisecondAligned(value time.Time) bool {
+	return value.Equal(time.UnixMilli(value.UnixMilli()).In(value.Location()))
 }
 
 func kafkaPrimaryMode(mode ProducerMode) bool {
