@@ -238,33 +238,44 @@ func startWorkers(
 	if err := behaviorWorker.Start(ctx); err != nil {
 		return err
 	}
+	behaviorConsumers := orderedBehaviorKafkaConsumers(
+		behaviorKafkaConsumer{
+			migration:     viewMigration,
+			activeGroup:   infrakafka.GroupConsumeViewActive,
+			shadowGroup:   infrakafka.GroupConsumeViewShadow,
+			activeHandler: infrabehaviorstream.NewViewHandler(behaviorWorker),
+			parity:        infrabehaviorstream.ViewParityChecker{Reader: recommendationRepo},
+			stream:        infrabehaviorstream.StreamView,
+		},
+		behaviorKafkaConsumer{
+			migration:     actionMigration,
+			activeGroup:   infrakafka.GroupPersistActionActive,
+			shadowGroup:   infrakafka.GroupPersistActionShadow,
+			activeHandler: infrabehaviorstream.NewActionHandler(actionWorker),
+			parity:        infrabehaviorstream.ActionParityChecker{Reader: interactionRepo},
+			stream:        infrabehaviorstream.StreamAction,
+		},
+	)
+	behaviorConsumers, err = initializeBehaviorKafkaCutovers(
+		ctx,
+		gormDB,
+		kafkaBackbone,
+		behaviorConsumers,
+	)
+	if err != nil {
+		return err
+	}
 	if err := startBehaviorKafkaConsumers(
 		ctx,
 		kafkaBackbone,
 		cfg.Kafka,
-		orderedBehaviorKafkaConsumers(
-			behaviorKafkaConsumer{
-				migration:     viewMigration,
-				activeGroup:   infrakafka.GroupConsumeViewActive,
-				shadowGroup:   infrakafka.GroupConsumeViewShadow,
-				activeHandler: infrabehaviorstream.NewViewHandler(behaviorWorker),
-				parity:        infrabehaviorstream.ViewParityChecker{Reader: recommendationRepo},
-				stream:        infrabehaviorstream.StreamView,
-			},
-			behaviorKafkaConsumer{
-				migration:     actionMigration,
-				activeGroup:   infrakafka.GroupPersistActionActive,
-				shadowGroup:   infrakafka.GroupPersistActionShadow,
-				activeHandler: infrabehaviorstream.NewActionHandler(actionWorker),
-				parity:        infrabehaviorstream.ActionParityChecker{Reader: interactionRepo},
-				stream:        infrabehaviorstream.StreamAction,
-			},
-		),
+		behaviorConsumers,
 		runtimeFailures,
 		startKafkaConsumer,
 	); err != nil {
 		return err
 	}
+
 	profileOutboxWorker := applicationrecommendation.NewProfileOutboxWorker(
 		applicationrecommendation.NewProfileProjector(recommendationRepo),
 		recommendationRepo,
@@ -398,6 +409,53 @@ func startWorkers(
 		}),
 	)
 	return mediaWorker.Start(ctx)
+}
+
+func initializeBehaviorKafkaCutovers(
+	ctx context.Context,
+	db *gorm.DB,
+	backbone *infrakafka.Backbone,
+	consumers []behaviorKafkaConsumer,
+) ([]behaviorKafkaConsumer, error) {
+	result := append([]behaviorKafkaConsumer(nil), consumers...)
+	for index := range result {
+		consumer := &result[index]
+		if consumer.migration.Consumer != infrakafka.ConsumerModeKafka ||
+			consumer.migration.CutoverBoundary == "" {
+			continue
+		}
+		var cutoverResult infrakafka.CutoverResult
+		err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			lockKey := "kafka-cutover:" + string(consumer.activeGroup)
+			if err := tx.Exec(
+				"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+				lockKey,
+			).Error; err != nil {
+				return err
+			}
+			applied, err := backbone.ApplyConsumerCutover(
+				ctx,
+				consumer.activeGroup,
+				consumer.migration.CutoverBoundary,
+				infrakafka.CutoverInitializeOnly,
+			)
+			if err != nil {
+				return err
+			}
+			cutoverResult = applied
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		log.Printf(
+			"kafka consumer %s cutover offsets: %s",
+			consumer.activeGroup,
+			cutoverResult,
+		)
+		consumer.migration.CutoverBoundary = ""
+	}
+	return result, nil
 }
 
 type behaviorKafkaConsumer struct {

@@ -64,6 +64,8 @@ type RabbitMQ struct {
 	conn                     *amqp.Connection
 	publishChannel           *amqp.Channel
 	actionPublishChannel     *amqp.Channel
+	actionPublishConn        *amqp.Connection
+	actionPublishMu          sync.Mutex
 	viewEventPublishChannel  *amqp.Channel
 	viewEventPublishConn     *amqp.Connection
 	viewEventPublishMu       sync.Mutex
@@ -212,9 +214,9 @@ func (r *RabbitMQ) Close() error {
 	if r.publishChannel != nil {
 		_ = r.publishChannel.Close()
 	}
-	if r.actionPublishChannel != nil {
-		_ = r.actionPublishChannel.Close()
-	}
+	r.actionPublishMu.Lock()
+	r.resetActionPublisher()
+	r.actionPublishMu.Unlock()
 	if r.viewEventPublishChannel != nil {
 		_ = r.viewEventPublishChannel.Close()
 	}
@@ -287,6 +289,11 @@ func (r *RabbitMQ) PublishActionChanged(ctx context.Context, event *applicationi
 	if err != nil {
 		return err
 	}
+	r.actionPublishMu.Lock()
+	defer r.actionPublishMu.Unlock()
+	if err := r.ensureActionPublisher(); err != nil {
+		return err
+	}
 	confirmation, err := r.actionPublishChannel.PublishWithDeferredConfirmWithContext(
 		ctx,
 		r.config.InteractionExchange,
@@ -302,19 +309,76 @@ func (r *RabbitMQ) PublishActionChanged(ctx context.Context, event *applicationi
 		},
 	)
 	if err != nil {
-		return err
+		r.resetActionPublisher()
+		return &UncertainPublishError{cause: err}
 	}
 	if confirmation == nil {
 		return &UncertainPublishError{cause: ErrPublisherConfirmUnavailable}
 	}
 	acknowledged, err := confirmation.WaitContext(ctx)
 	if err != nil {
+		r.resetActionPublisher()
 		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
-		return publisherNackError(r.actionPublishChannel)
+		result := publisherNackError(r.actionPublishChannel)
+		if _, uncertain := result.(*UncertainPublishError); uncertain {
+			r.resetActionPublisher()
+		}
+		return result
 	}
 	return nil
+}
+
+func (r *RabbitMQ) ensureActionPublisher() error {
+	if r.actionPublishChannel != nil && !r.actionPublishChannel.IsClosed() {
+		return nil
+	}
+	connection := r.conn
+	if connection == nil || connection.IsClosed() {
+		created, err := amqp.Dial(r.config.URL)
+		if err != nil {
+			return err
+		}
+		r.actionPublishConn = created
+		connection = created
+	}
+	channel, err := connection.Channel()
+	if err != nil {
+		r.resetActionPublisher()
+		return err
+	}
+	if err := channel.Confirm(false); err != nil {
+		_ = channel.Close()
+		r.resetActionPublisher()
+		return err
+	}
+	if err := channel.ExchangeDeclare(
+		r.config.InteractionExchange,
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	); err != nil {
+		_ = channel.Close()
+		r.resetActionPublisher()
+		return err
+	}
+	r.actionPublishChannel = channel
+	return nil
+}
+
+func (r *RabbitMQ) resetActionPublisher() {
+	if r.actionPublishChannel != nil {
+		_ = r.actionPublishChannel.Close()
+		r.actionPublishChannel = nil
+	}
+	if r.actionPublishConn != nil {
+		_ = r.actionPublishConn.Close()
+		r.actionPublishConn = nil
+	}
 }
 
 func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *applicationvideo.PublishedEvent) error {

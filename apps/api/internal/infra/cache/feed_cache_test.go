@@ -533,6 +533,7 @@ func TestActionReceiptDualModeDoesNotInferHandoffFromBaseline(t *testing.T) {
 		EventID: accepted.EventID, IdempotencyKey: accepted.IdempotencyKey,
 		OccurredAt: accepted.OccurredAt, UpdatedAt: accepted.OccurredAt,
 	}
+
 	retried, err := cache.SetActionState(
 		context.Background(),
 		accepted.UserID,
@@ -549,6 +550,35 @@ func TestActionReceiptDualModeDoesNotInferHandoffFromBaseline(t *testing.T) {
 	}
 	if !retried.ShouldPublish || retried.EventID != accepted.EventID {
 		t.Fatalf("dual mode inferred completed handoff: %#v", retried)
+	}
+}
+
+func TestActionReceiptDualModeRepublishesAfterRedisLoss(t *testing.T) {
+	cache := newActionReceiptTestCache(t)
+	cache.RequireExplicitActionHandoff(true)
+	now := time.Now().UTC()
+	baseline := &domaininteraction.ActionStateSnapshot{
+		Exists: true, Active: true, Version: 7,
+		EventID: "event-after-redis-loss", IdempotencyKey: "redis-loss-key",
+		OccurredAt: now, UpdatedAt: now,
+	}
+	retried, err := cache.SetActionState(
+		context.Background(),
+		42,
+		1007,
+		domaininteraction.ActionTypeLike,
+		true,
+		"redis-loss-key",
+		&domaininteraction.VideoStat{VideoID: 1007},
+		baseline,
+		actionReceiptTestMutation("event-unused"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retried.ShouldPublish || retried.EventID != baseline.EventID ||
+		retried.Version != baseline.Version {
+		t.Fatalf("Redis loss suppressed dual repair: %#v", retried)
 	}
 }
 

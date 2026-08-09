@@ -519,7 +519,8 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 		if initialState != nil && (!cached || initialState.Version > previous.Version) {
 			previous = *initialState
 			cached = false
-			handoffConfirmed = true
+			handoffConfirmed = !c.requireExplicitActionHandoff ||
+				!actionStateNeedsHandoff(previous)
 		}
 		if initialState != nil && cached && actionStateSnapshotsMatch(*initialState, previous) &&
 			!deliveryIncomplete && !c.requireExplicitActionHandoff {
