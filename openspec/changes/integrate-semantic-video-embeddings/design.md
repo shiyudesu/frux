@@ -218,6 +218,18 @@ Tests will cover:
 - Compose rendering and a targeted outage test proving the worker writes hash vectors while the semantic container is unavailable, then eventually fills semantic coverage for the live event after recovery;
 - scope tests or assertions proving no historical scan, command/job entry point, cursor/checkpoint behavior, dry-run, re-embedding mode, or backfill-specific retry loop is introduced.
 
+### 10. Preserve cross-change startup, readiness, logging, and publication lifecycle guarantees
+
+The semantic service dependency uses one 180-second startup deadline across preload, fixture
+validation, and full pool initialization. Replacement failures retry with bounded backoff, expose
+live capacity, and keep readiness failed until required capacity recovers. Its request logs contain
+only route/status/duration/result/capacity and Uvicorn access logs remain disabled.
+
+Publication dispatch starts asynchronously so Kafka or RabbitMQ outage cannot block the worker or
+unrelated consumers. Runs are aggregate-bounded. Immutable publication facts survive bounded
+replay-window cleanup of dispatched operational outbox rows, and reconciliation uses the fact so
+cleanup cannot cause semantic intake or Feed fanout to receive a newly synthesized publication.
+
 ## Risks / Trade-offs
 
 - [The dependent semantic service change is still active and may not yet be implemented] → Treat its accepted spec as the contract, include a live cross-service contract gate, and do not mark integration implementation complete until that service is available.

@@ -215,6 +215,10 @@ GORM Repository 规则：
   embedding canonicalization。确定性语义 input 错误仅由 embedding Group terminal 提交，Feed Group
   仍须接受同一视频发布事实。publication outbox 的 stats query 与 dispatch error 分开观测，transport
   失败不得阻止成功的 pending/oldest gauge 更新。
+- 首次公开同时写 immutable `video_publication_event_fact` 与 operational outbox。Dispatcher
+  初次/周期运行异步，broker outage 不得阻塞 Worker 其余 consumer 启动；每次最多 5×100 条且
+  总计 10 秒。30 天后只按 100 条 batch 清理已有 fact 的 dispatched outbox，reconciliation 按
+  fact 缺失而不是 outbox 缺失修复，禁止 cleanup 后重新发布。
 - `frux.media.processing-requested.v1` 只是不权威的短保留唤醒提示。Consumer 校验数据库任务并
   有界 signal 后立即提交，不得在 ffmpeg 期间持有 Offset；数据库租约、心跳、轮询与 reconciliation
   继续决定正确性。语义向量长重试同样由 PostgreSQL job 管理，不使用 Kafka retry topic。
@@ -586,3 +590,7 @@ openspec validate --all --strict
 - 该服务由一个 HTTP coordinator 和最多两个隔离 inference 子进程组成。模型 preload/fixture 与
   native inference 都必须在可终止进程中执行；总 deadline 或 cancellation 要终止并替换对应进程、
   立即释放 admission，shutdown 回收全部子进程，子进程输出不得进入业务日志。
+- 一个 180 秒外层 deadline 必须覆盖 preload、fixture validation 和完整 inference pool 初始化，
+  worker 不得各自重置完整 timeout。replacement 失败按有界退避重试，readiness 要求全部配置容量，
+  全 worker 丢失返回 503 并在恢复后自动 ready。请求日志只允许 route/status/duration/result/
+  capacity，禁止 body/text/ID/vector/token/path/URL/raw error；Uvicorn access log 必须关闭。

@@ -655,3 +655,5 @@ flowchart LR
 `apps/semantic-embedding` 是独立 Python 3.12 CPU 服务，只提供固定 revision 的受保护 HTTP
 metadata/embedding 接口，不访问 Frux 数据库、缓存、队列或浏览器。Go Worker 按 hash-first
 边界写 PostgreSQL semantic job，再用唯一 claim token、lease heartbeat 和 fencing 调用服务。
+服务用一个 180 秒外层 deadline 初始化 preload/fixture/完整进程池；readiness 绑定全部 live
+capacity，replacement 有界重试。运营日志只含 route/status/duration/result/capacity。

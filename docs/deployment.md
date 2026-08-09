@@ -144,3 +144,10 @@ Compose 包含内部 `semantic-embedding` 服务，固定 MiniLM revision，复�
 limit 和 180 秒 readiness allowance。Worker 只使用 `condition: service_started`；服务启动后
 不可用时 hash intake、Feed 和媒体轮询仍运行，semantic jobs suspended/retry 并在 metadata 与
 resume 成功后恢复。
+
+服务内部使用同一个 180 秒 deadline 完成 preload、fixture validation 和全部 inference worker
+初始化。运行中 live capacity 少于配置值时 readiness 为 503；replacement 以最多 5 秒退避重试，
+容量恢复后 readiness 自动恢复。请求日志仅含 route/status/duration/result/capacity，Uvicorn
+access log 关闭。Kafka/RabbitMQ publication transport outage 同样不会阻塞 Worker 启动；
+publication dispatcher 异步重试并按 5×100/10 秒运行，30 天后的 dispatched outbox 仅在 immutable
+fact 存在时分批清理。

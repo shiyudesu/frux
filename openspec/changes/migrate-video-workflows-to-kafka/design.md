@@ -42,9 +42,18 @@ Alternative: separate fanout and embedding topics. Rejected because publication 
 
 ### Create a video-owned publication event outbox
 
-The transaction that first establishes a stable public publication fact inserts one `video_publication_event_outbox` row keyed by `event_id`. Review, media readiness, restore, and reconciliation all call the same idempotent publication boundary.
+The transaction that first establishes a stable public publication fact inserts one immutable
+`video_publication_event_fact` row and one operational `video_publication_event_outbox` row keyed by
+the same `event_id`. Review, media readiness, restore, and reconciliation all call the same
+idempotent publication boundary.
 
-The dispatcher publishes Kafka and marks the row dispatched after acknowledgement. A lease, `available_at`, attempts, bounded error class, and stable payload support crash recovery. The publication notification outbox is not reused because creator notification delivery and domain-event publication have different recipients, payloads, readiness, retention, and consumers.
+The dispatcher publishes Kafka and marks the operational row dispatched after acknowledgement. Its
+`Start` validates local dependencies and immediately returns; initial and periodic reconciliation,
+bounded aggregate dispatch, statistics, and cleanup run asynchronously. Broker transport failure
+never fails worker startup. Each run processes at most five 100-row batches under a 10-second
+deadline. Dispatched operational rows older than the 30-day replay window are deleted in bounded
+100-row cleanup batches only when the immutable fact exists. Reconciliation keys off the fact, so
+cleanup can never synthesize or republish a completed publication.
 
 Outbox statistics and dispatch operations are observed independently. A successful pending/oldest
 statistics query updates both gauges even when the same run encounters a Kafka transport failure;
@@ -104,7 +113,9 @@ Publication producer mirror/shadow validation precedes activation of each consum
 
 ## Risks / Trade-offs
 
-- [The publication outbox adds another durable row] -> Keep it compact, unique by event ID, lease in bounded batches, and remove only completed rows after a replay window.
+- [Publication persistence adds fact and operational rows] -> Keep both compact and unique by event
+  ID, lease in bounded batches, and remove only completed operational rows after the replay window
+  while retaining the immutable fact.
 - [Fanout replay repeats Redis writes] -> Preserve idempotent sorted-set/index operations and test duplicate publication events.
 - [Kafka wakeup can be lost] -> Treat PostgreSQL polling and reconciliation as mandatory correctness paths.
 - [Semantic job backlog can grow during long outages] -> Cap retry frequency, expose pending count/oldest age, support suspension, and preserve hash processing.

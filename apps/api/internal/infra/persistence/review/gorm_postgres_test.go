@@ -1048,7 +1048,8 @@ func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
 	}
 	if err := db.AutoMigrate(
 		&infravideo.VideoModel{}, &infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
-		&infravideo.NotificationOutboxModel{}, &infravideo.PublicationEventOutboxModel{},
+		&infravideo.NotificationOutboxModel{}, &infravideo.PublicationEventFactModel{},
+		&infravideo.PublicationEventOutboxModel{},
 		&CaseModel{}, &ResultModel{}, &SignalModel{}, &DecisionModel{}, &ModerationJobModel{}, &PolicyModel{},
 		&AssignmentModel{}, &HumanDecisionModel{}, &HumanDecisionIdempotencyModel{},
 		&NotificationOutboxModel{}, &infraadminaudit.EventModel{},

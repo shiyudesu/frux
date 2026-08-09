@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import hmac
+import logging
 import re
+import sys
 import time
 
 from fastapi import FastAPI, Request
@@ -40,6 +42,7 @@ from .settings import Settings, load_settings
 
 ITEM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 PROTECTED = {"/internal/v1/model", "/internal/v1/embeddings"}
+REQUEST_LOGGER = logging.getLogger("frux_embedding.requests")
 
 
 def error_response(status: int, code: str, message: str, headers: dict[str, str] | None = None):
@@ -49,62 +52,122 @@ def error_response(status: int, code: str, message: str, headers: dict[str, str]
 
 
 class RequestBoundary:
-    def __init__(self, app, settings: Settings):
+    def __init__(self, app, settings: Settings, capacity: Capacity):
         self.app = app
         self.settings = settings
+        self.capacity = capacity
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        scope.setdefault("state", {})["started"] = time.monotonic()
+        started = time.monotonic()
+        scope.setdefault("state", {})["started"] = started
         path = scope.get("path", "")
+        route = request_route(scope.get("method", ""), path)
+        status = 500
+
+        async def observed_send(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = int(message["status"])
+            await send(message)
+
         headers = {
             key.decode("latin1").lower(): value.decode("latin1")
             for key, value in scope.get("headers", [])
         }
-        if path in PROTECTED:
-            supplied = headers.get("x-internal-token")
-            if supplied is None:
-                await error_response(
-                    401, "AUTH_INTERNAL_TOKEN_REQUIRED", "internal token required"
-                )(scope, receive, send)
-                return
-            if not hmac.compare_digest(supplied.strip(), self.settings.token):
-                await error_response(
-                    401, "AUTH_INVALID_INTERNAL_TOKEN", "invalid internal token"
-                )(scope, receive, send)
-                return
         try:
-            content_length = int(headers.get("content-length", "0"))
-        except ValueError:
-            content_length = MAX_REQUEST_BYTES + 1
-        if content_length > MAX_REQUEST_BYTES:
-            await error_response(413, "REQUEST_TOO_LARGE", "request too large")(
-                scope, receive, send
-            )
-            return
-        size = 0
+            if path in PROTECTED:
+                supplied = headers.get("x-internal-token")
+                if supplied is None:
+                    await error_response(
+                        401, "AUTH_INTERNAL_TOKEN_REQUIRED", "internal token required"
+                    )(scope, receive, observed_send)
+                    return
+                if not hmac.compare_digest(supplied.strip(), self.settings.token):
+                    await error_response(
+                        401, "AUTH_INVALID_INTERNAL_TOKEN", "invalid internal token"
+                    )(scope, receive, observed_send)
+                    return
+            try:
+                content_length = int(headers.get("content-length", "0"))
+            except ValueError:
+                content_length = MAX_REQUEST_BYTES + 1
+            if content_length > MAX_REQUEST_BYTES:
+                await error_response(
+                    413, "REQUEST_TOO_LARGE", "request too large"
+                )(scope, receive, observed_send)
+                return
+            size = 0
 
-        async def bounded_receive():
-            nonlocal size
-            message = await receive()
-            if message["type"] == "http.request":
-                size += len(message.get("body", b""))
-                if size > MAX_REQUEST_BYTES:
-                    raise BodyTooLarge
-            return message
+            async def bounded_receive():
+                nonlocal size
+                message = await receive()
+                if message["type"] == "http.request":
+                    size += len(message.get("body", b""))
+                    if size > MAX_REQUEST_BYTES:
+                        raise BodyTooLarge
+                return message
 
-        try:
-            await self.app(scope, bounded_receive, send)
-        except BodyTooLarge:
-            await error_response(413, "REQUEST_TOO_LARGE", "request too large")(
-                scope, receive, send
+            try:
+                await self.app(scope, bounded_receive, observed_send)
+            except BodyTooLarge:
+                await error_response(413, "REQUEST_TOO_LARGE", "request too large")(
+                    scope, receive, observed_send
+                )
+        finally:
+            duration_ms = max(0, round((time.monotonic() - started) * 1000))
+            REQUEST_LOGGER.info(
+                "route=%s status=%d duration_ms=%d result=%s capacity=%d",
+                route,
+                status,
+                duration_ms,
+                request_result(status),
+                self.capacity.live_capacity(),
             )
 
 
 class BodyTooLarge(Exception):
     pass
+
+
+def request_route(method: str, path: str) -> str:
+    return {
+        ("GET", "/health/live"): "live",
+        ("GET", "/health/ready"): "ready",
+        ("GET", "/internal/v1/model"): "model",
+        ("POST", "/internal/v1/embeddings"): "embeddings",
+    }.get((method.upper(), path), "unknown")
+
+
+def request_result(status: int) -> str:
+    if 200 <= status < 300:
+        return "success"
+    if status == 401:
+        return "auth"
+    if status in {400, 404, 405, 413, 422}:
+        return "validation"
+    if status == 429:
+        return "overload"
+    if status == 504:
+        return "timeout"
+    if status == 503:
+        return "unavailable"
+    return "internal"
+
+
+def configure_request_logging(level: str) -> None:
+    REQUEST_LOGGER.setLevel(getattr(logging, level.upper(), logging.INFO))
+    if not any(
+        getattr(handler, "_frux_bounded_request_handler", False)
+        for handler in REQUEST_LOGGER.handlers
+    ):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        handler._frux_bounded_request_handler = True
+        REQUEST_LOGGER.addHandler(handler)
+    REQUEST_LOGGER.propagate = False
 
 
 def metadata() -> ModelMetadata:
@@ -120,8 +183,13 @@ def metadata() -> ModelMetadata:
     )
 
 
-def create_app(settings: Settings, runtime: ModelRuntime) -> FastAPI:
-    capacity = Capacity(settings, runtime)
+def create_app(
+    settings: Settings,
+    runtime: ModelRuntime,
+    startup_deadline: float | None = None,
+) -> FastAPI:
+    configure_request_logging(settings.log_level)
+    capacity = Capacity(settings, runtime, startup_deadline=startup_deadline)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -139,7 +207,7 @@ def create_app(settings: Settings, runtime: ModelRuntime) -> FastAPI:
     app.state.settings = settings
     app.state.runtime = runtime
     app.state.capacity = capacity
-    app.add_middleware(RequestBoundary, settings=settings)
+    app.add_middleware(RequestBoundary, settings=settings, capacity=capacity)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, __: RequestValidationError):
@@ -167,7 +235,10 @@ def create_app(settings: Settings, runtime: ModelRuntime) -> FastAPI:
 
     @app.get("/health/ready")
     async def ready():
-        if not runtime.ready:
+        if (
+            not runtime.ready
+            or app.state.capacity.live_capacity() < settings.max_concurrency
+        ):
             return JSONResponse(status_code=503, content={"status": "not_ready"})
         return {"status": "ready"}
 

@@ -714,13 +714,15 @@ func TestPostgresVideoCreationRollsBackWhenNotificationFails(t *testing.T) {
 		if err != nil || created != 1 {
 			t.Fatalf("reconcile created=%d err=%v", created, err)
 		}
-		var repaired, historicalEvents int64
+		var repaired, historicalEvents, facts int64
 		_ = db.Model(&infravideo.PublicationEventOutboxModel{}).
 			Where("event_id = ?", eventID).Count(&repaired).Error
+		_ = db.Model(&infravideo.PublicationEventFactModel{}).
+			Where("event_id = ?", eventID).Count(&facts).Error
 		_ = db.Model(&infravideo.PublicationEventOutboxModel{}).
 			Where("video_id = ?", historical.ID).Count(&historicalEvents).Error
-		if repaired != 1 || historicalEvents != 0 {
-			t.Fatalf("repaired=%d historical=%d", repaired, historicalEvents)
+		if repaired != 1 || facts != 1 || historicalEvents != 0 {
+			t.Fatalf("repaired=%d facts=%d historical=%d", repaired, facts, historicalEvents)
 		}
 		var notification infravideo.NotificationOutboxModel
 		if err := db.Where("event_id = ?", eventID).Take(&notification).Error; err != nil {
@@ -728,6 +730,31 @@ func TestPostgresVideoCreationRollsBackWhenNotificationFails(t *testing.T) {
 		}
 		if notification.State != domainmessage.LifecycleOutboxDelivered {
 			t.Fatalf("notification state changed: %s", notification.State)
+		}
+		dispatchedAt := now.Add(time.Minute)
+		if err := db.Model(&infravideo.PublicationEventOutboxModel{}).
+			Where("event_id = ?", eventID).
+			Update("dispatched_at", dispatchedAt).Error; err != nil {
+			t.Fatal(err)
+		}
+		deleted, err := repository.CleanupPublicationEvents(
+			context.Background(), dispatchedAt.Add(time.Second), 100,
+		)
+		if err != nil || deleted != 1 {
+			t.Fatalf("cleanup deleted=%d err=%v", deleted, err)
+		}
+		created, err = repository.ReconcilePublicationEvents(
+			context.Background(), 100, dispatchedAt.Add(2*time.Second),
+		)
+		if err != nil || created != 0 {
+			t.Fatalf("post-cleanup reconcile created=%d err=%v", created, err)
+		}
+		_ = db.Model(&infravideo.PublicationEventOutboxModel{}).
+			Where("event_id = ?", eventID).Count(&repaired).Error
+		_ = db.Model(&infravideo.PublicationEventFactModel{}).
+			Where("event_id = ?", eventID).Count(&facts).Error
+		if repaired != 0 || facts != 1 {
+			t.Fatalf("post-cleanup outbox=%d facts=%d", repaired, facts)
 		}
 	})
 	if err := db.Exec(`
@@ -815,6 +842,7 @@ func openSearchPostgres(t *testing.T) *gorm.DB {
 		&infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
 		&infravideo.BatchOperationModel{},
 		&infravideo.NotificationOutboxModel{},
+		&infravideo.PublicationEventFactModel{},
 		&infravideo.PublicationEventOutboxModel{},
 	); err != nil {
 		t.Fatalf("migrate search tables: %v", err)

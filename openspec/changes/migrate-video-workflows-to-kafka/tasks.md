@@ -59,3 +59,4 @@
 - [x] 9.1 Unify media Kafka wakeups and polling under one bounded scheduler/worker pool that claims no more jobs than available slots.
 - [x] 9.2 Use unique per-claim media tokens and fence heartbeat/completion/retry by token and unexpired lease, with bounded heartbeat contexts and stale/reclaim tests.
 - [x] 9.3 Observe publication outbox statistics independently of dispatch-operation errors so oldest-age updates during transport failures.
+- [x] 9.4 Separate immutable publication facts from operational outbox rows, make dispatcher startup asynchronous and aggregate-bounded, add replay-window cleanup, and prove broker-outage startup plus cleanup reconciliation safety.

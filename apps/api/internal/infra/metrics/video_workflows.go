@@ -37,6 +37,21 @@ var (
 		},
 		[]string{"result"},
 	)
+	VideoPublicationCleanupTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "video_publication_outbox_cleanup_total",
+			Help:      "Bounded cleanup runs for dispatched video-publication outbox rows.",
+		},
+		[]string{"result"},
+	)
+	VideoPublicationCleanupDeletedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "video_publication_outbox_cleanup_deleted_total",
+			Help:      "Dispatched video-publication outbox rows removed after the replay window.",
+		},
+	)
 	MediaWakeupsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "frux",
@@ -61,6 +76,8 @@ func init() {
 		VideoPublicationOutboxPending,
 		VideoPublicationOutboxLagSeconds,
 		VideoPublicationDispatchTotal,
+		VideoPublicationCleanupTotal,
+		VideoPublicationCleanupDeletedTotal,
 		MediaWakeupsTotal,
 		VideoWorkflowShadowTotal,
 	)
@@ -112,6 +129,16 @@ func (VideoWorkflowObserver) ObservePublicationOutbox(
 
 func (VideoWorkflowObserver) ObservePublicationDispatch(result string) {
 	VideoPublicationDispatchTotal.WithLabelValues(publicationResultLabel(result)).Inc()
+}
+
+func (VideoWorkflowObserver) ObservePublicationCleanup(result string, deleted int64) {
+	if result != "success" {
+		result = "failure"
+	}
+	VideoPublicationCleanupTotal.WithLabelValues(result).Inc()
+	if deleted > 0 {
+		VideoPublicationCleanupDeletedTotal.Add(float64(deleted))
+	}
 }
 
 func ObserveMediaWakeup(result string) {

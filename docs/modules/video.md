@@ -122,11 +122,16 @@
 
 保存视频模块拥有的结构化生命周期事实：提交审核、媒体终态失败、首次公开、下架和恢复。`event_id` 唯一，载荷包含 recipient、video、review version、stage、result、safe reason 和业务发生时间。Worker 通过 30 秒数据库租约、`FOR UPDATE SKIP LOCKED`、有界指数退避和 terminal 状态投递。
 
-首次发布事实使用两个独立耐久边界：`video_notification_outbox` 管理创作者通知 readiness，
-`video_publication_event_outbox` 保存稳定事件 ID、原始 `published_at`、有界载荷、租约、尝试与
-Kafka dispatch 状态。审核、媒体 ready、恢复、运营和 reconciliation 都调用同一幂等边界；Kafka
-不可用不会回滚真实公开状态。Worker 将事实发布到 30 天保留的 `frux.video.published.v1`，RabbitMQ
-仅在迁移模式中保留 mirror/rollback。
+首次发布事实使用两个独立耐久边界：`video_notification_outbox` 管理创作者通知 readiness；
+`video_publication_event_fact` 永久保存不可变稳定事件事实，`video_publication_event_outbox`
+只保存租约、尝试、可用时间和 dispatch 等运营状态。审核、媒体 ready、恢复、运营和
+reconciliation 都调用同一幂等边界；Kafka 不可用不会回滚真实公开状态。Worker 将事实发布到
+30 天保留的 `frux.video.published.v1`，RabbitMQ 仅在迁移模式中保留 mirror/rollback。
+
+Dispatcher 启动只校验本地依赖，初次 dispatch 与周期任务异步执行，因此 Kafka/RabbitMQ outage
+不阻塞 Worker 或其他 consumer 启动。单次运行最多 5 个 100-row batch 且总计 10 秒；超过 replay
+window 的 dispatched 运营行每次最多清理 100 行。清理要求 immutable fact 已存在，reconciliation
+也按 fact 缺失判断，所以删除 outbox 不会重新发布。
 
 publication outbox 的 pending/oldest 统计查询与 dispatch 操作错误分别观测。即使 Kafka transport
 失败，只要统计查询成功，pending 与 oldest-age gauge 仍按当前数据库结果更新；统计查询自身失败时才
@@ -235,8 +240,8 @@ publication outbox 的 pending/oldest 统计查询与 dispatch 操作错误分�
 ## 10. 首次公开事件原子性
 
 审核、媒体就绪、可见性、后台恢复和 reconciliation 在首次形成公开资格的数据库事务内同时
-upsert lifecycle notification 与 `video_publication_event_outbox`。媒体-backed 边界先创建
-不可 dispatch 的同一 outbox 行，公共 variant 就绪后再事务性解除 readiness；notification
-即使已经 ready/delivered 也不能替代 publication handoff 证明。已 dispatch 行保留为稳定
-first-publication tombstone，私密、删除或没有 lifecycle 历史的旧公开视频不会被 reconciliation
-合成事件。
+upsert lifecycle notification、immutable publication fact 与 operational publication outbox。
+媒体-backed 边界先创建不可 dispatch 的同一 outbox 行，公共 variant 就绪后再事务性解除
+readiness；notification 即使已经 ready/delivered 也不能替代 publication fact 证明。已 dispatch
+运营行可在 replay window 后有界清理，immutable fact 继续阻止 reconciliation 合成事件；私密、
+删除或没有 lifecycle 历史的旧公开视频不会被 reconciliation 合成。

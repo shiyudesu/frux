@@ -50,3 +50,6 @@
 - [x] 8.1 Move native model inference and startup self-checks into killable isolated processes.
 - [x] 8.2 Terminate and replace a hung inference process at the end-to-end deadline while preserving the two-slot/eight-waiter contract.
 - [x] 8.3 Add process replacement, capacity release, no-live-process-leak, and child-output redaction tests; prepare writable runtime tmpfs state for process spawning.
+- [x] 8.4 Apply one 180-second outer deadline across preload, fixture validation, and full inference-pool initialization without per-worker deadline resets.
+- [x] 8.5 Retry failed inference replacements with bounded capped backoff, expose live capacity, gate readiness on full capacity, and verify all-worker loss, recovery, and shutdown.
+- [x] 8.6 Emit only bounded route/status/duration/result/capacity request logs for success and every error class, keep Uvicorn access logs disabled, and add redaction tests.

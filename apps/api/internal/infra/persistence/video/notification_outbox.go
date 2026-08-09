@@ -232,7 +232,7 @@ func (r *Repository) ReconcileLifecyclePublicationNotifications(
 				SELECT 1 FROM video_notification_outbox published
 				WHERE published.event_id = CONCAT('video-published:', v.id, ':', v.review_version)
 			) OR NOT EXISTS (
-				SELECT 1 FROM video_publication_event_outbox publication
+				SELECT 1 FROM video_publication_event_fact publication
 				WHERE publication.event_id = CONCAT('video-published:', v.id, ':', v.review_version)
 			))`,
 			domainvideo.StatusPublished, domainvideo.VisibilityPublic,

@@ -52,3 +52,8 @@
 - [x] 8.1 Remove semantic text compatibility from the shared `video.published` Kafka contract and prove Feed accepts video-valid records that embedding intake terminally classifies.
 - [x] 8.2 Bound semantic lease-heartbeat database calls with processing-derived contexts and cover shutdown/database-stall behavior.
 - [x] 8.3 Re-run Python, offline contract, targeted/full Go, binary build, Compose, strict OpenSpec, and diff validation after cross-change remediation.
+- [x] 8.4 Make publication dispatcher startup asynchronous during Kafka/RabbitMQ outage and bound aggregate dispatch runs.
+- [x] 8.5 Apply one semantic-service startup deadline across preload, fixture validation, and complete inference-pool initialization.
+- [x] 8.6 Retry inference replacement with bounded backoff, expose live capacity, and gate readiness through all-worker loss and recovery.
+- [x] 8.7 Retain immutable publication facts while bounded cleanup removes replay-expired operational outbox rows without reconciliation re-emission.
+- [x] 8.8 Restrict semantic operational logs to route/status/duration/result/capacity and cover success and bounded failure classes with redaction tests.

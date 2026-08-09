@@ -4,6 +4,7 @@ import math
 import multiprocessing
 import os
 import asyncio
+import logging
 from io import StringIO
 import json
 from pathlib import Path
@@ -11,8 +12,10 @@ import subprocess
 import sys
 from threading import Event
 import time
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 
 TOKEN = "Strong-Internal-Token-For-Frux-123!"
@@ -103,6 +106,54 @@ class ReplacementBlockingRuntime:
         if texts == ["hang"]:
             self.inference_gate.wait()
         return [[1.0] for _ in texts]
+
+
+class RecoveringReplacementRuntime:
+    ready = True
+
+    def __init__(self, loads, initial_workers, recovery):
+        self.loads = loads
+        self.initial_workers = initial_workers
+        self.recovery = recovery
+
+    def load(self):
+        with self.loads.get_lock():
+            self.loads.value += 1
+            count = self.loads.value
+        if count > self.initial_workers and not self.recovery.is_set():
+            raise RuntimeError("replacement unavailable")
+        self.ready = True
+
+    def encode(self, texts):
+        return [[1.0] for _ in texts]
+
+
+class PhasedStartupRuntime:
+    ready = False
+
+    def __init__(self, loads, delay):
+        self.loads = loads
+        self.delay = delay
+
+    def load(self):
+        with self.loads.get_lock():
+            self.loads.value += 1
+        time.sleep(self.delay)
+        self.ready = True
+
+    def encode(self, texts):
+        return [[1.0] for _ in texts]
+
+
+class RaisingCapacity:
+    def __init__(self, error=None):
+        self.error = error
+
+    async def run(self, texts, started):
+        if self.error is not None:
+            raise self.error
+        value = 1 / math.sqrt(MODEL_DIMENSION)
+        return [[value] * MODEL_DIMENSION for _ in texts]
 
 
 def client():
@@ -478,6 +529,178 @@ async def test_shutdown_terminates_in_progress_process_replacement():
     active = multiprocessing.active_children()
     assert original.isdisjoint({child.pid for child in active})
     assert all(child.name != "semantic-embedding-inference" for child in active)
+
+
+async def test_all_worker_loss_fails_readiness_and_recovers():
+    process_context = multiprocessing.get_context("spawn")
+    loads = process_context.Value("i", 0)
+    recovery = process_context.Event()
+    settings = Settings(
+        token=TOKEN,
+        max_concurrency=2,
+        max_queue=0,
+        queue_timeout_ms=100,
+        request_timeout_ms=1_000,
+    )
+    app = create_app(
+        settings,
+        RecoveringReplacementRuntime(loads, settings.max_concurrency, recovery),
+    )
+    capacity = app.state.capacity
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://semantic.test"
+        ) as api:
+            assert (await api.get("/health/ready")).status_code == 200
+            workers = [
+                await capacity.pool.acquire(0.1)
+                for _ in range(settings.max_concurrency)
+            ]
+            for worker in workers:
+                capacity.pool.recycle(worker)
+            assert capacity.live_capacity() == 0
+            assert (await api.get("/health/ready")).status_code == 503
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with loads.get_lock():
+                    if loads.value > settings.max_concurrency:
+                        break
+                await asyncio.sleep(0.02)
+            recovery.set()
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                response = await api.get("/health/ready")
+                if response.status_code == 200:
+                    break
+                await asyncio.sleep(0.05)
+            assert response.status_code == 200
+            assert capacity.live_capacity() == settings.max_concurrency
+    finally:
+        await capacity.close()
+
+
+def test_single_outer_startup_deadline_covers_complete_pool(capsys):
+    process_context = multiprocessing.get_context("spawn")
+    loads = process_context.Value("i", 0)
+    started = time.monotonic()
+    code = run_server(
+        settings_loader=lambda: Settings(token=TOKEN, max_concurrency=2),
+        runtime_factory=lambda *_: PhasedStartupRuntime(loads, 0.35),
+        app_factory=create_app,
+        server_runner=lambda *_: pytest.fail("server must not start"),
+        startup_timeout_seconds=0.8,
+    )
+    elapsed = time.monotonic() - started
+    assert code == 1
+    assert elapsed < 1.8
+    assert capsys.readouterr().err == (
+        "semantic_embedding_startup_failed category=startup_timeout\n"
+    )
+    with loads.get_lock():
+        assert loads.value >= 2
+
+
+def test_uvicorn_access_logging_remains_disabled(monkeypatch):
+    observed = {}
+
+    def run(application, **kwargs):
+        observed.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=run))
+    assert run_server(
+        settings_loader=lambda: Settings(token=TOKEN),
+        runtime_factory=lambda *_: FakeRuntime(),
+        app_factory=lambda *_: object(),
+        startup_timeout_seconds=1,
+    ) == 0
+    assert observed["access_log"] is False
+    assert observed["server_header"] is False
+    assert observed["date_header"] is False
+
+
+def test_bounded_structured_operational_logging():
+    app = create_app(
+        Settings(token=TOKEN, max_concurrency=1),
+        FakeRuntime(),
+    )
+    secret_id = "video:secret-id"
+    secret_text = "private semantic text"
+    secret_token = "query-secret-token"
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger = logging.getLogger("frux_embedding.requests")
+    logger.addHandler(handler)
+    try:
+        with TestClient(app) as api:
+            app.state.capacity = RaisingCapacity()
+            assert api.post(
+                "/internal/v1/embeddings",
+                headers={"X-Internal-Token": TOKEN},
+                json={
+                    "items": [
+                        {
+                            "id": secret_id,
+                            "title": secret_text,
+                            "description": "",
+                        }
+                    ]
+                },
+            ).status_code == 200
+            assert api.post(
+                "/internal/v1/embeddings",
+                headers={"X-Internal-Token": TOKEN},
+                json={"items": [{"id": "bad id", "title": "x", "description": ""}]},
+            ).status_code == 400
+            assert api.get("/internal/v1/model").status_code == 401
+            for error, status in (
+                (OverCapacity(), 429),
+                (InferenceTimeout(), 504),
+                (RuntimeError("raw internal detail"), 500),
+            ):
+                app.state.capacity = RaisingCapacity(error)
+                assert api.post(
+                    "/internal/v1/embeddings",
+                    headers={"X-Internal-Token": TOKEN},
+                    json={
+                        "items": [
+                            {
+                                "id": secret_id,
+                                "title": secret_text,
+                                "description": "",
+                            }
+                        ]
+                    },
+                ).status_code == status
+            assert api.get(f"/private-path?token={secret_token}").status_code == 404
+    finally:
+        logger.removeHandler(handler)
+
+    messages = stream.getvalue().splitlines()
+    joined = "\n".join(messages)
+    for result in ("success", "validation", "auth", "overload", "timeout", "internal"):
+        assert f"result={result}" in joined
+    for message in messages:
+        assert set(part.split("=", 1)[0] for part in message.split()) == {
+            "route",
+            "status",
+            "duration_ms",
+            "result",
+            "capacity",
+        }
+    for forbidden in (
+        secret_id,
+        secret_text,
+        "private description",
+        TOKEN,
+        secret_token,
+        "/private-path",
+        "raw internal detail",
+        "http://",
+        "[[",
+    ):
+        assert forbidden not in joined
 
 
 @pytest.mark.parametrize(

@@ -170,6 +170,18 @@ Compose SHALL configure the worker to call the internal `semantic-embedding` ser
 - **WHEN** metadata validation later succeeds and pending jobs become available
 - **THEN** missing semantic rows are generated without duplicating existing hash or semantic facts
 
+#### Scenario: Publication transport is unavailable during worker startup
+- **WHEN** Kafka or RabbitMQ publication dispatch cannot connect
+- **THEN** publication retry starts asynchronously and hash, semantic, Feed, media, and unrelated workers remain eligible to start
+
+#### Scenario: Semantic inference capacity is lost
+- **WHEN** one or all required inference workers are unavailable
+- **THEN** semantic readiness fails, replacements retry with bounded backoff, and readiness recovers only after full required capacity returns
+
+#### Scenario: Completed publication handoff is cleaned
+- **WHEN** a dispatched operational publication row ages beyond the replay window
+- **THEN** bounded cleanup retains the immutable publication fact and reconciliation does not re-emit the event
+
 ### Requirement: Verification and Documentation
 The implementation SHALL include unit, HTTP contract, Kafka intake/commit, PostgreSQL semantic-job, live semantic-service contract, Compose, outage-recovery, and migration-assessment tests. Documentation SHALL cover configuration, fixed model identity, hash-first intake, database retry/lease/suspension behavior, metrics, failure modes, rollout, rollback, the dependency on `add-semantic-embedding-service` and `migrate-video-workflows-to-kafka`, and the future backfill boundary.
 

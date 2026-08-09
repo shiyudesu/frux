@@ -281,6 +281,8 @@ stream 独立回滚。
 
 - `frux_video_publication_outbox_pending` 与 oldest lag；
 - `frux_video_publication_dispatch_total{result}`；
+- `frux_video_publication_outbox_cleanup_total{result}` 与
+  `frux_video_publication_outbox_cleanup_deleted_total`；
 - `frux_video_workflow_publication_total{workflow,role,transport,result}`；
 - Kafka Feed/embedding/media Group lag、commit 和 delivery delay；
 - `frux_video_embedding_vectors_total{model,source,outcome}`；

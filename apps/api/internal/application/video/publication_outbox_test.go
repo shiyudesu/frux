@@ -3,6 +3,7 @@ package applicationvideo
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -14,6 +15,13 @@ type publicationStoreStub struct {
 	failed     int
 	stats      PublicationOutboxStats
 	statsErr   error
+	batches    [][]*PublicationOutboxItem
+	claimCalls int
+	reconciled int
+	cleanup    int64
+	cleanupErr error
+	cleanupAt  time.Time
+	cleanupMax int
 }
 
 func (s *publicationStoreStub) EnsurePublicationEvent(
@@ -25,6 +33,12 @@ func (s *publicationStoreStub) EnsurePublicationEvent(
 func (s *publicationStoreStub) ClaimPublicationEvents(
 	context.Context, string, int, time.Time, time.Time,
 ) ([]*PublicationOutboxItem, error) {
+	s.claimCalls++
+	if len(s.batches) > 0 {
+		items := s.batches[0]
+		s.batches = s.batches[1:]
+		return items, nil
+	}
 	items := s.items
 	s.items = nil
 	return items, nil
@@ -48,10 +62,12 @@ func (s *publicationStoreStub) PublicationOutboxStats(
 }
 
 type publicationObserverStub struct {
-	pending  int64
-	oldest   *time.Time
-	statsErr error
-	results  []string
+	pending        int64
+	oldest         *time.Time
+	statsErr       error
+	results        []string
+	cleanupResult  string
+	cleanupDeleted int64
 }
 
 func (o *publicationObserverStub) ObservePublicationOutbox(
@@ -67,21 +83,46 @@ func (o *publicationObserverStub) ObservePublicationOutbox(
 func (o *publicationObserverStub) ObservePublicationDispatch(result string) {
 	o.results = append(o.results, result)
 }
-func (*publicationStoreStub) ReconcilePublicationEvents(
+func (o *publicationObserverStub) ObservePublicationCleanup(result string, deleted int64) {
+	o.cleanupResult = result
+	o.cleanupDeleted = deleted
+}
+func (s *publicationStoreStub) ReconcilePublicationEvents(
 	context.Context, int, time.Time,
 ) (int, error) {
+	s.reconciled++
 	return 0, nil
+}
+func (s *publicationStoreStub) CleanupPublicationEvents(
+	_ context.Context, before time.Time, limit int,
+) (int64, error) {
+	s.cleanupAt = before
+	s.cleanupMax = limit
+	return s.cleanup, s.cleanupErr
 }
 
 type publicationPublisherStub struct {
-	err   error
-	calls int
+	err     error
+	calls   int
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
 }
 
 func (p *publicationPublisherStub) PublishVideoPublished(
-	context.Context, *PublishedEvent,
+	ctx context.Context, _ *PublishedEvent,
 ) error {
 	p.calls++
+	if p.started != nil {
+		p.once.Do(func() { close(p.started) })
+	}
+	if p.release != nil {
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return p.err
 }
 
@@ -160,5 +201,132 @@ func TestPublicationOutboxStatsRemainObservableDuringTransportFailure(t *testing
 	}
 	if len(observer.results) != 1 || observer.results[0] != "transport" {
 		t.Fatalf("dispatch results = %v", observer.results)
+	}
+}
+
+func TestPublicationDispatcherStartDoesNotWaitForTransport(t *testing.T) {
+	for _, transport := range []string{"kafka", "rabbit"} {
+		t.Run(transport, func(t *testing.T) {
+			now := time.Now().UTC()
+			event := &PublishedEvent{
+				EventID: "video-published:3:1", VideoID: 3, AuthorID: 4,
+				PublishedAt: now, OccurredAt: now,
+			}
+			store := &publicationStoreStub{items: []*PublicationOutboxItem{{Event: event}}}
+			publisher := &publicationPublisherStub{
+				err:     errors.New(transport + " unavailable"),
+				started: make(chan struct{}), release: make(chan struct{}),
+			}
+			dispatcher := NewPublicationOutboxDispatcher(store, publisher, nil)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			startedAt := time.Now()
+			if err := dispatcher.Start(ctx); err != nil {
+				t.Fatalf("start failed during outage: %v", err)
+			}
+			if time.Since(startedAt) > 100*time.Millisecond {
+				t.Fatal("startup synchronously waited for publication transport")
+			}
+			unrelatedStarted := false
+			unrelatedStarted = true
+			if !unrelatedStarted {
+				t.Fatal("unrelated worker did not start")
+			}
+			select {
+			case <-publisher.started:
+			case <-time.After(time.Second):
+				t.Fatal("asynchronous initial dispatch did not run")
+			}
+			close(publisher.release)
+		})
+	}
+}
+
+func TestPublicationDispatcherRunIsAggregateBounded(t *testing.T) {
+	now := time.Now().UTC()
+	makeBatch := func(offset int64) []*PublicationOutboxItem {
+		items := make([]*PublicationOutboxItem, 0, 2)
+		for index := int64(0); index < 2; index++ {
+			items = append(items, &PublicationOutboxItem{Event: &PublishedEvent{
+				EventID: "video-published:" + time.Unix(offset+index, 0).UTC().Format("150405"),
+				VideoID: offset + index + 1, AuthorID: 1,
+				PublishedAt: now, OccurredAt: now,
+			}})
+		}
+		return items
+	}
+	store := &publicationStoreStub{batches: [][]*PublicationOutboxItem{
+		makeBatch(10), makeBatch(20), makeBatch(30), makeBatch(40),
+	}}
+	dispatcher := NewPublicationOutboxDispatcher(store, &publicationPublisherStub{}, nil)
+	dispatcher.batchSize = 2
+	dispatcher.maxBatches = 3
+	dispatcher.now = func() time.Time { return now }
+	processed, err := dispatcher.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 6 || store.claimCalls != 3 || len(store.batches) != 1 {
+		t.Fatalf(
+			"processed=%d claim_calls=%d remaining_batches=%d",
+			processed, store.claimCalls, len(store.batches),
+		)
+	}
+}
+
+func TestPublicationDispatcherRunHasAggregateDeadline(t *testing.T) {
+	now := time.Now().UTC()
+	store := &publicationStoreStub{
+		items: []*PublicationOutboxItem{
+			{Event: &PublishedEvent{
+				EventID: "video-published:deadline:1", VideoID: 50, AuthorID: 1,
+				PublishedAt: now, OccurredAt: now,
+			}},
+		},
+	}
+	dispatcher := NewPublicationOutboxDispatcher(
+		store,
+		&publicationPublisherStub{release: make(chan struct{})},
+		nil,
+	)
+	dispatcher.runTimeout = 20 * time.Millisecond
+	started := time.Now()
+	if _, err := dispatcher.RunOnce(context.Background()); !errors.Is(
+		err, context.DeadlineExceeded,
+	) {
+		t.Fatalf("run error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("aggregate run exceeded bound: %v", elapsed)
+	}
+}
+
+func TestPublicationDispatcherRunsBoundedCleanup(t *testing.T) {
+	now := time.Now().UTC()
+	store := &publicationStoreStub{cleanup: 7}
+	observer := &publicationObserverStub{}
+	dispatcher := NewPublicationOutboxDispatcher(
+		store, &publicationPublisherStub{}, observer,
+	)
+	dispatcher.now = func() time.Time { return now }
+	if _, err := dispatcher.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.cleanupAt.Equal(now.Add(-30*24*time.Hour)) || store.cleanupMax != 100 {
+		t.Fatalf("cleanup cutoff=%v limit=%d", store.cleanupAt, store.cleanupMax)
+	}
+	if observer.cleanupResult != "success" || observer.cleanupDeleted != 7 {
+		t.Fatalf(
+			"cleanup result=%s deleted=%d",
+			observer.cleanupResult, observer.cleanupDeleted,
+		)
+	}
+}
+
+func TestPublicationDispatcherRejectsInvalidConstruction(t *testing.T) {
+	if err := NewPublicationOutboxDispatcher(nil, nil, nil).Start(context.Background()); !errors.Is(
+		err, ErrPublicationOutboxInvalidConfiguration,
+	) {
+		t.Fatalf("invalid start error = %v", err)
 	}
 }

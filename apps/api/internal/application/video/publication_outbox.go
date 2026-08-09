@@ -11,6 +11,7 @@ import (
 const publicationOutboxEventType = "video_published.v1"
 
 var ErrPublicationOutboxLeaseLost = errors.New("video publication outbox lease lost")
+var ErrPublicationOutboxInvalidConfiguration = errors.New("invalid video publication outbox configuration")
 
 type PublicationOutboxItem struct {
 	Event       *PublishedEvent
@@ -50,6 +51,7 @@ type PublicationEventStore interface {
 	) error
 	PublicationOutboxStats(ctx context.Context, now time.Time) (PublicationOutboxStats, error)
 	ReconcilePublicationEvents(ctx context.Context, limit int, now time.Time) (int, error)
+	CleanupPublicationEvents(ctx context.Context, dispatchedBefore time.Time, limit int) (int64, error)
 }
 
 type DurablePublicationPublisher struct {
@@ -77,6 +79,7 @@ func (p *DurablePublicationPublisher) PublishVideoPublished(
 type PublicationOutboxObserver interface {
 	ObservePublicationOutbox(pending int64, oldest *time.Time, err error)
 	ObservePublicationDispatch(result string)
+	ObservePublicationCleanup(result string, deleted int64)
 }
 
 type PublicationOutboxDispatcher struct {
@@ -85,8 +88,12 @@ type PublicationOutboxDispatcher struct {
 	observer     PublicationOutboxObserver
 	owner        string
 	batchSize    int
+	maxBatches   int
+	cleanupBatch int
 	leaseTTL     time.Duration
 	pollInterval time.Duration
+	runTimeout   time.Duration
+	replayWindow time.Duration
 	now          func() time.Time
 }
 
@@ -102,19 +109,22 @@ func NewPublicationOutboxDispatcher(
 	return &PublicationOutboxDispatcher{
 		store: store, publisher: publisher, observer: observer,
 		owner: "video-publication:" + owner, batchSize: 100,
+		maxBatches: 5, cleanupBatch: 100,
 		leaseTTL: 30 * time.Second, pollInterval: time.Second,
+		runTimeout: 10 * time.Second, replayWindow: 30 * 24 * time.Hour,
 		now: func() time.Time { return time.Now().UTC() },
 	}
 }
 
 func (d *PublicationOutboxDispatcher) Start(ctx context.Context) error {
-	if d == nil || d.store == nil || d.publisher == nil {
-		return nil
-	}
-	if _, err := d.RunOnce(ctx); err != nil {
-		return err
+	if d == nil || d.store == nil || d.publisher == nil ||
+		d.batchSize <= 0 || d.maxBatches <= 0 || d.cleanupBatch <= 0 ||
+		d.leaseTTL <= 0 || d.pollInterval <= 0 || d.runTimeout <= 0 ||
+		d.replayWindow <= 0 {
+		return ErrPublicationOutboxInvalidConfiguration
 	}
 	go func() {
+		_, _ = d.RunOnce(ctx)
 		ticker := time.NewTicker(d.pollInterval)
 		defer ticker.Stop()
 		for {
@@ -133,14 +143,36 @@ func (d *PublicationOutboxDispatcher) RunOnce(ctx context.Context) (int, error) 
 	if d == nil || d.store == nil || d.publisher == nil {
 		return 0, nil
 	}
+	runCtx, cancel := context.WithTimeout(ctx, d.runTimeout)
+	defer cancel()
 	now := d.now().UTC()
-	_, reconcileErr := d.store.ReconcilePublicationEvents(ctx, d.batchSize, now)
+	_, reconcileErr := d.store.ReconcilePublicationEvents(runCtx, d.batchSize, now)
+	processed := 0
+	var dispatchErr error
+	for batch := 0; batch < d.maxBatches && runCtx.Err() == nil; batch++ {
+		batchProcessed, claimed, err := d.runBatch(runCtx)
+		processed += batchProcessed
+		dispatchErr = errors.Join(dispatchErr, err)
+		if err != nil || claimed < d.batchSize {
+			break
+		}
+	}
+	deleted, cleanupErr := d.store.CleanupPublicationEvents(
+		runCtx, now.Add(-d.replayWindow), d.cleanupBatch,
+	)
+	d.observeCleanup(cleanupErr, deleted)
+	combined := errors.Join(reconcileErr, dispatchErr, cleanupErr)
+	d.observeStats(runCtx)
+	return processed, combined
+}
+
+func (d *PublicationOutboxDispatcher) runBatch(ctx context.Context) (int, int, error) {
+	now := d.now().UTC()
 	items, err := d.store.ClaimPublicationEvents(
 		ctx, d.owner, d.batchSize, now, now.Add(d.leaseTTL),
 	)
 	if err != nil {
-		d.observeStats(ctx)
-		return 0, errors.Join(reconcileErr, err)
+		return 0, 0, err
 	}
 	processed := 0
 	var dispatchErr error
@@ -167,9 +199,7 @@ func (d *PublicationOutboxDispatcher) RunOnce(ctx context.Context) (int, error) 
 		dispatchErr = errors.Join(dispatchErr, err, markErr)
 		d.observeDispatch(class)
 	}
-	combined := errors.Join(reconcileErr, dispatchErr)
-	d.observeStats(ctx)
-	return processed, combined
+	return processed, len(items), dispatchErr
 }
 
 func (d *PublicationOutboxDispatcher) observeStats(ctx context.Context) {
@@ -188,6 +218,17 @@ func (d *PublicationOutboxDispatcher) observeDispatch(result string) {
 	if d != nil && d.observer != nil {
 		d.observer.ObservePublicationDispatch(result)
 	}
+}
+
+func (d *PublicationOutboxDispatcher) observeCleanup(err error, deleted int64) {
+	if d == nil || d.observer == nil {
+		return
+	}
+	result := "success"
+	if err != nil {
+		result = "failure"
+	}
+	d.observer.ObservePublicationCleanup(result, deleted)
 }
 
 func publicationRetryDelay(attempts int) time.Duration {

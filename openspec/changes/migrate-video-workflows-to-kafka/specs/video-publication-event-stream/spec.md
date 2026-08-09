@@ -1,7 +1,9 @@
 ## ADDED Requirements
 
 ### Requirement: Durable Publication Event Handoff
-The first transition that establishes a stable public publication fact SHALL create one video-owned durable publication-event outbox row in the same transaction or durable publication boundary.
+The first transition that establishes a stable public publication fact SHALL create one immutable
+video-owned publication fact and one operational publication-event outbox row in the same
+transaction or durable publication boundary.
 
 #### Scenario: Public gates first become complete
 - **WHEN** review, media readiness, visibility, lifecycle, or reconciliation first makes a video publicly eligible
@@ -14,6 +16,22 @@ The first transition that establishes a stable public publication fact SHALL cre
 #### Scenario: Dispatch fails while backlog statistics succeed
 - **WHEN** Kafka publication fails but the outbox pending/oldest statistics query succeeds
 - **THEN** the dispatch failure is observed separately and the pending and oldest-age gauges still update from the successful statistics result
+
+#### Scenario: Broker is unavailable during worker startup
+- **WHEN** Kafka or RabbitMQ publication transport is unavailable while the worker starts
+- **THEN** the dispatcher starts initial delivery asynchronously, worker startup succeeds, and unrelated workers remain able to start while the outbox retains retryable rows
+
+#### Scenario: One aggregate dispatch run executes
+- **WHEN** a large publication backlog is available
+- **THEN** one run processes no more than five 100-row claim batches under one 10-second bound before yielding
+
+#### Scenario: Completed operational rows age past replay
+- **WHEN** dispatched outbox rows are older than 30 days and their immutable publication facts exist
+- **THEN** bounded cleanup removes at most 100 operational rows per run while retaining the facts
+
+#### Scenario: Reconciliation runs after cleanup
+- **WHEN** a completed operational row has been cleaned but its immutable publication fact remains
+- **THEN** reconciliation does not recreate or republish the publication event
 
 ### Requirement: Retained Video Publication Topic
 Frux SHALL publish stable first-publication facts to a registered retained Kafka topic keyed by video ID.

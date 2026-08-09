@@ -124,7 +124,12 @@ class InferenceWorker:
 
 
 class ProcessPool:
-    def __init__(self, runtime, size: int) -> None:
+    def __init__(
+        self,
+        runtime,
+        size: int,
+        startup_deadline: float | None = None,
+    ) -> None:
         self.runtime = runtime
         self.size = size
         self.context = multiprocessing.get_context("spawn")
@@ -134,12 +139,20 @@ class ProcessPool:
         self.state_lock = threading.Lock()
         self.replacements: set[asyncio.Task[Any]] = set()
         self.closed = False
-        for _ in range(size):
-            worker = self._new_worker()
-            self.workers.add(worker)
-            self.available.put_nowait(worker)
+        self.closed_event = asyncio.Event()
+        deadline = startup_deadline or time.monotonic() + STARTUP_TIMEOUT_SECONDS
+        try:
+            for _ in range(size):
+                worker = self._new_worker(deadline)
+                self.workers.add(worker)
+                self.available.put_nowait(worker)
+        except BaseException:
+            for worker in list(self.workers):
+                worker.terminate()
+            self.workers.clear()
+            raise
 
-    def _new_worker(self) -> InferenceWorker:
+    def _new_worker(self, deadline: float) -> InferenceWorker:
         with self.state_lock:
             if self.closed:
                 raise WorkerUnavailable
@@ -150,7 +163,11 @@ class ProcessPool:
                 raise WorkerUnavailable
             self.starting.add(worker)
         try:
-            worker.wait_ready(STARTUP_TIMEOUT_SECONDS)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                worker.terminate()
+                raise WorkerUnavailable
+            worker.wait_ready(remaining)
             return worker
         finally:
             with self.state_lock:
@@ -176,20 +193,36 @@ class ProcessPool:
         task.add_done_callback(self.replacements.discard)
 
     async def _replace(self) -> None:
-        try:
-            worker = await asyncio.to_thread(self._new_worker)
-        except BaseException:
+        delays = (0.0, 0.1, 0.5, 1.0, 2.0, 5.0)
+        attempt = 0
+        while not self.closed:
+            delay = delays[min(attempt, len(delays) - 1)]
+            if delay > 0:
+                try:
+                    await asyncio.wait_for(self.closed_event.wait(), delay)
+                    return
+                except TimeoutError:
+                    pass
+            try:
+                worker = await asyncio.to_thread(
+                    self._new_worker,
+                    time.monotonic() + min(30.0, STARTUP_TIMEOUT_SECONDS),
+                )
+            except BaseException:
+                attempt += 1
+                continue
+            if self.closed:
+                worker.terminate()
+                return
+            self.workers.add(worker)
+            self.available.put_nowait(worker)
             return
-        if self.closed:
-            worker.terminate()
-            return
-        self.workers.add(worker)
-        self.available.put_nowait(worker)
 
     async def close(self) -> None:
         with self.state_lock:
             self.closed = True
             starting = list(self.starting)
+        self.closed_event.set()
         workers = list(self.workers) + starting
         self.workers.clear()
         await asyncio.gather(
@@ -201,17 +234,33 @@ class ProcessPool:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def pids(self) -> set[int]:
+        with self.state_lock:
+            workers = list(self.workers)
         return {
             worker.pid
-            for worker in self.workers
+            for worker in workers
             if worker.pid is not None and worker.process.is_alive()
         }
 
+    def live_capacity(self) -> int:
+        with self.state_lock:
+            workers = list(self.workers)
+        return sum(worker.process.is_alive() for worker in workers)
+
 
 class Capacity:
-    def __init__(self, settings, runtime) -> None:
+    def __init__(
+        self,
+        settings,
+        runtime,
+        startup_deadline: float | None = None,
+    ) -> None:
         self.settings = settings
-        self.pool = ProcessPool(runtime, settings.max_concurrency)
+        self.pool = ProcessPool(
+            runtime,
+            settings.max_concurrency,
+            startup_deadline=startup_deadline,
+        )
         self.lock = asyncio.Lock()
         self.admitted = 0
         self.sequence = 0
@@ -281,6 +330,9 @@ class Capacity:
 
     def worker_pids(self) -> set[int]:
         return self.pool.pids()
+
+    def live_capacity(self) -> int:
+        return self.pool.live_capacity()
 
 
 class OverCapacity(Exception):

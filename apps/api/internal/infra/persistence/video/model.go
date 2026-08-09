@@ -158,6 +158,20 @@ type PublicationEventOutboxModel struct {
 	UpdatedAt      time.Time  `gorm:"column:updated_at;not null"`
 }
 
+type PublicationEventFactModel struct {
+	EventID     string    `gorm:"column:event_id;size:128;primaryKey"`
+	VideoID     int64     `gorm:"column:video_id;not null;index:idx_video_publication_fact_video"`
+	EventType   string    `gorm:"column:event_type;size:64;not null"`
+	PayloadJSON string    `gorm:"column:payload_json;type:jsonb;not null"`
+	PublishedAt time.Time `gorm:"column:published_at;not null"`
+	OccurredAt  time.Time `gorm:"column:occurred_at;not null"`
+	CreatedAt   time.Time `gorm:"column:created_at;not null"`
+}
+
+func (PublicationEventFactModel) TableName() string {
+	return "video_publication_event_fact"
+}
+
 func (PublicationEventOutboxModel) TableName() string {
 	return "video_publication_event_outbox"
 }

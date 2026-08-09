@@ -87,11 +87,35 @@ func AppendPublicationHandoff(
 	}, deliveryReady); err != nil {
 		return err
 	}
+	fact := &PublicationEventFactModel{
+		EventID: event.EventID, VideoID: event.VideoID,
+		EventType: publicationOutboxEventType, PayloadJSON: string(payload),
+		PublishedAt: event.PublishedAt, OccurredAt: event.OccurredAt,
+		CreatedAt: readyAt.UTC(),
+	}
+	factResult := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(fact)
+	if factResult.Error != nil {
+		return factResult.Error
+	}
 	model := &PublicationEventOutboxModel{
 		EventID: event.EventID, VideoID: event.VideoID,
 		EventType: publicationOutboxEventType, PayloadJSON: string(payload),
 		DeliveryReady: deliveryReady, AvailableAt: readyAt.UTC(),
 		CreatedAt: readyAt.UTC(), UpdatedAt: readyAt.UTC(),
+	}
+	if factResult.RowsAffected == 0 {
+		return tx.Model(&PublicationEventOutboxModel{}).
+			Where("event_id = ? AND dispatched_at IS NULL", event.EventID).
+			Updates(map[string]any{
+				"delivery_ready": gorm.Expr(
+					"video_publication_event_outbox.delivery_ready OR ?", deliveryReady,
+				),
+				"available_at": gorm.Expr(
+					"CASE WHEN ? THEN ? ELSE video_publication_event_outbox.available_at END",
+					deliveryReady, readyAt.UTC(),
+				),
+				"updated_at": readyAt.UTC(),
+			}).Error
 	}
 	return tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "event_id"}},
@@ -230,7 +254,10 @@ func (r *Repository) CleanupPublicationEvents(
 	}
 	var eventIDs []string
 	if err := r.db.WithContext(ctx).Model(&PublicationEventOutboxModel{}).
-		Where("dispatched_at < ?", dispatchedBefore.UTC()).
+		Where(`dispatched_at < ? AND EXISTS (
+			SELECT 1 FROM video_publication_event_fact fact
+			WHERE fact.event_id = video_publication_event_outbox.event_id
+		)`, dispatchedBefore.UTC()).
 		Order("dispatched_at ASC").Limit(limit).Pluck("event_id", &eventIDs).Error; err != nil {
 		return 0, err
 	}
@@ -238,7 +265,10 @@ func (r *Repository) CleanupPublicationEvents(
 		return 0, nil
 	}
 	result := r.db.WithContext(ctx).
-		Where("event_id IN ? AND dispatched_at < ?", eventIDs, dispatchedBefore.UTC()).
+		Where(`event_id IN ? AND dispatched_at < ? AND EXISTS (
+			SELECT 1 FROM video_publication_event_fact fact
+			WHERE fact.event_id = video_publication_event_outbox.event_id
+		)`, eventIDs, dispatchedBefore.UTC()).
 		Delete(&PublicationEventOutboxModel{})
 	return result.RowsAffected, result.Error
 }
@@ -260,8 +290,8 @@ func (r *Repository) ReconcilePublicationEvents(
 				  AND lifecycle.review_version = video.review_version
 			) AND
 			NOT EXISTS (
-				SELECT 1 FROM video_publication_event_outbox outbox
-				WHERE outbox.event_id = CONCAT('video-published:', video.id, ':', video.review_version)
+				SELECT 1 FROM video_publication_event_fact fact
+				WHERE fact.event_id = CONCAT('video-published:', video.id, ':', video.review_version)
 			)`,
 			domainvideo.StatusPublished, domainvideo.VisibilityPublic,
 			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).

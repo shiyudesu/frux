@@ -34,7 +34,7 @@ The service SHALL expose only `sentence-transformers/paraphrase-multilingual-Min
 The service SHALL expose only `GET /health/live`, `GET /health/ready`, `GET /internal/v1/model`, and `POST /internal/v1/embeddings`. Health responses SHALL contain status only. The model and embedding endpoints SHALL be internal service-to-service APIs, SHALL NOT enable CORS or browser credentials, and SHALL NOT be published on a host port by the default Compose configuration.
 
 #### Scenario: Process is live and model is ready
-- **WHEN** the process is running and startup model validation has completed
+- **WHEN** the process is running, startup model validation has completed, and every configured inference worker is live
 - **THEN** liveness returns `200` with `{"status":"live"}` and readiness returns `200` with `{"status":"ready"}`
 
 #### Scenario: Model is not ready
@@ -98,16 +98,16 @@ A successful embedding response SHALL include the fixed model, revision, dimensi
 The service SHALL use exactly one HTTP server coordinator and at most two isolated inference worker
 processes. A killable preload process SHALL fully load the packaged model and run the deterministic
 Chinese fixture before readiness. Every inference worker SHALL preload the same immutable packaged
-model contract before receiving work. Preload and self-validation SHALL verify dimension,
-finiteness, normalization, and committed expected vector tolerance and SHALL complete within 180
-seconds or terminate non-zero.
+model contract before receiving work. One 180-second outer deadline SHALL cover model preload,
+metadata and fixture validation, and initialization of the full configured inference pool; workers
+MUST consume the remaining outer budget rather than receive independent 180-second deadlines.
 
 #### Scenario: Startup self-check succeeds
 - **WHEN** the packaged model matches the pinned contract and produces the expected fixture vector
 - **THEN** startup completes and readiness becomes successful
 
 #### Scenario: Startup times out or self-check differs
-- **WHEN** loading exceeds 180 seconds or the fixture result falls outside tolerance
+- **WHEN** preload, fixture validation, or complete pool initialization exceeds the single 180-second deadline, or the fixture result falls outside tolerance
 - **THEN** the process exits non-zero and orchestration keeps it out of service
 
 #### Scenario: Request arrives after readiness
@@ -137,12 +137,20 @@ and SHALL document 1 CPU and 1 GiB as the minimum reservation guidance.
 - **WHEN** a model/native kernel remains blocked past the end-to-end deadline
 - **THEN** the coordinator kills that isolated process, makes the old PID ineligible for reuse, restores the slot with a freshly preloaded process, and leaves no live orphan process
 
+#### Scenario: Replacement preload fails
+- **WHEN** one or all inference workers are lost and replacement preload temporarily fails
+- **THEN** replacement retries continue with bounded capped backoff, readiness returns `503` while live capacity is below the configured requirement, and readiness recovers after all missing workers are restored
+
+#### Scenario: Shutdown occurs during replacement
+- **WHEN** shutdown begins while replacement workers are sleeping or preloading
+- **THEN** retries stop, starting and live children are terminated, and shutdown leaves no inference child alive
+
 #### Scenario: Invalid runtime bound is configured
 - **WHEN** concurrency, queue, thread, or timeout configuration exceeds its allowed maximum or is non-positive
 - **THEN** startup fails non-zero rather than silently accepting an unbounded value
 
 ### Requirement: Safe Errors and Privacy-Bounded Operation
-All JSON errors SHALL use `{"code":"<STABLE_CODE>","error":"<safe text>"}` with bounded stable codes and generic text. Responses and logs MUST NOT expose stack traces, filesystem paths, dependency errors, model cache URLs, secrets, request bodies, normalized text, item IDs, or vectors. The service SHALL keep no request history and SHALL write no application data. Logs MAY contain only bounded operational fields such as generated request ID, route, status, item count, normalized code-point count, queue time, inference time, and result class.
+All JSON errors SHALL use `{"code":"<STABLE_CODE>","error":"<safe text>"}` with bounded stable codes and generic text. Responses and logs MUST NOT expose stack traces, filesystem paths, dependency errors, model cache URLs, secrets, request bodies, normalized text, item IDs, vectors, raw paths, URLs, or raw errors. The service SHALL keep no request history and SHALL write no application data. Request logs SHALL contain only closed-registry `route`, numeric `status`, numeric `duration_ms`, bounded `result`, and numeric live `capacity`; Uvicorn raw access logging MUST remain disabled.
 
 #### Scenario: Unexpected inference failure occurs
 - **WHEN** the model runtime raises an unexpected exception

@@ -144,9 +144,11 @@ FRUX_KAFKA_TEST_BROKERS=127.0.0.1:29092 \
 ## Video workflow correctness refinements
 
 每个首次公开 review/media/visibility/admin/restore edge 在状态事务内同时写 notification 与
-publication event row。媒体-backed row 可先 blocked，公共交付完成后解除 dispatch readiness；
-notification ready/delivered 从不作为 handoff 证明。Reconciliation 修复两行并排除
-private/deleted 和无 lifecycle 追踪的历史视频。
+immutable publication fact、operational publication outbox。媒体-backed outbox 可先 blocked，
+公共交付完成后解除 dispatch readiness；notification ready/delivered 从不作为 handoff 证明。
+Dispatcher 异步启动并以 5×100/10 秒为单次上限，broker outage 不影响其他 worker。30 天 replay
+window 后只清理已有 fact 的 dispatched outbox；Reconciliation 按 fact 缺失修复，因此清理不会
+重新发出事件，并继续排除 private/deleted 和无 lifecycle 追踪的历史视频。
 
 Feed fanout、embedding intake 和 media wakeup shadow 使用非变更 parity reader，传播缺失最多
 三次有界内联重试；配置 shadow/active Kafka gate 时 nil parity 使 Worker 启动失败。Semantic

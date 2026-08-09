@@ -5,6 +5,7 @@ from enum import Enum
 import multiprocessing
 import os
 import sys
+import time
 from typing import TextIO
 
 from .constants import STARTUP_TIMEOUT_SECONDS
@@ -16,6 +17,7 @@ class StartupFailure(str, Enum):
     MODEL_METADATA = "model_metadata"
     FIXTURE_CONTRACT = "fixture_contract"
     PRELOAD_TIMEOUT = "preload_timeout"
+    STARTUP_TIMEOUT = "startup_timeout"
     DEPENDENCY = "dependency"
     INTERNAL = "internal"
 
@@ -107,6 +109,7 @@ def run_server(
     server_runner=None,
     startup_timeout_seconds: float = STARTUP_TIMEOUT_SECONDS,
 ) -> int:
+    startup_deadline = time.monotonic() + startup_timeout_seconds
     if settings_loader is None:
         try:
             from .settings import load_settings
@@ -135,7 +138,10 @@ def run_server(
         report_failure(StartupResult(StartupFailure.DEPENDENCY))
         return 1
 
-    result = preload_runtime(runtime, startup_timeout_seconds)
+    result = preload_runtime(
+        runtime,
+        max(0.0, startup_deadline - time.monotonic()),
+    )
     if not result.succeeded:
         report_failure(result)
         return 1
@@ -145,7 +151,7 @@ def run_server(
             from .app import create_app
 
             app_factory = create_app
-        app = app_factory(settings, runtime)
+        app = app_factory(settings, runtime, startup_deadline)
         if server_runner is None:
             import uvicorn
 
@@ -162,7 +168,16 @@ def run_server(
                 )
 
         server_runner(app, settings)
-    except Exception:
-        report_failure(StartupResult(StartupFailure.INTERNAL))
+    except Exception as error:
+        try:
+            from .inference import WorkerUnavailable
+        except Exception:
+            WorkerUnavailable = ()
+        failure = (
+            StartupFailure.STARTUP_TIMEOUT
+            if isinstance(error, WorkerUnavailable)
+            else StartupFailure.INTERNAL
+        )
+        report_failure(StartupResult(failure))
         return 1
     return 0

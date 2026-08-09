@@ -126,7 +126,8 @@ Alternative considered: accept one arbitrary `text` field. Rejected because pres
 
 ### 5. Make inference ordered and deterministic
 
-At startup, a killable preload process validates the packaged model and fixtures. Each fixed
+At startup, one 180-second monotonic outer deadline covers the killable preload process, packaged
+model/metadata/fixture validation, and initialization of every configured inference child. Each fixed
 inference child repeats the same immutable preload before accepting work, sets deterministic CPU
 seeds/settings, enables evaluation and no-gradient/inference mode, disables tokenizer parallelism,
 and fixes PyTorch/BLAS/OpenMP threads to two. A request is split into consecutive chunks of 8 and
@@ -157,6 +158,9 @@ admission. If the admitted waiting capacity is full, the service returns `429 OV
 complete handler, including validation, queue time, inference, vector validation, and serialization,
 has a 15-second deadline; timeout returns no partial result, terminates the executing child, releases
 admission immediately, and asynchronously replaces the slot with a freshly preloaded process.
+Replacement preload failures retry with bounded 100 ms, 500 ms, 1 s, 2 s, then capped 5 s backoff
+until shutdown. The pool reports currently live workers; readiness requires the full configured
+capacity and returns to ready only after all missing replacements have successfully preloaded.
 
 Supported configuration:
 
@@ -184,10 +188,12 @@ Alternative considered: an unbounded executor queue with only an HTTP timeout. R
 
 ### 8. Fail closed on startup and return safe bounded errors
 
-Startup has a 180-second outer timeout covering settings validation, killable model preload,
-metadata checks, and the deterministic fixture. Any failure terminates the preload process, logs a
-stable startup result class, and exits non-zero; it does not start degraded with a substitute model.
-Inference-process recycling reloads only the same packaged immutable model contract.
+Startup has one 180-second outer timeout covering settings validation, killable model preload,
+metadata/fixture checks, and complete inference-pool initialization. Workers consume only the
+remaining outer budget; they do not each receive an independent 180-second timeout. Any failure
+terminates startup children, logs a stable startup result class, and exits non-zero; it does not
+start degraded with a substitute model. Inference-process recycling reloads only the same packaged
+immutable model contract.
 
 Errors use the Frux envelope:
 
@@ -197,7 +203,11 @@ Errors use the Frux envelope:
 
 Stable categories include authentication errors, `INVALID_JSON`, `INVALID_REQUEST`, `REQUEST_TOO_LARGE`, `OVER_CAPACITY`, `INFERENCE_TIMEOUT`, `NOT_READY`, and `INTERNAL_ERROR`. Messages are generic and do not echo input or infrastructure details. Custom exception handlers replace framework validation/trace output with this envelope and bound all response bodies.
 
-Operational logs are structured and contain only generated request ID, route, status, item count, aggregate normalized code points, queue milliseconds, inference milliseconds, and a bounded result enum. They exclude headers, bodies, normalized text, item IDs, vectors, model filesystem paths, cache URLs, and raw exception text. The service has no database, queue, cache, request-history file, or analytics sink.
+Operational request logs contain only `route`, `status`, `duration_ms`, bounded `result`, and current
+live `capacity`. Route and result values come from closed registries. Logs exclude headers, bodies,
+normalized text, item IDs, vectors, tokens, raw paths, URLs, model filesystem paths, cache URLs, and
+raw exception text. Uvicorn access logging remains disabled. The service has no database, queue,
+cache, request-history file, or analytics sink.
 
 ### 9. Package the model in a hardened Compose service
 
