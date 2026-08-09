@@ -42,6 +42,7 @@ type CutoverAdministrator struct {
 	backend cutoverBackend
 	prefix  string
 	timeout time.Duration
+	now     func() time.Time
 }
 
 func NewCutoverAdministrator(client *Client, cfg infraconfig.KafkaConfig) *CutoverAdministrator {
@@ -49,6 +50,7 @@ func NewCutoverAdministrator(client *Client, cfg infraconfig.KafkaConfig) *Cutov
 		backend: &franzCutoverBackend{client: kadm.NewClient(client.kgoClient)},
 		prefix:  cfg.TopicPrefix,
 		timeout: client.adminTimeout,
+		now:     func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -66,7 +68,7 @@ func (a *CutoverAdministrator) Apply(
 		return "", fmt.Errorf("%w: active group is required", ErrConsumerCutover)
 	}
 	cutoverAt, err := time.Parse(time.RFC3339, boundary)
-	if err != nil {
+	if err != nil || cutoverAt.After(a.currentTime()) {
 		return "", fmt.Errorf("%w: invalid boundary", ErrConsumerCutover)
 	}
 	if mode != CutoverInitializeOnly && mode != CutoverForceReset {
@@ -133,6 +135,13 @@ func (a *CutoverAdministrator) Apply(
 		return CutoverReset, nil
 	}
 	return CutoverInitialized, nil
+}
+
+func (a *CutoverAdministrator) currentTime() time.Time {
+	if a != nil && a.now != nil {
+		return a.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func allPartitionsCommitted(offsets kadm.OffsetResponses, topic string) bool {

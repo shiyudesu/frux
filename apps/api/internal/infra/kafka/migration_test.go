@@ -2,6 +2,7 @@ package infrakafka
 
 import (
 	"testing"
+	"time"
 
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 )
@@ -208,6 +209,23 @@ func TestMigrationPlanRejectsSubMillisecondCutoverBoundary(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("sub-millisecond cutover boundary was accepted")
+	}
+}
+
+func TestMigrationPlanRejectsFutureCutoverBoundary(t *testing.T) {
+	future := time.Now().UTC().Add(time.Hour).Truncate(time.Millisecond)
+	_, err := MigrationPlan(infraconfig.KafkaConfig{
+		Enabled: true,
+		Migration: infraconfig.KafkaMigrationConfig{
+			ViewEventRecorded: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode:    "kafka",
+				ConsumerMode:    "kafka",
+				CutoverBoundary: future.Format(time.RFC3339Nano),
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("future cutover boundary was accepted")
 	}
 }
 

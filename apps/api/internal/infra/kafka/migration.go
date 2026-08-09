@@ -55,7 +55,8 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 		}
 		if stream.CutoverBoundary != "" {
 			boundary, err := time.Parse(time.RFC3339, stream.CutoverBoundary)
-			if err != nil || !millisecondAligned(boundary) {
+			if err != nil || !millisecondAligned(boundary) ||
+				boundary.After(time.Now().UTC()) {
 				return nil, fmt.Errorf("%w: cutover boundary", ErrUnknownRegistryValue)
 			}
 		}

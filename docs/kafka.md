@@ -49,6 +49,7 @@ An active Kafka consumer requires an RFC3339 `cutover_boundary`. Before the grou
 uses kadm to resolve the broker append timestamp to every partition offset and commits the boundary
 while the group is inactive. Registered retained event topics require
 `message.timestamp.type=LogAppendTime`; envelope `produced_at` is not used for offset resolution.
+The boundary must be millisecond-aligned and no later than worker startup time.
 Existing group commits are preserved on restart; the boundary is not reapplied. The
 explicit `Backbone.ApplyConsumerCutover(..., CutoverForceReset)` operation may reset only an inactive group.
 The action boundary must be strictly later than the view boundary, and each worker initializes/starts

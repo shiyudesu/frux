@@ -231,3 +231,21 @@ func TestCutoverMetadataPreservesMillisecondBoundary(t *testing.T) {
 		t.Fatalf("metadata = %q", offset.Metadata)
 	}
 }
+
+func TestCutoverRejectsFutureBoundary(t *testing.T) {
+	now := time.Date(2026, 8, 9, 1, 0, 0, 0, time.UTC)
+	admin := &CutoverAdministrator{
+		backend: &fakeCutoverBackend{},
+		timeout: time.Second,
+		now:     func() time.Time { return now },
+	}
+	_, err := admin.Apply(
+		context.Background(),
+		GroupConsumeViewActive,
+		now.Add(time.Millisecond).Format(time.RFC3339Nano),
+		CutoverInitializeOnly,
+	)
+	if !errors.Is(err, ErrConsumerCutover) {
+		t.Fatalf("error = %v, want ErrConsumerCutover", err)
+	}
+}
