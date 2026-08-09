@@ -90,6 +90,7 @@ including `CreateTime`.
 - In-flight produce cancellation is enabled to enforce deadlines; every error after submission is classified as uncertain and must be handled through stable event IDs and application fallback.
 - Controller listeners isolated from application networks.
 - Alerts for broker health, topology failures, commit uncertainty, contract failures, lag, and delay.
+- Consumers disable automatic offset reset; retention loss and out-of-range committed offsets are fatal rather than silently skipping behavior facts.
 - Rebalance timeout covers handler cancellation and offset commit; a blocked rebalance cancels the current batch before partition ownership is released.
 - franz-go data-loss notifications are recorded as bounded metrics and consumption continues from the client's recovered cursor instead of restarting the group.
 - Worker processes continuously probe Kafka health so broker failure and recovery update the exported health gauge after startup.

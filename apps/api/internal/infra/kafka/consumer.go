@@ -166,6 +166,7 @@ func NewConsumer(
 	options = append(options,
 		kgo.ConsumerGroup(groupName),
 		kgo.ConsumeTopics(topicName),
+		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.DisableAutoCommit(),
 		kgo.Balancers(kgo.CooperativeStickyBalancer()),
 		kgo.BlockRebalanceOnPoll(),
@@ -273,7 +274,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 				c.observeCommit("uncertain")
 				c.source.AllowRebalance()
 				c.sampleLag(ctx, true)
-				return fmt.Errorf("%w: %s", ErrCommitUncertain, sanitizeKafkaError(err))
+				return errors.Join(
+					ErrCommitUncertain,
+					err,
+					errors.New(sanitizeKafkaError(err)),
+				)
 			}
 			c.observeCommit("success")
 		}

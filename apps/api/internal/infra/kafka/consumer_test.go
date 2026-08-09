@@ -418,12 +418,20 @@ func TestConsumerStopsSessionOnCommitUncertainty(t *testing.T) {
 		batches:   [][]brokerRecord{{probeRecord(t, 0, 0)}},
 		commitErr: errors.New("coordinator unavailable"),
 	}
+
 	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
 		return applicationeventstream.OutcomeDurableSuccess, nil
 	}))
 	err := consumer.Run(context.Background())
 	if !errors.Is(err, ErrCommitUncertain) || source.allows != 1 || !source.closed {
 		t.Fatalf("error=%v allows=%d closed=%v", err, source.allows, source.closed)
+	}
+}
+
+func TestCommitAuthorizationFailureRemainsFatal(t *testing.T) {
+	err := errors.Join(ErrCommitUncertain, kerr.GroupAuthorizationFailed)
+	if RetryableConsumerError(err) {
+		t.Fatalf("commit authorization failure was retryable: %v", err)
 	}
 }
 
