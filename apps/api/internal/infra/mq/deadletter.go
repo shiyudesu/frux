@@ -42,6 +42,8 @@ type managementQueue struct {
 	State                  string `json:"state"`
 }
 
+var ErrConsumerNotDrained = errors.New("rabbitmq consumer queue is not drained")
+
 type managementMessage struct {
 	Payload         string               `json:"payload"`
 	PayloadEncoding string               `json:"payload_encoding"`
@@ -96,6 +98,7 @@ func (m *DeadLetterManager) ListDeadLetterQueues(ctx context.Context) ([]domaind
 	if err := m.available(); err != nil {
 		return nil, err
 	}
+
 	specs := m.rabbit.queueSpecs()
 	result := make([]domaindeadletter.QueueSummary, 0, len(specs))
 	for _, spec := range specs {
@@ -113,6 +116,41 @@ func (m *DeadLetterManager) ListDeadLetterQueues(ctx context.Context) ([]domaind
 		inframetrics.ObserveMQDeadLetterDepth(spec.Consumer, queue.Messages)
 	}
 	return result, nil
+}
+
+func (m *DeadLetterManager) VerifyConsumerDrained(
+	ctx context.Context,
+	consumer string,
+) error {
+	if m == nil || m.rabbit == nil || m.config.ManagementURL == "" {
+		return domaindeadletter.ErrInspectionFailed
+	}
+	queues := m.rabbit.consumerQueues(consumer)
+	if len(queues) == 0 {
+		return fmt.Errorf("%w: unknown consumer", ErrConsumerNotDrained)
+	}
+	for _, queueName := range queues {
+		var queue managementQueue
+		if err := m.request(
+			ctx,
+			http.MethodGet,
+			"/api/queues/%2F/"+url.PathEscape(queueName),
+			nil,
+			&queue,
+		); err != nil {
+			return err
+		}
+		if queue.MessagesReady != 0 || queue.MessagesUnacknowledged != 0 {
+			return fmt.Errorf(
+				"%w: %s ready=%d unacknowledged=%d",
+				ErrConsumerNotDrained,
+				queueName,
+				queue.MessagesReady,
+				queue.MessagesUnacknowledged,
+			)
+		}
+	}
+	return nil
 }
 
 func (m *DeadLetterManager) PreviewDeadLetterQueue(

@@ -123,12 +123,17 @@ func (p *ActionPublisher) PublishActionChanged(
 		return nil
 	}
 	primary, mirror := transports(p.mode)
-	primaryErr := p.publish(ctx, primary, event)
-	p.observe(StreamAction, "primary", primary, primaryErr)
 	if mirror == "" {
+		primaryErr := p.publish(ctx, primary, event)
+		p.observe(StreamAction, "primary", primary, primaryErr)
 		return primaryErr
 	}
-	mirrorErr := p.publish(ctx, mirror, event)
+	primaryErr, mirrorErr := publishConcurrently(
+		ctx,
+		func(ctx context.Context) error { return p.publish(ctx, primary, event) },
+		func(ctx context.Context) error { return p.publish(ctx, mirror, event) },
+	)
+	p.observe(StreamAction, "primary", primary, primaryErr)
 	p.observe(StreamAction, "mirror", mirror, mirrorErr)
 	combinedErr := errors.Join(primaryErr, mirrorErr)
 	p.observe(StreamAction, "combined", "dual", combinedErr)
@@ -206,24 +211,58 @@ func (p *ViewPublisher) PublishViewEventRecorded(
 		return nil
 	}
 	primary, mirror := transports(p.mode)
-	primaryErr := p.publish(ctx, primary, event)
-	p.observe(StreamView, "primary", primary, primaryErr)
 	if mirror == "" {
+		primaryErr := p.publish(ctx, primary, event)
+		p.observe(StreamView, "primary", primary, primaryErr)
 		return primaryErr
 	}
-	mirrorErr := p.publish(ctx, mirror, event)
+	primaryErr, mirrorErr := publishConcurrently(
+		ctx,
+		func(ctx context.Context) error { return p.publish(ctx, primary, event) },
+		func(ctx context.Context) error { return p.publish(ctx, mirror, event) },
+	)
+	p.observe(StreamView, "primary", primary, primaryErr)
 	p.observe(StreamView, "mirror", mirror, mirrorErr)
 	combinedErr := errors.Join(primaryErr, mirrorErr)
 	p.observe(StreamView, "combined", "dual", combinedErr)
 	if combinedErr == nil {
 		return nil
 	}
+
 	return &PublicationError{
 		primaryTransport: primary,
 		primaryErr:       primaryErr,
 		mirrorTransport:  mirror,
 		mirrorErr:        mirrorErr,
 	}
+}
+
+func publishConcurrently(
+	ctx context.Context,
+	primary func(context.Context) error,
+	mirror func(context.Context) error,
+) (error, error) {
+	type result struct {
+		primary bool
+		err     error
+	}
+	results := make(chan result, 2)
+	go func() {
+		results <- result{primary: true, err: primary(ctx)}
+	}()
+	go func() {
+		results <- result{err: mirror(ctx)}
+	}()
+	var primaryErr, mirrorErr error
+	for range 2 {
+		item := <-results
+		if item.primary {
+			primaryErr = item.err
+		} else {
+			mirrorErr = item.err
+		}
+	}
+	return primaryErr, mirrorErr
 }
 
 func (p *ViewPublisher) publish(

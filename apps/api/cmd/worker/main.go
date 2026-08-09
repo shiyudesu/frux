@@ -240,26 +240,30 @@ func startWorkers(
 	}
 	behaviorConsumers := orderedBehaviorKafkaConsumers(
 		behaviorKafkaConsumer{
-			migration:     viewMigration,
-			activeGroup:   infrakafka.GroupConsumeViewActive,
-			shadowGroup:   infrakafka.GroupConsumeViewShadow,
-			activeHandler: infrabehaviorstream.NewViewHandler(behaviorWorker),
-			parity:        infrabehaviorstream.ViewParityChecker{Reader: recommendationRepo},
-			stream:        infrabehaviorstream.StreamView,
+			migration:      viewMigration,
+			activeGroup:    infrakafka.GroupConsumeViewActive,
+			shadowGroup:    infrakafka.GroupConsumeViewShadow,
+			activeHandler:  infrabehaviorstream.NewViewHandler(behaviorWorker),
+			parity:         infrabehaviorstream.ViewParityChecker{Reader: recommendationRepo},
+			stream:         infrabehaviorstream.StreamView,
+			rabbitConsumer: inframq.ConsumerViewEventRecorded,
 		},
 		behaviorKafkaConsumer{
-			migration:     actionMigration,
-			activeGroup:   infrakafka.GroupPersistActionActive,
-			shadowGroup:   infrakafka.GroupPersistActionShadow,
-			activeHandler: infrabehaviorstream.NewActionHandler(actionWorker),
-			parity:        infrabehaviorstream.ActionParityChecker{Reader: interactionRepo},
-			stream:        infrabehaviorstream.StreamAction,
+			migration:      actionMigration,
+			activeGroup:    infrakafka.GroupPersistActionActive,
+			shadowGroup:    infrakafka.GroupPersistActionShadow,
+			activeHandler:  infrabehaviorstream.NewActionHandler(actionWorker),
+			parity:         infrabehaviorstream.ActionParityChecker{Reader: interactionRepo},
+			stream:         infrabehaviorstream.StreamAction,
+			rabbitConsumer: inframq.ConsumerActionChanged,
 		},
 	)
+	drainInspector := inframq.NewDeadLetterManager(rabbitMQ, cfg.RabbitMQ)
 	behaviorConsumers, err = initializeBehaviorKafkaCutovers(
 		ctx,
 		gormDB,
 		kafkaBackbone,
+		drainInspector,
 		behaviorConsumers,
 	)
 	if err != nil {
@@ -415,6 +419,9 @@ func initializeBehaviorKafkaCutovers(
 	ctx context.Context,
 	db *gorm.DB,
 	backbone *infrakafka.Backbone,
+	drainInspector interface {
+		VerifyConsumerDrained(context.Context, string) error
+	},
 	consumers []behaviorKafkaConsumer,
 ) ([]behaviorKafkaConsumer, error) {
 	result := append([]behaviorKafkaConsumer(nil), consumers...)
@@ -431,6 +438,15 @@ func initializeBehaviorKafkaCutovers(
 				"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
 				lockKey,
 			).Error; err != nil {
+				return err
+			}
+			if drainInspector == nil {
+				return inframq.ErrConsumerNotDrained
+			}
+			if err := drainInspector.VerifyConsumerDrained(
+				ctx,
+				consumer.rabbitConsumer,
+			); err != nil {
 				return err
 			}
 			applied, err := backbone.ApplyConsumerCutover(
@@ -459,12 +475,13 @@ func initializeBehaviorKafkaCutovers(
 }
 
 type behaviorKafkaConsumer struct {
-	migration     infrakafka.StreamMigration
-	activeGroup   infrakafka.ConsumerGroupID
-	shadowGroup   infrakafka.ConsumerGroupID
-	activeHandler applicationeventstream.Handler
-	parity        applicationeventstream.ParityChecker
-	stream        string
+	migration      infrakafka.StreamMigration
+	activeGroup    infrakafka.ConsumerGroupID
+	shadowGroup    infrakafka.ConsumerGroupID
+	activeHandler  applicationeventstream.Handler
+	parity         applicationeventstream.ParityChecker
+	stream         string
+	rabbitConsumer string
 }
 
 type kafkaConsumerStarter func(

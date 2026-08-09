@@ -315,6 +315,32 @@ func TestPublicationResultRecognizesTransportUncertainty(t *testing.T) {
 	if result := publicationResult(possiblyAcknowledgedBridgeError{}); result != "uncertain" {
 		t.Fatalf("result = %q", result)
 	}
+
+}
+
+func TestDualPublicationStartsMirrorBeforePrimaryDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	mirrorStarted := make(chan struct{})
+	primaryErr, mirrorErr := publishConcurrently(
+		ctx,
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		func(context.Context) error {
+			close(mirrorStarted)
+			return nil
+		},
+	)
+	select {
+	case <-mirrorStarted:
+	default:
+		t.Fatal("mirror did not start concurrently")
+	}
+	if !errors.Is(primaryErr, context.DeadlineExceeded) || mirrorErr != nil {
+		t.Fatalf("primary=%v mirror=%v", primaryErr, mirrorErr)
+	}
 }
 
 type publicationObserverStub struct {
