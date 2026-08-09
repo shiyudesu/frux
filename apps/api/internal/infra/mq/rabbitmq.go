@@ -334,7 +334,10 @@ func (r *RabbitMQ) ensureActionPublisher() error {
 	if r.actionPublishChannel != nil && !r.actionPublishChannel.IsClosed() {
 		return nil
 	}
-	connection := r.conn
+	connection := r.actionPublishConn
+	if connection == nil || connection.IsClosed() {
+		connection = r.conn
+	}
 	if connection == nil || connection.IsClosed() {
 		created, err := amqp.Dial(r.config.URL)
 		if err != nil {
