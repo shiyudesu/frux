@@ -20,9 +20,11 @@ type ProducerMode string
 type ConsumerMode string
 
 const (
-	TopicBackboneProbe     TopicID = "backbone_probe"
-	TopicActionChanged     TopicID = "action_changed"
-	TopicViewEventRecorded TopicID = "view_event_recorded"
+	TopicBackboneProbe            TopicID = "backbone_probe"
+	TopicActionChanged            TopicID = "action_changed"
+	TopicViewEventRecorded        TopicID = "view_event_recorded"
+	TopicVideoPublished           TopicID = "video_published"
+	TopicMediaProcessingRequested TopicID = "media_processing_requested"
 
 	TopicClassEvent   TopicClass = "event"
 	TopicClassCommand TopicClass = "command"
@@ -36,21 +38,32 @@ const (
 	KeyKindProbeID     KeyKind = "probe_id"
 	KeyKindActionState KeyKind = "action_state"
 	KeyKindUserID      KeyKind = "user_id"
+	KeyKindVideoID     KeyKind = "video_id"
+	KeyKindAssetID     KeyKind = "asset_id"
 
 	ProducerPlatformAPI    ProducerID = "platform_api"
 	ProducerPlatformWorker ProducerID = "platform_worker"
 	ProducerInteractionAPI ProducerID = "interaction_api"
 	ProducerExposureWorker ProducerID = "exposure_worker"
+	ProducerVideoWorker    ProducerID = "video_worker"
+	ProducerMediaAPI       ProducerID = "media_api"
 
-	GroupBackboneProbeActive ConsumerGroupID = "backbone_probe_active"
-	GroupBackboneProbeShadow ConsumerGroupID = "backbone_probe_shadow"
-	GroupPersistActionActive ConsumerGroupID = "persist_action_active"
-	GroupPersistActionShadow ConsumerGroupID = "persist_action_shadow"
-	GroupConsumeViewActive   ConsumerGroupID = "consume_view_active"
-	GroupConsumeViewShadow   ConsumerGroupID = "consume_view_shadow"
+	GroupBackboneProbeActive           ConsumerGroupID = "backbone_probe_active"
+	GroupBackboneProbeShadow           ConsumerGroupID = "backbone_probe_shadow"
+	GroupPersistActionActive           ConsumerGroupID = "persist_action_active"
+	GroupPersistActionShadow           ConsumerGroupID = "persist_action_shadow"
+	GroupConsumeViewActive             ConsumerGroupID = "consume_view_active"
+	GroupConsumeViewShadow             ConsumerGroupID = "consume_view_shadow"
+	GroupFeedVideoPublishedActive      ConsumerGroupID = "feed_video_published_active"
+	GroupFeedVideoPublishedShadow      ConsumerGroupID = "feed_video_published_shadow"
+	GroupEmbeddingVideoPublishedActive ConsumerGroupID = "embedding_video_published_active"
+	GroupEmbeddingVideoPublishedShadow ConsumerGroupID = "embedding_video_published_shadow"
+	GroupMediaProcessingActive         ConsumerGroupID = "media_processing_active"
+	GroupMediaProcessingShadow         ConsumerGroupID = "media_processing_shadow"
 
 	ResponsibilityActionChanged     ResponsibilityID = "action_changed"
 	ResponsibilityVideoPublished    ResponsibilityID = "video_published"
+	ResponsibilityVideoFeed         ResponsibilityID = "video_feed"
 	ResponsibilityVideoEmbedding    ResponsibilityID = "video_embedding"
 	ResponsibilityViewEventRecorded ResponsibilityID = "view_event_recorded"
 	ResponsibilityMediaProcessing   ResponsibilityID = "media_processing"
@@ -127,6 +140,28 @@ var topics = [...]TopicSpec{
 		AllowedProducers: []ProducerID{ProducerExposureWorker},
 		AllowedGroups:    []ConsumerGroupID{GroupConsumeViewActive, GroupConsumeViewShadow},
 	},
+	{
+		ID: TopicVideoPublished, BaseName: "frux.video.published.v1",
+		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindVideoID,
+		LocalPartitions: 12, Retention: 30 * 24 * time.Hour, CleanupPolicy: CleanupDelete,
+		MessageTimestamp: MessageTimestampLogAppendTime,
+		MaxRecordBytes:   256 << 10,
+		AllowedProducers: []ProducerID{ProducerVideoWorker},
+		AllowedGroups: []ConsumerGroupID{
+			GroupFeedVideoPublishedActive, GroupFeedVideoPublishedShadow,
+			GroupEmbeddingVideoPublishedActive, GroupEmbeddingVideoPublishedShadow,
+		},
+		ReplayAllowed: true,
+	},
+	{
+		ID: TopicMediaProcessingRequested, BaseName: "frux.media.processing-requested.v1",
+		Version: 1, Class: TopicClassCommand, KeyKind: KeyKindAssetID,
+		LocalPartitions: 12, Retention: 6 * time.Hour, CleanupPolicy: CleanupDelete,
+		MessageTimestamp: MessageTimestampLogAppendTime,
+		MaxRecordBytes:   32 << 10,
+		AllowedProducers: []ProducerID{ProducerMediaAPI},
+		AllowedGroups:    []ConsumerGroupID{GroupMediaProcessingActive, GroupMediaProcessingShadow},
+	},
 }
 
 var consumerGroups = [...]ConsumerGroupSpec{
@@ -136,6 +171,12 @@ var consumerGroups = [...]ConsumerGroupSpec{
 	{ID: GroupPersistActionShadow, BaseName: "frux.interaction.persist-action.v1", Topic: TopicActionChanged, Shadow: true},
 	{ID: GroupConsumeViewActive, BaseName: "frux.recommendation.consume-view.v1", Topic: TopicViewEventRecorded},
 	{ID: GroupConsumeViewShadow, BaseName: "frux.recommendation.consume-view.v1", Topic: TopicViewEventRecorded, Shadow: true},
+	{ID: GroupFeedVideoPublishedActive, BaseName: "frux.feed.video-published.v1", Topic: TopicVideoPublished},
+	{ID: GroupFeedVideoPublishedShadow, BaseName: "frux.feed.video-published.v1", Topic: TopicVideoPublished, Shadow: true},
+	{ID: GroupEmbeddingVideoPublishedActive, BaseName: "frux.embedding.video-published.v1", Topic: TopicVideoPublished},
+	{ID: GroupEmbeddingVideoPublishedShadow, BaseName: "frux.embedding.video-published.v1", Topic: TopicVideoPublished, Shadow: true},
+	{ID: GroupMediaProcessingActive, BaseName: "frux.media.processing-requested.v1", Topic: TopicMediaProcessingRequested},
+	{ID: GroupMediaProcessingShadow, BaseName: "frux.media.processing-requested.v1", Topic: TopicMediaProcessingRequested, Shadow: true},
 }
 
 var migrations = [...]MigrationSpec{
@@ -143,13 +184,26 @@ var migrations = [...]MigrationSpec{
 		Responsibility: ResponsibilityActionChanged, DefaultProducer: ProducerModeRabbit,
 		DefaultConsumer: ConsumerModeRabbit, KafkaProducerAvailable: true, KafkaConsumerAvailable: true,
 	},
-	{Responsibility: ResponsibilityVideoPublished, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
-	{Responsibility: ResponsibilityVideoEmbedding, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
+	{
+		Responsibility: ResponsibilityVideoPublished, DefaultProducer: ProducerModeRabbit,
+		DefaultConsumer: ConsumerModeRabbit, KafkaProducerAvailable: true,
+	},
+	{
+		Responsibility: ResponsibilityVideoFeed, DefaultProducer: ProducerModeRabbit,
+		DefaultConsumer: ConsumerModeRabbit, KafkaConsumerAvailable: true,
+	},
+	{
+		Responsibility: ResponsibilityVideoEmbedding, DefaultProducer: ProducerModeRabbit,
+		DefaultConsumer: ConsumerModeRabbit, KafkaConsumerAvailable: true,
+	},
 	{
 		Responsibility: ResponsibilityViewEventRecorded, DefaultProducer: ProducerModeRabbit,
 		DefaultConsumer: ConsumerModeRabbit, KafkaProducerAvailable: true, KafkaConsumerAvailable: true,
 	},
-	{Responsibility: ResponsibilityMediaProcessing, DefaultProducer: ProducerModeRabbit, DefaultConsumer: ConsumerModeRabbit},
+	{
+		Responsibility: ResponsibilityMediaProcessing, DefaultProducer: ProducerModeRabbit,
+		DefaultConsumer: ConsumerModeRabbit, KafkaProducerAvailable: true, KafkaConsumerAvailable: true,
+	},
 }
 
 var topicPrefixPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$`)

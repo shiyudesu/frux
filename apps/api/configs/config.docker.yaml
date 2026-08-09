@@ -97,6 +97,7 @@ kafka:
   migration:
     action_changed: {producer_mode: "rabbit", consumer_mode: "rabbit"}
     video_published: {producer_mode: "rabbit", consumer_mode: "rabbit"}
+    video_feed: {producer_mode: "rabbit", consumer_mode: "rabbit"}
     video_embedding: {producer_mode: "rabbit", consumer_mode: "rabbit"}
     view_event_recorded: {producer_mode: "rabbit", consumer_mode: "rabbit"}
     media_processing: {producer_mode: "rabbit", consumer_mode: "rabbit"}
@@ -122,6 +123,16 @@ media:
     secret_key: "frux-secret"
     use_path_style: true
     auto_create_bucket: true
+
+semantic_embedding:
+  enabled: ${FRUX_SEMANTIC_EMBEDDING_ENABLED}
+  base_url: "${FRUX_SEMANTIC_EMBEDDING_URL}"
+  metadata_timeout: "3s"
+  request_timeout: "17s"
+  coverage_interval: "5m"
+  lease_ttl: "30s"
+  poll_interval: "1s"
+  worker_concurrency: 2
 
 moderation:
   mode: "${FRUX_MODERATION_MODE}"

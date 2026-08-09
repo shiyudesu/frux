@@ -166,6 +166,14 @@ feed:hot:window:v1:{windowEndUnix}
 
 ## 6. Web Feed 顺序预加载
 
+### 5.1 发布 fanout 的 Kafka 边界
+
+首次公开视频由 `frux.video.published.v1` 提供 30 天保留事实。Feed 使用独立
+`frux.feed.video-published.v1` Group，在卡片预热和 inbox/author-outbox 幂等 ZSET 写入成功后才提交
+Offset。Embedding 的延迟、语义服务故障和重放不会阻塞 Feed Group；重复记录继续使用原始
+`published_at`，不会改变 Timeline 顺序。切换前使用独立 shadow Group 做信封、key、年龄和事实校验，
+异常时只回滚 Feed responsibility 到 RabbitMQ。
+
 关注场景在 Web 中额外展示 208px 关注目录。目录数据来自关系模块
 `GET /api/users/me/following`，拥有独立的 query、cursor、loading 和 error 状态；目录滚轮与指针
 不进入 Feed 切换处理器。点击用户进入公开主页，不产生作者过滤 Feed。目录可收起释放舞台宽度，

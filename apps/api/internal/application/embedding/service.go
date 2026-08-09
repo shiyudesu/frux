@@ -1,19 +1,24 @@
 package applicationembedding
 
 import (
-	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
-	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	"context"
 	"encoding/json"
 	"errors"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	"time"
+
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 var ErrSaveVideoEmbeddingFailed = errors.New("failed to save video embedding")
 var ErrMarshalEmbeddingFailed = errors.New("failed to marshal embedding")
 
 type Service struct {
-	repo       domainembedding.Repository
-	vectorizer domainembedding.Vectorizer
+	repo            domainembedding.Repository
+	vectorizer      domainembedding.Vectorizer
+	semanticEnabled bool
+	now             func() time.Time
 }
 
 type GenerateVideoEmbeddingResult struct {
@@ -28,6 +33,13 @@ func New(repo domainembedding.Repository, vectorizer domainembedding.Vectorizer)
 	return &Service{
 		repo:       repo,
 		vectorizer: vectorizer,
+		now:        func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func (s *Service) SetSemanticEnabled(enabled bool) {
+	if s != nil {
+		s.semanticEnabled = enabled
 	}
 }
 
@@ -37,7 +49,12 @@ func (s *Service) GenerateForPublishedVideo(ctx context.Context, event *applicat
 		return &GenerateVideoEmbeddingResult{}, nil
 	}
 
-	text := domainembedding.BuildVideoText(event.Title, event.Description)
+	title, description, text, err := domainembedding.CanonicalVideoText(
+		event.Title, event.Description,
+	)
+	if err != nil {
+		return nil, err
+	}
 	vector := s.vectorizer.Vectorize(text)
 	content, err := json.Marshal(vector)
 	if err != nil {
@@ -51,12 +68,48 @@ func (s *Service) GenerateForPublishedVideo(ctx context.Context, event *applicat
 		domainembedding.TextHash(text),
 		string(content),
 	)
-	if err := s.repo.SaveVideoEmbedding(ctx, embedding); err != nil {
+	createdOrUpdated := true
+	if finder, ok := s.repo.(interface {
+		FindVideoEmbedding(context.Context, int64, string) (*domainembedding.VideoEmbedding, error)
+	}); ok {
+		existing, findErr := finder.FindVideoEmbedding(ctx, event.VideoID, embedding.Model)
+		if findErr == nil && existing != nil && existing.TextHash == embedding.TextHash {
+			createdOrUpdated = false
+		}
+	}
+	jobState := domainembedding.SemanticJobPending
+	if !s.semanticEnabled {
+		jobState = domainembedding.SemanticJobSuspended
+	}
+	now := s.now().UTC()
+	job := &domainembedding.SemanticJob{
+		VideoID: event.VideoID, Model: domainembedding.SemanticModelKey,
+		TextHash: embedding.TextHash, Title: title, Description: description,
+		State: jobState, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if repository, ok := s.repo.(interface {
+		PersistHashAndSemanticJob(
+			context.Context,
+			*domainembedding.VideoEmbedding,
+			*domainembedding.SemanticJob,
+		) error
+	}); ok {
+		if err := repository.PersistHashAndSemanticJob(ctx, embedding, job); err != nil {
+			inframetrics.ObserveHashVector("failed")
+			return nil, ErrSaveVideoEmbeddingFailed
+		}
+	} else if err := s.repo.SaveVideoEmbedding(ctx, embedding); err != nil {
+		inframetrics.ObserveHashVector("failed")
 		return nil, ErrSaveVideoEmbeddingFailed
+	}
+	if createdOrUpdated {
+		inframetrics.ObserveHashVector("generated")
+	} else {
+		inframetrics.ObserveHashVector("skipped")
 	}
 
 	return &GenerateVideoEmbeddingResult{
 		Embedding:        embedding,
-		CreatedOrUpdated: true,
+		CreatedOrUpdated: createdOrUpdated,
 	}, nil
 }

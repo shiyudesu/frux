@@ -19,29 +19,30 @@
 - [ ] 3.3 Refactor application orchestration to keep the hash vectorizer mandatory, make semantic generation optional, return bounded per-model outcomes, and enforce `hash lookup/generate/save -> semantic lookup/generate/save`.
 - [ ] 3.4 Add application/worker tests for disabled semantics, new and duplicate live events, changed text, hash failure, semantic success, closed semantic gate, invalid vectors, and concurrent idempotent writes.
 
-## 4. Dedicated Live-Event Retry Pipeline
+## 4. Kafka Intake and Durable Semantic Jobs
 
-- [ ] 4.1 Add a dedicated supervised RabbitMQ connection/channel for embedding deliveries with manual acknowledgements and prefetch one, isolated from fanout, action, view-event, and media consumers.
-- [ ] 4.2 Declare durable 5s, 30s, 2m, 10m, and repeating-30m retry queues that dead-letter through the default exchange only to the primary embedding queue.
-- [ ] 4.3 Implement bounded attempt-header parsing, exact delay selection, publisher-confirmed retry copies, the specified acknowledgement matrix, and embedding-channel-only reconnect backoff.
-- [ ] 4.4 Add RabbitMQ topology and delivery tests for queue arguments, routing isolation, QoS, every retry tier, confirmation failure, crash/redelivery idempotency, malformed events, shutdown, reconnect, and unrelated-consumer progress.
+- [ ] 4.1 Consume the retained video-publication topic through the registered independent embedding group and strictly validate its envelope, key, identity, timestamps, and payload.
+- [ ] 4.2 Add a PostgreSQL semantic job keyed by `(video_id, model)` with canonical text hash, state, attempts, availability, lease owner/until, bounded error class, and completion metadata.
+- [ ] 4.3 Commit the Kafka offset only after hash persistence and semantic-job upsert/reset commit; duplicate publication records and changed text hashes remain idempotent.
+- [ ] 4.4 Add intake and persistence tests for group isolation, malformed events, commit failure/redelivery, duplicate publication, changed text, job leases, reclaim, retry, suspension, cleanup, and backlog ordering.
 
 ## 5. Worker Composition and Observability
 
-- [ ] 5.1 Add the semantic readiness gate with one bounded startup probe and background metadata validation retries; fail startup only for invalid local configuration while remote failures leave hash and unrelated workers running.
-- [ ] 5.2 Add bounded Prometheus collectors and instrumentation for semantic request count/latency/result, live-event hash/semantic outcomes, coverage, and ready/retry/in-flight backlog without high-cardinality labels.
-- [ ] 5.3 Update worker startup/shutdown and samplers to manage the semantic transport, validator, dedicated RabbitMQ resources, coverage counts, and queue inspection without affecting existing workers; add lifecycle and metric-label tests.
+- [ ] 5.1 Add the semantic readiness gate with one bounded startup probe and background metadata validation retries; fail startup only for invalid local configuration while remote failures leave hash intake and unrelated workers running.
+- [ ] 5.2 Implement a bounded leased semantic worker with the 5s, 30s, 2m, 10m, then capped 30m retry schedule, explicit suspended state, expired-lease reclaim, and terminal contract classification.
+- [ ] 5.3 Add bounded Prometheus collectors and instrumentation for semantic request count/latency/result, live-event hash/semantic outcomes, coverage, and pending/retry/suspended/in-flight PostgreSQL backlog without high-cardinality labels.
+- [ ] 5.4 Update worker startup/shutdown and samplers to manage the semantic transport, validator, Kafka intake, semantic-job poller, coverage counts, and PostgreSQL backlog inspection without affecting existing workers; add lifecycle and metric-label tests.
 
 ## 6. Compose, Documentation, and Future Boundary
 
 - [ ] 6.1 Add local and Docker semantic configuration, enable Compose with `http://semantic-embedding:8081` and `FRUX_INTERNAL_TOKEN`, and use `condition: service_started` while keeping the service internal-only.
-- [ ] 6.2 Add Compose assertions and an outage/recovery test proving a live published event receives hash coverage during semantic downtime and exactly one semantic row after delayed recovery.
-- [ ] 6.3 Update embedding, semantic-service, video, engineering, architecture, deployment, module-index, and setup/configuration documentation for fixed model identity, hash-first live processing, retries/acknowledgements, metrics, failure modes, rollout, rollback, and no-schema/no-recommendation behavior.
+- [ ] 6.2 Add Compose assertions and an outage/recovery test proving a live published event receives hash coverage and a durable semantic job during semantic downtime and exactly one semantic row after delayed recovery.
+- [ ] 6.3 Update embedding, semantic-service, video, engineering, architecture, deployment, module-index, and setup/configuration documentation for fixed model identity, hash-first Kafka intake, PostgreSQL retries/leases/suspension, metrics, failure modes, rollout, rollback, and no-vector-schema/no-recommendation behavior.
 - [ ] 6.4 Document and test the one-way boundary: `backfill-semantic-video-embeddings` depends on this change's model identity, canonicalization, validated client, conditional persistence, and coverage interfaces, while this change adds no historical scan, command/job, cursor/checkpoint, dry-run, re-embedding mode, or backfill-specific retry and does not backfill existing historical videos.
 
 ## 7. Validation
 
-- [ ] 7.1 Run targeted Go tests for embedding domain/application/client/config/metrics/RabbitMQ packages, PostgreSQL persistence, the existing video embedding worker flow, and the live semantic-service contract.
+- [ ] 7.1 Run targeted Go tests for embedding domain/application/client/config/metrics/Kafka packages, PostgreSQL persistence and semantic jobs, the video publication intake flow, and the live semantic-service contract.
 - [ ] 7.2 Compile `./cmd/feed` and `./cmd/worker`, then run the complete Go test suite.
 - [ ] 7.3 Run targeted Compose outage/recovery verification with a strong test token and `docker compose -f apps/docker-compose.yml config`.
 - [ ] 7.4 Confirm no main OpenSpec specs, recommendation recall/ranking/policy code, backfill binary/job, or pgvector/ANN artifacts were added, then run `openspec validate --all --strict`.

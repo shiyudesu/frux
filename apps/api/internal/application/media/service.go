@@ -13,6 +13,7 @@ import (
 	"time"
 
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 const maxVideoUploadBytes int64 = 512 << 20
@@ -318,7 +319,7 @@ func (s *Service) CompleteUploadSession(ctx context.Context, ownerID int64, sess
 		}
 		if s.publisher != nil {
 			if err := s.publisher.PublishMediaProcessingRequested(ctx, NewProcessingRequestedEvent(storedAsset.ID, s.profileVersion, now)); err != nil {
-				return nil, ErrDispatchProcessingFailed
+				inframetrics.ObserveMediaWakeup("publish_failed")
 			}
 		}
 	}

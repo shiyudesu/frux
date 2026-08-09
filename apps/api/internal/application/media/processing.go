@@ -78,6 +78,7 @@ type MediaProcessingWorker struct {
 	concurrency  int
 	now          func() time.Time
 	notifier     MediaStateNotifier
+	wakeups      chan ProcessingRequestedEvent
 }
 
 type ProcessingWorkerOption func(*MediaProcessingWorker)
@@ -102,7 +103,8 @@ func NewMediaProcessingWorker(repo ProcessingRepository, processor Processor, co
 	worker := &MediaProcessingWorker{
 		repo: repo, processor: processor, consumer: consumer, owner: owner,
 		leaseTTL: leaseTTL, pollInterval: defaultProcessingPollInterval, concurrency: concurrency,
-		now: func() time.Time { return time.Now().UTC() },
+		now:     func() time.Time { return time.Now().UTC() },
+		wakeups: make(chan ProcessingRequestedEvent, concurrency),
 	}
 	for _, option := range options {
 		option(worker)
@@ -119,6 +121,9 @@ func (w *MediaProcessingWorker) Start(ctx context.Context) error {
 			return err
 		}
 	}
+	for range w.concurrency {
+		go w.runWakeupScheduler(ctx)
+	}
 	go func() {
 		ticker := time.NewTicker(w.pollInterval)
 		defer ticker.Stop()
@@ -134,6 +139,52 @@ func (w *MediaProcessingWorker) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func (w *MediaProcessingWorker) SignalRequested(
+	ctx context.Context,
+	event *ProcessingRequestedEvent,
+) error {
+	if event == nil || event.AssetID <= 0 || event.ProfileVersion == "" {
+		return nil
+	}
+	if reader, ok := w.repo.(interface {
+		FindProcessingJobByAsset(context.Context, int64) (*domainmedia.MediaProcessingJob, error)
+	}); ok {
+		job, err := reader.FindProcessingJobByAsset(ctx, event.AssetID)
+		if errors.Is(err, domainmedia.ErrProcessingJobNotFound) {
+			inframetrics.ObserveMediaWakeup("missing_job")
+			return nil
+		}
+		if err != nil {
+			inframetrics.ObserveMediaWakeup("validation_failed")
+			return err
+		}
+		if job == nil || job.ProfileVersion != event.ProfileVersion {
+			inframetrics.ObserveMediaWakeup("stale")
+			return nil
+		}
+	}
+	select {
+	case w.wakeups <- *event:
+		inframetrics.ObserveMediaWakeup("signaled")
+	default:
+		inframetrics.ObserveMediaWakeup("capacity_full")
+	}
+	return nil
+}
+
+func (w *MediaProcessingWorker) runWakeupScheduler(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-w.wakeups:
+			if err := w.HandleRequested(ctx, &event); err != nil {
+				inframetrics.ObserveWorkerJob("media_processing_wakeup", 0, err)
+			}
+		}
+	}
 }
 
 func (w *MediaProcessingWorker) HandleRequested(ctx context.Context, event *ProcessingRequestedEvent) error {
@@ -156,6 +207,9 @@ func (w *MediaProcessingWorker) ProcessPending(ctx context.Context) (int, error)
 	jobs, err := w.repo.LeaseProcessingJobs(ctx, w.owner, now, now.Add(w.leaseTTL), w.concurrency)
 	if err != nil {
 		return 0, err
+	}
+	if len(jobs) > 0 {
+		inframetrics.ObserveMediaWakeup("polling_recovery")
 	}
 	processed := 0
 	var processErr error

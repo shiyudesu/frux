@@ -50,7 +50,7 @@ The worker SHALL always compose and run `hash-ngram-v1` generation. Semantic gen
 
 #### Scenario: Semantic integration is disabled
 - **WHEN** the worker receives a video-published event with semantic generation disabled
-- **THEN** it generates or skips the current hash vector and acknowledges the event without calling the semantic service
+- **THEN** it generates or skips the current hash vector, persists a pending or suspended semantic job, and commits the Kafka record without calling the semantic service
 
 #### Scenario: Enabled service is unavailable at startup
 - **WHEN** the startup metadata probe fails within its bounded deadline
@@ -61,46 +61,57 @@ The worker SHALL always compose and run `hash-ngram-v1` generation. Semantic gen
 - **THEN** worker startup fails before opening semantic consumers
 
 ### Requirement: Hash-First Idempotent Published-Event Processing
-For every valid video-published event, Frux SHALL canonicalize title and description according to the dependent service contract, persist or skip `hash-ngram-v1` first, and attempt the fixed semantic model only after hash persistence succeeds. Identical `(video_id, model, text_hash)` work SHALL not create another fact or update an unchanged row; changed canonical text MAY replace the row for that model.
+For every valid Kafka video-publication event, Frux SHALL canonicalize title and description according to the dependent service contract, persist or skip `hash-ngram-v1` first, and persist a semantic-job handoff before committing the publication offset. The fixed semantic model SHALL be attempted later by a leased PostgreSQL worker. Identical `(video_id, model, text_hash)` work SHALL not create another fact or update an unchanged row; changed canonical text MAY replace the row for that model.
 
 #### Scenario: New publication is processed
 - **WHEN** neither model exists for a published video
-- **THEN** the worker persists hash coverage first and then attempts semantic generation
+- **THEN** Kafka intake persists hash coverage first and then creates the semantic job before committing
 
 #### Scenario: Duplicate event is delivered
 - **WHEN** both model rows already carry the same canonical text hash
-- **THEN** the worker skips both writes and acknowledges without creating duplicate facts
+- **THEN** intake skips identical writes and commits without creating duplicate facts or jobs
 
 #### Scenario: Hash persistence fails
 - **WHEN** the hash vector cannot be durably saved
-- **THEN** the worker does not call the semantic service and retains the event for retry
+- **THEN** intake does not create semantic work and leaves the Kafka record uncommitted
 
 #### Scenario: Published text changes
 - **WHEN** a later event for the same video has a different canonical text hash
 - **THEN** each enabled model may update its single `(video_id, model)` row to the new bounded vector
 
-### Requirement: Durable Delayed Semantic Retry and Exact Acknowledgement
-The embedding consumer SHALL use a dedicated supervised RabbitMQ connection/channel with prefetch one. Retryable hash or semantic failures SHALL use durable fixed-delay retry queues with delays of 5 seconds, 30 seconds, 2 minutes, 10 minutes, and a repeating 30-minute cap. The original delivery SHALL be acknowledged only after successful processing or publisher-confirmed retry publication.
+### Requirement: Kafka Intake and Durable Semantic Job Handoff
+The registered embedding Kafka group SHALL commit a video-publication offset only after hash persistence and a PostgreSQL semantic job keyed by `(video_id, model)` commit. Semantic execution, retries, suspension, leases, and terminal outcomes SHALL NOT be represented by Kafka retry topics, RabbitMQ retry queues, broker headers, or an uncommitted publication record.
+
+#### Scenario: Semantic handoff commits
+- **WHEN** hash persistence and semantic-job upsert commit for a valid publication event
+- **THEN** the publication record becomes eligible for Kafka offset commit without waiting for remote inference
+
+#### Scenario: Offset commit is uncertain
+- **WHEN** intake commits its durable boundary but Kafka offset commit fails
+- **THEN** the consumer session ends and redelivery remains safe through conditional hash persistence and semantic-job identity
+
+#### Scenario: Event contract is invalid
+- **WHEN** the registered publication envelope, video-ID key, event identity, timestamp, or payload is invalid
+- **THEN** the record is terminally classified without model work
+
+### Requirement: PostgreSQL-Owned Semantic Retry State
+Semantic jobs SHALL store canonical text hash, bounded state, attempts, `available_at`, lease owner/until, bounded error class, and completion metadata. Claims SHALL be bounded and stably ordered. Retry delays SHALL be 5 seconds, 30 seconds, 2 minutes, 10 minutes, then capped at 30 minutes.
 
 #### Scenario: Semantic service is temporarily unavailable
-- **WHEN** hash persistence succeeds but semantic generation returns timeout, overload, authentication, unavailable, or contract failure
-- **THEN** the original event is publisher-confirmed into the delay selected by its attempt count and only then acknowledged
+- **WHEN** a leased request returns timeout, overload, authentication, unavailable, or retryable contract failure
+- **THEN** the job releases its lease and becomes available after the capped database retry delay
 
-#### Scenario: Retry publication fails
-- **WHEN** the worker cannot obtain publisher confirmation for the durable retry copy
-- **THEN** it negatively acknowledges with requeue, closes only the embedding channel, and reconnects with bounded 1, 2, 4, 8, 16, then 30-second delays
+#### Scenario: Semantic integration is disabled
+- **WHEN** semantic execution is intentionally disabled
+- **THEN** pending jobs remain durably suspended or pending and hash coverage continues
 
-#### Scenario: Process crashes across acknowledgement
-- **WHEN** a crash occurs after a retry copy or model row is committed but before the original delivery is acknowledged
-- **THEN** redelivery remains safe because model writes and same-text skips are idempotent
+#### Scenario: Worker exits with a lease
+- **WHEN** a semantic worker stops before completing a job and its lease expires
+- **THEN** another worker reclaims the same job without resetting a Kafka offset
 
-#### Scenario: Event JSON is malformed
-- **WHEN** the delivery cannot be decoded as the bounded published-event envelope
-- **THEN** it is negatively acknowledged without requeue and no model work occurs
-
-#### Scenario: Worker shuts down during processing
-- **WHEN** cancellation interrupts an in-flight semantic delivery
-- **THEN** the channel closes without acknowledging that delivery so RabbitMQ can redeliver it
+#### Scenario: Canonical text changes
+- **WHEN** intake observes a new canonical text hash for the same video and model
+- **THEN** the single semantic job resets to pending for the new hash and stale completion cannot overwrite it
 
 ### Requirement: Side-by-Side Normalized Persistence
 Frux SHALL store semantic vectors in the existing `video_embedding` table beside hash vectors using unique `(video_id, model)` semantics. Semantic rows SHALL contain dimension 384, the fixed revision-bearing model key, canonical text hash, finite L2-normalized bounded JSON, and timestamps. This capability SHALL require no pgvector column, ANN index, or new vector table.
@@ -118,7 +129,7 @@ Frux SHALL store semantic vectors in the existing `video_embedding` table beside
 - **THEN** the fixed model key fits the current column and a 384-component normalized JSON vector round-trips without schema DDL
 
 ### Requirement: Semantic Embedding Observability
-Frux SHALL expose bounded-cardinality metrics for metadata and embedding request count/latency/result, hash and semantic live-event vector outcomes, retries, readable-video semantic coverage, and ready/retry/in-flight embedding backlog. Metrics MUST NOT label video IDs, text, URLs, raw errors, retry numbers, tokens, vectors, or arbitrary model strings.
+Frux SHALL expose bounded-cardinality metrics for metadata and embedding request count/latency/result, hash and semantic live-event vector outcomes, retries, readable-video semantic coverage, and PostgreSQL semantic-job count and oldest age by bounded state. Metrics MUST NOT label video IDs, text, URLs, raw errors, retry numbers, tokens, vectors, or arbitrary model strings.
 
 #### Scenario: Semantic request completes
 - **WHEN** metadata or embedding HTTP work finishes
@@ -133,8 +144,8 @@ Frux SHALL expose bounded-cardinality metrics for metadata and embedding request
 - **THEN** gauges report readable published videos with and without the fixed semantic model
 
 #### Scenario: Backlog sampling runs
-- **WHEN** RabbitMQ queue inspection succeeds
-- **THEN** gauges report primary ready, summed retry ready, and local in-flight work without per-attempt labels
+- **WHEN** PostgreSQL semantic-job sampling succeeds
+- **THEN** gauges report count and oldest age for pending, processing, retry, suspended, completed, and failed states without per-attempt labels
 
 ### Requirement: Compose and Failure Isolation
 Compose SHALL configure the worker to call the internal `semantic-embedding` service with the shared strong token and SHALL declare a `service_started` dependency rather than a health-gated dependency. The semantic service SHALL remain internal-only. A semantic outage MUST NOT prevent worker startup, hash generation, or progress by fanout, action, view-event, media, or other consumers.
@@ -145,14 +156,14 @@ Compose SHALL configure the worker to call the internal `semantic-embedding` ser
 
 #### Scenario: Semantic container is unhealthy
 - **WHEN** the semantic container fails readiness or becomes unavailable
-- **THEN** the worker continues hash and unrelated consumer work while semantic messages move through delayed retries
+- **THEN** the worker continues hash and unrelated consumer work while semantic jobs remain in capped database retries
 
 #### Scenario: Semantic service recovers
-- **WHEN** metadata validation later succeeds and retry deliveries return
+- **WHEN** metadata validation later succeeds and pending jobs become available
 - **THEN** missing semantic rows are generated without duplicating existing hash or semantic facts
 
 ### Requirement: Verification and Documentation
-The implementation SHALL include unit, HTTP contract, worker acknowledgement, RabbitMQ topology, PostgreSQL integration, live semantic-service contract, Compose, outage-recovery, and migration-assessment tests. Documentation SHALL cover configuration, fixed model identity, live-event retry and acknowledgement behavior, metrics, failure modes, rollout, rollback, the dependency on `add-semantic-embedding-service`, and the future backfill boundary.
+The implementation SHALL include unit, HTTP contract, Kafka intake/commit, PostgreSQL semantic-job, live semantic-service contract, Compose, outage-recovery, and migration-assessment tests. Documentation SHALL cover configuration, fixed model identity, hash-first intake, database retry/lease/suspension behavior, metrics, failure modes, rollout, rollback, the dependency on `add-semantic-embedding-service` and `migrate-video-workflows-to-kafka`, and the future backfill boundary.
 
 #### Scenario: Client contract suite runs
 - **WHEN** tests exercise timeouts, overload, auth rejection, oversized/truncated responses, metadata mismatch, wrong identity/order/dimension, non-finite values, and non-unit vectors

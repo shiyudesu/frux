@@ -32,9 +32,19 @@ type UserKey struct {
 	UserID int64
 }
 
+type VideoKey struct {
+	VideoID int64
+}
+
+type AssetKey struct {
+	AssetID int64
+}
+
 type probeKeyCodec struct{}
 type actionStateKeyCodec struct{}
 type userKeyCodec struct{}
+type videoKeyCodec struct{}
+type assetKeyCodec struct{}
 
 var probeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
@@ -136,7 +146,73 @@ func (codec userKeyCodec) Validate(data []byte) error {
 	return err
 }
 
-var keyCodecs = [...]KeyCodec{probeKeyCodec{}, actionStateKeyCodec{}, userKeyCodec{}}
+func (videoKeyCodec) Kind() KeyKind { return KeyKindVideoID }
+
+func (videoKeyCodec) Encode(value any) ([]byte, error) {
+	key, ok := value.(VideoKey)
+	if !ok || key.VideoID <= 0 {
+		return nil, ErrInvalidEventKey
+	}
+	return []byte(fmt.Sprintf("video:%d", key.VideoID)), nil
+}
+
+func (codec videoKeyCodec) Decode(data []byte) (any, error) {
+	const prefix = "video:"
+	if !strings.HasPrefix(string(data), prefix) {
+		return nil, ErrInvalidEventKey
+	}
+	videoID, err := strconv.ParseInt(string(data[len(prefix):]), 10, 64)
+	if err != nil || videoID <= 0 {
+		return nil, ErrInvalidEventKey
+	}
+	key := VideoKey{VideoID: videoID}
+	canonical, encodeErr := codec.Encode(key)
+	if encodeErr != nil || !bytes.Equal(data, canonical) {
+		return nil, ErrInvalidEventKey
+	}
+	return key, nil
+}
+
+func (codec videoKeyCodec) Validate(data []byte) error {
+	_, err := codec.Decode(data)
+	return err
+}
+
+func (assetKeyCodec) Kind() KeyKind { return KeyKindAssetID }
+
+func (assetKeyCodec) Encode(value any) ([]byte, error) {
+	key, ok := value.(AssetKey)
+	if !ok || key.AssetID <= 0 {
+		return nil, ErrInvalidEventKey
+	}
+	return []byte(fmt.Sprintf("asset:%d", key.AssetID)), nil
+}
+
+func (codec assetKeyCodec) Decode(data []byte) (any, error) {
+	const prefix = "asset:"
+	if !strings.HasPrefix(string(data), prefix) {
+		return nil, ErrInvalidEventKey
+	}
+	assetID, err := strconv.ParseInt(string(data[len(prefix):]), 10, 64)
+	if err != nil || assetID <= 0 {
+		return nil, ErrInvalidEventKey
+	}
+	key := AssetKey{AssetID: assetID}
+	canonical, encodeErr := codec.Encode(key)
+	if encodeErr != nil || !bytes.Equal(data, canonical) {
+		return nil, ErrInvalidEventKey
+	}
+	return key, nil
+}
+
+func (codec assetKeyCodec) Validate(data []byte) error {
+	_, err := codec.Decode(data)
+	return err
+}
+
+var keyCodecs = [...]KeyCodec{
+	probeKeyCodec{}, actionStateKeyCodec{}, userKeyCodec{}, videoKeyCodec{}, assetKeyCodec{},
+}
 
 func Codec(kind KeyKind) (KeyCodec, error) {
 	for _, codec := range keyCodecs {

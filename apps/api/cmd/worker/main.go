@@ -21,6 +21,7 @@ import (
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
@@ -47,6 +48,8 @@ import (
 	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
 	infrareview "github.com/shiyudesu/frux/internal/infra/persistence/review"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
+	infrasemanticembedding "github.com/shiyudesu/frux/internal/infra/semanticembedding"
+	infravideostream "github.com/shiyudesu/frux/internal/infra/videostream"
 
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -188,6 +191,34 @@ func startWorkers(
 	if err != nil {
 		return err
 	}
+	publicationMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityVideoPublished,
+	)
+	if err != nil {
+		return err
+	}
+	feedMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityVideoFeed,
+	)
+	if err != nil {
+		return err
+	}
+	embeddingMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityVideoEmbedding,
+	)
+	if err != nil {
+		return err
+	}
+	mediaMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityMediaProcessing,
+	)
+	if err != nil {
+		return err
+	}
 	drainInspector := inframq.NewDeadLetterManager(rabbitMQ, cfg.RabbitMQ)
 	initializedCutovers, err := initializeBehaviorKafkaCutovers(
 		ctx,
@@ -212,6 +243,32 @@ func startWorkers(
 	}
 	viewMigration = initializedCutovers[0].migration
 	actionMigration = initializedCutovers[1].migration
+	videoCutovers, err := initializeBehaviorKafkaCutovers(
+		ctx,
+		gormDB,
+		kafkaBackbone,
+		drainInspector,
+		[]behaviorKafkaConsumer{
+			{
+				migration: feedMigration, activeGroup: infrakafka.GroupFeedVideoPublishedActive,
+				rabbitConsumer: inframq.ConsumerVideoPublished,
+			},
+			{
+				migration: embeddingMigration, activeGroup: infrakafka.GroupEmbeddingVideoPublishedActive,
+				rabbitConsumer: inframq.ConsumerVideoEmbedding,
+			},
+			{
+				migration: mediaMigration, activeGroup: infrakafka.GroupMediaProcessingActive,
+				rabbitConsumer: inframq.ConsumerMediaProcessing,
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	feedMigration = videoCutovers[0].migration
+	embeddingMigration = videoCutovers[1].migration
+	mediaMigration = videoCutovers[2].migration
 	var actionSource applicationinteraction.ActionEventConsumer
 	if actionMigration.Consumer != infrakafka.ConsumerModeKafka {
 		actionSource = rabbitMQ
@@ -305,13 +362,6 @@ func startWorkers(
 		return err
 	}
 
-	embeddingRepo := infraembedding.New(gormDB)
-	embeddingService := applicationembedding.New(embeddingRepo, nil)
-	embeddingWorker := applicationembedding.NewVideoEmbeddingWorker(embeddingService, rabbitMQ)
-	if err := embeddingWorker.Start(ctx); err != nil {
-		return err
-	}
-
 	mediaStore, err := inframedia.NewObjectStore(ctx, cfg.Media)
 	if err != nil {
 		return err
@@ -340,16 +390,36 @@ func startWorkers(
 	}
 	mediaCatalog := inframedia.NewDeliveryCatalog(mediaRepo, mediaURLResolver, mediaStore)
 	videoRepo := infravideo.New(gormDB, infravideo.WithMediaCatalog(mediaCatalog))
-	mediaPublication := applicationvideo.NewMediaPublicationService(videoRepo, mediaCatalog, rabbitMQ, feedCache)
+	durablePublicationPublisher := applicationvideo.NewDurablePublicationPublisher(videoRepo)
+	publicationTransportPublisher, err := infravideostream.NewVideoPublisher(
+		publicationMigration.Producer,
+		rabbitMQ,
+		kafkaBackbone.Publisher(),
+		inframetrics.VideoWorkflowObserver{},
+	)
+	if err != nil {
+		return err
+	}
+	publicationDispatcher := applicationvideo.NewPublicationOutboxDispatcher(
+		videoRepo,
+		publicationTransportPublisher,
+		inframetrics.VideoWorkflowObserver{},
+	)
+	if err := publicationDispatcher.Start(ctx); err != nil {
+		return err
+	}
+	mediaPublication := applicationvideo.NewMediaPublicationService(
+		videoRepo, mediaCatalog, durablePublicationPublisher, feedCache,
+	)
 	publicationRecovery := applicationvideo.NewPublicationRecoveryService(
-		videoRepo, mediaPublication, rabbitMQ,
+		videoRepo, mediaPublication, durablePublicationPublisher,
 	)
 	reviewService := applicationreview.New(
 		reviewRepo,
 		applicationreview.WithObserver(workerReviewObserver{}),
 		applicationreview.WithOutcomeApplier(workerReviewOutcomeApplier{
 			videoReader: videoRepo, mediaPublication: mediaPublication,
-			publisher: rabbitMQ, cacheInvalidator: feedCache,
+			publisher: durablePublicationPublisher, cacheInvalidator: feedCache,
 		}),
 	)
 	lifecycleWriter := &lifecycleNotificationMessageWriter{
@@ -379,7 +449,7 @@ func startWorkers(
 		feedCache,
 		workerVideoAdminTransitionApplier{
 			mediaPublication: mediaPublication,
-			publisher:        rabbitMQ,
+			publisher:        durablePublicationPublisher,
 			publication:      videoRepo,
 		},
 	)
@@ -411,21 +481,113 @@ func startWorkers(
 	applicationmedia.NewReconciliationWorker(reconciler).Start(ctx)
 	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))
 	feedPreheater := applicationvideo.NewFeedPreheater(feedRepo, feedCache)
+	var fanoutSource applicationvideo.PublishedEventConsumer
+	if feedMigration.Consumer != infrakafka.ConsumerModeKafka {
+		fanoutSource = rabbitMQ
+	}
 	fanoutWorker := applicationvideo.NewFanoutWorker(
-		feedRepo, rabbitMQ, feedCache, feedPreheater,
+		feedRepo, fanoutSource, feedCache, feedPreheater,
 		applicationvideo.WithFanoutControlReader(governanceRuntime),
 	)
 	if err := fanoutWorker.Start(ctx); err != nil {
 		return err
 	}
 
+	embeddingRepo := infraembedding.New(gormDB)
+	embeddingService := applicationembedding.New(embeddingRepo, nil)
+	embeddingService.SetSemanticEnabled(cfg.SemanticEmbedding.Enabled)
+	var embeddingSource applicationembedding.PublishedEventConsumer
+	if embeddingMigration.Consumer != infrakafka.ConsumerModeKafka {
+		embeddingSource = rabbitMQ
+	}
+	embeddingWorker := applicationembedding.NewVideoEmbeddingWorker(
+		embeddingService, embeddingSource,
+	)
+	if err := embeddingWorker.Start(ctx); err != nil {
+		return err
+	}
+	semanticClient, err := infrasemanticembedding.New(
+		cfg.SemanticEmbedding,
+		cfg.Internal.Token,
+	)
+	if err != nil {
+		return err
+	}
+	semanticLeaseTTL, err := time.ParseDuration(cfg.SemanticEmbedding.LeaseTTL)
+	if err != nil {
+		return err
+	}
+	semanticPollInterval, err := time.ParseDuration(cfg.SemanticEmbedding.PollInterval)
+	if err != nil {
+		return err
+	}
+	semanticWorker := applicationembedding.NewSemanticWorker(
+		embeddingRepo,
+		semanticClient,
+		cfg.SemanticEmbedding.Enabled,
+		cfg.SemanticEmbedding.WorkerConcurrency,
+		semanticLeaseTTL,
+		semanticPollInterval,
+	)
+	if err := semanticWorker.Start(ctx); err != nil {
+		return err
+	}
+	coverageInterval, err := time.ParseDuration(cfg.SemanticEmbedding.CoverageInterval)
+	if err != nil {
+		return err
+	}
+	go sampleSemanticBacklog(ctx, embeddingRepo, coverageInterval)
+
+	var mediaSource applicationmedia.ProcessingConsumer
+	if mediaMigration.Consumer != infrakafka.ConsumerModeKafka {
+		mediaSource = rabbitMQ
+	}
 	mediaWorker := applicationmedia.NewMediaProcessingWorker(
-		mediaRepo, mediaProcessor, rabbitMQ, leaseTTL, cfg.Media.Processing.WorkerConcurrency,
+		mediaRepo, mediaProcessor, mediaSource, leaseTTL, cfg.Media.Processing.WorkerConcurrency,
 		applicationmedia.WithMediaStateNotifier(reviewMediaReadyNotifier{
 			publication: mediaPublication, videoRepo: videoRepo, reviewService: reviewService,
 		}),
 	)
-	return mediaWorker.Start(ctx)
+	if err := mediaWorker.Start(ctx); err != nil {
+		return err
+	}
+	videoConsumers := []behaviorKafkaConsumer{
+		{
+			migration:     feedMigration,
+			activeGroup:   infrakafka.GroupFeedVideoPublishedActive,
+			shadowGroup:   infrakafka.GroupFeedVideoPublishedShadow,
+			activeHandler: infravideostream.NewFanoutHandler(fanoutWorker),
+			stream:        "feed", rabbitConsumer: inframq.ConsumerVideoPublished,
+			shadowObserver: inframetrics.VideoWorkflowShadowObserver{Workflow: "feed"},
+			maxAge:         30 * 24 * time.Hour,
+		},
+		{
+			migration:     embeddingMigration,
+			activeGroup:   infrakafka.GroupEmbeddingVideoPublishedActive,
+			shadowGroup:   infrakafka.GroupEmbeddingVideoPublishedShadow,
+			activeHandler: infravideostream.NewEmbeddingHandler(embeddingWorker),
+			stream:        "embedding", rabbitConsumer: inframq.ConsumerVideoEmbedding,
+			shadowObserver: inframetrics.VideoWorkflowShadowObserver{Workflow: "embedding"},
+			maxAge:         30 * 24 * time.Hour,
+		},
+		{
+			migration:     mediaMigration,
+			activeGroup:   infrakafka.GroupMediaProcessingActive,
+			shadowGroup:   infrakafka.GroupMediaProcessingShadow,
+			activeHandler: infravideostream.NewMediaWakeupHandler(mediaWorker),
+			stream:        "media_wakeup", rabbitConsumer: inframq.ConsumerMediaProcessing,
+			shadowObserver: inframetrics.VideoWorkflowShadowObserver{Workflow: "media_wakeup"},
+			maxAge:         6 * time.Hour,
+		},
+	}
+	return startBehaviorKafkaConsumers(
+		ctx,
+		kafkaBackbone,
+		cfg.Kafka,
+		videoConsumers,
+		runtimeFailures,
+		startKafkaConsumer,
+	)
 }
 
 func initializeBehaviorKafkaCutovers(
@@ -504,6 +666,8 @@ type behaviorKafkaConsumer struct {
 	parity         applicationeventstream.ParityChecker
 	stream         string
 	rabbitConsumer string
+	shadowObserver applicationeventstream.ShadowObserver
+	maxAge         time.Duration
 }
 
 type kafkaConsumerStarter func(
@@ -554,11 +718,19 @@ func startBehaviorKafkaConsumers(
 			if err != nil {
 				return err
 			}
+			shadowObserver := consumer.shadowObserver
+			if shadowObserver == nil {
+				shadowObserver = inframetrics.BehaviorShadowObserver{Stream: consumer.stream}
+			}
+			maxAge := consumer.maxAge
+			if maxAge <= 0 {
+				maxAge = 7 * 24 * time.Hour
+			}
 			shadow, err := applicationeventstream.NewShadowHandler(
 				groupName,
-				7*24*time.Hour,
+				maxAge,
 				consumer.parity,
-				inframetrics.BehaviorShadowObserver{Stream: consumer.stream},
+				shadowObserver,
 			)
 			if err != nil {
 				return err
@@ -1062,5 +1234,52 @@ func closeSQL(db *sql.DB) {
 func closeRabbitMQ(rabbitMQ *inframq.RabbitMQ) {
 	if rabbitMQ != nil {
 		_ = rabbitMQ.Close()
+	}
+}
+
+func sampleSemanticBacklog(
+	ctx context.Context,
+	repository interface {
+		SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error)
+		SemanticCoverage(context.Context) (int64, int64, error)
+		CleanupSemanticJobs(context.Context, time.Time, int) (int64, error)
+	},
+	interval time.Duration,
+) {
+	if repository == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	sample := func() {
+		rows, err := repository.SemanticBacklog(ctx)
+		if err != nil {
+			inframetrics.ObserveWorkerJob("semantic_backlog_sample", 0, err)
+			return
+		}
+		inframetrics.ObserveSemanticBacklog(rows, time.Now().UTC())
+		present, missing, coverageErr := repository.SemanticCoverage(ctx)
+		if coverageErr != nil {
+			inframetrics.ObserveWorkerJob("semantic_coverage_sample", 0, coverageErr)
+			return
+		}
+		inframetrics.ObserveSemanticCoverage(present, missing)
+		if _, cleanupErr := repository.CleanupSemanticJobs(
+			ctx, time.Now().UTC().Add(-30*24*time.Hour), 100,
+		); cleanupErr != nil {
+			inframetrics.ObserveWorkerJob("semantic_job_cleanup", 0, cleanupErr)
+		}
+	}
+	sample()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sample()
+		}
 	}
 }

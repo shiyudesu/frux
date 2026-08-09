@@ -18,6 +18,7 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 	configured := map[ResponsibilityID]infraconfig.KafkaStreamMigrationConfig{
 		ResponsibilityActionChanged:     cfg.Migration.ActionChanged,
 		ResponsibilityVideoPublished:    cfg.Migration.VideoPublished,
+		ResponsibilityVideoFeed:         cfg.Migration.VideoFeed,
 		ResponsibilityVideoEmbedding:    cfg.Migration.VideoEmbedding,
 		ResponsibilityViewEventRecorded: cfg.Migration.ViewEventRecorded,
 		ResponsibilityMediaProcessing:   cfg.Migration.MediaProcessing,
@@ -92,7 +93,35 @@ func MigrationPlan(cfg infraconfig.KafkaConfig) ([]StreamMigration, error) {
 	if kafkaPrimaryMode(action.Producer) && !kafkaPrimaryMode(view.Producer) {
 		return nil, fmt.Errorf("%w: view producer must cut over before action", ErrUnknownRegistryValue)
 	}
+	publication, _ := MigrationFor(plan, ResponsibilityVideoPublished)
+	feed, _ := MigrationFor(plan, ResponsibilityVideoFeed)
+	embedding, _ := MigrationFor(plan, ResponsibilityVideoEmbedding)
+	for _, consumer := range []StreamMigration{feed, embedding} {
+		if !validPublicationConsumerPair(publication.Producer, consumer.Consumer) {
+			return nil, fmt.Errorf(
+				"%w: publication producer and %s consumer do not share one active delivery path",
+				ErrUnknownRegistryValue,
+				consumer.Responsibility,
+			)
+		}
+	}
 	return plan, nil
+}
+
+func validPublicationConsumerPair(producer ProducerMode, consumer ConsumerMode) bool {
+	switch consumer {
+	case ConsumerModeRabbit:
+		return producer == ProducerModeRabbit ||
+			producer == ProducerModeRabbitWithKafkaMirror ||
+			producer == ProducerModeKafkaWithRabbitMirror
+	case ConsumerModeKafkaShadow:
+		return producer == ProducerModeRabbitWithKafkaMirror
+	case ConsumerModeKafka:
+		return producer == ProducerModeKafka ||
+			producer == ProducerModeKafkaWithRabbitMirror
+	default:
+		return false
+	}
 }
 
 func millisecondAligned(value time.Time) bool {

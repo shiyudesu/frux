@@ -7,13 +7,15 @@ import (
 
 func TestRegistryIsClosedAndNamesAreStable(t *testing.T) {
 	topics := Topics()
-	if len(topics) != 3 {
-		t.Fatalf("topic count = %d, want 3", len(topics))
+	if len(topics) != 5 {
+		t.Fatalf("topic count = %d, want 5", len(topics))
 	}
+
 	name, err := TopicName("dev", TopicBackboneProbe)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if name != "dev.frux.platform.backbone_probe.v1" {
 		t.Fatalf("topic name = %q", name)
 	}
@@ -29,6 +31,37 @@ func TestRegistryIsClosedAndNamesAreStable(t *testing.T) {
 	}
 	if _, err := GroupName("invalid prefix!", GroupBackboneProbeActive); err == nil {
 		t.Fatal("invalid prefix was accepted")
+	}
+}
+
+func TestVideoWorkflowRegistryContractsAreStable(t *testing.T) {
+	publication, err := Topic(TopicVideoPublished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publication.BaseName != "frux.video.published.v1" ||
+		publication.KeyKind != KeyKindVideoID ||
+		publication.Retention != 30*24*time.Hour ||
+		!publication.ReplayAllowed ||
+		publication.MessageTimestamp != MessageTimestampLogAppendTime {
+		t.Fatalf("publication topic = %+v", publication)
+	}
+	media, err := Topic(TopicMediaProcessingRequested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if media.BaseName != "frux.media.processing-requested.v1" ||
+		media.Class != TopicClassCommand ||
+		media.KeyKind != KeyKindAssetID ||
+		media.Retention != 6*time.Hour {
+		t.Fatalf("media topic = %+v", media)
+	}
+	feed, _ := GroupName("", GroupFeedVideoPublishedActive)
+	embedding, _ := GroupName("", GroupEmbeddingVideoPublishedActive)
+	if feed != "frux.feed.video-published.v1" ||
+		embedding != "frux.embedding.video-published.v1" ||
+		feed == embedding {
+		t.Fatalf("independent groups = %q %q", feed, embedding)
 	}
 }
 

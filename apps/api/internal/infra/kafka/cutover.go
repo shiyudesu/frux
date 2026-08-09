@@ -91,8 +91,17 @@ func (a *CutoverAdministrator) Apply(
 	defer cancel()
 
 	committed, err := a.backend.FetchOffsets(adminContext, groupName, topicName)
+	if emptyInitialOffsetsError(err) ||
+		(committed != nil && emptyInitialOffsetsError(committed.Error())) {
+		committed = make(kadm.OffsetResponses)
+		err = nil
+	}
 	if err != nil || committed.Error() != nil {
-		return "", fmt.Errorf("%w: fetch committed offsets", ErrConsumerCutover)
+		return "", fmt.Errorf(
+			"%w: fetch committed offsets: %v",
+			ErrConsumerCutover,
+			errors.Join(err, committed.Error()),
+		)
 	}
 	if mode == CutoverInitializeOnly && allPartitionsCommitted(committed, topicName) {
 		return CutoverPreserved, nil
@@ -110,6 +119,11 @@ func (a *CutoverAdministrator) Apply(
 	}
 	if mode == CutoverInitializeOnly {
 		committed, err = a.backend.FetchOffsets(adminContext, groupName, topicName)
+		if emptyInitialOffsetsError(err) ||
+			(committed != nil && emptyInitialOffsetsError(committed.Error())) {
+			committed = make(kadm.OffsetResponses)
+			err = nil
+		}
 		if err != nil || committed.Error() != nil {
 			return "", fmt.Errorf("%w: recheck committed offsets", ErrConsumerCutover)
 		}
@@ -164,10 +178,19 @@ func (a *CutoverAdministrator) Initialized(
 	adminContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	committed, err := a.backend.FetchOffsets(adminContext, groupName, topicName)
+	if emptyInitialOffsetsError(err) ||
+		(committed != nil && emptyInitialOffsetsError(committed.Error())) {
+		return false, nil
+	}
 	if err != nil || committed.Error() != nil {
 		return false, fmt.Errorf("%w: fetch committed offsets", ErrConsumerCutover)
 	}
 	return allPartitionsCommitted(committed, topicName), nil
+}
+
+func emptyInitialOffsetsError(err error) bool {
+	return errors.Is(err, kerr.GroupIDNotFound) ||
+		errors.Is(err, kerr.UnknownTopicOrPartition)
 }
 
 func (a *CutoverAdministrator) currentTime() time.Time {

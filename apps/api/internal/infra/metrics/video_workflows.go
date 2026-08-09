@@ -1,0 +1,170 @@
+package inframetrics
+
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+	VideoWorkflowPublicationTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "video_workflow_publication_total",
+			Help:      "Video workflow publications by bounded workflow, role, transport, and result.",
+		},
+		[]string{"workflow", "role", "transport", "result"},
+	)
+	VideoPublicationOutboxPending = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "frux",
+			Name:      "video_publication_outbox_pending",
+			Help:      "Pending durable video-publication outbox rows.",
+		},
+	)
+	VideoPublicationOutboxLagSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "frux",
+			Name:      "video_publication_outbox_lag_seconds",
+			Help:      "Age of the oldest pending video-publication outbox row.",
+		},
+	)
+	VideoPublicationDispatchTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "video_publication_dispatch_total",
+			Help:      "Durable video-publication outbox outcomes.",
+		},
+		[]string{"result"},
+	)
+	MediaWakeupsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "media_processing_wakeups_total",
+			Help:      "Media processing wakeup outcomes.",
+		},
+		[]string{"result"},
+	)
+	VideoWorkflowShadowTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "video_workflow_shadow_total",
+			Help:      "Non-mutating video workflow shadow validation outcomes.",
+		},
+		[]string{"workflow", "result"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(
+		VideoWorkflowPublicationTotal,
+		VideoPublicationOutboxPending,
+		VideoPublicationOutboxLagSeconds,
+		VideoPublicationDispatchTotal,
+		MediaWakeupsTotal,
+		VideoWorkflowShadowTotal,
+	)
+}
+
+type VideoWorkflowObserver struct{}
+
+type VideoWorkflowShadowObserver struct{ Workflow string }
+
+func (o VideoWorkflowShadowObserver) ObserveShadow(result string) {
+	switch result {
+	case "invalid", "future", "expired", "validated", "parity_unavailable",
+		"parity_match", "parity_mismatch", "parity_pending", "parity_pending_exhausted":
+	default:
+		result = "invalid"
+	}
+	VideoWorkflowShadowTotal.WithLabelValues(
+		videoConsumerWorkflowLabel(o.Workflow),
+		result,
+	).Inc()
+}
+
+func (VideoWorkflowObserver) ObserveVideoWorkflowPublication(
+	workflow, role, transport, result string,
+) {
+	VideoWorkflowPublicationTotal.WithLabelValues(
+		videoWorkflowLabel(workflow),
+		publicationRoleLabel(role),
+		transportLabel(transport),
+		publicationResultLabel(result),
+	).Inc()
+}
+
+func (VideoWorkflowObserver) ObservePublicationOutbox(
+	pending int64,
+	oldest *time.Time,
+	err error,
+) {
+	VideoPublicationOutboxPending.Set(float64(pending))
+	lag := 0.0
+	if err == nil && pending > 0 && oldest != nil {
+		lag = time.Since(oldest.UTC()).Seconds()
+		if lag < 0 {
+			lag = 0
+		}
+	}
+	VideoPublicationOutboxLagSeconds.Set(lag)
+}
+
+func (VideoWorkflowObserver) ObservePublicationDispatch(result string) {
+	VideoPublicationDispatchTotal.WithLabelValues(publicationResultLabel(result)).Inc()
+}
+
+func ObserveMediaWakeup(result string) {
+	switch result {
+	case "signaled", "capacity_full", "missing_job", "stale", "validation_failed",
+		"publish_failed", "polling_recovery":
+	default:
+		result = "unknown"
+	}
+	MediaWakeupsTotal.WithLabelValues(result).Inc()
+}
+
+func videoWorkflowLabel(value string) string {
+	switch value {
+	case "publication", "media_wakeup":
+		return value
+	default:
+		return "unknown"
+	}
+}
+
+func videoConsumerWorkflowLabel(value string) string {
+	switch value {
+	case "feed", "embedding", "media_wakeup":
+		return value
+	default:
+		return "unknown"
+	}
+}
+
+func publicationRoleLabel(value string) string {
+	switch value {
+	case "primary", "mirror":
+		return value
+	default:
+		return "unknown"
+	}
+}
+
+func transportLabel(value string) string {
+	switch value {
+	case "rabbit", "kafka":
+		return value
+	default:
+		return "unknown"
+	}
+}
+
+func publicationResultLabel(value string) string {
+	switch value {
+	case "success", "failure", "uncertain", "transport", "timeout", "canceled":
+		return value
+	default:
+		return "unknown"
+	}
+}

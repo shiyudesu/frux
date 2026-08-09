@@ -138,7 +138,9 @@ Management Adapter 提供脱敏摘要/Preview；Replay Service 验证 allowlist 
 Kafka 是并行存在的事件流基础，不是 RabbitMQ 的重命名适配层。代码注册 Topic、Partition Key、
 Producer 和 Consumer Group；franz-go Producer 使用 idempotence + `acks=all`，Consumer 禁用自动
 提交并在耐久结果后提交 Offset。`action_changed` 与 `view_event_recorded` 已接入独立 Topic、
-active/shadow Group 和 per-stream migration mode；视频、媒体等其他流程仍走 RabbitMQ。
+active/shadow Group 和 per-stream migration mode。视频首次公开事实现在通过
+`video_publication_event_outbox -> frux.video.published.v1`，Feed 与 embedding 各自维护 Offset；
+媒体仍由 PostgreSQL job 决定正确性，Kafka command 只负责唤醒。
 
 ## 3. 核心请求链路
 
@@ -616,7 +618,7 @@ flowchart LR
   API -->|"返回预签名 PUT"| Web
   Web -->|"直传原始视频/封面"| S3[("S3 / MinIO")]
   Web -->|"完成会话"| API
-  API -->|"写资产、任务并发布事件"| MQ["RabbitMQ"]
+  API -->|"提交资产与 PostgreSQL job；尽力发布唤醒"| MQ["Kafka command / Rabbit rollback"]
   MQ --> Worker["Media Worker"]
   Worker -->|"ffprobe + FFmpeg"| Outputs["基线 MP4 / 多码率 MP4 / DASH"]
   Worker -->|"临时键校验后发布"| S3
@@ -626,6 +628,10 @@ flowchart LR
 
 - 本地开发继续支持 `/api/uploads` 和受保护 `/uploads/*`；生产模式通过 `media.backend=s3` 使用上传会话。
 - `media_asset` 保存原始资产，`media_variant` 保存基线、清晰度、manifest 和 segment，`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。
+- `frux.media.processing-requested.v1` Consumer 只校验 job 并有界 signal 后提交，不在转码期间持有
+  Offset；轮询与 reconciliation 覆盖命令丢失、重复、延迟、满容量和重启。
+- `frux.video.published.v1` 保留 30 天首次发布事实。Embedding intake 先提交 hash 与
+  `semantic_embedding_job`；远端语义请求由独立数据库租约 worker 执行，长重试不占 Kafka Partition。
 - Worker 只在临时对象通过大小与 SHA-256 校验后发布受保护的内容寻址输出；只有审核已通过且公开的视频才提升到 `media/` 公共前缀。基线先就绪时仅更新 `media_status=ready` 并保持公共 URL 为空；批准先发生时也等待基线，双门满足后才投影 URL 和发送发布事件。
 - 公共变体使用版本化 `media/v2/{exposure-generation}/...` URL、60 秒可重验证缓存、ETag 和 Range/HEAD；私密、下架、拒绝、媒体失败或删除转换会将变体降回保护前缀，本地 `/media` 还实时校验数据库公开资格。状态撤销允许最多一个短缓存窗口，失败返回错误并由幂等请求重试；首次上线需 purge 旧 `media/*` 一年缓存条目。原始对象和未完成资产只能由不可变 owner 获取短期签名 URL。
 - 删除视频立即停止 API 发现，并通过 `media_cleanup_task` 延迟删除对象；Reconciler 修复过期租约、缺失对象、不完整变体和孤儿对象。

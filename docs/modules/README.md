@@ -9,6 +9,8 @@
 | 用户 | 账户 | [account.md](account.md) | 已实现 |
 | 用户 | 关系 | [relation.md](relation.md) | 已实现 |
 | 内容 | 视频 | [video.md](video.md) | 已实现 |
+| 内容 | 媒体任务 | [media.md](media.md) | 已实现 |
+| 内容 | 视频向量 | [embedding.md](embedding.md) | 已实现 |
 | 内容 | 互动 | [interaction.md](interaction.md) | 已实现 |
 | 内容 | 个人内容库 | [library.md](library.md) | 已实现 |
 | 发现 | 全局搜索 | [search.md](search.md) | 已实现 |

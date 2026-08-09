@@ -1,9 +1,9 @@
 package applicationembedding
 
 import (
+	"context"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
-	"context"
 	"time"
 )
 

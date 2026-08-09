@@ -154,6 +154,9 @@ func (s *MediaPublicationService) publishAndMarkReady(
 	if event == nil {
 		return nil
 	}
+	if store, ok := s.repo.(PublicationEventStore); ok {
+		return store.EnsurePublicationEvent(ctx, event, time.Now().UTC())
+	}
 	if s.publisher != nil {
 		if err := s.publisher.PublishVideoPublished(ctx, event); err != nil {
 			return err

@@ -312,11 +312,54 @@ func TestEnvelopeRejectsOversizedAndInvalidMetadata(t *testing.T) {
 	if !errors.As(err, &contract) || contract.Code != ContractOversizedRecord {
 		t.Fatalf("oversized error = %v", err)
 	}
+
 	_, err = EncodeEvent(TopicBackboneProbe, key, EventMetadata{
 		EventID: " bad id! ", Type: EventTypeBackboneProbe, SchemaVersion: 1,
 		OccurredAt: time.Now(), ProducedAt: time.Now(), Producer: ProducerPlatformAPI,
 	}, BackboneProbePayload{ProbeID: "probe-1", Source: "test"})
 	if !errors.As(err, &contract) || contract.Code != ContractInvalidEnvelope {
 		t.Fatalf("metadata error = %v", err)
+	}
+}
+
+func TestVideoAndMediaWorkflowContractsRoundTrip(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	videoKey, err := EncodeKey(KeyKindVideoID, VideoKey{VideoID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoPayload := VideoPublishedPayload{
+		EventID: "video-published:42:3", VideoID: 42, AuthorID: 7,
+		Title: "title", Description: "description",
+		PublishedAt: now.Add(-time.Minute), OccurredAt: now,
+	}
+	encoded, err := EncodeEvent(TopicVideoPublished, videoKey, EventMetadata{
+		EventID: videoPayload.EventID, Type: EventTypeVideoPublished, SchemaVersion: 1,
+		OccurredAt: now, ProducedAt: now, Producer: ProducerVideoWorker,
+	}, videoPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeEvent(TopicVideoPublished, videoKey, encoded, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload := decoded.Payload.(*VideoPublishedPayload); !payload.PublishedAt.Equal(videoPayload.PublishedAt) {
+		t.Fatalf("published_at = %v, want %v", payload.PublishedAt, videoPayload.PublishedAt)
+	}
+
+	assetKey, err := EncodeKey(KeyKindAssetID, AssetKey{AssetID: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaPayload := MediaProcessingRequestedPayload{
+		EventID: "media-processing:99:v1", AssetID: 99,
+		ProfileVersion: "v1", OccurredAt: now,
+	}
+	if _, err := EncodeEvent(TopicMediaProcessingRequested, assetKey, EventMetadata{
+		EventID: mediaPayload.EventID, Type: EventTypeMediaProcessingRequested, SchemaVersion: 1,
+		OccurredAt: now, ProducedAt: now, Producer: ProducerMediaAPI,
+	}, mediaPayload); err != nil {
+		t.Fatal(err)
 	}
 }

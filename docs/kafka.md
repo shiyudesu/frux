@@ -6,7 +6,8 @@ Kafka is a retained event-stream foundation alongside RabbitMQ. This foundation 
 registries, strict JSON contracts, franz-go clients, explicit offset commits, migration controls,
 metrics, diagnostics, and local KRaft provisioning.
 
-The first business streams are `action_changed` and `view_event_recorded`. RabbitMQ remains available
+Business streams include behavior events, the retained video-publication fact, and media-processing
+wakeup commands. RabbitMQ remains available
 as primary/mirror and rollback transport. This foundation does **not** remove AMQP, provide
 cross-system exactly-once semantics, or add retry topics, DLQ inspection, replay, Kafka Connect, CDC,
 Flink, or a schema registry.
@@ -38,8 +39,9 @@ Migration modes are closed:
 - Producer: `rabbit`, `rabbit_with_kafka_mirror`, `kafka_with_rabbit_mirror`, `kafka`.
 - Consumer: `rabbit`, `kafka_shadow`, `kafka`.
 
-Checked-in modes remain `rabbit`; action and view may independently select the four producer modes
-and three consumer modes. A single-transport mode succeeds after that transport acknowledges. Either
+Checked-in modes remain `rabbit`; action, view, video publication, Feed, embedding, and media wakeup
+responsibilities select registered modes independently. Feed and embedding share the retained
+publication producer but own different active/shadow groups. A single-transport mode succeeds after that transport acknowledges. Either
 dual transition mode succeeds only after both RabbitMQ and Kafka acknowledge; a partial or uncertain
 result enters the action PostgreSQL fallback/conditional rollback path or leaves the view outbox
 pending. Stable event IDs absorb duplicates from retrying the transport that already acknowledged.
@@ -65,6 +67,24 @@ Registered behavior contracts:
 | `frux.exposure.view-event-recorded.v1` | `user:{user}` | `exposure_worker` | `frux.recommendation.consume-view.v1` |
 
 Both retain immutable records for seven days with delete cleanup and broker-assigned append timestamps.
+
+Registered video workflow contracts:
+
+| Topic | Semantics | Key | Producer | Groups | Retention |
+| --- | --- | --- | --- | --- | --- |
+| `frux.video.published.v1` | Retained first-publication fact | `video:{video_id}` | `video_worker` | `frux.feed.video-published.v1`, `frux.embedding.video-published.v1`, and deployment-specific shadows | 30 days |
+| `frux.media.processing-requested.v1` | Non-authoritative wakeup command | `asset:{asset_id}` | `media_api` | `frux.media.processing-requested.v1` and shadow | 6 hours |
+
+The video transaction/durable publication boundary writes
+`video_publication_event_outbox`; its dispatcher waits for the selected transport acknowledgement.
+Feed commits after idempotent preheat/index work. Embedding commits after hash persistence and
+PostgreSQL semantic-job handoff. Media wakeup consumers only validate the durable
+`media_processing_job`, signal bounded local scheduling, and commit without waiting for ffmpeg.
+PostgreSQL polling and reconciliation remain the media correctness path.
+
+Semantic inference retries are not Kafka retry topics. `semantic_embedding_job` owns model/text-hash
+identity, availability, attempts, leases, suspension, completion, and the capped
+5s/30s/2m/10m/30m retry schedule.
 
 ## Contracts and topology
 

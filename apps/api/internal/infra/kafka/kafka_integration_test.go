@@ -29,6 +29,25 @@ func TestKafkaBackboneProvisionsProducesAndConsumesAfterClientRestart(t *testing
 		t.Fatalf("start first Kafka client: %v", err)
 	}
 	now := time.Now().UTC()
+	boundary := now.Add(-time.Second).Truncate(time.Millisecond)
+	var cutoverResult CutoverResult
+	var cutoverErr error
+	for attempt := 0; attempt < 20; attempt++ {
+		cutoverResult, cutoverErr = first.ApplyConsumerCutover(
+			ctx,
+			GroupBackboneProbeActive,
+			boundary.Format(time.RFC3339Nano),
+			CutoverInitializeOnly,
+		)
+		if cutoverErr == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if cutoverErr != nil || cutoverResult != CutoverInitialized {
+		_ = first.Close(context.Background())
+		t.Fatalf("initialize probe cutover: result=%s err=%v", cutoverResult, cutoverErr)
+	}
 	producerClock := now.Add(4 * time.Minute)
 	key := []byte("probe:persisted")
 	produced, err := first.Publisher().Publish(ctx, TopicBackboneProbe, key, EventMetadata{
@@ -58,8 +77,15 @@ func TestKafkaBackboneProvisionsProducesAndConsumesAfterClientRestart(t *testing
 		t.Fatalf("restart Kafka client: %v", err)
 	}
 	defer func() {
-		topicName, _ := TopicName(prefix, TopicBackboneProbe)
-		_, _ = kadm.NewClient(second.client.kgoClient).DeleteTopics(context.Background(), topicName)
+		topicNames := make([]string, 0, len(Topics()))
+		for _, topic := range Topics() {
+			topicName, _ := TopicName(prefix, topic.ID)
+			topicNames = append(topicNames, topicName)
+		}
+		_, _ = kadm.NewClient(second.client.kgoClient).DeleteTopics(
+			context.Background(),
+			topicNames...,
+		)
 		_ = second.Close(context.Background())
 	}()
 	received := make(chan applicationeventstream.Event, 1)

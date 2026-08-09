@@ -51,6 +51,7 @@ import (
 	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
 	infrareview "github.com/shiyudesu/frux/internal/infra/persistence/review"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
+	infravideostream "github.com/shiyudesu/frux/internal/infra/videostream"
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
 	interfaceshttpadminauth "github.com/shiyudesu/frux/internal/interfaces/http/adminauth"
@@ -193,6 +194,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		infravideo.WithMediaCatalog(mediaCatalog),
 		infravideo.WithAdminAuditWriter(adminAuditRepo),
 	)
+	durablePublicationPublisher := applicationvideo.NewDurablePublicationPublisher(videoRepo)
 	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))
 	recommendationRepo := infrarecommendation.New(gormDB)
 	relationRepo := infrarelation.New(gormDB)
@@ -209,7 +211,9 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		),
 	}
 	feedOptions := []applicationfeed.Option{}
-	videoOptions := []applicationvideo.Option{}
+	videoOptions := []applicationvideo.Option{
+		applicationvideo.WithPublishedEventPublisher(durablePublicationPublisher),
+	}
 	interactionOptions := []applicationinteraction.Option{}
 	var feedCache *infracache.FeedCache
 	var distributedRateLimiter applicationratelimit.DistributedLimiter
@@ -308,8 +312,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		rabbitMQ, err = inframq.NewRabbitMQ(cfg.RabbitMQ)
 		if err != nil {
 			log.Printf("rabbitmq disabled: %v", err)
-		} else {
-			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(rabbitMQ))
 		}
 	}
 	actionMigration, err := infrakafka.MigrationFor(
@@ -364,18 +366,31 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	mediaOptions := []applicationmedia.Option{}
 	mediaOptions = append(mediaOptions, applicationmedia.WithURLResolver(mediaURLResolver, signedURLTTL))
 	mediaOptions = append(mediaOptions, applicationmedia.WithMediaAssetAuthorizer(videoRepo))
-	if rabbitMQ != nil {
-		mediaOptions = append(mediaOptions, applicationmedia.WithProcessingPublisher(rabbitMQ))
+	mediaMigration, err := infrakafka.MigrationFor(
+		kafkaBackbone.MigrationPlan(),
+		infrakafka.ResponsibilityMediaProcessing,
+	)
+	if err != nil {
+		return err
+	}
+	if rabbitMQ != nil || mediaMigration.Producer != infrakafka.ProducerModeRabbit {
+		mediaPublisher, publisherErr := infravideostream.NewMediaPublisher(
+			mediaMigration.Producer,
+			rabbitMQ,
+			kafkaBackbone.Publisher(),
+			inframetrics.VideoWorkflowObserver{},
+		)
+		if publisherErr != nil {
+			return publisherErr
+		}
+		mediaOptions = append(mediaOptions, applicationmedia.WithProcessingPublisher(mediaPublisher))
 	}
 	mediaService := applicationmedia.New(
 		mediaRepo, mediaStore, cfg.Media.Backend, uploadSessionTTL,
 		cfg.Media.Processing.ProfileVersion, cfg.Media.Processing.MaxAttempts, mediaOptions...,
 	)
 	uploadSessionHandler := interfaceshttpupload.NewSessionHandler(mediaService)
-	var reviewPublisher applicationvideo.PublishedEventPublisher
-	if rabbitMQ != nil {
-		reviewPublisher = rabbitMQ
-	}
+	var reviewPublisher applicationvideo.PublishedEventPublisher = durablePublicationPublisher
 	mediaPublicationService := applicationvideo.NewMediaPublicationService(
 		videoRepo, mediaCatalog, reviewPublisher, feedCache,
 	)
@@ -415,12 +430,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		applicationvideo.WithManagementMediaCleanup(mediaCleanupService),
 		applicationvideo.WithManagementMediaPublisher(mediaPublicationService),
 	}
-	if rabbitMQ != nil {
-		videoManagementOptions = append(
-			videoManagementOptions,
-			applicationvideo.WithManagementPublishedPublisher(rabbitMQ),
-		)
-	}
+	videoManagementOptions = append(
+		videoManagementOptions,
+		applicationvideo.WithManagementPublishedPublisher(durablePublicationPublisher),
+	)
 	videoManagementService := applicationvideo.NewManagement(videoRepo, feedCache, videoManagementOptions...)
 	videoOptions = append(videoOptions, applicationvideo.WithLocalAssetOwnership(videoManagementService))
 	videoOptions = append(videoOptions, applicationvideo.WithMediaAssets(mediaRepo))

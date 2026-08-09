@@ -18,9 +18,11 @@ type ContractFailureCode string
 const (
 	EnvelopeVersion1 = 1
 
-	EventTypeBackboneProbe     EventType = "frux.platform.backbone_probe"
-	EventTypeActionChanged     EventType = "frux.interaction.action_changed"
-	EventTypeViewEventRecorded EventType = "frux.exposure.view_event_recorded"
+	EventTypeBackboneProbe            EventType = "frux.platform.backbone_probe"
+	EventTypeActionChanged            EventType = "frux.interaction.action_changed"
+	EventTypeViewEventRecorded        EventType = "frux.exposure.view_event_recorded"
+	EventTypeVideoPublished           EventType = "frux.video.published"
+	EventTypeMediaProcessingRequested EventType = "frux.media.processing_requested"
 
 	ContractMalformedJSON      ContractFailureCode = "malformed_json"
 	ContractTrailingData       ContractFailureCode = "trailing_data"
@@ -109,6 +111,25 @@ type ViewEventRecordedPayload struct {
 	ExposureCount     int       `json:"exposure_count,omitempty"`
 }
 
+type VideoPublishedPayload struct {
+	EventID     string    `json:"event_id"`
+	VideoID     int64     `json:"video_id"`
+	AuthorID    int64     `json:"author_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	MediaURL    string    `json:"media_url"`
+	CoverURL    string    `json:"cover_url"`
+	PublishedAt time.Time `json:"published_at"`
+	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+type MediaProcessingRequestedPayload struct {
+	EventID        string    `json:"event_id"`
+	AssetID        int64     `json:"asset_id"`
+	ProfileVersion string    `json:"profile_version"`
+	OccurredAt     time.Time `json:"occurred_at"`
+}
+
 type ContractError struct {
 	Code ContractFailureCode
 	Err  error
@@ -165,6 +186,28 @@ var events = [...]EventSpec{
 			return &ViewEventRecordedPayload{}, true
 		},
 		ValidatePayload: validateViewEventRecordedPayload,
+	},
+	{
+		Type: EventTypeVideoPublished, Topic: TopicVideoPublished, SchemaVersions: []int{1},
+		KeyKind: KeyKindVideoID, MaxPayloadBytes: 64 << 10,
+		NewPayload: func(version int) (any, bool) {
+			if version != 1 {
+				return nil, false
+			}
+			return &VideoPublishedPayload{}, true
+		},
+		ValidatePayload: validateVideoPublishedPayload,
+	},
+	{
+		Type: EventTypeMediaProcessingRequested, Topic: TopicMediaProcessingRequested,
+		SchemaVersions: []int{1}, KeyKind: KeyKindAssetID, MaxPayloadBytes: 8 << 10,
+		NewPayload: func(version int) (any, bool) {
+			if version != 1 {
+				return nil, false
+			}
+			return &MediaProcessingRequestedPayload{}, true
+		},
+		ValidatePayload: validateMediaProcessingRequestedPayload,
 	},
 }
 
@@ -420,6 +463,42 @@ func validateViewEventRecordedPayload(metadata EventMetadata, key []byte, payloa
 	decoded, err := DecodeKey(KeyKindUserID, key)
 	if err != nil || decoded.(UserKey).UserID != event.UserID {
 		return errors.New("view key mismatch")
+	}
+	return nil
+}
+
+func validateVideoPublishedPayload(metadata EventMetadata, key []byte, payload any) error {
+	event, ok := payload.(*VideoPublishedPayload)
+	if !ok || event.EventID != metadata.EventID || event.VideoID <= 0 || event.AuthorID <= 0 ||
+		event.PublishedAt.IsZero() || event.OccurredAt.IsZero() ||
+		!event.OccurredAt.UTC().Equal(metadata.OccurredAt.UTC()) ||
+		event.PublishedAt.After(event.OccurredAt.Add(5*time.Minute)) ||
+		len(event.Title) > 128 || len(event.Description) > 512 ||
+		len(event.MediaURL) > 512 || len(event.CoverURL) > 512 {
+		return errors.New("invalid video publication payload")
+	}
+	decoded, err := DecodeKey(KeyKindVideoID, key)
+	if err != nil || decoded.(VideoKey).VideoID != event.VideoID {
+		return errors.New("video publication key mismatch")
+	}
+	return nil
+}
+
+func validateMediaProcessingRequestedPayload(
+	metadata EventMetadata,
+	key []byte,
+	payload any,
+) error {
+	event, ok := payload.(*MediaProcessingRequestedPayload)
+	if !ok || event.EventID != metadata.EventID || event.AssetID <= 0 ||
+		strings.TrimSpace(event.ProfileVersion) == "" || len(event.ProfileVersion) > 64 ||
+		event.OccurredAt.IsZero() ||
+		!event.OccurredAt.UTC().Equal(metadata.OccurredAt.UTC()) {
+		return errors.New("invalid media processing payload")
+	}
+	decoded, err := DecodeKey(KeyKindAssetID, key)
+	if err != nil || decoded.(AssetKey).AssetID != event.AssetID {
+		return errors.New("media processing key mismatch")
 	}
 	return nil
 }

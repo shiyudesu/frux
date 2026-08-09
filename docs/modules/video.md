@@ -122,7 +122,11 @@
 
 保存视频模块拥有的结构化生命周期事实：提交审核、媒体终态失败、首次公开、下架和恢复。`event_id` 唯一，载荷包含 recipient、video、review version、stage、result、safe reason 和业务发生时间。Worker 通过 30 秒数据库租约、`FOR UPDATE SKIP LOCKED`、有界指数退避和 terminal 状态投递。
 
-首次发布事实使用两阶段 `delivery_ready`：业务事务先写 Outbox；生产媒体提升、稳定 RabbitMQ 发布事件和恢复副作用完成后才置为可投递。API 与 Worker 可并发运行投递器，数据库租约保证不会重复创建消息。
+首次发布事实使用两个独立耐久边界：`video_notification_outbox` 管理创作者通知 readiness，
+`video_publication_event_outbox` 保存稳定事件 ID、原始 `published_at`、有界载荷、租约、尝试与
+Kafka dispatch 状态。审核、媒体 ready、恢复、运营和 reconciliation 都调用同一幂等边界；Kafka
+不可用不会回滚真实公开状态。Worker 将事实发布到 30 天保留的 `frux.video.published.v1`，RabbitMQ
+仅在迁移模式中保留 mirror/rollback。
 
 ## 4. 业务规则
 
@@ -156,6 +160,7 @@
 | 双门门禁 | 审核通过和 H.264/AAC faststart 基线就绪相互独立；两者同时满足前只对作者展示真实处理/审核状态 |
 | 生命周期通知 | 创建提交事实；审核拒绝/批准、终态媒体失败、首次公开、下架和恢复各使用稳定 event ID；瞬时上传进度、处理重试和转人工审核不写消息中心 |
 | 首次发布唯一性 | 同一 `video_id + review_version` 最多一个 `video-published` 事实；审核、媒体 ready、可见性、恢复和 reconciliation 共享该身份 |
+| 发布流消费 | Feed 与 embedding 使用独立 Kafka Group；任一侧延迟、重放或回滚不推进另一侧 Offset，也不重写 `published_at` |
 | 发布恢复 | 未 ready 的发布事实由 `PublicationRecoveryService` 幂等完成媒体提升和发布事件；删除或 review version 已推进的事实转 terminal |
 | 历史兼容 | 只有存在同版本 submission/publication 跟踪标记的迁移后视频才补首次发布事实，既有历史公开视频不会被合成通知 |
 | 兼容与增量响应 | `media_url`、`cover_url` 继续投影可播放基线和封面；新客户端可读取有序 `playback_sources` |
@@ -207,7 +212,7 @@
 | 非本人请求保护资产 | 返回权限错误且不签发对象 URL |
 | 视频仍在处理 | 作者列表返回 `media_status=processing`，公共详情、Feed、推荐和预加载均不返回 |
 | 基线完成 | `media_url` 投影到基线，`playback_sources` 按基线、MP4 清晰度、DASH manifest 稳定排序 |
-| 首次发布投递失败 | 视频事实保持提交；Outbox 重试且同一 event 不重复创建消息 |
+| 首次发布投递失败 | 视频事实保持提交；publication Outbox 延迟重试，通知 readiness 与事件 dispatch 独立，且同一 event 不重复创建 |
 | 发布副作用中断 | 未 ready 的 publication 事实由 API/Worker 恢复后再投递，不提前声称视频已公开 |
 | 删除生产视频 | 公开发现立即消失，物理对象在安全延迟后由 Worker 清理 |
 

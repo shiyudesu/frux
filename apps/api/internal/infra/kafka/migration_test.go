@@ -229,16 +229,44 @@ func TestMigrationPlanRejectsFutureCutoverBoundary(t *testing.T) {
 	}
 }
 
-func TestNonBehaviorKafkaMigrationRemainsUnavailable(t *testing.T) {
-	_, err := MigrationPlan(infraconfig.KafkaConfig{
+func TestVideoWorkflowMigrationModesAreIndependentAndSharePublicationPath(t *testing.T) {
+	boundary := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond).Format(time.RFC3339Nano)
+	plan, err := MigrationPlan(infraconfig.KafkaConfig{
 		Enabled: true,
 		Migration: infraconfig.KafkaMigrationConfig{
 			VideoPublished: infraconfig.KafkaStreamMigrationConfig{
-				ProducerMode: "kafka", ConsumerMode: "rabbit",
+				ProducerMode: "kafka_with_rabbit_mirror", ConsumerMode: "rabbit",
+			},
+			VideoFeed: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode: "rabbit", ConsumerMode: "kafka",
+				CutoverBoundary: boundary,
+			},
+			VideoEmbedding: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode: "rabbit", ConsumerMode: "rabbit",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed, err := MigrationFor(plan, ResponsibilityVideoFeed)
+	if err != nil || feed.Consumer != ConsumerModeKafka {
+		t.Fatalf("feed migration = %+v err=%v", feed, err)
+	}
+
+	_, err = MigrationPlan(infraconfig.KafkaConfig{
+		Enabled: true,
+		Migration: infraconfig.KafkaMigrationConfig{
+			VideoPublished: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode: "rabbit", ConsumerMode: "rabbit",
+			},
+			VideoFeed: infraconfig.KafkaStreamMigrationConfig{
+				ProducerMode: "rabbit", ConsumerMode: "kafka",
+				CutoverBoundary: boundary,
 			},
 		},
 	})
 	if err == nil {
-		t.Fatal("video Kafka migration was accepted")
+		t.Fatal("Kafka feed consumer without Kafka publication path was accepted")
 	}
 }

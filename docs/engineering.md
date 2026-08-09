@@ -208,6 +208,12 @@ GORM Repository 规则：
   Action boundary 必须严格晚于 view boundary，且 Worker 必须等待 view assignment ready 后才启动
   action Kafka group。
   Shadow 未查到事实记为 pending 并有界延迟重试，只有已存在但冲突的事实记为 mismatch。
+- 视频首次公开事实在视频拥有的 `video_publication_event_outbox` 中耐久保存，再由 Worker 发布到
+  30 天保留的 `frux.video.published.v1`。Feed 与 embedding 使用独立 Group；前者在幂等 Redis
+  fanout/preheat 后提交，后者在 hash 向量与 `semantic_embedding_job` 同一事务提交后提交。
+- `frux.media.processing-requested.v1` 只是不权威的短保留唤醒提示。Consumer 校验数据库任务并
+  有界 signal 后立即提交，不得在 ffmpeg 期间持有 Offset；数据库租约、心跳、轮询与 reconciliation
+  继续决定正确性。语义向量长重试同样由 PostgreSQL job 管理，不使用 Kafka retry topic。
 - Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
 - DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。

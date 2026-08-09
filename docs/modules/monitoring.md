@@ -274,3 +274,21 @@ event、user、video、key、partition、offset 或错误正文。View 先 cutov
 更晚且 Worker 先启动 view Kafka group；任一 stream 出现持续
 primary failure、fallback/rollback 增长、shadow mismatch、lag 或 delivery age 超门槛时按该
 stream 独立回滚。
+
+## 16. Video workflow migration observability
+
+视频工作流额外暴露：
+
+- `frux_video_publication_outbox_pending` 与 oldest lag；
+- `frux_video_publication_dispatch_total{result}`；
+- `frux_video_workflow_publication_total{workflow,role,transport,result}`；
+- Kafka Feed/embedding/media Group lag、commit 和 delivery delay；
+- `frux_video_embedding_vectors_total{model,source,outcome}`；
+- `frux_video_embedding_coverage_videos{model,state}`；
+- `frux_video_embedding_semantic_jobs{state}` 与 oldest age；
+- `frux_media_processing_wakeups_total{result}`。
+
+告警优先级：publication outbox 增长但公开视频事实保持真实；Feed lag 影响关注分发但不影响 embedding
+Offset；semantic pending/retry/suspended 增长时 hash 应继续生成；media `publish_failed` 或
+`capacity_full` 增长时确认 `polling_recovery` 与数据库 job 仍推进。标签只允许封闭 workflow、
+transport、result、model 和 state，禁止 video/asset/text/model string/raw error。

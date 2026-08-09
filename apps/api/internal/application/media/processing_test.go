@@ -54,6 +54,7 @@ func TestMediaProcessingWorkerRecordsTerminalFailure(t *testing.T) {
 			MaxAttempts: 5, NextAttemptAt: now,
 		},
 	}
+
 	processor := &processorStub{err: &ProcessError{Code: "probe_invalid", Terminal: true, Err: errors.New("bad media")}}
 	worker := NewMediaProcessingWorker(repo, processor, nil, time.Minute, 1)
 	worker.now = func() time.Time { return now }
@@ -64,6 +65,37 @@ func TestMediaProcessingWorkerRecordsTerminalFailure(t *testing.T) {
 	if repo.asset.State != domainmedia.AssetStateFailed || repo.asset.ErrorCode != "probe_invalid" ||
 		repo.job.State != domainmedia.JobStateFailed {
 		t.Fatalf("unexpected failure state: asset=%+v job=%+v", repo.asset, repo.job)
+	}
+}
+
+func TestKafkaWakeupValidatesAndSignalsWithoutProcessing(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &processingRepositoryStub{
+		job: &domainmedia.MediaProcessingJob{
+			ID: 1, AssetID: 20, ProfileVersion: "v1", State: domainmedia.JobStatePending,
+		},
+	}
+	processor := &processorStub{}
+	worker := NewMediaProcessingWorker(repo, processor, nil, time.Minute, 1)
+	event := NewProcessingRequestedEvent(20, "v1", now)
+	if err := worker.SignalRequested(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if processor.calls != 0 || len(worker.wakeups) != 1 {
+		t.Fatalf("processor calls=%d queued=%d", processor.calls, len(worker.wakeups))
+	}
+	if err := worker.SignalRequested(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if len(worker.wakeups) != 1 {
+		t.Fatalf("full scheduler changed queued wakeups: %d", len(worker.wakeups))
+	}
+	stale := NewProcessingRequestedEvent(20, "v2", now)
+	if err := worker.SignalRequested(context.Background(), stale); err != nil {
+		t.Fatal(err)
+	}
+	if len(worker.wakeups) != 1 {
+		t.Fatalf("stale wakeup was queued: %d", len(worker.wakeups))
 	}
 }
 
@@ -88,7 +120,18 @@ func (r *processingRepositoryStub) FindAssetByID(context.Context, int64) (*domai
 	if r.asset == nil {
 		return nil, domainmedia.ErrMediaAssetNotFound
 	}
+
 	return r.asset, nil
+}
+
+func (r *processingRepositoryStub) FindProcessingJobByAsset(
+	context.Context,
+	int64,
+) (*domainmedia.MediaProcessingJob, error) {
+	if r.job == nil {
+		return nil, domainmedia.ErrProcessingJobNotFound
+	}
+	return r.job, nil
 }
 
 func (r *processingRepositoryStub) UpdateAsset(_ context.Context, asset *domainmedia.MediaAsset) error {

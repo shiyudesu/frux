@@ -142,6 +142,25 @@ type NotificationOutboxModel struct {
 	UpdatedAt     time.Time  `gorm:"column:updated_at;not null"`
 }
 
+type PublicationEventOutboxModel struct {
+	EventID        string     `gorm:"column:event_id;size:128;primaryKey"`
+	VideoID        int64      `gorm:"column:video_id;not null;index:idx_video_publication_outbox_video"`
+	EventType      string     `gorm:"column:event_type;size:64;not null"`
+	PayloadJSON    string     `gorm:"column:payload_json;type:jsonb;not null"`
+	Attempts       int        `gorm:"column:attempts;not null;default:0"`
+	AvailableAt    time.Time  `gorm:"column:available_at;not null;index:idx_video_publication_outbox_pending,priority:1"`
+	LeaseOwner     string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil     *time.Time `gorm:"column:lease_until;index:idx_video_publication_outbox_pending,priority:2"`
+	LastErrorClass string     `gorm:"column:last_error_class;size:32;not null;default:''"`
+	DispatchedAt   *time.Time `gorm:"column:dispatched_at;index:idx_video_publication_outbox_dispatched"`
+	CreatedAt      time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt      time.Time  `gorm:"column:updated_at;not null"`
+}
+
+func (PublicationEventOutboxModel) TableName() string {
+	return "video_publication_event_outbox"
+}
+
 func (NotificationOutboxModel) TableName() string {
 	return "video_notification_outbox"
 }

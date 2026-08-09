@@ -62,6 +62,23 @@ Delivery Limit 和 Replay timeout 必须在发布前压测。
 
 完整配置字段、迁移模式和验证命令见 [Kafka event backbone](kafka.md)。
 
+视频工作流按 publication producer、Feed consumer、embedding consumer、media wakeup 四个责任独立
+切换。`frux.video.published.v1` 必须保持 30 天 delete retention 和 `LogAppendTime`；
+`frux.media.processing-requested.v1` 为 6 小时 command。首次 active cutover 前必须在 advisory lock
+内确认对应 Rabbit source/quorum/DLQ 全部 drain；已有 Kafka Group Offset 在重启时保留，future
+boundary 或 Offset/data-loss 检测必须使 Worker 显式失败。
+
+语义 integration 默认关闭。启用时设置：
+
+```bash
+export FRUX_SEMANTIC_EMBEDDING_ENABLED=true
+export FRUX_SEMANTIC_EMBEDDING_URL=http://semantic-embedding:8081
+```
+
+目标服务必须实现固定 metadata/embedding 契约并复用强 `FRUX_INTERNAL_TOKEN`。服务不可用不会阻止
+Worker 的 hash、Feed 或媒体轮询；观察 `semantic_embedding_job` backlog，恢复 metadata 后 job 自动
+resume。当前 Compose 仓库未实现 `add-semantic-embedding-service` 的容器时应保持该开关关闭。
+
 ## 生产审核推理网关
 
 默认 `moderation.mode` 为空并归一化为 `disabled`。Compose 可注入：
@@ -104,7 +121,8 @@ fallback 率、人工队列 oldest age 和回滚演练结果。
 1. 先以 `legacy` 部署 `.q2`、DLX 和 DLQ，确认声明幂等且没有修改旧 Classic Queue 类型。
 2. 改为 `dual`，同时观察旧/新 Queue、重复 Event ID、retry exhaustion 和 DLQ backlog。
 3. 旧 Queue 的 ready/unacked 连续 15 分钟为零后改为 `new`；旧 Queue 至少保留一个观察窗口。
-4. 逐个迁移 video fanout、embedding、view event 和 media processing，不同时切换多个 Consumer。
+4. 依次观察 publication mirror、Feed shadow、embedding shadow 和 media-wakeup shadow；每个责任单独
+   cut over/rollback，不同时切换多个 Consumer。
 5. 回滚先改回 `dual`，再在旧 Consumer 健康后改为 `legacy`；保留新 DLQ 供调查。
 
 Prometheus 加载 `apps/monitoring/alerts/rabbitmq_dead_letter.yml`，Grafana 自动加载

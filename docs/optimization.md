@@ -30,7 +30,8 @@ flowchart LR
     FeedService --> StatCache["Video Stat Cache"]
 ```
 
-Redis 用于读性能和短期状态，Kafka 保留 action/view 行为流，RabbitMQ 保留其他任务及行为
+Redis 用于读性能和短期状态，Kafka 保留 action/view 与视频首次发布事件，并承载非权威媒体唤醒；
+RabbitMQ 保留迁移 mirror/rollback 与未迁移流程。
 mirror/rollback，PostgreSQL 保存最终事实。
 
 推荐召回还使用每服务 16 个有限 provider slots：不响应取消的下游调用保持占位，后续请求降级而非继续创建 goroutine。
@@ -160,7 +161,7 @@ HTTP Handler
 优化：
 
 - 小粉丝量作者可同步写入关注流 inbox。
-- 大粉丝量作者走 RabbitMQ fanout worker。
+- 大粉丝量作者走独立 Kafka Feed Group 的 fanout worker；发布 Outbox 与粉丝规模解耦。
 - 粉丝数超过阈值时按批次写 Redis inbox。
 - 关注新作者时可回填作者近期视频。
 - Redis inbox 保留固定长度，避免无限增长。
@@ -169,6 +170,8 @@ HTTP Handler
 
 - 发布接口响应时间与粉丝数解耦。
 - Worker 可重复消费同一发布事件。
+- Feed 与 embedding lag 隔离；语义服务长故障只增长 PostgreSQL job backlog，不占用 publication
+  Partition。媒体 command 在本地容量满时仍快速提交，由轮询恢复，避免 ffmpeg 时长影响 Group liveness。
 - inbox 长度受控。
 
 ## 10. Hot Feed
