@@ -129,6 +129,10 @@ func (m *DeadLetterManager) VerifyConsumerDrained(
 	if len(queues) == 0 {
 		return fmt.Errorf("%w: unknown consumer", ErrConsumerNotDrained)
 	}
+	if spec, ok := m.rabbit.queueSpec(consumer); ok &&
+		m.config.DeadLetter.Enabled {
+		queues = append(queues, spec.DeadQueue)
+	}
 	for _, queueName := range queues {
 		var queue managementQueue
 		if err := m.request(
