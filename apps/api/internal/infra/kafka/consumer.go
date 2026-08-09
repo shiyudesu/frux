@@ -800,7 +800,8 @@ func RetryableConsumerError(err error) bool {
 		errors.Is(err, kerr.UnsupportedSaslMechanism) ||
 		errors.Is(err, kerr.TopicAuthorizationFailed) ||
 		errors.Is(err, kerr.GroupAuthorizationFailed) ||
-		errors.Is(err, kerr.ClusterAuthorizationFailed) {
+		errors.Is(err, kerr.ClusterAuthorizationFailed) ||
+		errors.Is(err, kerr.OffsetOutOfRange) {
 		return false
 	}
 	return true

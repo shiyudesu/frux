@@ -114,6 +114,22 @@ type actionDeliveryObserverStub struct {
 	rollback []string
 }
 
+type hotScoreRecorderStub struct {
+	calls int
+	delta int
+}
+
+func (s *hotScoreRecorderStub) AddHotScore(
+	context.Context,
+	int64,
+	int,
+	time.Time,
+) error {
+	s.calls++
+	s.delta += hotScoreLikeWeight
+	return nil
+}
+
 func (o *actionDeliveryObserverStub) ObserveActionFallback(result string) {
 	o.fallback = append(o.fallback, result)
 }
@@ -247,6 +263,28 @@ func TestDualPublicationFailuresAttemptFallbackButRemainUnconfirmed(t *testing.T
 				t.Fatalf("result=%#v repo=%#v store=%#v", result, repo, store)
 			}
 		})
+	}
+}
+
+func TestDualFallbackStillAppliesActionSideEffectsOnce(t *testing.T) {
+	repo := &synchronousActionRepositoryStub{}
+	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
+	hot := &hotScoreRecorderStub{}
+	service := New(
+		repo,
+		WithHotScoreRecorder(hot),
+		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
+			err:          errors.New("dual publication incomplete"),
+			acknowledged: map[string]bool{"rabbit": true},
+			primary:      "rabbit",
+		}}),
+	)
+	_, err := service.Like(context.Background(), 7, 11, "like-1")
+	if !errors.Is(err, ErrUpdateInteractionFailed) {
+		t.Fatalf("error = %v", err)
+	}
+	if hot.calls != 1 {
+		t.Fatalf("hot score calls = %d", hot.calls)
 	}
 }
 

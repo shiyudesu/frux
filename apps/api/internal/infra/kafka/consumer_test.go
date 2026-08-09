@@ -433,6 +433,13 @@ func TestCommitAuthorizationFailureRemainsFatal(t *testing.T) {
 	if RetryableConsumerError(err) {
 		t.Fatalf("commit authorization failure was retryable: %v", err)
 	}
+
+}
+
+func TestOffsetOutOfRangeIsFatal(t *testing.T) {
+	if RetryableConsumerError(kerr.OffsetOutOfRange) {
+		t.Fatal("offset out of range was retryable")
+	}
 }
 
 func TestSupervisorRedeliversAfterCommitFailureAndRestarts(t *testing.T) {

@@ -497,6 +497,7 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			s.observeActionFallback("success")
 			cancelRecovery()
 			if multiTransport {
+				s.applyActionSideEffects(ctx, state, userID)
 				return nil, actionUpdateError(publishErr)
 			}
 		}
@@ -504,17 +505,7 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			return nil, actionUpdateError(confirmErr)
 		}
 	}
-	if state.Delta != 0 {
-		s.recordActionHotScore(ctx, state.VideoID, state.ActionType, state.Delta)
-		if state.ActionType == domaininteraction.ActionTypeLike && state.Active && state.Delta > 0 {
-			s.notifyLike(ctx, &domaininteraction.Action{
-				UserID:     userID,
-				VideoID:    state.VideoID,
-				ActionType: state.ActionType,
-				Status:     domaininteraction.ActionStatusActive,
-			})
-		}
-	}
+	s.applyActionSideEffects(ctx, state, userID)
 
 	return &ActionResult{
 		VideoID:       state.VideoID,
@@ -523,6 +514,26 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		LikeCount:     state.LikeCount,
 		FavoriteCount: state.FavoriteCount,
 	}, nil
+}
+
+func (s *Service) applyActionSideEffects(
+	ctx context.Context,
+	state *ActionStateResult,
+	userID int64,
+) {
+	if state == nil || state.Delta == 0 {
+		return
+	}
+	s.recordActionHotScore(ctx, state.VideoID, state.ActionType, state.Delta)
+	if state.ActionType == domaininteraction.ActionTypeLike &&
+		state.Active && state.Delta > 0 {
+		s.notifyLike(ctx, &domaininteraction.Action{
+			UserID:     userID,
+			VideoID:    state.VideoID,
+			ActionType: state.ActionType,
+			Status:     domaininteraction.ActionStatusActive,
+		})
+	}
 }
 
 func (s *Service) handleActionStateStoreFailure(ctx context.Context, state *ActionStateResult, stateErr error) error {
