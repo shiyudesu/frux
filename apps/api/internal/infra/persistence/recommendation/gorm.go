@@ -720,7 +720,8 @@ func behaviorEventModel(event *applicationexposure.ViewEventRecordedEvent) Behav
 		EventType: event.EventType, PlaybackSessionID: stringPtr(event.PlaybackSessionID),
 		Sequence: int64Ptr(event.Sequence), PositionMs: event.PositionMs, WatchMs: event.WatchMs,
 		DurationMs: cloneInt(event.DurationMs), Completed: event.Completed,
-		OccurredAt: event.OccurredAt.UTC(), RecordedAt: recordedAtFromViewEvent(event),
+		ExposureCount: event.ExposureCount,
+		OccurredAt:    event.OccurredAt.UTC(), RecordedAt: recordedAtFromViewEvent(event),
 	}
 }
 
@@ -739,6 +740,7 @@ func sameBehaviorEvent(left, right BehaviorEventModel) bool {
 		intValue(left.DurationMs) == intValue(right.DurationMs) &&
 		(left.DurationMs == nil) == (right.DurationMs == nil) &&
 		left.Completed == right.Completed &&
+		left.ExposureCount == right.ExposureCount &&
 		left.OccurredAt.Equal(right.OccurredAt) &&
 		left.RecordedAt.Equal(right.RecordedAt)
 }

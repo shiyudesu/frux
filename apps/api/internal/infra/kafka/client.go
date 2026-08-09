@@ -104,8 +104,9 @@ func clientOptions(cfg infraconfig.KafkaConfig) ([]kgo.Opt, error) {
 		kgo.RecordDeliveryTimeout(produceTimeout),
 		kgo.ProduceRequestTimeout(produceTimeout),
 		kgo.AllowIdempotentProduceCancellation(),
-		kgo.ProducerBatchMaxBytes(1 << 20),
+		kgo.ProducerBatchMaxBytes(producerBatchMaxBytes()),
 	}
+
 	switch cfg.Authentication.Mechanism {
 	case "", "none":
 	case "plain":
@@ -131,6 +132,20 @@ func clientOptions(cfg infraconfig.KafkaConfig) ([]kgo.Opt, error) {
 		options = append(options, kgo.DialTLSConfig(tlsConfig))
 	}
 	return options, nil
+}
+
+func producerBatchMaxBytes() int32 {
+	var minimum int
+	for _, topic := range Topics() {
+		limit := brokerMaxMessageBytes(topic)
+		if minimum == 0 || limit < minimum {
+			minimum = limit
+		}
+	}
+	if minimum <= 0 {
+		minimum = 1 << 20
+	}
+	return int32(minimum)
 }
 
 func loadTLSConfig(cfg infraconfig.KafkaTLSConfig) (*tls.Config, error) {

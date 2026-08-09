@@ -9,6 +9,19 @@ import (
 	"time"
 )
 
+func TestSameBehaviorEventIncludesExposureCount(t *testing.T) {
+	base := BehaviorEventModel{
+		EventID: "view-1", ViewEventID: 1, UserID: 2, VideoID: 3,
+		Scene: "recommend", EventType: "exposed", ExposureCount: 1,
+		OccurredAt: time.Now().UTC(), RecordedAt: time.Now().UTC(),
+	}
+	changed := base
+	changed.ExposureCount = 2
+	if sameBehaviorEvent(base, changed) {
+		t.Fatal("different exposure count was treated as the same behavior event")
+	}
+}
+
 func TestProgressEventWeightUsesBoundedPlaybackProgress(t *testing.T) {
 	duration := 60_000
 	early := eventWeight(domainexposure.EventTypeProgress, 5_000, 4_000, &duration, false)

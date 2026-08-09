@@ -68,6 +68,19 @@ func TestRetainedEventTopicsUseBrokerAppendTime(t *testing.T) {
 			topic.MessageTimestamp != MessageTimestampLogAppendTime {
 			t.Fatalf("topic %s timestamp type = %q", topic.ID, topic.MessageTimestamp)
 		}
+
+	}
+}
+
+func TestProducerBatchBoundMatchesSmallestRegisteredTopic(t *testing.T) {
+	want := int32(brokerMaxMessageBytes(Topics()[0]))
+	for _, topic := range Topics()[1:] {
+		if candidate := int32(brokerMaxMessageBytes(topic)); candidate < want {
+			want = candidate
+		}
+	}
+	if got := producerBatchMaxBytes(); got != want {
+		t.Fatalf("batch max = %d, want %d", got, want)
 	}
 }
 

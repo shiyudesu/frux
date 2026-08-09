@@ -125,13 +125,13 @@ func (m *DeadLetterManager) VerifyConsumerDrained(
 	if m == nil || m.rabbit == nil || m.config.ManagementURL == "" {
 		return domaindeadletter.ErrInspectionFailed
 	}
-	queues := m.rabbit.consumerQueues(consumer)
-	if len(queues) == 0 {
+	spec, ok := m.rabbit.queueSpec(consumer)
+	if !ok {
 		return fmt.Errorf("%w: unknown consumer", ErrConsumerNotDrained)
 	}
-	if spec, ok := m.rabbit.queueSpec(consumer); ok &&
-		m.config.DeadLetter.Enabled {
-		queues = append(queues, spec.DeadQueue)
+	queues := []string{spec.LegacyQueue}
+	if m.config.DeadLetter.Enabled {
+		queues = append(queues, spec.SourceQueue, spec.DeadQueue)
 	}
 	for _, queueName := range queues {
 		var queue managementQueue

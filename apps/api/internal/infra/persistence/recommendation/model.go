@@ -56,6 +56,7 @@ type BehaviorEventModel struct {
 	WatchMs             int        `gorm:"column:watch_ms;not null;default:0"`
 	DurationMs          *int       `gorm:"column:duration_ms"`
 	Completed           bool       `gorm:"column:completed;not null;default:false"`
+	ExposureCount       int        `gorm:"column:exposure_count_snapshot;not null;default:0"`
 	OccurredAt          time.Time  `gorm:"column:occurred_at;not null;index:idx_recommendation_behavior_user_occurred,priority:2"`
 	RecordedAt          time.Time  `gorm:"column:recorded_at;not null;default:CURRENT_TIMESTAMP"`
 	ProfileDispatchedAt *time.Time `gorm:"column:profile_dispatched_at;index:idx_recommendation_behavior_profile_pending,priority:1"`
