@@ -587,7 +587,9 @@ func TestActionReceiptDifferentKeyNoOpWaitsForHandoff(t *testing.T) {
 	accepted := setActionReceiptTestState(t, cache, "original-key", true, actionReceiptTestMutation("event-original"))
 
 	dependent := setActionReceiptTestState(t, cache, "dependent-key", true, actionReceiptTestMutation("event-dependent"))
-	if !dependent.ShouldPublish || dependent.EventID != accepted.EventID || dependent.Version != accepted.Version {
+	if !dependent.ShouldPublish || dependent.EventID != accepted.EventID ||
+		dependent.Version != accepted.Version ||
+		dependent.IdempotencyKey != accepted.IdempotencyKey {
 		t.Fatalf("different-key no-op did not recover the stable pending event: got=%#v want=%#v", dependent, accepted)
 	}
 	rawReceipts, err := cache.client.HGet(
@@ -609,6 +611,36 @@ func TestActionReceiptDifferentKeyNoOpWaitsForHandoff(t *testing.T) {
 	replayed := setActionReceiptTestState(t, cache, "dependent-key", true, actionReceiptTestMutation("event-after-confirm"))
 	if replayed.ShouldPublish || replayed.EventID != accepted.EventID {
 		t.Fatalf("confirmed dependency replay requested duplicate handoff: %#v", replayed)
+	}
+
+}
+
+func TestDependentReceiptRetryRetainsOriginalEventIdempotencyKey(t *testing.T) {
+	cache := newActionReceiptTestCache(t)
+	accepted := setActionReceiptTestState(
+		t,
+		cache,
+		"original-key",
+		true,
+		actionReceiptTestMutation("event-original"),
+	)
+	_ = setActionReceiptTestState(
+		t,
+		cache,
+		"dependent-key",
+		true,
+		actionReceiptTestMutation("event-dependent"),
+	)
+	retried := setActionReceiptTestState(
+		t,
+		cache,
+		"dependent-key",
+		true,
+		actionReceiptTestMutation("event-retry"),
+	)
+	if retried.EventID != accepted.EventID ||
+		retried.IdempotencyKey != accepted.IdempotencyKey {
+		t.Fatalf("retry mutated stable payload: got=%#v want=%#v", retried, accepted)
 	}
 }
 

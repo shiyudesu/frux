@@ -545,7 +545,7 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 				VideoID:                 videoID,
 				ActionType:              actionType,
 				Active:                  receipt.Active,
-				IdempotencyKey:          receipt.Key,
+				IdempotencyKey:          actionEventIdempotencyKey(receipt, previous),
 				RecommendationRequestID: receipt.RecommendationRequestID,
 				Version:                 receipt.Version,
 				EventID:                 receipt.EventID,
@@ -676,13 +676,14 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 				VideoID:                 videoID,
 				ActionType:              actionType,
 				Active:                  previous.Active,
-				IdempotencyKey:          idempotencyKey,
+				IdempotencyKey:          previous.IdempotencyKey,
 				RecommendationRequestID: previous.RecommendationRequestID,
 				Version:                 previous.Version,
 				EventID:                 previous.EventID,
 				OccurredAt:              previous.OccurredAt,
 				ShouldPublish:           needsHandoff,
 			}
+
 			return nil
 		}
 
@@ -751,6 +752,17 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 	}
 
 	return completeActionStateResult(ctx, c.client, result, counterBaseKey, jsonKey, initialStat)
+}
+
+func actionEventIdempotencyKey(
+	receipt actionIdempotencyReceipt,
+	snapshot domaininteraction.ActionStateSnapshot,
+) string {
+	if actionIdempotencyReceiptReferencesSnapshot(receipt, snapshot) &&
+		strings.TrimSpace(snapshot.IdempotencyKey) != "" {
+		return strings.TrimSpace(snapshot.IdempotencyKey)
+	}
+	return strings.TrimSpace(receipt.Key)
 }
 
 func completeActionStateResult(ctx context.Context, client redisActionStatReadWriter, result *applicationinteraction.ActionStateResult, counterBaseKey string, jsonKey string, initialStat *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
