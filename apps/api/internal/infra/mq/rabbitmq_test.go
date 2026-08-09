@@ -13,6 +13,14 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+func TestUncertainPublishErrorMayHaveAcknowledged(t *testing.T) {
+	cause := context.DeadlineExceeded
+	err := &UncertainPublishError{cause: cause}
+	if !err.MayHaveAcknowledged() || !errors.Is(err, cause) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestActionDeliveryRequeuesOnlyInfrastructureFailures(t *testing.T) {
 	if shouldRequeueActionDelivery(applicationinteraction.ErrTerminalActionEvent) {
 		t.Fatal("terminal poison action event was requeued")

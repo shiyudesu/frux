@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
@@ -36,6 +37,28 @@ const viewEventConsumerRetryDelay = time.Second
 var ErrEmptyRabbitMQURL = errors.New("rabbitmq url is empty")
 var ErrPublisherConfirmUnavailable = errors.New("rabbitmq publisher confirm unavailable")
 var ErrPublishNotAcknowledged = errors.New("rabbitmq publish not acknowledged")
+
+type UncertainPublishError struct {
+	cause error
+}
+
+func (e *UncertainPublishError) Error() string {
+	if e == nil || e.cause == nil {
+		return "rabbitmq publish result uncertain"
+	}
+	return fmt.Sprintf("rabbitmq publish result uncertain: %v", e.cause)
+}
+
+func (e *UncertainPublishError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func (*UncertainPublishError) MayHaveAcknowledged() bool {
+	return true
+}
 
 type RabbitMQ struct {
 	conn                     *amqp.Connection
@@ -244,11 +267,11 @@ func (r *RabbitMQ) PublishMediaProcessingRequested(ctx context.Context, event *a
 		return err
 	}
 	if confirmation == nil {
-		return ErrPublisherConfirmUnavailable
+		return &UncertainPublishError{cause: ErrPublisherConfirmUnavailable}
 	}
 	acknowledged, err := confirmation.WaitContext(ctx)
 	if err != nil {
-		return err
+		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
 		return ErrPublishNotAcknowledged
@@ -282,11 +305,11 @@ func (r *RabbitMQ) PublishActionChanged(ctx context.Context, event *applicationi
 		return err
 	}
 	if confirmation == nil {
-		return ErrPublisherConfirmUnavailable
+		return &UncertainPublishError{cause: ErrPublisherConfirmUnavailable}
 	}
 	acknowledged, err := confirmation.WaitContext(ctx)
 	if err != nil {
-		return err
+		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
 		return ErrPublishNotAcknowledged
@@ -322,11 +345,11 @@ func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *application
 		return err
 	}
 	if confirmation == nil {
-		return ErrPublisherConfirmUnavailable
+		return &UncertainPublishError{cause: ErrPublisherConfirmUnavailable}
 	}
 	acknowledged, err := confirmation.WaitContext(ctx)
 	if err != nil {
-		return err
+		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
 		return ErrPublishNotAcknowledged
@@ -372,12 +395,12 @@ func (r *RabbitMQ) PublishViewEventRecorded(ctx context.Context, event *applicat
 	}
 	if confirmation == nil {
 		r.resetViewEventPublisher()
-		return ErrPublisherConfirmUnavailable
+		return &UncertainPublishError{cause: ErrPublisherConfirmUnavailable}
 	}
 	acknowledged, err := confirmation.WaitContext(ctx)
 	if err != nil {
 		r.resetViewEventPublisher()
-		return err
+		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
 		r.resetViewEventPublisher()

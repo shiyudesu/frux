@@ -436,6 +436,19 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		event := actionChangedEventFromState(userID, state)
 		if publishErr := s.actionPublisher.PublishActionChanged(ctx, event); publishErr != nil {
 			recoveryCtx, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
+			multiTransport := applicationeventstream.IsMultiTransportPublicationError(publishErr)
+			if multiTransport {
+				if markErr := s.markActionDeliveryIncomplete(recoveryCtx, state); markErr != nil {
+					if applicationeventstream.AnyTransportAcknowledged(publishErr) ||
+						applicationeventstream.MayHaveTransportAcknowledgement(publishErr) {
+						cancelRecovery()
+						return nil, actionUpdateError(publishErr, markErr)
+					}
+					_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
+					cancelRecovery()
+					return nil, actionUpdateError(publishErr, markErr, rollbackErr)
+				}
+			}
 			accepted, acceptedErr := acceptedActionEvent(event)
 			if acceptedErr != nil {
 				rolledBack, rollbackErr := s.rollbackActionState(recoveryCtx, state)
@@ -483,9 +496,8 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			}
 			s.observeActionFallback("success")
 			cancelRecovery()
-			if applicationeventstream.IsMultiTransportPublicationError(publishErr) {
-				markErr := s.markActionDeliveryIncomplete(ctx, state)
-				return nil, actionUpdateError(publishErr, markErr)
+			if multiTransport {
+				return nil, actionUpdateError(publishErr)
 			}
 		}
 		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {

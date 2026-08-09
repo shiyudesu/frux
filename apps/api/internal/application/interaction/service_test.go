@@ -23,12 +23,13 @@ func (r *synchronousActionRepositoryStub) PersistAcceptedActionEvent(context.Con
 }
 
 type actionStateStoreStub struct {
-	state           *ActionStateResult
-	rollbackResult  bool
-	rollbackErr     error
-	rollbackCalls   int
-	confirmCalls    int
-	incompleteCalls int
+	state            *ActionStateResult
+	rollbackResult   bool
+	rollbackErr      error
+	rollbackCalls    int
+	confirmCalls     int
+	incompleteCalls  int
+	incompleteCtxErr error
 }
 
 func (s *actionStateStoreStub) SetActionState(
@@ -56,11 +57,12 @@ func (s *actionStateStoreStub) ConfirmActionStateHandoff(context.Context, *Actio
 }
 
 func (s *actionStateStoreStub) MarkActionStateDeliveryIncomplete(
-	context.Context,
-	*ActionStateResult,
+	ctx context.Context,
+	_ *ActionStateResult,
 ) error {
 	s.incompleteCalls++
-	return nil
+	s.incompleteCtxErr = ctx.Err()
+	return s.incompleteCtxErr
 }
 
 type actionPublisherStub struct{ err error }
@@ -238,12 +240,35 @@ func TestDualPublicationFailuresAttemptFallbackButRemainUnconfirmed(t *testing.T
 			if !errors.Is(err, ErrUpdateInteractionFailed) {
 				t.Fatalf("error = %v", err)
 			}
+
 			if result != nil || repo.persistCalls != 1 ||
 				store.rollbackCalls != 0 || store.confirmCalls != 0 ||
 				store.incompleteCalls != 1 {
 				t.Fatalf("result=%#v repo=%#v store=%#v", result, repo, store)
 			}
 		})
+	}
+}
+
+func TestDualIncompleteMarkerUsesRecoveryContextAfterRequestCancellation(t *testing.T) {
+	repo := &synchronousActionRepositoryStub{}
+	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
+	service := New(
+		repo,
+		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
+			err:          errors.New("dual publication incomplete"),
+			acknowledged: map[string]bool{"rabbit": true},
+			primary:      "rabbit",
+		}}),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := service.Like(ctx, 7, 11, "like-1")
+	if !errors.Is(err, ErrUpdateInteractionFailed) {
+		t.Fatalf("error = %v", err)
+	}
+	if store.incompleteCalls != 1 || store.incompleteCtxErr != nil {
+		t.Fatalf("store=%#v", store)
 	}
 }
 
