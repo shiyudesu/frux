@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	rand "math/rand/v2"
 	"sort"
 	"sync"
 	"time"
@@ -432,7 +433,7 @@ func (c *Consumer) processPartition(
 			c.observeConsume("retryable", started, record.Timestamp)
 			return result{eligible: lastEligible, err: err}
 		}
-		outcome, handleErr := c.handler.Handle(ctx, applicationeventstream.Event{
+		applicationEvent := applicationeventstream.Event{
 			Metadata: applicationeventstream.RecordMetadata{
 				Topic: record.Topic, Group: c.groupName,
 				Partition: record.Partition, Offset: record.Offset,
@@ -445,7 +446,8 @@ func (c *Consumer) processPartition(
 			Producer:      string(decoded.Envelope.Producer),
 			CorrelationID: decoded.Envelope.CorrelationID,
 			Payload:       decoded.Payload,
-		})
+		}
+		outcome, handleErr := c.handleWithRequestedRetry(ctx, applicationEvent)
 		if !applicationeventstream.ValidOutcome(outcome) {
 			c.observeConsume("retryable", started, record.Timestamp)
 			return result{eligible: lastEligible, err: applicationeventstream.ErrInvalidOutcome}
@@ -462,6 +464,32 @@ func (c *Consumer) processPartition(
 		return result{eligible: lastEligible, err: handleErr}
 	}
 	return result{eligible: lastEligible}
+}
+
+func (c *Consumer) handleWithRequestedRetry(
+	ctx context.Context,
+	event applicationeventstream.Event,
+) (applicationeventstream.Outcome, error) {
+	for {
+		outcome, err := c.handler.Handle(ctx, event)
+		if outcome != applicationeventstream.OutcomeRetryable || err == nil {
+			return outcome, err
+		}
+		type retryAfter interface {
+			RetryAfter() time.Duration
+		}
+		var requested retryAfter
+		if !errors.As(err, &requested) || requested.RetryAfter() <= 0 {
+			return outcome, err
+		}
+		timer := time.NewTimer(requested.RetryAfter())
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return outcome, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 type result struct {
@@ -711,8 +739,17 @@ func (s Supervisor) Run(ctx context.Context) error {
 			if backoff <= 0 {
 				backoff = 100 * time.Millisecond
 			}
+			delay := rebalanceRestartDelay()
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
 			continue
 		}
+
 		if !RetryableConsumerError(err) {
 			s.observe("fatal_failure")
 			return err
@@ -739,6 +776,10 @@ func (s Supervisor) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func rebalanceRestartDelay() time.Duration {
+	return time.Second + time.Duration(rand.Int64N(int64(2*time.Second)))
 }
 
 func RetryableConsumerError(err error) bool {

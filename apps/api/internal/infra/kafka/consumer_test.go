@@ -307,6 +307,7 @@ func TestConsumerForcesLagSampleOnHandlerFailure(t *testing.T) {
 		batches: [][]brokerRecord{{probeRecord(t, 0, 3)}},
 		lag:     9,
 	}
+
 	observer := &consumerObserver{}
 	consumer := testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
 		return applicationeventstream.OutcomeRetryable, errors.New("database unavailable")
@@ -319,6 +320,34 @@ func TestConsumerForcesLagSampleOnHandlerFailure(t *testing.T) {
 	}
 	if observer.lag != 9 || observer.calls != 2 {
 		t.Fatalf("lag=%d calls=%d, want lag 9 and initial+failure samples", observer.lag, observer.calls)
+	}
+}
+
+func TestConsumerRetriesRequestedDelayWithoutRestartingSession(t *testing.T) {
+	var calls atomic.Int32
+	consumer := testConsumer(nil, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
+		if calls.Add(1) < 3 {
+			return applicationeventstream.OutcomeRetryable,
+				applicationeventstream.PendingParityError{Delay: time.Millisecond}
+		}
+		return applicationeventstream.OutcomeDurableSuccess, nil
+	}))
+	outcome, err := consumer.handleWithRequestedRetry(
+		context.Background(),
+		applicationeventstream.Event{},
+	)
+	if err != nil || outcome != applicationeventstream.OutcomeDurableSuccess ||
+		calls.Load() != 3 {
+		t.Fatalf("outcome=%s error=%v calls=%d", outcome, err, calls.Load())
+	}
+}
+
+func TestRebalanceRestartDelayIsBounded(t *testing.T) {
+	for range 100 {
+		delay := rebalanceRestartDelay()
+		if delay < time.Second || delay >= 3*time.Second {
+			t.Fatalf("delay = %s", delay)
+		}
 	}
 }
 

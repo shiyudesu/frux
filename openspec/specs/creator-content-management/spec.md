@@ -132,9 +132,13 @@ Frux SHALL maintain per-user public-work, private-work, received-like, and colle
 - **WHEN** the broker may have accepted an event but publisher confirmation is unavailable or times out
 - **THEN** synchronous fallback may persist the same version and any later broker delivery is an exactly-once duplicate
 
-#### Scenario: Partial dual acknowledgement survives fallback failure
-- **WHEN** fallback fails after exactly one transition transport durably acknowledges the stable action event
-- **THEN** the API reports failure but confirms the Redis handoff and does not roll back state that the broker can later persist
+#### Scenario: Active action acknowledgement survives fallback failure
+- **WHEN** fallback fails after the active primary transport durably acknowledges the stable action event
+- **THEN** the API reports failure, confirms the Redis handoff, and does not roll back state that the active broker can later persist
+
+#### Scenario: Mirror-only action acknowledgement remains retryable
+- **WHEN** fallback fails after only the non-active mirror transport acknowledges the stable action event
+- **THEN** the API reports failure and preserves Redis without confirming the handoff so an idempotent retry republishes to the active transport
 
 #### Scenario: Failed mutation is superseded
 - **WHEN** a newer Redis action version replaces a failed mutation before its recovery rollback
