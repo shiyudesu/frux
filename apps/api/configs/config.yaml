@@ -61,7 +61,7 @@ kafka:
   enabled: false
   environment: "local"
   brokers:
-    - "localhost:9092"
+    - "localhost:29092"
   client_id: "frux-local"
   topic_prefix: ""
   allow_local_provisioning: true
