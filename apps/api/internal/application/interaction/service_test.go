@@ -30,6 +30,7 @@ type actionStateStoreStub struct {
 	confirmCalls     int
 	incompleteCalls  int
 	incompleteCtxErr error
+	incompleteErr    error
 }
 
 func (s *actionStateStoreStub) SetActionState(
@@ -62,7 +63,7 @@ func (s *actionStateStoreStub) MarkActionStateDeliveryIncomplete(
 ) error {
 	s.incompleteCalls++
 	s.incompleteCtxErr = ctx.Err()
-	return s.incompleteCtxErr
+	return errors.Join(s.incompleteCtxErr, s.incompleteErr)
 }
 
 type actionPublisherStub struct{ err error }
@@ -305,8 +306,33 @@ func TestDualIncompleteMarkerUsesRecoveryContextAfterRequestCancellation(t *test
 	if !errors.Is(err, ErrUpdateInteractionFailed) {
 		t.Fatalf("error = %v", err)
 	}
+
 	if store.incompleteCalls != 1 || store.incompleteCtxErr != nil {
 		t.Fatalf("store=%#v", store)
+	}
+}
+
+func TestDualMarkerFailureStillAttemptsPostgresFallback(t *testing.T) {
+	markerErr := errors.New("Redis marker unavailable")
+	repo := &synchronousActionRepositoryStub{}
+	store := &actionStateStoreStub{
+		state: acceptedAsyncState(), rollbackResult: true,
+		incompleteErr: markerErr,
+	}
+	service := New(
+		repo,
+		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
+			err:          errors.New("dual publication incomplete"),
+			acknowledged: map[string]bool{"kafka": true},
+			primary:      "rabbit",
+		}}),
+	)
+	_, err := service.Like(context.Background(), 7, 11, "like-1")
+	if !errors.Is(err, ErrUpdateInteractionFailed) || !errors.Is(err, markerErr) {
+		t.Fatalf("error = %v", err)
+	}
+	if repo.persistCalls != 1 || store.rollbackCalls != 0 {
+		t.Fatalf("repo=%#v store=%#v", repo, store)
 	}
 }
 

@@ -437,17 +437,9 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		if publishErr := s.actionPublisher.PublishActionChanged(ctx, event); publishErr != nil {
 			recoveryCtx, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
 			multiTransport := applicationeventstream.IsMultiTransportPublicationError(publishErr)
+			var markerErr error
 			if multiTransport {
-				if markErr := s.markActionDeliveryIncomplete(recoveryCtx, state); markErr != nil {
-					if applicationeventstream.AnyTransportAcknowledged(publishErr) ||
-						applicationeventstream.MayHaveTransportAcknowledgement(publishErr) {
-						cancelRecovery()
-						return nil, actionUpdateError(publishErr, markErr)
-					}
-					_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
-					cancelRecovery()
-					return nil, actionUpdateError(publishErr, markErr, rollbackErr)
-				}
+				markerErr = s.markActionDeliveryIncomplete(recoveryCtx, state)
 			}
 			accepted, acceptedErr := acceptedActionEvent(event)
 			if acceptedErr != nil {
@@ -478,7 +470,12 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 							confirmErr,
 						)
 					}
-					return nil, actionUpdateError(publishErr, persistErr, confirmErr)
+					return nil, actionUpdateError(
+						publishErr,
+						markerErr,
+						persistErr,
+						confirmErr,
+					)
 				}
 				_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
 				cancelRecovery()
@@ -487,7 +484,13 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 					if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
 						return nil, errors.Join(domaininteraction.ErrVideoNotFound, publishErr, persistErr, rollbackErr, recoveryErr)
 					}
-					return nil, actionUpdateError(publishErr, persistErr, rollbackErr, recoveryErr)
+					return nil, actionUpdateError(
+						publishErr,
+						markerErr,
+						persistErr,
+						rollbackErr,
+						recoveryErr,
+					)
 				}
 				if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
 					return nil, domaininteraction.ErrVideoNotFound
@@ -498,7 +501,7 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			cancelRecovery()
 			if multiTransport {
 				s.applyActionSideEffects(ctx, state, userID)
-				return nil, actionUpdateError(publishErr)
+				return nil, actionUpdateError(publishErr, markerErr)
 			}
 		}
 		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {
