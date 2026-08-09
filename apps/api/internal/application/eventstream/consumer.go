@@ -3,6 +3,7 @@ package applicationeventstream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -135,15 +136,16 @@ func (h *ShadowHandler) Handle(ctx context.Context, event Event) (Outcome, error
 			h.observe("parity_unavailable")
 			return OutcomeRetryable, err
 		}
+		pendingKey := shadowPendingKey(event)
 		switch result {
 		case ParityMatch:
-			h.clearPending(event.EventID)
+			h.clearPending(pendingKey)
 			h.observe("parity_match")
 		case ParityMismatch:
-			h.clearPending(event.EventID)
+			h.clearPending(pendingKey)
 			h.observe("parity_mismatch")
 		case ParityPending:
-			if h.retryPending(event.EventID) {
+			if h.retryPending(pendingKey) {
 				h.observe("parity_pending")
 				return OutcomeRetryable, PendingParityError{Delay: h.retryDelay}
 			}
@@ -156,6 +158,15 @@ func (h *ShadowHandler) Handle(ctx context.Context, event Event) (Outcome, error
 		h.observe("validated")
 	}
 	return OutcomeDurableSuccess, nil
+}
+
+func shadowPendingKey(event Event) string {
+	return fmt.Sprintf(
+		"%s:%d:%d",
+		event.Metadata.Topic,
+		event.Metadata.Partition,
+		event.Metadata.Offset,
+	)
 }
 
 type PendingParityError struct {

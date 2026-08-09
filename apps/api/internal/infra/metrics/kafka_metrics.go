@@ -224,7 +224,7 @@ func (KafkaObserver) ObserveConsumerSession(group infrakafka.ConsumerGroupID, re
 	switch resultLabel {
 	case "started":
 		KafkaConsumerSessionHealthy.WithLabelValues(groupLabel).Set(1)
-	case "retryable_failure", "fatal_failure", "stopped":
+	case "retryable_failure", "fatal_failure", "rebalance_restart", "stopped":
 		KafkaConsumerSessionHealthy.WithLabelValues(groupLabel).Set(0)
 	}
 }

@@ -46,3 +46,21 @@ func TestKafkaMetricDescriptorsExcludeUnboundedDimensions(t *testing.T) {
 		}
 	}
 }
+
+func TestKafkaRebalanceRestartMarksSessionUnhealthy(t *testing.T) {
+	group := infrakafka.GroupPersistActionActive
+	groupLabel := kafkaGroupLabel(group)
+	observer := KafkaObserver{}
+	observer.ObserveConsumerSession(group, "started")
+	if got := testutil.ToFloat64(
+		KafkaConsumerSessionHealthy.WithLabelValues(groupLabel),
+	); got != 1 {
+		t.Fatalf("started health = %v", got)
+	}
+	observer.ObserveConsumerSession(group, "rebalance_restart")
+	if got := testutil.ToFloat64(
+		KafkaConsumerSessionHealthy.WithLabelValues(groupLabel),
+	); got != 0 {
+		t.Fatalf("rebalance health = %v", got)
+	}
+}

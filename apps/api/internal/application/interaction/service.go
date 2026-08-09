@@ -446,7 +446,10 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			if persistErr := s.repo.PersistAcceptedActionEvent(recoveryCtx, accepted); persistErr != nil {
 				s.observeActionFallback("failure")
 				if applicationeventstream.AnyTransportAcknowledged(publishErr) {
-					confirmErr := s.confirmActionStateHandoff(recoveryCtx, state)
+					var confirmErr error
+					if applicationeventstream.PrimaryTransportAcknowledged(publishErr) {
+						confirmErr = s.confirmActionStateHandoff(recoveryCtx, state)
+					}
 					cancelRecovery()
 					if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
 						return nil, errors.Join(

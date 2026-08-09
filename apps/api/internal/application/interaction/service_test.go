@@ -63,6 +63,7 @@ func (p actionPublisherStub) PublishActionChanged(context.Context, *ActionChange
 type acknowledgedPublicationError struct {
 	err          error
 	acknowledged map[string]bool
+	primary      string
 }
 
 func (e acknowledgedPublicationError) Error() string { return e.err.Error() }
@@ -77,6 +78,10 @@ func (e acknowledgedPublicationError) AnyTransportAcknowledged() bool {
 		}
 	}
 	return false
+}
+
+func (e acknowledgedPublicationError) PrimaryTransportAcknowledged() bool {
+	return e.acknowledged[e.primary]
 }
 
 type actionDeliveryObserverStub struct {
@@ -203,6 +208,7 @@ func TestDualPublicationFailuresAlwaysAttemptSuccessfulFallback(t *testing.T) {
 				repo,
 				WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
 					err: errors.New("dual publication incomplete"), acknowledged: test.acknowledged,
+					primary: "rabbit",
 				}}),
 			)
 			result, err := service.Like(context.Background(), 7, 11, "like-1")
@@ -234,9 +240,15 @@ func TestKafkaAndFallbackFailureConditionallyRollBackRedis(t *testing.T) {
 	}
 }
 
-func TestPartialDualAcknowledgementAndFallbackFailureConfirmHandoffWithoutRollback(t *testing.T) {
-	for _, acknowledged := range []string{"rabbit", "kafka"} {
-		t.Run(acknowledged, func(t *testing.T) {
+func TestPartialDualAcknowledgementAndFallbackFailurePreserveRedisWithoutUnsafeConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		acknowledged string
+		wantConfirm  int
+	}{
+		{acknowledged: "rabbit", wantConfirm: 1},
+		{acknowledged: "kafka", wantConfirm: 0},
+	} {
+		t.Run(test.acknowledged, func(t *testing.T) {
 			persistErr := errors.New("database unavailable")
 			publishErr := errors.New("dual publication incomplete")
 			repo := &synchronousActionRepositoryStub{persistErr: persistErr}
@@ -245,7 +257,9 @@ func TestPartialDualAcknowledgementAndFallbackFailureConfirmHandoffWithoutRollba
 			service := New(
 				repo,
 				WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
-					err: publishErr, acknowledged: map[string]bool{acknowledged: true},
+					err:          publishErr,
+					acknowledged: map[string]bool{test.acknowledged: true},
+					primary:      "rabbit",
 				}}),
 				WithActionDeliveryObserver(observer),
 			)
@@ -255,7 +269,8 @@ func TestPartialDualAcknowledgementAndFallbackFailureConfirmHandoffWithoutRollba
 				!errors.Is(err, persistErr) {
 				t.Fatalf("error = %v", err)
 			}
-			if repo.persistCalls != 1 || store.rollbackCalls != 0 || store.confirmCalls != 1 {
+			if repo.persistCalls != 1 || store.rollbackCalls != 0 ||
+				store.confirmCalls != test.wantConfirm {
 				t.Fatalf("repo=%#v store=%#v", repo, store)
 			}
 			if len(observer.fallback) != 1 || observer.fallback[0] != "failure" ||

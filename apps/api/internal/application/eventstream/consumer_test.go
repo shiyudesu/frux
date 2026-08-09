@@ -77,6 +77,42 @@ func TestShadowHandlerAgeAndParity(t *testing.T) {
 	}
 }
 
+func TestShadowPendingRetriesAreScopedByRecordCoordinates(t *testing.T) {
+	now := time.Now().UTC()
+	handler, err := NewShadowHandler(
+		"frux.probe.shadow.v1",
+		time.Hour,
+		parityCheckerFunc(func(context.Context, Event) (ParityResult, error) {
+			return ParityPending, nil
+		}),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.now = func() time.Time { return now }
+	handler.maxRetries = 1
+	event := Event{
+		Metadata: RecordMetadata{
+			Group:     "frux.probe.shadow.v1",
+			Topic:     "frux.view.v1",
+			Partition: 0,
+			Offset:    7,
+			Key:       []byte("user:1"),
+		},
+		EventID:    "shared-id",
+		EventType:  "view",
+		ProducedAt: now,
+	}
+	if outcome, _ := handler.Handle(context.Background(), event); outcome != OutcomeRetryable {
+		t.Fatalf("first record outcome = %s", outcome)
+	}
+	event.Metadata.Partition = 1
+	if outcome, _ := handler.Handle(context.Background(), event); outcome != OutcomeRetryable {
+		t.Fatalf("second record shared retry budget: %s", outcome)
+	}
+}
+
 func TestShadowHandlerRetriesPendingParityThenMatches(t *testing.T) {
 	now := time.Now().UTC()
 	calls := 0

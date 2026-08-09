@@ -77,6 +77,10 @@ func (e *PublicationError) AnyTransportAcknowledged() bool {
 	return e.primaryErr == nil || e.mirrorErr == nil
 }
 
+func (e *PublicationError) PrimaryTransportAcknowledged() bool {
+	return e.primaryErr == nil
+}
+
 type ActionPublisher struct {
 	mode     infrakafka.ProducerMode
 	rabbit   RabbitActionPublisher
