@@ -114,7 +114,7 @@ func (a *CutoverAdministrator) Apply(
 			return CutoverPreserved, nil
 		}
 	}
-	metadata := "frux-cutover:" + cutoverAt.UTC().Format(time.RFC3339)
+	metadata := "frux-cutover:" + cutoverAt.UTC().Format(time.RFC3339Nano)
 	targets := cutoverTargets(offsets, committed, topicName, metadata, mode)
 	if len(targets[topicName]) == 0 {
 		return CutoverPreserved, nil

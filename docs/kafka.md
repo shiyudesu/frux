@@ -84,6 +84,7 @@ including `CreateTime`.
 - At least 3 brokers across failure domains; replication factor >= 3 and minimum ISR >= 2.
 - TLS 1.2+ and authenticated clients; mount secrets/keys instead of embedding them in YAML.
 - Broker auto topic creation disabled.
+- Versioned topics require the exact registered partition count; partition-count changes require a new topic version to preserve keyed ordering.
 - `acks=all`, idempotent producer permissions, and reviewed retention/cleanup/append-time/max-record settings.
 - In-flight produce cancellation is enabled to enforce deadlines; every error after submission is classified as uncertain and must be handled through stable event IDs and application fallback.
 - Controller listeners isolated from application networks.

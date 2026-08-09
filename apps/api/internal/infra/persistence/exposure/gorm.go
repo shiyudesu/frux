@@ -1,14 +1,14 @@
 package infraexposure
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
-	"context"
-	"errors"
-	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -55,6 +55,11 @@ func (r *Repository) SaveViewEvent(ctx context.Context, event *domainexposure.Vi
 	var eventModel ViewEventModel
 	var exposureModel ExposureModel
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Event IDs and Kafka partition keys are user-scoped. Serialize before
+		// allocating event/outbox IDs so commit order cannot invert that stream.
+		if err := lockViewHistoryUser(tx, event.UserID); err != nil {
+			return err
+		}
 		if err := ensureReadableVideo(tx, event.UserID, event.VideoID); err != nil {
 			return err
 		}
@@ -86,9 +91,6 @@ func (r *Repository) SaveViewEvent(ctx context.Context, event *domainexposure.Vi
 		}
 
 		if event.CountsAsHistory() {
-			if err := lockViewHistoryUser(tx, event.UserID); err != nil {
-				return err
-			}
 			blocked, err := viewHistoryDeletionBlocks(tx, eventModel)
 			if err != nil {
 				return err

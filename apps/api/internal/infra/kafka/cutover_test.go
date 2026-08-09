@@ -204,3 +204,30 @@ func TestCutoverResetRequiresInactiveGroup(t *testing.T) {
 		t.Fatalf("error=%v commits=%d", err, backend.commitCalls)
 	}
 }
+
+func TestCutoverMetadataPreservesMillisecondBoundary(t *testing.T) {
+	topic := "frux.exposure.view-event-recorded.v1"
+	backend := &fakeCutoverBackend{
+		inactive: true,
+		fetches:  []kadm.OffsetResponses{{}, {}},
+		offsets: kadm.ListedOffsets{
+			topic: {
+				0: {Topic: topic, Partition: 0, Offset: 7},
+			},
+		},
+	}
+	admin := &CutoverAdministrator{backend: backend, timeout: time.Second}
+	_, err := admin.Apply(
+		context.Background(),
+		GroupConsumeViewActive,
+		"2026-08-09T01:00:00.123Z",
+		CutoverInitializeOnly,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset := backend.committed[topic][0]
+	if offset.Metadata != "frux-cutover:2026-08-09T01:00:00.123Z" {
+		t.Fatalf("metadata = %q", offset.Metadata)
+	}
+}

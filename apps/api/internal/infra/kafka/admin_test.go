@@ -80,9 +80,22 @@ func TestValidateTopicStateRejectsImpossibleMinimumISR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	state := desiredTopicState("frux.platform.backbone_probe.v1", spec, 1, 1)
 	state.MinInSyncReplicas = 2
 	if err := validateTopicState(state, spec, true, 1, 1); !errors.Is(err, ErrTopicTopologyInvalid) {
+		t.Fatalf("error = %v, want ErrTopicTopologyInvalid", err)
+	}
+}
+
+func TestValidateTopicStateRejectsPartitionExpansionForVersionedTopic(t *testing.T) {
+	spec, err := Topic(TopicActionChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := desiredTopicState("frux.interaction.action-changed.v1", spec, 3, 2)
+	state.Partitions++
+	if err := validateTopicState(state, spec, false, 3, 2); !errors.Is(err, ErrTopicTopologyInvalid) {
 		t.Fatalf("error = %v, want ErrTopicTopologyInvalid", err)
 	}
 }

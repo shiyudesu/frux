@@ -142,10 +142,7 @@ func validateTopicState(
 	requiredReplication int,
 	requiredISR int,
 ) error {
-	partitionValid := state.Partitions >= spec.LocalPartitions
-	if local {
-		partitionValid = state.Partitions == spec.LocalPartitions
-	}
+	partitionValid := state.Partitions == spec.LocalPartitions
 	if !partitionValid || state.ReplicationFactor < requiredReplication ||
 		state.MinInSyncReplicas < requiredISR ||
 		state.MinInSyncReplicas > state.ReplicationFactor ||
