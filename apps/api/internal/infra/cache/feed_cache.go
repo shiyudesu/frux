@@ -59,12 +59,19 @@ type redisStatCacheClient interface {
 
 // FeedCache 使用 Redis 保存 Feed 查询结果。
 type FeedCache struct {
-	client redisWatchCmdable
+	client                       redisWatchCmdable
+	requireExplicitActionHandoff bool
 }
 
 // NewFeedCache 创建 Feed 结果缓存。
 func NewFeedCache(client redisWatchCmdable) *FeedCache {
 	return &FeedCache{client: client}
+}
+
+func (c *FeedCache) RequireExplicitActionHandoff(required bool) {
+	if c != nil {
+		c.requireExplicitActionHandoff = required
+	}
 }
 
 // GetPage 读取缓存中的轻量 Feed 页。
@@ -515,7 +522,7 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 			handoffConfirmed = true
 		}
 		if initialState != nil && cached && actionStateSnapshotsMatch(*initialState, previous) &&
-			!deliveryIncomplete {
+			!deliveryIncomplete && !c.requireExplicitActionHandoff {
 			handoffConfirmed = true
 			baselineConfirmsCurrent = !actionStateHandoffStored(values[actionStateHandoffConfirmedField])
 		}

@@ -274,7 +274,7 @@ func (r *RabbitMQ) PublishMediaProcessingRequested(ctx context.Context, event *a
 		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
-		return ErrPublishNotAcknowledged
+		return publisherNackError(r.mediaPublishChannel)
 	}
 	return nil
 }
@@ -312,7 +312,7 @@ func (r *RabbitMQ) PublishActionChanged(ctx context.Context, event *applicationi
 		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
-		return ErrPublishNotAcknowledged
+		return publisherNackError(r.actionPublishChannel)
 	}
 	return nil
 }
@@ -352,7 +352,7 @@ func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *application
 		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
-		return ErrPublishNotAcknowledged
+		return publisherNackError(r.publishChannel)
 	}
 	return nil
 }
@@ -403,10 +403,22 @@ func (r *RabbitMQ) PublishViewEventRecorded(ctx context.Context, event *applicat
 		return &UncertainPublishError{cause: err}
 	}
 	if !acknowledged {
+		channelClosed := r.viewEventPublishChannel == nil ||
+			r.viewEventPublishChannel.IsClosed()
 		r.resetViewEventPublisher()
+		if channelClosed {
+			return &UncertainPublishError{cause: ErrPublishNotAcknowledged}
+		}
 		return ErrPublishNotAcknowledged
 	}
 	return nil
+}
+
+func publisherNackError(channel *amqp.Channel) error {
+	if channel == nil || channel.IsClosed() {
+		return &UncertainPublishError{cause: ErrPublishNotAcknowledged}
+	}
+	return ErrPublishNotAcknowledged
 }
 
 func (r *RabbitMQ) ensureViewEventPublisher() error {

@@ -319,6 +319,12 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	if feedCache != nil {
+		feedCache.RequireExplicitActionHandoff(
+			actionMigration.Producer == infrakafka.ProducerModeRabbitWithKafkaMirror ||
+				actionMigration.Producer == infrakafka.ProducerModeKafkaWithRabbitMirror,
+		)
+	}
 	interactionOptions = append(
 		interactionOptions,
 		applicationinteraction.WithActionDeliveryObserver(inframetrics.BehaviorObserver{}),

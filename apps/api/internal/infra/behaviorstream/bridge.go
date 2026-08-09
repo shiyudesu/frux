@@ -287,7 +287,8 @@ func publicationResult(err error) string {
 	switch {
 	case err == nil:
 		return "success"
-	case errors.Is(err, infrakafka.ErrProduceUncertain):
+	case errors.Is(err, infrakafka.ErrProduceUncertain),
+		applicationeventstream.MayHaveTransportAcknowledgement(err):
 		return "uncertain"
 	default:
 		return "failure"

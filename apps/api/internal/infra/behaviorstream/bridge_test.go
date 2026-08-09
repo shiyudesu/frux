@@ -306,6 +306,17 @@ type publicationObservation struct {
 	result    string
 }
 
+type possiblyAcknowledgedBridgeError struct{}
+
+func (possiblyAcknowledgedBridgeError) Error() string             { return "uncertain" }
+func (possiblyAcknowledgedBridgeError) MayHaveAcknowledged() bool { return true }
+
+func TestPublicationResultRecognizesTransportUncertainty(t *testing.T) {
+	if result := publicationResult(possiblyAcknowledgedBridgeError{}); result != "uncertain" {
+		t.Fatalf("result = %q", result)
+	}
+}
+
 type publicationObserverStub struct {
 	observations []publicationObservation
 }

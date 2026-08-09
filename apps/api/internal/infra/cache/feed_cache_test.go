@@ -468,6 +468,7 @@ func TestActionReceiptIncompleteDualDeliverySurvivesMatchingBaseline(t *testing.
 	if err := cache.MarkActionStateDeliveryIncomplete(context.Background(), accepted); err != nil {
 		t.Fatalf("mark incomplete delivery: %v", err)
 	}
+
 	baseline := &domaininteraction.ActionStateSnapshot{
 		Exists: true, Active: true, Version: accepted.Version,
 		EventID: accepted.EventID, IdempotencyKey: accepted.IdempotencyKey,
@@ -514,6 +515,40 @@ func TestActionReceiptIncompleteDualDeliverySurvivesMatchingBaseline(t *testing.
 	)
 	if replayed.ShouldPublish {
 		t.Fatalf("repaired delivery still pending: %#v", replayed)
+	}
+}
+
+func TestActionReceiptDualModeDoesNotInferHandoffFromBaseline(t *testing.T) {
+	cache := newActionReceiptTestCache(t)
+	cache.RequireExplicitActionHandoff(true)
+	accepted := setActionReceiptTestState(
+		t,
+		cache,
+		"dual-explicit-key",
+		true,
+		actionReceiptTestMutation("event-dual-explicit"),
+	)
+	baseline := &domaininteraction.ActionStateSnapshot{
+		Exists: true, Active: true, Version: accepted.Version,
+		EventID: accepted.EventID, IdempotencyKey: accepted.IdempotencyKey,
+		OccurredAt: accepted.OccurredAt, UpdatedAt: accepted.OccurredAt,
+	}
+	retried, err := cache.SetActionState(
+		context.Background(),
+		accepted.UserID,
+		accepted.VideoID,
+		accepted.ActionType,
+		true,
+		accepted.IdempotencyKey,
+		&domaininteraction.VideoStat{VideoID: accepted.VideoID},
+		baseline,
+		actionReceiptTestMutation("event-unused"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retried.ShouldPublish || retried.EventID != accepted.EventID {
+		t.Fatalf("dual mode inferred completed handoff: %#v", retried)
 	}
 }
 

@@ -19,6 +19,15 @@ func TestUncertainPublishErrorMayHaveAcknowledged(t *testing.T) {
 	if !err.MayHaveAcknowledged() || !errors.Is(err, cause) {
 		t.Fatalf("error = %v", err)
 	}
+
+}
+
+func TestClosedChannelNackIsUncertain(t *testing.T) {
+	err := publisherNackError(nil)
+	var uncertain *UncertainPublishError
+	if !errors.As(err, &uncertain) || !uncertain.MayHaveAcknowledged() {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestActionDeliveryRequeuesOnlyInfrastructureFailures(t *testing.T) {
