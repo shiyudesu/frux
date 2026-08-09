@@ -54,3 +54,16 @@ Media and semantic workers SHALL use bounded leases, polling, reconciliation, re
 #### Scenario: Semantic backlog grows
 - **WHEN** pending semantic jobs exceed the configured age or count threshold
 - **THEN** Frux exposes an alertable backlog signal without video IDs, model strings outside the registry, text, vectors, or raw errors as labels
+
+### Requirement: Fenced Semantic Claims and Resume
+Each semantic processor SHALL claim one job with a unique per-claim token, heartbeat while remote
+inference is active, and fence heartbeat, complete, and retry by token, text hash, and unexpired lease.
+Processors SHALL start only after suspended jobs resume successfully.
+
+#### Scenario: Stale semantic attempt returns
+- **WHEN** a semantic lease expires, another token reclaims the job, and the old remote call returns
+- **THEN** the old attempt cannot heartbeat, complete, or retry the reclaimed job
+
+#### Scenario: Resume fails after metadata recovery
+- **WHEN** metadata validation succeeds but resuming suspended jobs fails
+- **THEN** processors remain stopped and validation retries until resume succeeds

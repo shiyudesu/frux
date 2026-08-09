@@ -136,3 +136,11 @@ Prometheus 加载 `apps/monitoring/alerts/rabbitmq_dead_letter.yml`，Grafana �
 4. 验证基线 MP4、DASH、Range、ETag、CDN 缓存和删除清理后，再全量开启。
 5. 回滚时把 `media.backend` 切回 `local` 并让 Web 根据 `mode=multipart` 自动回退。已生成的 `ready` 记录、`media_url` 和 `cover_url` 继续可读，不删除新增表或对象。
 6. 若 Worker 异常，停止新直传并保留任务表；修复后由数据库 pending/retryable 任务和 Reconciler 恢复，不需要重放用户请求。
+
+## Semantic embedding Compose service
+
+Compose 包含内部 `semantic-embedding` 服务，固定 MiniLM revision，复用强
+`FRUX_INTERNAL_TOKEN`，无 host port，read-only root，UID 10001、64 MiB tmpfs、2 CPU/2 GiB
+limit 和 180 秒 readiness allowance。Worker 只使用 `condition: service_started`；服务启动后
+不可用时 hash intake、Feed 和媒体轮询仍运行，semantic jobs suspended/retry 并在 metadata 与
+resume 成功后恢复。

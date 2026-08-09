@@ -57,6 +57,14 @@ var (
 		},
 		[]string{"model", "state"},
 	)
+	SemanticLeaseTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "video_embedding_semantic_lease_total",
+			Help:      "Semantic embedding lease heartbeat and fencing outcomes.",
+		},
+		[]string{"outcome"},
+	)
 )
 
 func init() {
@@ -67,7 +75,17 @@ func init() {
 		SemanticJobCount,
 		SemanticJobOldestSeconds,
 		VideoEmbeddingCoverage,
+		SemanticLeaseTotal,
 	)
+}
+
+func ObserveSemanticLease(outcome string) {
+	switch outcome {
+	case "extended", "lost":
+	default:
+		outcome = "lost"
+	}
+	SemanticLeaseTotal.WithLabelValues(outcome).Inc()
 }
 
 func ObserveSemanticCoverage(present, missing int64) {

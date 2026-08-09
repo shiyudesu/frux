@@ -57,13 +57,6 @@ func (s *MediaPublicationService) MediaReady(ctx context.Context, assetID int64)
 				if !tracked {
 					continue
 				}
-				ready, err := s.repo.LifecyclePublicationReady(ctx, eventID)
-				if err != nil {
-					return err
-				}
-				if ready {
-					continue
-				}
 				if err := s.publishAndMarkReady(ctx, video); err != nil {
 					return err
 				}
@@ -119,13 +112,6 @@ func (s *MediaPublicationService) MediaReady(ctx context.Context, assetID int64)
 				return err
 			}
 			if !tracked {
-				continue
-			}
-			ready, err := s.repo.LifecyclePublicationReady(ctx, eventID)
-			if err != nil {
-				return err
-			}
-			if ready {
 				continue
 			}
 			if publishErr := s.publishAndMarkReady(ctx, video); publishErr != nil {

@@ -223,42 +223,36 @@ func (r *Repository) ReconcileLifecyclePublicationNotifications(
 	if err := r.db.WithContext(ctx).Table("video AS v").
 		Select("v.*").
 		Where(`v.status = ? AND v.visibility = ? AND v.media_status IN ? AND
-			v.media_asset_id IS NULL AND
 			EXISTS (
-				SELECT 1 FROM video_notification_outbox submitted
-				WHERE submitted.video_id = v.id
-				  AND submitted.review_version = v.review_version
-				  AND submitted.stage = ?
-			) AND NOT EXISTS (
+				SELECT 1 FROM video_notification_outbox lifecycle
+				WHERE lifecycle.video_id = v.id
+				  AND lifecycle.review_version = v.review_version
+			) AND
+			(NOT EXISTS (
 				SELECT 1 FROM video_notification_outbox published
 				WHERE published.event_id = CONCAT('video-published:', v.id, ':', v.review_version)
-			)`,
+			) OR NOT EXISTS (
+				SELECT 1 FROM video_publication_event_outbox publication
+				WHERE publication.event_id = CONCAT('video-published:', v.id, ':', v.review_version)
+			))`,
 			domainvideo.StatusPublished, domainvideo.VisibilityPublic,
-			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
-			domainmessage.LifecycleStageSubmitted).
+			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Order("v.updated_at ASC").Order("v.id ASC").Limit(limit).Scan(&videos).Error; err != nil {
 		return 0, err
 	}
 	created := 0
 	for _, video := range videos {
 		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			before := int64(0)
-			if err := tx.Model(&NotificationOutboxModel{}).
-				Where("event_id = ?", domainmessage.PublicationEventID(video.ID, video.ReviewVersion)).
-				Count(&before).Error; err != nil {
+			var current VideoModel
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ?", video.ID).Take(&current).Error; err != nil {
 				return err
 			}
-			if before > 0 {
-				return nil
+			ready, err := publicationDeliveryReady(tx, current)
+			if err != nil {
+				return err
 			}
-			if err := AppendLifecycleNotificationWithReadiness(tx, domainmessage.LifecycleNotification{
-				EventID:     domainmessage.PublicationEventID(video.ID, video.ReviewVersion),
-				RecipientID: video.AuthorID, VideoID: video.ID,
-				ReviewVersion: video.ReviewVersion,
-				Stage:         domainmessage.LifecycleStagePublished,
-				Result:        domainmessage.LifecycleResultPublic,
-				OccurredAt:    video.UpdatedAt,
-			}, true); err != nil {
+			if err := AppendPublicationHandoff(tx, current, time.Now().UTC(), ready); err != nil {
 				return err
 			}
 			created++

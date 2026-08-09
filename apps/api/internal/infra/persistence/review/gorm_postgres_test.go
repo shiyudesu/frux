@@ -102,8 +102,13 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if err := db.Model(&infravideo.NotificationOutboxModel{}).
 			Select("delivery_ready").
 			Where("event_id = ?", domainmessage.PublicationEventID(101, 1)).
-			Scan(&publicationReady).Error; err != nil || publicationReady {
+			Scan(&publicationReady).Error; err != nil || !publicationReady {
 			t.Fatalf("legacy publication ready=%v err=%v", publicationReady, err)
+		}
+		var event infravideo.PublicationEventOutboxModel
+		if err := db.Where("event_id = ?", domainmessage.PublicationEventID(101, 1)).
+			Take(&event).Error; err != nil || !event.DeliveryReady {
+			t.Fatalf("legacy publication event=%#v err=%v", event, err)
 		}
 	})
 
@@ -1043,7 +1048,7 @@ func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
 	}
 	if err := db.AutoMigrate(
 		&infravideo.VideoModel{}, &infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
-		&infravideo.NotificationOutboxModel{},
+		&infravideo.NotificationOutboxModel{}, &infravideo.PublicationEventOutboxModel{},
 		&CaseModel{}, &ResultModel{}, &SignalModel{}, &DecisionModel{}, &ModerationJobModel{}, &PolicyModel{},
 		&AssignmentModel{}, &HumanDecisionModel{}, &HumanDecisionIdempotencyModel{},
 		&NotificationOutboxModel{}, &infraadminaudit.EventModel{},

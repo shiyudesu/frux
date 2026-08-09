@@ -303,6 +303,49 @@ func (c *FeedCache) AddAuthorOutboxItem(ctx context.Context, authorID int64, ite
 	return err
 }
 
+func (c *FeedCache) HasFollowingFanout(
+	ctx context.Context,
+	authorID int64,
+	userIDs []int64,
+	item *domainfeed.FeedPageItem,
+	authorOutbox bool,
+) (bool, error) {
+	if c == nil || c.client == nil || authorID <= 0 || item == nil ||
+		item.VideoID <= 0 || item.PublishedAt.IsZero() {
+		return false, nil
+	}
+	member := followingIndexMember(item.VideoID, authorID, item.PublishedAt)
+	if authorOutbox {
+		_, err := c.client.ZScore(ctx, followingAuthorOutboxKey(authorID), member).Result()
+		if err == redis.Nil {
+			return false, nil
+		}
+		return err == nil, err
+	}
+	if len(userIDs) == 0 {
+		return true, nil
+	}
+	pipe := c.client.Pipeline()
+	commands := make([]*redis.FloatCmd, 0, len(userIDs))
+	for _, userID := range userIDs {
+		if userID > 0 {
+			commands = append(commands, pipe.ZScore(ctx, followingInboxKey(userID), member))
+		}
+	}
+	_, err := pipe.Exec(ctx)
+	if err != nil && err != redis.Nil {
+		return false, err
+	}
+	for _, command := range commands {
+		if _, err := command.Result(); err == redis.Nil {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 func (c *FeedCache) ListFollowingIndexPage(
 	ctx context.Context,
 	viewerID int64,

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 )
 
@@ -476,6 +477,11 @@ func validateVideoPublishedPayload(metadata EventMetadata, key []byte, payload a
 		len(event.Title) > 128 || len(event.Description) > 512 ||
 		len(event.MediaURL) > 512 || len(event.CoverURL) > 512 {
 		return errors.New("invalid video publication payload")
+	}
+	if _, _, _, err := domainembedding.CanonicalVideoText(
+		event.Title, event.Description,
+	); err != nil {
+		return errors.New("video publication text is incompatible with embedding intake")
 	}
 	decoded, err := DecodeKey(KeyKindVideoID, key)
 	if err != nil || decoded.(VideoKey).VideoID != event.VideoID {

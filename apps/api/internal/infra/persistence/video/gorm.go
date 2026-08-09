@@ -413,6 +413,17 @@ func (r *Repository) ApplyLifecycleTransition(
 		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
 			return err
 		}
+		current.Status = video.Status
+		current.PublishedAt = video.PublishedAt
+		if current.Status == domainvideo.StatusPublished &&
+			current.Visibility == domainvideo.VisibilityPublic &&
+			domainmedia.IsPublicReadyStatus(current.MediaStatus) {
+			if err := AppendPublicationHandoff(
+				tx, current, at, current.MediaAssetID == nil,
+			); err != nil {
+				return err
+			}
+		}
 		applied = true
 		return nil
 	})
@@ -495,21 +506,12 @@ func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvid
 			}
 		}
 		if eligible {
-			tracked, err := LifecyclePublicationTracked(tx, current.ID, current.ReviewVersion)
-			if err != nil {
+			current.MediaURL = video.MediaURL
+			current.CoverURL = video.CoverURL
+			current.MediaStatus = video.MediaStatus
+			current.MediaErrorCode = video.MediaErrorCode
+			if err := AppendPublicationHandoff(tx, current, now, true); err != nil {
 				return err
-			}
-			if tracked {
-				if err := AppendLifecycleNotificationWithReadiness(tx, domainmessage.LifecycleNotification{
-					EventID:     domainmessage.PublicationEventID(current.ID, current.ReviewVersion),
-					RecipientID: current.AuthorID, VideoID: current.ID,
-					ReviewVersion: current.ReviewVersion,
-					Stage:         domainmessage.LifecycleStagePublished,
-					Result:        domainmessage.LifecycleResultPublic,
-					OccurredAt:    now,
-				}, video.MediaAssetID <= 0); err != nil {
-					return err
-				}
 			}
 		}
 		return nil

@@ -222,37 +222,8 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 				ref.Visibility == domainvideo.VisibilityPublic &&
 				ref.Status == domainvideo.StatusPublished &&
 				domainmedia.IsPublicReadyStatus(ref.MediaStatus) {
-				if reader, ok := s.repo.(VideoByIDReader); ok {
-					video, err := reader.FindByIDAnyStatus(ctx, ref.VideoID)
-					if err != nil {
-						mediaErr = errors.Join(mediaErr, err)
-					} else if event := NewPublishedEvent(video); event != nil {
-						if tracker, ok := s.repo.(LifecyclePublicationTracker); ok {
-							ready, readyErr := tracker.LifecyclePublicationReady(ctx, event.EventID)
-							if readyErr != nil {
-								mediaErr = errors.Join(mediaErr, readyErr)
-								break
-							}
-							if ready {
-								break
-							}
-						}
-						if s.publisher != nil {
-							if publishErr := s.publisher.PublishVideoPublished(ctx, event); publishErr != nil {
-								mediaErr = errors.Join(mediaErr, publishErr)
-								break
-							}
-						}
-						if tracker, ok := s.repo.(LifecyclePublicationTracker); ok {
-							mediaErr = errors.Join(
-								mediaErr,
-								tracker.MarkLifecyclePublicationReady(
-									ctx, event.EventID, time.Now().UTC(),
-								),
-							)
-						}
-					}
-				}
+				// The repository commits the stable publication handoff atomically
+				// with the visibility transition.
 			}
 		case domainvideo.BatchActionMakePrivate:
 			if s.mediaPublisher != nil && ref.Visibility == domainvideo.VisibilityPrivate &&

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -296,18 +297,13 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 	}
 	if ready, err := repository.LifecyclePublicationReady(
 		context.Background(), eventID,
-	); err != nil || ready {
+	); err != nil || !ready {
 		t.Fatalf("production projection ready=%v err=%v", ready, err)
 	}
-	if err := repository.MarkLifecyclePublicationReady(
-		context.Background(), eventID, now,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if ready, err := repository.LifecyclePublicationReady(
-		context.Background(), eventID,
-	); err != nil || !ready {
-		t.Fatalf("completed publication ready=%v err=%v", ready, err)
+	var publicationEvent infravideo.PublicationEventOutboxModel
+	if err := db.Where("event_id = ?", eventID).Take(&publicationEvent).Error; err != nil ||
+		!publicationEvent.DeliveryReady {
+		t.Fatalf("publication event=%#v err=%v", publicationEvent, err)
 	}
 	legacyCandidate := searchVideoModel(
 		98, "Legacy candidate", "", domainvideo.StatusPublished,
@@ -534,7 +530,15 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 		t.Fatal(err)
 	}
 	if pendingPublication.DeliveryReady {
-		t.Fatal("visibility transaction marked production media publication ready")
+		t.Fatal("visibility transaction marked media-backed notification ready")
+	}
+	var blockedEvent infravideo.PublicationEventOutboxModel
+	if err := db.Where("event_id = ?", privatePublicationID).
+		Take(&blockedEvent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if blockedEvent.DeliveryReady {
+		t.Fatal("visibility transaction made media-backed event dispatchable")
 	}
 	if _, err := repository.UpdateMediaProjection(context.Background(), &domainvideo.Video{
 		ID: privateVideo.ID, AuthorID: 1, ReviewVersion: 1,
@@ -547,18 +551,12 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 	}
 	if ready, err := repository.LifecyclePublicationReady(
 		context.Background(), privatePublicationID,
-	); err != nil || ready {
-		t.Fatalf("pre-event publication ready=%v err=%v", ready, err)
-	}
-	if err := repository.MarkLifecyclePublicationReady(
-		context.Background(), privatePublicationID, now,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if ready, err := repository.LifecyclePublicationReady(
-		context.Background(), privatePublicationID,
 	); err != nil || !ready {
 		t.Fatalf("completed private publication ready=%v err=%v", ready, err)
+	}
+	if err := db.Where("event_id = ?", privatePublicationID).
+		Take(&blockedEvent).Error; err != nil || !blockedEvent.DeliveryReady {
+		t.Fatalf("completed publication event=%#v err=%v", blockedEvent, err)
 	}
 	historicalPrivate := searchVideoModel(
 		102, "Historical private", "", domainvideo.StatusPublished,
@@ -578,7 +576,7 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 	var synthesized int64
 	if err := db.Model(&infravideo.NotificationOutboxModel{}).
 		Where("event_id = ?", domainmessage.PublicationEventID(historicalPrivate.ID, 1)).
-		Count(&synthesized).Error; err != nil || synthesized != 0 {
+		Count(&synthesized).Error; err != nil || synthesized != 1 {
 		t.Fatalf("historical make-public notifications=%d err=%v", synthesized, err)
 	}
 }
@@ -588,6 +586,150 @@ func TestPostgresVideoCreationRollsBackWhenNotificationFails(t *testing.T) {
 	if err := db.AutoMigrate(&infravideo.NotificationOutboxModel{}); err != nil {
 		t.Fatal(err)
 	}
+
+	t.Run("outbox failure rolls back public edge", func(t *testing.T) {
+		db := openSearchPostgres(t)
+		now := time.Now().UTC()
+		video := searchVideoModel(
+			701, "atomic", "", domainvideo.StatusPublished,
+			domainvideo.VisibilityPrivate, domainmedia.MediaStatusLegacyReady, now,
+		)
+		video.AuthorID = 1
+		video.ReviewVersion = 1
+		if err := db.Create(&video).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			return infravideo.AppendLifecycleNotification(tx, domainmessage.LifecycleNotification{
+				EventID:     domainmessage.SubmissionEventID(video.ID, 1),
+				RecipientID: 1, VideoID: video.ID, ReviewVersion: 1,
+				Stage:  domainmessage.LifecycleStageSubmitted,
+				Result: domainmessage.LifecycleResultPending, OccurredAt: now,
+			})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Exec(`
+				ALTER TABLE video_publication_event_outbox
+				ADD CONSTRAINT reject_publication_event CHECK (event_type <> 'video_published.v1')
+			`).Error; err != nil {
+			t.Fatal(err)
+		}
+		repository := infravideo.New(db)
+		if _, _, err := repository.ApplyBatch(
+			context.Background(), 1, domainvideo.BatchActionMakePublic,
+			[]int64{video.ID}, "atomic-edge", "atomic-edge",
+		); err == nil {
+			t.Fatal("expected publication outbox failure")
+		}
+		var current infravideo.VideoModel
+		if err := db.Where("id = ?", video.ID).Take(&current).Error; err != nil {
+			t.Fatal(err)
+		}
+		if current.Visibility != domainvideo.VisibilityPrivate {
+			t.Fatalf("visibility committed without outbox: %s", current.Visibility)
+		}
+	})
+
+	t.Run("concurrent public edge creates one stable event", func(t *testing.T) {
+		db := openSearchPostgres(t)
+		now := time.Now().UTC()
+		video := searchVideoModel(
+			702, "race", "", domainvideo.StatusPublished,
+			domainvideo.VisibilityPrivate, domainmedia.MediaStatusLegacyReady, now,
+		)
+		video.AuthorID = 1
+		video.ReviewVersion = 1
+		if err := db.Create(&video).Error; err != nil {
+			t.Fatal(err)
+		}
+		repository := infravideo.New(db)
+		var wait sync.WaitGroup
+		errs := make(chan error, 8)
+		for index := range 8 {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				key := fmt.Sprintf("race-%d", index)
+				_, _, err := repository.ApplyBatch(
+					context.Background(), 1, domainvideo.BatchActionMakePublic,
+					[]int64{video.ID}, key, key,
+				)
+				errs <- err
+			}()
+		}
+		wait.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		eventID := domainmessage.PublicationEventID(video.ID, 1)
+		var notifications, events int64
+		if err := db.Model(&infravideo.NotificationOutboxModel{}).
+			Where("event_id = ?", eventID).Count(&notifications).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&infravideo.PublicationEventOutboxModel{}).
+			Where("event_id = ?", eventID).Count(&events).Error; err != nil {
+			t.Fatal(err)
+		}
+		if notifications != 1 || events != 1 {
+			t.Fatalf("handoff rows notification=%d event=%d", notifications, events)
+		}
+	})
+
+	t.Run("delivered notification repairs missing event without historical scan", func(t *testing.T) {
+		db := openSearchPostgres(t)
+		now := time.Now().UTC()
+		tracked := searchVideoModel(
+			703, "repair", "", domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic, domainmedia.MediaStatusLegacyReady, now,
+		)
+		tracked.AuthorID = 1
+		tracked.ReviewVersion = 1
+		historical := searchVideoModel(
+			704, "historical", "", domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic, domainmedia.MediaStatusLegacyReady, now,
+		)
+		historical.AuthorID = 1
+		historical.ReviewVersion = 1
+		if err := db.Create(&[]infravideo.VideoModel{tracked, historical}).Error; err != nil {
+			t.Fatal(err)
+		}
+		eventID := domainmessage.PublicationEventID(tracked.ID, 1)
+		deliveredAt := now
+		if err := db.Create(&infravideo.NotificationOutboxModel{
+			EventID: eventID, RecipientID: 1, VideoID: tracked.ID, ReviewVersion: 1,
+			Stage:  domainmessage.LifecycleStagePublished,
+			Result: domainmessage.LifecycleResultPublic, OccurredAt: now,
+			DeliveryReady: true, State: domainmessage.LifecycleOutboxDelivered,
+			AvailableAt: now, DeliveredAt: &deliveredAt, CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		repository := infravideo.New(db)
+		created, err := repository.ReconcilePublicationEvents(context.Background(), 100, now)
+		if err != nil || created != 1 {
+			t.Fatalf("reconcile created=%d err=%v", created, err)
+		}
+		var repaired, historicalEvents int64
+		_ = db.Model(&infravideo.PublicationEventOutboxModel{}).
+			Where("event_id = ?", eventID).Count(&repaired).Error
+		_ = db.Model(&infravideo.PublicationEventOutboxModel{}).
+			Where("video_id = ?", historical.ID).Count(&historicalEvents).Error
+		if repaired != 1 || historicalEvents != 0 {
+			t.Fatalf("repaired=%d historical=%d", repaired, historicalEvents)
+		}
+		var notification infravideo.NotificationOutboxModel
+		if err := db.Where("event_id = ?", eventID).Take(&notification).Error; err != nil {
+			t.Fatal(err)
+		}
+		if notification.State != domainmessage.LifecycleOutboxDelivered {
+			t.Fatalf("notification state changed: %s", notification.State)
+		}
+	})
 	if err := db.Exec(`
 		ALTER TABLE video_notification_outbox
 		ADD CONSTRAINT reject_submission_notification CHECK (stage <> 'submitted')
@@ -673,6 +815,7 @@ func openSearchPostgres(t *testing.T) *gorm.DB {
 		&infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
 		&infravideo.BatchOperationModel{},
 		&infravideo.NotificationOutboxModel{},
+		&infravideo.PublicationEventOutboxModel{},
 	); err != nil {
 		t.Fatalf("migrate search tables: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	unicodenorm "golang.org/x/text/unicode/norm"
 )
@@ -67,6 +68,9 @@ func CanonicalVideoText(title, description string) (string, string, string, erro
 }
 
 func normalizeSemanticField(value string) (string, error) {
+	if !utf8.ValidString(value) {
+		return "", ErrInvalidSemanticText
+	}
 	value = unicodenorm.NFKC.String(value)
 	for _, item := range value {
 		if unicode.IsControl(item) && !unicode.IsSpace(item) {

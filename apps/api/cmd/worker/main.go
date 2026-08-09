@@ -557,6 +557,7 @@ func startWorkers(
 			activeGroup:   infrakafka.GroupFeedVideoPublishedActive,
 			shadowGroup:   infrakafka.GroupFeedVideoPublishedShadow,
 			activeHandler: infravideostream.NewFanoutHandler(fanoutWorker),
+			parity:        infravideostream.FanoutParityChecker{Reader: feedRepo, Index: feedCache},
 			stream:        "feed", rabbitConsumer: inframq.ConsumerVideoPublished,
 			shadowObserver: inframetrics.VideoWorkflowShadowObserver{Workflow: "feed"},
 			maxAge:         30 * 24 * time.Hour,
@@ -566,6 +567,7 @@ func startWorkers(
 			activeGroup:   infrakafka.GroupEmbeddingVideoPublishedActive,
 			shadowGroup:   infrakafka.GroupEmbeddingVideoPublishedShadow,
 			activeHandler: infravideostream.NewEmbeddingHandler(embeddingWorker),
+			parity:        infravideostream.EmbeddingParityChecker{Reader: embeddingRepo},
 			stream:        "embedding", rabbitConsumer: inframq.ConsumerVideoEmbedding,
 			shadowObserver: inframetrics.VideoWorkflowShadowObserver{Workflow: "embedding"},
 			maxAge:         30 * 24 * time.Hour,
@@ -575,6 +577,7 @@ func startWorkers(
 			activeGroup:   infrakafka.GroupMediaProcessingActive,
 			shadowGroup:   infrakafka.GroupMediaProcessingShadow,
 			activeHandler: infravideostream.NewMediaWakeupHandler(mediaWorker),
+			parity:        infravideostream.MediaWakeupParityChecker{Reader: mediaRepo},
 			stream:        "media_wakeup", rabbitConsumer: inframq.ConsumerMediaProcessing,
 			shadowObserver: inframetrics.VideoWorkflowShadowObserver{Workflow: "media_wakeup"},
 			maxAge:         6 * time.Hour,
@@ -696,6 +699,15 @@ func startBehaviorKafkaConsumers(
 	starter kafkaConsumerStarter,
 ) error {
 	for _, consumer := range consumers {
+		if (consumer.migration.Consumer == infrakafka.ConsumerModeKafkaShadow ||
+			consumer.migration.Consumer == infrakafka.ConsumerModeKafka) &&
+			consumer.parity == nil {
+			return fmt.Errorf(
+				"%w: parity checker required for %s",
+				infrakafka.ErrConsumerConfiguration,
+				consumer.activeGroup,
+			)
+		}
 		switch consumer.migration.Consumer {
 		case infrakafka.ConsumerModeKafka:
 			if err := starter(
@@ -1017,25 +1029,8 @@ func (a workerReviewOutcomeApplier) ApplyReviewOutcome(
 		if event == nil {
 			return nil
 		}
-		if tracker, ok := a.videoReader.(workerReviewPublicationTracker); ok {
-			ready, err := tracker.LifecyclePublicationReady(ctx, event.EventID)
-			if err != nil {
-				return err
-			}
-			if ready {
-				return nil
-			}
-		}
 		if a.publisher != nil {
-			if err := a.publisher.PublishVideoPublished(ctx, event); err != nil {
-				return err
-			}
-		}
-		if tracker, ok := a.videoReader.(workerReviewPublicationTracker); ok {
-			return tracker.MarkLifecyclePublicationReady(
-				ctx, domainmessage.PublicationEventID(result.Case.VideoID, result.Case.ReviewVersion),
-				time.Now().UTC(),
-			)
+			return a.publisher.PublishVideoPublished(ctx, event)
 		}
 	case domainreview.OutcomeReject:
 		if result.MediaAssetID > 0 {
@@ -1096,24 +1091,8 @@ func (a workerVideoAdminTransitionApplier) ApplyAdminTransition(
 		return a.mediaPublication.MediaReady(ctx, video.MediaAssetID)
 	}
 	if event := applicationvideo.NewPublishedEvent(video); event != nil {
-		if a.publication != nil {
-			ready, err := a.publication.LifecyclePublicationReady(ctx, event.EventID)
-			if err != nil {
-				return err
-			}
-			if ready {
-				return nil
-			}
-		}
 		if a.publisher != nil {
-			if err := a.publisher.PublishVideoPublished(ctx, event); err != nil {
-				return err
-			}
-		}
-		if a.publication != nil {
-			return a.publication.MarkLifecyclePublicationReady(
-				ctx, event.EventID, time.Now().UTC(),
-			)
+			return a.publisher.PublishVideoPublished(ctx, event)
 		}
 	}
 	return nil

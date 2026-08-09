@@ -147,10 +147,11 @@ type PublicationEventOutboxModel struct {
 	VideoID        int64      `gorm:"column:video_id;not null;index:idx_video_publication_outbox_video"`
 	EventType      string     `gorm:"column:event_type;size:64;not null"`
 	PayloadJSON    string     `gorm:"column:payload_json;type:jsonb;not null"`
+	DeliveryReady  bool       `gorm:"column:delivery_ready;not null;default:false;index:idx_video_publication_outbox_pending,priority:1"`
 	Attempts       int        `gorm:"column:attempts;not null;default:0"`
-	AvailableAt    time.Time  `gorm:"column:available_at;not null;index:idx_video_publication_outbox_pending,priority:1"`
+	AvailableAt    time.Time  `gorm:"column:available_at;not null;index:idx_video_publication_outbox_pending,priority:2"`
 	LeaseOwner     string     `gorm:"column:lease_owner;size:128;not null;default:''"`
-	LeaseUntil     *time.Time `gorm:"column:lease_until;index:idx_video_publication_outbox_pending,priority:2"`
+	LeaseUntil     *time.Time `gorm:"column:lease_until;index:idx_video_publication_outbox_pending,priority:3"`
 	LastErrorClass string     `gorm:"column:last_error_class;size:32;not null;default:''"`
 	DispatchedAt   *time.Time `gorm:"column:dispatched_at;index:idx_video_publication_outbox_dispatched"`
 	CreatedAt      time.Time  `gorm:"column:created_at;not null"`

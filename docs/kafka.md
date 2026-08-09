@@ -140,3 +140,15 @@ cd apps/api
 FRUX_KAFKA_TEST_BROKERS=127.0.0.1:29092 \
   go test ./internal/infra/kafka -run '^TestKafkaBackboneProvisionsProducesAndConsumesAfterClientRestart$'
 ```
+
+## Video workflow correctness refinements
+
+每个首次公开 review/media/visibility/admin/restore edge 在状态事务内同时写 notification 与
+publication event row。媒体-backed row 可先 blocked，公共交付完成后解除 dispatch readiness；
+notification ready/delivered 从不作为 handoff 证明。Reconciliation 修复两行并排除
+private/deleted 和无 lifecycle 追踪的历史视频。
+
+Feed fanout、embedding intake 和 media wakeup shadow 使用非变更 parity reader，传播缺失最多
+三次有界内联重试；配置 shadow/active Kafka gate 时 nil parity 使 Worker 启动失败。Semantic
+processor 每次只 claim 一个 job，使用唯一 token、远程调用 heartbeat，并 fencing 过期或被回收
+attempt 的 complete/retry。

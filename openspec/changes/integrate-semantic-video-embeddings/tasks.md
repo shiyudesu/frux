@@ -35,7 +35,7 @@
 
 ## 6. Compose, Documentation, and Future Boundary
 
-- [ ] 6.1 Add local and Docker semantic configuration, enable Compose with `http://semantic-embedding:8081` and `FRUX_INTERNAL_TOKEN`, and use `condition: service_started` while keeping the service internal-only.
+- [x] 6.1 Add local and Docker semantic configuration, enable Compose with `http://semantic-embedding:8081` and `FRUX_INTERNAL_TOKEN`, and use `condition: service_started` while keeping the service internal-only.
 - [ ] 6.2 Add Compose assertions and an outage/recovery test proving a live published event receives hash coverage and a durable semantic job during semantic downtime and exactly one semantic row after delayed recovery.
 - [ ] 6.3 Update embedding, semantic-service, video, engineering, architecture, deployment, module-index, and setup/configuration documentation for fixed model identity, hash-first Kafka intake, PostgreSQL retries/leases/suspension, metrics, failure modes, rollout, rollback, and no-vector-schema/no-recommendation behavior.
 - [ ] 6.4 Document and test the one-way boundary: `backfill-semantic-video-embeddings` depends on this change's model identity, canonicalization, validated client, conditional persistence, and coverage interfaces, while this change adds no historical scan, command/job, cursor/checkpoint, dry-run, re-embedding mode, or backfill-specific retry and does not backfill existing historical videos.

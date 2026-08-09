@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 
@@ -159,6 +160,15 @@ func (r *Repository) CommitAdminTransition(
 		}
 		if notification.EventID != "" {
 			if err := AppendLifecycleNotification(tx, notification); err != nil {
+				return err
+			}
+		}
+		if current.Status == domainvideo.StatusPublished &&
+			current.Visibility == domainvideo.VisibilityPublic &&
+			domainmedia.IsPublicReadyStatus(current.MediaStatus) {
+			if err := AppendPublicationHandoff(
+				tx, current, command.OccurredAt, current.MediaAssetID == nil,
+			); err != nil {
 				return err
 			}
 		}

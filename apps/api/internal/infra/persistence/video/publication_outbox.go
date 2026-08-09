@@ -27,10 +27,6 @@ func (r *Repository) EnsurePublicationEvent(
 	if readyAt.IsZero() {
 		readyAt = time.Now().UTC()
 	}
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var video VideoModel
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -48,20 +44,70 @@ func (r *Repository) EnsurePublicationEvent(
 			domainmessage.PublicationEventID(video.ID, video.ReviewVersion) != event.EventID {
 			return domainvideo.ErrVideoStateNotAllowed
 		}
-		model := PublicationEventOutboxModel{
-			EventID: event.EventID, VideoID: event.VideoID,
-			EventType: publicationOutboxEventType, PayloadJSON: string(payload),
-			AvailableAt: readyAt.UTC(), CreatedAt: readyAt.UTC(), UpdatedAt: readyAt.UTC(),
-		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model).Error; err != nil {
-			return err
-		}
-		return tx.Model(&NotificationOutboxModel{}).
-			Where("event_id = ? AND stage = ?", event.EventID, domainmessage.LifecycleStagePublished).
-			Updates(map[string]any{
-				"delivery_ready": true, "available_at": readyAt.UTC(), "updated_at": readyAt.UTC(),
-			}).Error
+		return AppendPublicationHandoff(tx, video, readyAt, true)
 	})
+}
+
+func AppendPublicationHandoff(
+	tx *gorm.DB,
+	video VideoModel,
+	readyAt time.Time,
+	deliveryReady bool,
+) error {
+	if tx == nil || video.Status != domainvideo.StatusPublished ||
+		video.Visibility != domainvideo.VisibilityPublic ||
+		!domainmedia.IsPublicReadyStatus(video.MediaStatus) ||
+		video.PublishedAt == nil || video.ReviewVersion <= 0 {
+		return domainvideo.ErrVideoStateNotAllowed
+	}
+	if readyAt.IsZero() {
+		readyAt = video.PublishedAt.UTC()
+	}
+	event := &applicationvideo.PublishedEvent{
+		EventID:     domainmessage.PublicationEventID(video.ID, video.ReviewVersion),
+		VideoID:     video.ID,
+		AuthorID:    video.AuthorID,
+		Title:       strings.TrimSpace(video.Title),
+		Description: strings.TrimSpace(video.Description),
+		MediaURL:    strings.TrimSpace(video.MediaURL),
+		CoverURL:    strings.TrimSpace(video.CoverURL),
+		PublishedAt: video.PublishedAt.UTC(),
+		OccurredAt:  video.PublishedAt.UTC(),
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if err := AppendLifecycleNotificationWithReadiness(tx, domainmessage.LifecycleNotification{
+		EventID: event.EventID, RecipientID: video.AuthorID, VideoID: video.ID,
+		ReviewVersion: video.ReviewVersion,
+		Stage:         domainmessage.LifecycleStagePublished,
+		Result:        domainmessage.LifecycleResultPublic,
+		OccurredAt:    event.OccurredAt,
+	}, deliveryReady); err != nil {
+		return err
+	}
+	model := &PublicationEventOutboxModel{
+		EventID: event.EventID, VideoID: event.VideoID,
+		EventType: publicationOutboxEventType, PayloadJSON: string(payload),
+		DeliveryReady: deliveryReady, AvailableAt: readyAt.UTC(),
+		CreatedAt: readyAt.UTC(), UpdatedAt: readyAt.UTC(),
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "event_id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"payload_json": gorm.Expr(
+				"CASE WHEN video_publication_event_outbox.dispatched_at IS NULL THEN EXCLUDED.payload_json ELSE video_publication_event_outbox.payload_json END",
+			),
+			"delivery_ready": gorm.Expr(
+				"video_publication_event_outbox.delivery_ready OR EXCLUDED.delivery_ready",
+			),
+			"available_at": gorm.Expr(
+				"CASE WHEN EXCLUDED.delivery_ready THEN EXCLUDED.available_at ELSE video_publication_event_outbox.available_at END",
+			),
+			"updated_at": readyAt.UTC(),
+		}),
+	}).Create(model).Error
 }
 
 func (r *Repository) ClaimPublicationEvents(
@@ -79,7 +125,7 @@ func (r *Repository) ClaimPublicationEvents(
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var models []PublicationEventOutboxModel
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
-			Where(`dispatched_at IS NULL AND available_at <= ? AND
+			Where(`dispatched_at IS NULL AND delivery_ready = TRUE AND available_at <= ? AND
 				(lease_until IS NULL OR lease_until <= ?)`, now, now).
 			Order("available_at ASC").Order("created_at ASC").Order("event_id ASC").
 			Limit(limit).Find(&models).Error; err != nil {
@@ -209,44 +255,39 @@ func (r *Repository) ReconcilePublicationEvents(
 	if err := r.db.WithContext(ctx).
 		Where(`status = ? AND visibility = ? AND media_status IN ? AND published_at IS NOT NULL AND
 			EXISTS (
-				SELECT 1 FROM video_notification_outbox notification
-				WHERE notification.event_id = CONCAT('video-published:', video.id, ':', video.review_version)
-				  AND notification.stage = ?
-				  AND (notification.state = ? OR notification.delivery_ready = FALSE)
+				SELECT 1 FROM video_notification_outbox lifecycle
+				WHERE lifecycle.video_id = video.id
+				  AND lifecycle.review_version = video.review_version
 			) AND
 			NOT EXISTS (
 				SELECT 1 FROM video_publication_event_outbox outbox
 				WHERE outbox.event_id = CONCAT('video-published:', video.id, ':', video.review_version)
 			)`,
 			domainvideo.StatusPublished, domainvideo.VisibilityPublic,
-			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
-			domainmessage.LifecycleStagePublished,
-			domainmessage.LifecycleOutboxPending).
+			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Order("published_at ASC").Order("id ASC").Limit(limit).Find(&videos).Error; err != nil {
 		return 0, err
 	}
 	created := 0
 	for _, model := range videos {
-		video := restoreVideo(videoWithStatModel{
-			ID: model.ID, AuthorID: model.AuthorID, Title: model.Title,
-			Description: model.Description, MediaURL: model.MediaURL, CoverURL: model.CoverURL,
-			MediaAssetID: model.MediaAssetID, CoverAssetID: model.CoverAssetID,
-			MediaStatus: model.MediaStatus, MediaErrorCode: model.MediaErrorCode,
-			ReviewVersion: model.ReviewVersion, Version: model.Version, Status: model.Status,
-			Visibility: model.Visibility, PublishedAt: model.PublishedAt,
-			CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
-		})
-		event := applicationvideo.NewPublishedEvent(video)
-		if event == nil {
-			continue
-		}
-		event.OccurredAt = model.PublishedAt.UTC()
 		before := int64(0)
 		if err := r.db.WithContext(ctx).Model(&PublicationEventOutboxModel{}).
-			Where("event_id = ?", event.EventID).Count(&before).Error; err != nil {
+			Where("event_id = ?", domainmessage.PublicationEventID(model.ID, model.ReviewVersion)).
+			Count(&before).Error; err != nil {
 			return created, err
 		}
-		if err := r.EnsurePublicationEvent(ctx, event, now); err != nil {
+		if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var current VideoModel
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ?", model.ID).Take(&current).Error; err != nil {
+				return err
+			}
+			ready, err := publicationDeliveryReady(tx, current)
+			if err != nil {
+				return err
+			}
+			return AppendPublicationHandoff(tx, current, now, ready)
+		}); err != nil {
 			return created, err
 		}
 		if before == 0 {
@@ -254,6 +295,18 @@ func (r *Repository) ReconcilePublicationEvents(
 		}
 	}
 	return created, nil
+}
+
+func publicationDeliveryReady(tx *gorm.DB, video VideoModel) (bool, error) {
+	if video.MediaAssetID == nil || *video.MediaAssetID <= 0 {
+		return true, nil
+	}
+	var count int64
+	err := tx.Table("media_variant").
+		Where(`asset_id = ? AND role = ? AND state = ? AND public = TRUE`,
+			*video.MediaAssetID, domainmedia.VariantRoleBaseline, domainmedia.VariantStateReady).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func restorePublicationOutbox(

@@ -134,11 +134,6 @@ func (d *PublicationOutboxDispatcher) RunOnce(ctx context.Context) (int, error) 
 		return 0, nil
 	}
 	now := d.now().UTC()
-	if cleaner, ok := d.store.(interface {
-		CleanupPublicationEvents(context.Context, time.Time, int) (int64, error)
-	}); ok {
-		_, _ = cleaner.CleanupPublicationEvents(ctx, now.Add(-30*24*time.Hour), d.batchSize)
-	}
 	_, reconcileErr := d.store.ReconcilePublicationEvents(ctx, d.batchSize, now)
 	items, err := d.store.ClaimPublicationEvents(
 		ctx, d.owner, d.batchSize, now, now.Add(d.leaseTTL),

@@ -227,3 +227,12 @@ Kafka dispatch 状态。审核、媒体 ready、恢复、运营和 reconciliatio
 | 个人主页合集 Tab | 创建、编辑、删除合集并管理成员；编辑器独立搜索和游标加载全部公开/私密候选作品 |
 | 公开主页 | 展示已发布公开作品和公开合集 |
 | Admin Shell | 按 typed 筛选查询视频；下架/恢复弹窗携带原因、备注、确认和当前 version，只在服务端确认审计提交后报告成功 |
+
+## 10. 首次公开事件原子性
+
+审核、媒体就绪、可见性、后台恢复和 reconciliation 在首次形成公开资格的数据库事务内同时
+upsert lifecycle notification 与 `video_publication_event_outbox`。媒体-backed 边界先创建
+不可 dispatch 的同一 outbox 行，公共 variant 就绪后再事务性解除 readiness；notification
+即使已经 ready/delivered 也不能替代 publication handoff 证明。已 dispatch 行保留为稳定
+first-publication tombstone，私密、删除或没有 lifecycle 历史的旧公开视频不会被 reconciliation
+合成事件。

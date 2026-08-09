@@ -575,6 +575,8 @@ func (r *Repository) CommitHumanDecision(
 		}).Error; err != nil {
 			return err
 		}
+		video.Status = current.Status
+		video.PublishedAt = current.PublishedAt
 		publicDelta, privateDelta := reviewContentWorkDeltas(video, current.Status)
 		if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
 			return err
@@ -614,8 +616,8 @@ func (r *Repository) CommitHumanDecision(
 			return err
 		}
 		if notification.Stage == domainmessage.LifecycleStagePublished {
-			if err := infravideo.AppendLifecycleNotificationWithReadiness(
-				tx, notification, false,
+			if err := infravideo.AppendPublicationHandoff(
+				tx, video, now, video.MediaAssetID == nil,
 			); err != nil {
 				return err
 			}

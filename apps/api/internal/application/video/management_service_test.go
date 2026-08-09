@@ -195,7 +195,7 @@ func TestReplayedPrivateBatchDoesNotDemoteCurrentlyPublicVideo(t *testing.T) {
 	}
 }
 
-func TestMakePublicPublishesLegacyVideoEvent(t *testing.T) {
+func TestMakePublicReliesOnAtomicLegacyPublicationHandoff(t *testing.T) {
 	publishedAt := time.Now().UTC()
 	publisher := &managementPublishedPublisherStub{}
 	repo := &managementRepoStub{
@@ -223,11 +223,9 @@ func TestMakePublicPublishesLegacyVideoEvent(t *testing.T) {
 	); err != nil {
 		t.Fatalf("make legacy video public: %v", err)
 	}
-	if len(publisher.events) != 1 || publisher.events[0].VideoID != 1 {
-		t.Fatalf("legacy public event missing: %+v", publisher.events)
-	}
-	if repo.publicationMarks != 1 {
-		t.Fatalf("legacy publication marks=%d", repo.publicationMarks)
+	if len(publisher.events) != 0 || repo.publicationMarks != 0 {
+		t.Fatalf("post-commit publication attempted events=%d marks=%d",
+			len(publisher.events), repo.publicationMarks)
 	}
 	if _, err := service.ApplyBatch(
 		context.Background(), 7, domainvideo.BatchActionMakePublic,
@@ -235,7 +233,7 @@ func TestMakePublicPublishesLegacyVideoEvent(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if len(publisher.events) != 1 || repo.publicationMarks != 1 {
+	if len(publisher.events) != 0 || repo.publicationMarks != 0 {
 		t.Fatalf(
 			"legacy event replayed events=%d marks=%d",
 			len(publisher.events), repo.publicationMarks,
@@ -243,7 +241,7 @@ func TestMakePublicPublishesLegacyVideoEvent(t *testing.T) {
 	}
 }
 
-func TestMakePublicMarksLegacyReadyWithoutPublisher(t *testing.T) {
+func TestMakePublicWithoutPublisherUsesRepositoryHandoff(t *testing.T) {
 	publishedAt := time.Now().UTC()
 	repo := &managementRepoStub{
 		mediaRefs: []MediaAssetRef{{
@@ -267,7 +265,7 @@ func TestMakePublicMarksLegacyReadyWithoutPublisher(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if repo.publicationMarks != 1 || !repo.publicationReady {
+	if repo.publicationMarks != 0 || repo.publicationReady {
 		t.Fatalf(
 			"legacy readiness marks=%d ready=%v",
 			repo.publicationMarks, repo.publicationReady,

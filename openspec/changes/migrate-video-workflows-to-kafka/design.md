@@ -116,3 +116,14 @@ Rollback restores the RabbitMQ consumer or publisher for the affected workflow. 
 ## Open Questions
 
 None.
+
+## Review Clarifications
+
+- The transaction that first establishes public eligibility also upserts both lifecycle notification
+  and publication-event rows. Media-backed rows may remain blocked until public delivery is ready;
+  notification readiness or delivery is never handoff proof.
+- Feed, embedding-intake, and media-wakeup shadows use non-mutating readers, distinguish propagation
+  pending from mismatch, retry pending inline with a fixed bound, and reject nil parity at configured
+  shadow/cutover gates.
+- Each semantic processor claims one job with a unique token, heartbeats during the remote request,
+  fences complete/retry on token/hash/unexpired lease, and starts only after resume succeeds.

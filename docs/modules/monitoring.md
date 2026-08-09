@@ -292,3 +292,7 @@ stream 独立回滚。
 Offset；semantic pending/retry/suspended 增长时 hash 应继续生成；media `publish_failed` 或
 `capacity_full` 增长时确认 `polling_recovery` 与数据库 job 仍推进。标签只允许封闭 workflow、
 transport、result、model 和 state，禁止 video/asset/text/model string/raw error。
+
+语义 lease 使用 `frux_video_embedding_semantic_lease_total{outcome}`，outcome 只允许
+`extended/lost`。`lost` 上升时检查服务延迟、lease TTL、数据库连接和 reclaimed attempt；
+claim token、text hash、输入、向量和错误正文不得作为标签。

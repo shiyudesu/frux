@@ -88,6 +88,42 @@ func (r *Repository) PersistHashAndSemanticJob(
 	})
 }
 
+func (r *Repository) PublicationIntakeParity(
+	ctx context.Context,
+	videoID int64,
+	title string,
+	description string,
+) (bool, bool, error) {
+	canonicalTitle, canonicalDescription, text, err := domainembedding.CanonicalVideoText(
+		title, description,
+	)
+	if err != nil {
+		return true, false, nil
+	}
+	textHash := domainembedding.TextHash(text)
+	var embedding VideoEmbeddingModel
+	if err := r.db.WithContext(ctx).
+		Where("video_id = ? AND model = ?", videoID, domainembedding.HashNgramModel).
+		Take(&embedding).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	var job SemanticJobModel
+	if err := r.db.WithContext(ctx).
+		Where("video_id = ? AND model = ?", videoID, domainembedding.SemanticModelKey).
+		Take(&job).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	matches := embedding.TextHash == textHash && job.TextHash == textHash &&
+		job.Title == canonicalTitle && job.Description == canonicalDescription
+	return true, matches, nil
+}
+
 func (r *Repository) UpsertSemanticJob(
 	ctx context.Context,
 	job *domainembedding.SemanticJob,
@@ -183,7 +219,8 @@ func (r *Repository) CompleteSemanticJob(
 			return err
 		}
 		if current.State != domainembedding.SemanticJobProcessing ||
-			current.LeaseOwner != job.LeaseOwner || current.TextHash != job.TextHash {
+			current.LeaseOwner != job.LeaseOwner || current.TextHash != job.TextHash ||
+			current.LeaseUntil == nil || !current.LeaseUntil.After(completedAt) {
 			return domainembedding.ErrSemanticJobLeaseLost
 		}
 		if err := (&Repository{db: tx}).SaveVideoEmbedding(ctx, embedding); err != nil {
@@ -193,6 +230,7 @@ func (r *Repository) CompleteSemanticJob(
 			Where("video_id = ? AND model = ? AND state = ? AND lease_owner = ? AND text_hash = ?",
 				job.VideoID, job.Model, domainembedding.SemanticJobProcessing,
 				job.LeaseOwner, job.TextHash).
+			Where("lease_until > ?", completedAt.UTC()).
 			Updates(map[string]any{
 				"state": domainembedding.SemanticJobCompleted, "completed_at": completedAt.UTC(),
 				"lease_owner": "", "lease_until": nil, "last_error_class": "",
@@ -233,6 +271,7 @@ func (r *Repository) RetrySemanticJob(
 		Where("video_id = ? AND model = ? AND state = ? AND lease_owner = ? AND text_hash = ?",
 			job.VideoID, job.Model, domainembedding.SemanticJobProcessing,
 			job.LeaseOwner, job.TextHash).
+		Where("lease_until > ?", time.Now().UTC()).
 		Updates(updates)
 	if result.Error != nil {
 		return result.Error
@@ -240,6 +279,33 @@ func (r *Repository) RetrySemanticJob(
 	if result.RowsAffected != 1 {
 		return domainembedding.ErrSemanticJobLeaseLost
 	}
+	return nil
+}
+
+func (r *Repository) ExtendSemanticJobLease(
+	ctx context.Context,
+	job *domainembedding.SemanticJob,
+	now time.Time,
+	leaseUntil time.Time,
+) error {
+	if job == nil || strings.TrimSpace(job.LeaseOwner) == "" {
+		return domainembedding.ErrSemanticJobLeaseLost
+	}
+	result := r.db.WithContext(ctx).Model(&SemanticJobModel{}).
+		Where(`video_id = ? AND model = ? AND state = ? AND lease_owner = ?
+			AND text_hash = ? AND lease_until > ?`,
+			job.VideoID, job.Model, domainembedding.SemanticJobProcessing,
+			job.LeaseOwner, job.TextHash, now.UTC()).
+		Updates(map[string]any{
+			"lease_until": leaseUntil.UTC(), "updated_at": now.UTC(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return domainembedding.ErrSemanticJobLeaseLost
+	}
+	job.LeaseUntil = &leaseUntil
 	return nil
 }
 

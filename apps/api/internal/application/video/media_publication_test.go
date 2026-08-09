@@ -101,7 +101,7 @@ func TestMediaPublicationRetriesEventAfterPublishFailure(t *testing.T) {
 	}
 }
 
-func TestMediaPublicationSkipsCompletedAndUntrackedPublicEvents(t *testing.T) {
+func TestMediaPublicationRepairsTrackedHandoffAndSkipsHistoricalUntracked(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		ready     bool
@@ -129,7 +129,11 @@ func TestMediaPublicationSkipsCompletedAndUntrackedPublicEvents(t *testing.T) {
 			if err := service.MediaReady(context.Background(), video.MediaAssetID); err != nil {
 				t.Fatal(err)
 			}
-			if publisher.events != 0 || repo.readyMarks != 0 {
+			expected := 1
+			if test.untracked {
+				expected = 0
+			}
+			if publisher.events != expected || repo.readyMarks != expected {
 				t.Fatalf(
 					"unexpected replay events=%d marks=%d",
 					publisher.events, repo.readyMarks,
@@ -139,7 +143,7 @@ func TestMediaPublicationSkipsCompletedAndUntrackedPublicEvents(t *testing.T) {
 	}
 }
 
-func TestMediaPublicationRepairsMediaWithoutReplayingCompletedEvent(t *testing.T) {
+func TestMediaPublicationRepairsMediaAndPublicationHandoff(t *testing.T) {
 	video := domainvideo.RestoreVideoWithMedia(
 		91, 7, "repair", "", "", "",
 		domainvideo.StatusPublished, domainvideo.VisibilityPublic,
@@ -163,7 +167,7 @@ func TestMediaPublicationRepairsMediaWithoutReplayingCompletedEvent(t *testing.T
 	if err := service.MediaReady(context.Background(), video.MediaAssetID); err != nil {
 		t.Fatal(err)
 	}
-	if delivery.calls != 1 || publisher.events != 0 || repo.readyMarks != 0 {
+	if delivery.calls != 1 || publisher.events != 1 || repo.readyMarks != 1 {
 		t.Fatalf(
 			"repair calls=%d events=%d marks=%d",
 			delivery.calls, publisher.events, repo.readyMarks,

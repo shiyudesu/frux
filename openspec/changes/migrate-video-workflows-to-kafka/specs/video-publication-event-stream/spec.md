@@ -43,3 +43,20 @@ Frux SHALL validate publication mirrors and non-mutating shadow groups before ac
 #### Scenario: Publication consumer rolls back
 - **WHEN** one Kafka group exceeds its correctness or latency threshold
 - **THEN** Frux stops that group and restores only its RabbitMQ consumer without changing the other publication consumer
+
+### Requirement: Atomic Publication Proof and Non-Mutating Parity
+Publication notification and event rows SHALL be created atomically at every first-public edge.
+Notification readiness SHALL NOT substitute for event-row presence. Feed and embedding shadows SHALL
+require non-mutating parity readers.
+
+#### Scenario: Media delivery completes after review
+- **WHEN** review first establishes database public eligibility before a media-backed public variant is ready
+- **THEN** the same transaction creates a blocked stable event row and media readiness later makes that row dispatchable without changing event identity
+
+#### Scenario: Delivered notification lacks event row
+- **WHEN** reconciliation finds an eligible tracked video with a ready or delivered notification but no publication event row
+- **THEN** it repairs the event row while preserving notification state
+
+#### Scenario: Shadow parity is absent
+- **WHEN** Feed or embedding shadow/cutover mode is configured with nil parity
+- **THEN** worker startup fails

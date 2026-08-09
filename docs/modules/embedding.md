@@ -24,3 +24,8 @@ worker 覆盖新结果。禁用或服务 metadata 不匹配只暂停语义 job�
 
 该 live 路径不扫描历史视频，也不改变推荐 recall/ranking。历史覆盖仍由未来独立 backfill change
 负责。
+
+每个 processor 一次只 claim 一个 job，并使用每次 claim 唯一 token；complete、retry 和 heartbeat
+都同时按 token、text hash、未过期 lease fencing。远程请求期间每 `lease_ttl/3` 续租，旧 attempt
+不能完成或重试已回收 job。metadata validator 只有在 `ResumeSemanticJobs` 成功后才启动 processor。
+publication canonicalization/input 错误属于 Kafka terminal poison record，不阻塞 partition。

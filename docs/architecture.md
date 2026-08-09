@@ -649,3 +649,9 @@ flowchart LR
 ```
 
 首帧优先使用渲染回调，卡顿排除暂停和 seek。数据库保留诊断标识，指标标签只允许固定技术维度；看板和告警无法按用户、视频、请求或播放会话展开。
+
+## 语义向量服务边界
+
+`apps/semantic-embedding` 是独立 Python 3.12 CPU 服务，只提供固定 revision 的受保护 HTTP
+metadata/embedding 接口，不访问 Frux 数据库、缓存、队列或浏览器。Go Worker 按 hash-first
+边界写 PostgreSQL semantic job，再用唯一 claim token、lease heartbeat 和 fencing 调用服务。

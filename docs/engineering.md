@@ -572,3 +572,6 @@ openspec validate --all --strict
 - 治理 control mutation 要求 `governance.execute`、非空 reason 和 expected revision；rollback
   选择较早且未过期 revision，但必须创建新的 immutable revision。控制面失败不得阻塞请求：
   last-known-good 在 max staleness 内继续使用，之后使用代码注册 failure default。
+- `apps/semantic-embedding` 是独立 Python 3.12 内部服务，必须提交 frozen `uv.lock`、固定模型
+  revision、offline runtime 和严格 token HTTP 契约；不得直接依赖 Go、数据库、缓存、队列、
+  浏览器、持久化、回填或推荐代码。

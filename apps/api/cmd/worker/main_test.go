@@ -122,7 +122,15 @@ func (s *workerPublishedEventPublisherStub) PublishVideoPublished(
 	return nil
 }
 
-func TestAdminTransitionLegacyRestoreMarksPublicationReadyOnce(t *testing.T) {
+type workerParityStub struct{}
+
+func (workerParityStub) Compare(
+	context.Context, applicationeventstream.Event,
+) (applicationeventstream.ParityResult, error) {
+	return applicationeventstream.ParityMatch, nil
+}
+
+func TestAdminTransitionLegacyRestoreAlwaysRepairsDurableHandoff(t *testing.T) {
 	publishedAt := time.Now().UTC()
 	video := &domainvideo.Video{
 		ID: 9, AuthorID: 7, ReviewVersion: 1,
@@ -142,7 +150,7 @@ func TestAdminTransitionLegacyRestoreMarksPublicationReadyOnce(t *testing.T) {
 	if err := applier.ApplyAdminTransition(context.Background(), video); err != nil {
 		t.Fatal(err)
 	}
-	if publisher.calls != 1 || readiness.marks != 1 {
+	if publisher.calls != 2 || readiness.marks != 0 {
 		t.Fatalf("publisher calls=%d marks=%d", publisher.calls, readiness.marks)
 	}
 }
@@ -189,11 +197,13 @@ func TestBehaviorKafkaConsumersStartViewBeforeAction(t *testing.T) {
 						migration:   infrakafka.StreamMigration{Consumer: mode},
 						activeGroup: infrakafka.GroupConsumeViewActive,
 						shadowGroup: infrakafka.GroupConsumeViewShadow,
+						parity:      workerParityStub{},
 					},
 					behaviorKafkaConsumer{
 						migration:   infrakafka.StreamMigration{Consumer: mode},
 						activeGroup: infrakafka.GroupPersistActionActive,
 						shadowGroup: infrakafka.GroupPersistActionShadow,
+						parity:      workerParityStub{},
 					},
 				),
 				nil,
@@ -253,10 +263,12 @@ func TestBehaviorKafkaConsumersWaitForViewReadinessBeforeAction(t *testing.T) {
 				behaviorKafkaConsumer{
 					migration:   infrakafka.StreamMigration{Consumer: infrakafka.ConsumerModeKafka},
 					activeGroup: infrakafka.GroupConsumeViewActive,
+					parity:      workerParityStub{},
 				},
 				behaviorKafkaConsumer{
 					migration:   infrakafka.StreamMigration{Consumer: infrakafka.ConsumerModeKafka},
 					activeGroup: infrakafka.GroupPersistActionActive,
+					parity:      workerParityStub{},
 				},
 			),
 			nil,

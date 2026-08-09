@@ -9,6 +9,9 @@ import (
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 )
 
@@ -270,6 +273,9 @@ func (h *EmbeddingHandler) Handle(
 		return applicationeventstream.OutcomeTerminal, nil
 	}
 	if err := h.intake.HandleVideoPublished(ctx, publishedEvent(payload)); err != nil {
+		if errors.Is(err, domainembedding.ErrInvalidSemanticText) {
+			return applicationeventstream.OutcomeTerminal, err
+		}
 		return applicationeventstream.OutcomeRetryable, err
 	}
 	return applicationeventstream.OutcomeDurableSuccess, nil
@@ -279,6 +285,136 @@ type MediaWakeupHandler struct {
 	worker interface {
 		SignalRequested(context.Context, *applicationmedia.ProcessingRequestedEvent) error
 	}
+}
+
+type FanoutParityChecker struct {
+	Reader interface {
+		CountFollowers(context.Context, int64) (int, error)
+		ListFollowerIDs(context.Context, int64, int64, int) ([]int64, error)
+	}
+	Index interface {
+		HasFollowingFanout(
+			context.Context, int64, []int64, *domainfeed.FeedPageItem, bool,
+		) (bool, error)
+	}
+}
+
+func (c FanoutParityChecker) Compare(
+	ctx context.Context,
+	event applicationeventstream.Event,
+) (applicationeventstream.ParityResult, error) {
+	payload, ok := event.Payload.(*infrakafka.VideoPublishedPayload)
+	if !ok || c.Reader == nil || c.Index == nil {
+		return applicationeventstream.ParityMismatch, nil
+	}
+	count, err := c.Reader.CountFollowers(ctx, payload.AuthorID)
+	if err != nil {
+		return applicationeventstream.ParityPending, err
+	}
+	item := &domainfeed.FeedPageItem{
+		VideoID: payload.VideoID, AuthorID: payload.AuthorID, PublishedAt: payload.PublishedAt,
+	}
+	if count >= domainfeed.BigCreatorFollowerThreshold {
+		present, err := c.Index.HasFollowingFanout(
+			ctx, payload.AuthorID, nil, item, true,
+		)
+		if err != nil {
+			return applicationeventstream.ParityPending, err
+		}
+		if !present {
+			return applicationeventstream.ParityPending, nil
+		}
+		return applicationeventstream.ParityMatch, nil
+	}
+	followers := make([]int64, 0, count)
+	cursor := int64(0)
+	for len(followers) < count {
+		batch, err := c.Reader.ListFollowerIDs(ctx, payload.AuthorID, cursor, 500)
+		if err != nil {
+			return applicationeventstream.ParityPending, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		followers = append(followers, batch...)
+		cursor = batch[len(batch)-1]
+	}
+	if len(followers) != count {
+		return applicationeventstream.ParityPending, nil
+	}
+	present, err := c.Index.HasFollowingFanout(
+		ctx, payload.AuthorID, followers, item, false,
+	)
+	if err != nil {
+		return applicationeventstream.ParityPending, err
+	}
+	if !present {
+		return applicationeventstream.ParityPending, nil
+	}
+	return applicationeventstream.ParityMatch, nil
+}
+
+type EmbeddingParityChecker struct {
+	Reader interface {
+		PublicationIntakeParity(
+			context.Context, int64, string, string,
+		) (bool, bool, error)
+	}
+}
+
+func (c EmbeddingParityChecker) Compare(
+	ctx context.Context,
+	event applicationeventstream.Event,
+) (applicationeventstream.ParityResult, error) {
+	payload, ok := event.Payload.(*infrakafka.VideoPublishedPayload)
+	if !ok || c.Reader == nil {
+		return applicationeventstream.ParityMismatch, nil
+	}
+	present, matches, err := c.Reader.PublicationIntakeParity(
+		ctx, payload.VideoID, payload.Title, payload.Description,
+	)
+	if err != nil {
+		return applicationeventstream.ParityPending, err
+	}
+	if !present {
+		return applicationeventstream.ParityPending, nil
+	}
+	if !matches {
+		return applicationeventstream.ParityMismatch, nil
+	}
+	return applicationeventstream.ParityMatch, nil
+}
+
+type MediaWakeupParityChecker struct {
+	Reader interface {
+		FindProcessingJobByAsset(
+			context.Context, int64,
+		) (*domainmedia.MediaProcessingJob, error)
+	}
+}
+
+func (c MediaWakeupParityChecker) Compare(
+	ctx context.Context,
+	event applicationeventstream.Event,
+) (applicationeventstream.ParityResult, error) {
+	payload, ok := event.Payload.(*infrakafka.MediaProcessingRequestedPayload)
+	if !ok || c.Reader == nil {
+		return applicationeventstream.ParityMismatch, nil
+	}
+	job, err := c.Reader.FindProcessingJobByAsset(ctx, payload.AssetID)
+	if errors.Is(err, domainmedia.ErrProcessingJobNotFound) {
+		return applicationeventstream.ParityPending, nil
+	}
+	if err != nil {
+		return applicationeventstream.ParityPending, err
+	}
+	if job == nil {
+		return applicationeventstream.ParityPending, nil
+	}
+	if job.ProfileVersion != payload.ProfileVersion {
+		return applicationeventstream.ParityMismatch, nil
+	}
+	return applicationeventstream.ParityMatch, nil
 }
 
 func NewMediaWakeupHandler(worker interface {

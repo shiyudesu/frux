@@ -253,3 +253,7 @@ openspec validate --all --strict
 ```
 
 新增后端模块时参考 [docs/engineering.md](docs/engineering.md) 的分层模板和 [docs/modules/README.md](docs/modules/README.md) 的模块规格入口。
+
+Compose 同时构建内部 `semantic-embedding` 服务。它不发布宿主机端口；Worker 通过
+`http://semantic-embedding:8081` 调用，并在服务故障时继续生成 hash 向量和保存 durable semantic
+jobs。

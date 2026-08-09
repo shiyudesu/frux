@@ -18,6 +18,10 @@ type semanticRepositoryStub struct {
 	completed  int
 	terminal   bool
 	errorClass string
+	resumeErr  error
+	extended   int
+	claimLimit int
+	owners     []string
 }
 
 func (*semanticRepositoryStub) FindVideoEmbedding(
@@ -26,11 +30,41 @@ func (*semanticRepositoryStub) FindVideoEmbedding(
 	return nil, domainembedding.ErrVideoEmbeddingNotFound
 }
 func (s *semanticRepositoryStub) ClaimSemanticJobs(
-	context.Context, string, time.Time, time.Time, int,
+	_ context.Context, owner string, _ time.Time, leaseUntil time.Time, limit int,
 ) ([]*domainembedding.SemanticJob, error) {
-	jobs := s.jobs
-	s.jobs = nil
+	s.claimLimit = limit
+	s.owners = append(s.owners, owner)
+	if len(s.jobs) == 0 {
+		return nil, nil
+	}
+	count := min(limit, len(s.jobs))
+	jobs := append([]*domainembedding.SemanticJob(nil), s.jobs[:count]...)
+	s.jobs = s.jobs[count:]
+	for _, job := range jobs {
+		job.LeaseOwner = owner
+		job.LeaseUntil = &leaseUntil
+	}
 	return jobs, nil
+}
+
+func TestSemanticWorkerClaimsOneJobWithUniqueTokenPerProcessor(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &semanticRepositoryStub{jobs: []*domainembedding.SemanticJob{
+		{VideoID: 1, Model: domainembedding.SemanticModelKey, TextHash: "one"},
+		{VideoID: 2, Model: domainembedding.SemanticModelKey, TextHash: "two"},
+	}}
+	worker := NewSemanticWorker(
+		repository,
+		&semanticGeneratorStub{generateErr: errors.New("down")},
+		true, 2, time.Second, time.Hour,
+	)
+	worker.now = func() time.Time { return now }
+	_, _ = worker.ProcessPending(context.Background())
+	_, _ = worker.ProcessPending(context.Background())
+	if repository.claimLimit != 1 || len(repository.owners) != 2 ||
+		repository.owners[0] == repository.owners[1] {
+		t.Fatalf("claim limit=%d owners=%v", repository.claimLimit, repository.owners)
+	}
 }
 func (s *semanticRepositoryStub) CompleteSemanticJob(
 	context.Context,
@@ -53,13 +87,38 @@ func (s *semanticRepositoryStub) RetrySemanticJob(
 	s.terminal = terminal
 	return nil
 }
+func (s *semanticRepositoryStub) ExtendSemanticJobLease(
+	_ context.Context,
+	job *domainembedding.SemanticJob,
+	_ time.Time,
+	leaseUntil time.Time,
+) error {
+	s.extended++
+	job.LeaseUntil = &leaseUntil
+	return nil
+}
 func (s *semanticRepositoryStub) SuspendSemanticJobs(context.Context, time.Time) (int64, error) {
 	s.suspended++
 	return 1, nil
 }
 func (s *semanticRepositoryStub) ResumeSemanticJobs(context.Context, time.Time) (int64, error) {
 	s.resumed++
-	return 1, nil
+	return 1, s.resumeErr
+}
+
+func TestSemanticWorkerPropagatesResumeFailureBeforeStartingProcessors(t *testing.T) {
+	repository := &semanticRepositoryStub{resumeErr: errors.New("resume failed")}
+	worker := NewSemanticWorker(
+		repository,
+		&semanticGeneratorStub{},
+		true, 1, time.Second, time.Hour,
+	)
+	if err := worker.Start(context.Background()); !errors.Is(err, repository.resumeErr) {
+		t.Fatalf("start error = %v", err)
+	}
+	if repository.resumed != 1 {
+		t.Fatalf("resume attempts = %d", repository.resumed)
+	}
 }
 func (*semanticRepositoryStub) SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error) {
 	return nil, nil

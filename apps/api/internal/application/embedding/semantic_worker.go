@@ -2,11 +2,14 @@ package applicationembedding
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
@@ -67,6 +70,9 @@ type SemanticJobRepository interface {
 		time.Time,
 	) error
 	RetrySemanticJob(context.Context, *domainembedding.SemanticJob, time.Time, string, bool) error
+	ExtendSemanticJobLease(
+		context.Context, *domainembedding.SemanticJob, time.Time, time.Time,
+	) error
 	SuspendSemanticJobs(context.Context, time.Time) (int64, error)
 	ResumeSemanticJobs(context.Context, time.Time) (int64, error)
 	SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error)
@@ -74,15 +80,16 @@ type SemanticJobRepository interface {
 }
 
 type SemanticWorker struct {
-	repo         SemanticJobRepository
-	generator    SemanticGenerator
-	enabled      bool
-	owner        string
-	concurrency  int
-	leaseTTL     time.Duration
-	pollInterval time.Duration
-	now          func() time.Time
-	startOnce    sync.Once
+	repo          SemanticJobRepository
+	generator     SemanticGenerator
+	enabled       bool
+	owner         string
+	concurrency   int
+	leaseTTL      time.Duration
+	pollInterval  time.Duration
+	now           func() time.Time
+	startOnce     sync.Once
+	claimSequence atomic.Uint64
 }
 
 func NewSemanticWorker(
@@ -130,7 +137,9 @@ func (w *SemanticWorker) Start(ctx context.Context) error {
 		go w.runMetadataValidator(ctx)
 		return nil
 	}
-	_, _ = w.repo.ResumeSemanticJobs(ctx, now)
+	if _, err := w.repo.ResumeSemanticJobs(ctx, now); err != nil {
+		return err
+	}
 	w.startProcessors(ctx)
 	return nil
 }
@@ -161,8 +170,9 @@ func (w *SemanticWorker) ProcessPending(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	now := w.now().UTC()
+	claimToken := w.claimToken()
 	jobs, err := w.repo.ClaimSemanticJobs(
-		ctx, w.owner, now, now.Add(w.leaseTTL), w.concurrency,
+		ctx, claimToken, now, now.Add(w.leaseTTL), 1,
 	)
 	if err != nil {
 		return 0, err
@@ -193,9 +203,16 @@ func (w *SemanticWorker) process(
 	if err != nil && !errors.Is(err, domainembedding.ErrVideoEmbeddingNotFound) {
 		return w.retry(ctx, job, SemanticInternal, false, err)
 	}
-	vectors, err := w.generator.Generate(ctx, []SemanticInput{{
+	processCtx, cancel := context.WithCancel(ctx)
+	heartbeatDone := w.startLeaseHeartbeat(processCtx, cancel, job)
+	vectors, err := w.generator.Generate(processCtx, []SemanticInput{{
 		ID: "video:" + formatVideoID(job.VideoID), Title: job.Title, Description: job.Description,
 	}})
+	cancel()
+	heartbeatErr := <-heartbeatDone
+	if heartbeatErr != nil {
+		return heartbeatErr
+	}
 	if err != nil {
 		result, terminal := classifySemanticFailure(err)
 		return w.retry(ctx, job, result, terminal, err)
@@ -260,13 +277,57 @@ func (w *SemanticWorker) runMetadataValidator(ctx context.Context) {
 			}
 		}
 		if err := w.generator.ValidateMetadata(ctx); err == nil {
-			_, _ = w.repo.ResumeSemanticJobs(ctx, w.now().UTC())
-			w.startProcessors(ctx)
-			return
+			if _, resumeErr := w.repo.ResumeSemanticJobs(ctx, w.now().UTC()); resumeErr == nil {
+				w.startProcessors(ctx)
+				return
+			}
 		}
 		_, _ = w.repo.SuspendSemanticJobs(ctx, w.now().UTC())
 		index++
 	}
+}
+
+func (w *SemanticWorker) claimToken() string {
+	var random [12]byte
+	if _, err := rand.Read(random[:]); err == nil {
+		return w.owner + ":" + hex.EncodeToString(random[:])
+	}
+	return w.owner + ":" + formatVideoID(int64(w.claimSequence.Add(1)))
+}
+
+func (w *SemanticWorker) startLeaseHeartbeat(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	job *domainembedding.SemanticJob,
+) <-chan error {
+	done := make(chan error, 1)
+	interval := w.leaseTTL / 3
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				done <- nil
+				return
+			case <-ticker.C:
+				now := w.now().UTC()
+				if err := w.repo.ExtendSemanticJobLease(
+					context.Background(), job, now, now.Add(w.leaseTTL),
+				); err != nil {
+					inframetrics.ObserveSemanticLease("lost")
+					cancel()
+					done <- err
+					return
+				}
+				inframetrics.ObserveSemanticLease("extended")
+			}
+		}
+	}()
+	return done
 }
 
 func classifySemanticFailure(err error) (SemanticResult, bool) {

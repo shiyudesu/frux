@@ -9,12 +9,99 @@ import (
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 )
 
 type rabbitVideoPublisherStub struct {
 	calls int
 	err   error
+}
+
+type fanoutParityStub struct {
+	present bool
+}
+
+func (fanoutParityStub) CountFollowers(context.Context, int64) (int, error) {
+	return 1, nil
+}
+func (fanoutParityStub) ListFollowerIDs(
+	context.Context, int64, int64, int,
+) ([]int64, error) {
+	return []int64{9}, nil
+}
+func (s fanoutParityStub) HasFollowingFanout(
+	context.Context, int64, []int64, *domainfeed.FeedPageItem, bool,
+) (bool, error) {
+	return s.present, nil
+}
+
+type embeddingParityStub struct {
+	present bool
+	matches bool
+}
+
+func (s embeddingParityStub) PublicationIntakeParity(
+	context.Context, int64, string, string,
+) (bool, bool, error) {
+	return s.present, s.matches, nil
+}
+
+type mediaParityStub struct {
+	job *domainmedia.MediaProcessingJob
+}
+
+func (s mediaParityStub) FindProcessingJobByAsset(
+	context.Context, int64,
+) (*domainmedia.MediaProcessingJob, error) {
+	return s.job, nil
+}
+
+func TestVideoWorkflowParityDistinguishesPendingMismatchAndMatch(t *testing.T) {
+	now := time.Now().UTC()
+	publication := applicationeventstream.Event{Payload: &infrakafka.VideoPublishedPayload{
+		VideoID: 1, AuthorID: 2, Title: "title", PublishedAt: now,
+	}}
+	fanoutPending, _ := (FanoutParityChecker{
+		Reader: fanoutParityStub{}, Index: fanoutParityStub{},
+	}).Compare(context.Background(), publication)
+	fanoutMatch, _ := (FanoutParityChecker{
+		Reader: fanoutParityStub{present: true}, Index: fanoutParityStub{present: true},
+	}).Compare(context.Background(), publication)
+	embeddingMismatch, _ := (EmbeddingParityChecker{
+		Reader: embeddingParityStub{present: true},
+	}).Compare(context.Background(), publication)
+	embeddingMatch, _ := (EmbeddingParityChecker{
+		Reader: embeddingParityStub{present: true, matches: true},
+	}).Compare(context.Background(), publication)
+	mediaPending, _ := (MediaWakeupParityChecker{
+		Reader: mediaParityStub{},
+	}).Compare(context.Background(), applicationeventstream.Event{
+		Payload: &infrakafka.MediaProcessingRequestedPayload{
+			AssetID: 3, ProfileVersion: "v1",
+		},
+	})
+	mediaMismatch, _ := (MediaWakeupParityChecker{
+		Reader: mediaParityStub{job: &domainmedia.MediaProcessingJob{ProfileVersion: "v2"}},
+	}).Compare(context.Background(), applicationeventstream.Event{
+		Payload: &infrakafka.MediaProcessingRequestedPayload{
+			AssetID: 3, ProfileVersion: "v1",
+		},
+	})
+	if fanoutPending != applicationeventstream.ParityPending ||
+		fanoutMatch != applicationeventstream.ParityMatch ||
+		embeddingMismatch != applicationeventstream.ParityMismatch ||
+		embeddingMatch != applicationeventstream.ParityMatch ||
+		mediaPending != applicationeventstream.ParityPending ||
+		mediaMismatch != applicationeventstream.ParityMismatch {
+		t.Fatalf(
+			"fanout=%s/%s embedding=%s/%s media=%s/%s",
+			fanoutPending, fanoutMatch, embeddingMismatch, embeddingMatch,
+			mediaPending, mediaMismatch,
+		)
+	}
 }
 
 func (p *rabbitVideoPublisherStub) PublishVideoPublished(
@@ -102,6 +189,27 @@ func TestFeedHandlerPreservesOriginalPublicationTime(t *testing.T) {
 
 type mediaWakeupStub struct {
 	calls int
+}
+
+type poisonEmbeddingIntakeStub struct{}
+
+func (poisonEmbeddingIntakeStub) HandleVideoPublished(
+	context.Context, *applicationvideo.PublishedEvent,
+) error {
+	return domainembedding.ErrInvalidSemanticText
+}
+
+func TestEmbeddingHandlerTreatsCanonicalizationPoisonAsTerminal(t *testing.T) {
+	outcome, err := NewEmbeddingHandler(poisonEmbeddingIntakeStub{}).Handle(
+		context.Background(),
+		applicationeventstream.Event{Payload: &infrakafka.VideoPublishedPayload{
+			VideoID: 1, AuthorID: 2, Title: "\x00",
+		}},
+	)
+	if outcome != applicationeventstream.OutcomeTerminal ||
+		!errors.Is(err, domainembedding.ErrInvalidSemanticText) {
+		t.Fatalf("outcome=%s err=%v", outcome, err)
+	}
 }
 
 func (s *mediaWakeupStub) SignalRequested(

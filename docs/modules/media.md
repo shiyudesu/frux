@@ -19,3 +19,6 @@ Consumer 只严格验证命令与数据库任务、向有界本地调度器发�
 Worker 保留处理租约续期、过期 lease 回收、重试时间、终态通知、缺失输出修复和孤儿对象清理。
 监控区分 `signaled`、`capacity_full`、`publish_failed`、`missing_job`、`stale` 与
 `polling_recovery`。Kafka 只优化唤醒延迟，不是正确性或长期重试来源。
+
+media shadow 只读 `(asset_id, profile_version)` durable job；缺失为 propagation pending，
+已存在但 profile 冲突为 mismatch，不会 claim 或 signal job。

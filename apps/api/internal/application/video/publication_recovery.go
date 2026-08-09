@@ -47,13 +47,6 @@ func (s *PublicationRecoveryService) EnsurePublication(
 	if s == nil || s.repository == nil {
 		return ErrLifecycleNotificationNotReady
 	}
-	ready, err := s.repository.LifecyclePublicationReady(ctx, notification.EventID)
-	if err != nil {
-		return err
-	}
-	if ready {
-		return nil
-	}
 	video, err := s.repository.FindByIDAnyStatus(ctx, notification.VideoID)
 	if err != nil {
 		if errors.Is(err, domainvideo.ErrVideoNotFound) {
@@ -71,13 +64,6 @@ func (s *PublicationRecoveryService) EnsurePublication(
 		}
 		if err := s.media.MediaReady(ctx, video.MediaAssetID); err != nil {
 			return err
-		}
-		ready, err = s.repository.LifecyclePublicationReady(ctx, notification.EventID)
-		if err != nil {
-			return err
-		}
-		if !ready {
-			return ErrLifecycleNotificationNotReady
 		}
 		return nil
 	}

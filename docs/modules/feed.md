@@ -217,3 +217,7 @@ session/context、下一 refresh index 和反馈抑制集合。用户直接切�
   的活动视频不会进入推荐上下文；返回有效推荐快照时继续使用原 request/session、签名 cursor 和抑制状态。
 - 左侧导航只在当前活动 Feed 的同一高亮行内显示低强调单向刷新按钮，不使用独立凸起方块。点击栏目主体仍恢复快照；
   点击刷新按钮会关闭临时 UI、保留其他场景快照，并让当前场景从第一页和第一条卡片重新开始。
+
+Feed shadow parity 只读 PostgreSQL follower 真相与 Redis inbox/author-outbox，不执行预热或 fanout。
+缺失事实按 propagation pending 最多内联重试三次，冲突才记录 mismatch；配置 shadow/active
+cutover 时 parity reader 不能为空。
