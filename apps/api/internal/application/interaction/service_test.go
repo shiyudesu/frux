@@ -60,6 +60,14 @@ func (p actionPublisherStub) PublishActionChanged(context.Context, *ActionChange
 	return p.err
 }
 
+type possiblyAcknowledgedError struct{ err error }
+
+func (e possiblyAcknowledgedError) Error() string { return e.err.Error() }
+func (e possiblyAcknowledgedError) Unwrap() error { return e.err }
+func (possiblyAcknowledgedError) MayHaveAcknowledged() bool {
+	return true
+}
+
 type acknowledgedPublicationError struct {
 	err          error
 	acknowledged map[string]bool
@@ -82,6 +90,12 @@ func (e acknowledgedPublicationError) AnyTransportAcknowledged() bool {
 
 func (e acknowledgedPublicationError) PrimaryTransportAcknowledged() bool {
 	return e.acknowledged[e.primary]
+}
+func (e acknowledgedPublicationError) PrimaryTransportMayBeAcknowledged() bool {
+	return e.PrimaryTransportAcknowledged()
+}
+func (e acknowledgedPublicationError) AnyTransportMayBeAcknowledged() bool {
+	return e.AnyTransportAcknowledged()
 }
 
 type actionDeliveryObserverStub struct {
@@ -235,8 +249,28 @@ func TestKafkaAndFallbackFailureConditionallyRollBackRedis(t *testing.T) {
 	if _, err := service.Like(context.Background(), 7, 11, "like-1"); !errors.Is(err, ErrUpdateInteractionFailed) {
 		t.Fatalf("error = %v", err)
 	}
+
 	if store.rollbackCalls != 1 || len(observer.rollback) != 1 || observer.rollback[0] != "success" {
 		t.Fatalf("store=%#v observer=%#v", store, observer)
+	}
+}
+
+func TestUncertainKafkaAndFallbackFailureDoesNotRollBackRedis(t *testing.T) {
+	persistErr := errors.New("database unavailable")
+	repo := &synchronousActionRepositoryStub{persistErr: persistErr}
+	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
+	service := New(
+		repo,
+		WithAsyncActionPipeline(store, actionPublisherStub{err: possiblyAcknowledgedError{
+			err: errors.New("Kafka result uncertain"),
+		}}),
+	)
+	_, err := service.Like(context.Background(), 7, 11, "like-1")
+	if !errors.Is(err, ErrUpdateInteractionFailed) || !errors.Is(err, persistErr) {
+		t.Fatalf("error = %v", err)
+	}
+	if store.rollbackCalls != 0 || store.confirmCalls != 0 {
+		t.Fatalf("store=%#v", store)
 	}
 }
 

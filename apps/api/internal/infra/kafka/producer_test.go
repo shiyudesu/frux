@@ -100,6 +100,13 @@ func TestPublisherLeavesDuplicateSafeRetriesToIdempotentClient(t *testing.T) {
 	}
 }
 
+func TestUncertainProduceErrorMayHaveAcknowledged(t *testing.T) {
+	err := &UncertainProduceError{cause: errors.New("deadline")}
+	if !errors.Is(err, ErrProduceUncertain) || !err.MayHaveAcknowledged() {
+		t.Fatalf("uncertain error = %v", err)
+	}
+}
+
 func validProbeMetadata() EventMetadata {
 	now := time.Now().UTC()
 	return EventMetadata{

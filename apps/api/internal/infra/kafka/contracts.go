@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
+	"strings"
 	"time"
 )
 
@@ -32,7 +32,6 @@ const (
 
 var (
 	ErrContractFailure = errors.New("kafka contract failure")
-	eventIDPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 )
 
 type EventSpec struct {
@@ -297,8 +296,8 @@ func validateMetadata(
 	if metadata.SchemaVersion < 1 || !containsInt(spec.SchemaVersions, metadata.SchemaVersion) {
 		return EventSpec{}, contractError(ContractUnsupportedVersion, nil)
 	}
-	if !eventIDPattern.MatchString(metadata.EventID) ||
-		(metadata.CorrelationID != "" && !eventIDPattern.MatchString(metadata.CorrelationID)) ||
+	if !validEnvelopeIdentity(metadata.EventID) ||
+		(metadata.CorrelationID != "" && !validEnvelopeIdentity(metadata.CorrelationID)) ||
 		metadata.OccurredAt.IsZero() || metadata.ProducedAt.IsZero() ||
 		metadata.OccurredAt.After(metadata.ProducedAt.Add(5*time.Minute)) ||
 		metadata.ProducedAt.After(now.Add(5*time.Minute)) ||
@@ -310,6 +309,10 @@ func validateMetadata(
 		return EventSpec{}, contractError(ContractInvalidKey, err)
 	}
 	return spec, nil
+}
+
+func validEnvelopeIdentity(value string) bool {
+	return value != "" && len(value) <= 128 && strings.TrimSpace(value) == value
 }
 
 var errTrailingJSON = errors.New("trailing JSON data")

@@ -130,9 +130,9 @@ func TestBehaviorContractsRejectMalformedIdentityVersionKeySizeAndTime(t *testin
 		payload  ActionChangedPayload
 		code     ContractFailureCode
 	}{
-		{name: "malformed id", key: []byte("action:42:99:LIKE"), metadata: func() EventMetadata {
+		{name: "untrimmed id", key: []byte("action:42:99:LIKE"), metadata: func() EventMetadata {
 			value := base
-			value.EventID = "bad id!"
+			value.EventID = " bad id! "
 			return value
 		}(), payload: payload, code: ContractInvalidEnvelope},
 		{name: "unsupported version", key: []byte("action:42:99:LIKE"), metadata: func() EventMetadata {
@@ -189,6 +189,26 @@ func TestViewContractRejectsNonCanonicalUserKey(t *testing.T) {
 	var contract *ContractError
 	if !errors.As(err, &contract) || contract.Code != ContractInvalidKey {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestViewContractAcceptsDomainCompatibleEventIDCharacters(t *testing.T) {
+	now := time.Now().UTC()
+	payload := ViewEventRecordedPayload{
+		EventID: "playback/123 with punctuation!", ViewEventID: 101,
+		UserID: 42, VideoID: 99, Scene: "recommend", EventType: "play",
+		RecordedAt: now, OccurredAt: now,
+	}
+	key, err := EncodeKey(KeyKindUserID, UserKey{UserID: payload.UserID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = EncodeEvent(TopicViewEventRecorded, key, EventMetadata{
+		EventID: payload.EventID, Type: EventTypeViewEventRecorded, SchemaVersion: 1,
+		OccurredAt: now, ProducedAt: now, Producer: ProducerExposureWorker,
+	}, payload)
+	if err != nil {
+		t.Fatalf("domain-compatible event ID rejected: %v", err)
 	}
 }
 
@@ -252,7 +272,7 @@ func TestEnvelopeRejectsOversizedAndInvalidMetadata(t *testing.T) {
 		t.Fatalf("oversized error = %v", err)
 	}
 	_, err = EncodeEvent(TopicBackboneProbe, key, EventMetadata{
-		EventID: "bad id!", Type: EventTypeBackboneProbe, SchemaVersion: 1,
+		EventID: " bad id! ", Type: EventTypeBackboneProbe, SchemaVersion: 1,
 		OccurredAt: time.Now(), ProducedAt: time.Now(), Producer: ProducerPlatformAPI,
 	}, BackboneProbePayload{ProbeID: "probe-1", Source: "test"})
 	if !errors.As(err, &contract) || contract.Code != ContractInvalidEnvelope {

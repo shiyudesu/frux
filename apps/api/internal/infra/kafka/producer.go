@@ -14,6 +14,25 @@ var (
 	ErrProduceCanceled  = errors.New("kafka produce canceled")
 )
 
+type UncertainProduceError struct {
+	cause error
+}
+
+func (e *UncertainProduceError) Error() string {
+	if e == nil || e.cause == nil {
+		return ErrProduceUncertain.Error()
+	}
+	return fmt.Sprintf("%s: %v", ErrProduceUncertain, e.cause)
+}
+
+func (e *UncertainProduceError) Unwrap() error {
+	return ErrProduceUncertain
+}
+
+func (*UncertainProduceError) MayHaveAcknowledged() bool {
+	return true
+}
+
 type syncProducer interface {
 	ProduceSync(ctx context.Context, records ...*kgo.Record) kgo.ProduceResults
 }
@@ -80,7 +99,9 @@ func (p *Publisher) Publish(
 	results := p.producer.ProduceSync(produceContext, record)
 	if len(results) != 1 || results[0].Record == nil {
 		resultLabel = "uncertain"
-		return ProduceMetadata{}, ErrProduceUncertain
+		return ProduceMetadata{}, &UncertainProduceError{
+			cause: errors.New("missing produce result"),
+		}
 	}
 	result := results[0]
 	if result.Err != nil {
@@ -89,14 +110,14 @@ func (p *Publisher) Publish(
 			errors.Is(result.Err, context.DeadlineExceeded),
 			errors.Is(produceContext.Err(), context.DeadlineExceeded):
 			resultLabel = "uncertain"
-			return ProduceMetadata{}, fmt.Errorf("%w: canceled or deadline", ErrProduceUncertain)
+			return ProduceMetadata{}, &UncertainProduceError{
+				cause: errors.New("canceled or deadline"),
+			}
 		default:
 			resultLabel = "uncertain"
-			return ProduceMetadata{}, fmt.Errorf(
-				"%w: %s",
-				ErrProduceUncertain,
-				sanitizeKafkaError(result.Err),
-			)
+			return ProduceMetadata{}, &UncertainProduceError{
+				cause: errors.New(sanitizeKafkaError(result.Err)),
+			}
 		}
 	}
 	resultLabel = "acknowledged"

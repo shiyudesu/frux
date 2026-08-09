@@ -9,6 +9,13 @@ type PublicationAcknowledgementError interface {
 	TransportAcknowledged(transport string) bool
 	PrimaryTransportAcknowledged() bool
 	AnyTransportAcknowledged() bool
+	PrimaryTransportMayBeAcknowledged() bool
+	AnyTransportMayBeAcknowledged() bool
+}
+
+type PossiblyAcknowledgedError interface {
+	error
+	MayHaveAcknowledged() bool
 }
 
 func AnyTransportAcknowledged(err error) bool {
@@ -24,4 +31,13 @@ func PrimaryTransportAcknowledged(err error) bool {
 func IsMultiTransportPublicationError(err error) bool {
 	var publicationErr PublicationAcknowledgementError
 	return errors.As(err, &publicationErr)
+}
+
+func MayHaveTransportAcknowledgement(err error) bool {
+	var publicationErr PublicationAcknowledgementError
+	if errors.As(err, &publicationErr) {
+		return publicationErr.AnyTransportMayBeAcknowledged()
+	}
+	var possible PossiblyAcknowledgedError
+	return errors.As(err, &possible) && possible.MayHaveAcknowledged()
 }
