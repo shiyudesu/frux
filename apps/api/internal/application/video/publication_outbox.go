@@ -139,7 +139,7 @@ func (d *PublicationOutboxDispatcher) RunOnce(ctx context.Context) (int, error) 
 		ctx, d.owner, d.batchSize, now, now.Add(d.leaseTTL),
 	)
 	if err != nil {
-		d.observeStats(ctx, err)
+		d.observeStats(ctx)
 		return 0, errors.Join(reconcileErr, err)
 	}
 	processed := 0
@@ -168,11 +168,11 @@ func (d *PublicationOutboxDispatcher) RunOnce(ctx context.Context) (int, error) 
 		d.observeDispatch(class)
 	}
 	combined := errors.Join(reconcileErr, dispatchErr)
-	d.observeStats(ctx, combined)
+	d.observeStats(ctx)
 	return processed, combined
 }
 
-func (d *PublicationOutboxDispatcher) observeStats(ctx context.Context, operationErr error) {
+func (d *PublicationOutboxDispatcher) observeStats(ctx context.Context) {
 	if d == nil || d.observer == nil || d.store == nil {
 		return
 	}
@@ -180,7 +180,7 @@ func (d *PublicationOutboxDispatcher) observeStats(ctx context.Context, operatio
 	d.observer.ObservePublicationOutbox(
 		stats.Pending,
 		stats.OldestPending,
-		errors.Join(operationErr, err),
+		err,
 	)
 }
 

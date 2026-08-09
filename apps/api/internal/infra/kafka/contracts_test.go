@@ -328,6 +328,7 @@ func TestVideoAndMediaWorkflowContractsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	videoPayload := VideoPublishedPayload{
 		EventID: "video-published:42:3", VideoID: 42, AuthorID: 7,
 		Title: "title", Description: "description",
@@ -361,5 +362,28 @@ func TestVideoAndMediaWorkflowContractsRoundTrip(t *testing.T) {
 		OccurredAt: now, ProducedAt: now, Producer: ProducerMediaAPI,
 	}, mediaPayload); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVideoPublicationContractDoesNotApplyEmbeddingTextRules(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	key, err := EncodeKey(KeyKindVideoID, VideoKey{VideoID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := VideoPublishedPayload{
+		EventID: "video-published:42:3", VideoID: 42, AuthorID: 7,
+		Title: "accepted by video\x00", Description: "shared publication fact",
+		PublishedAt: now.Add(-time.Minute), OccurredAt: now,
+	}
+	encoded, err := EncodeEvent(TopicVideoPublished, key, EventMetadata{
+		EventID: payload.EventID, Type: EventTypeVideoPublished, SchemaVersion: 1,
+		OccurredAt: now, ProducedAt: now, Producer: ProducerVideoWorker,
+	}, payload)
+	if err != nil {
+		t.Fatalf("shared publication contract rejected embedding-incompatible text: %v", err)
+	}
+	if _, err := DecodeEvent(TopicVideoPublished, key, encoded, now); err != nil {
+		t.Fatalf("shared publication record did not decode: %v", err)
 	}
 }

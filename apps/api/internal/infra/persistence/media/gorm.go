@@ -250,6 +250,9 @@ func (r *Repository) LeaseProcessingJobs(ctx context.Context, owner string, now 
 	if limit <= 0 {
 		return []*domainmedia.MediaProcessingJob{}, nil
 	}
+	if limit > 1 {
+		limit = 1
+	}
 	var models []ProcessingJobModel
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
@@ -303,7 +306,9 @@ func (r *Repository) UpdateProcessingJob(ctx context.Context, job *domainmedia.M
 
 func (r *Repository) UpdateProcessingJobOwned(ctx context.Context, job *domainmedia.MediaProcessingJob, leaseOwner string) error {
 	result := r.db.WithContext(ctx).Model(&ProcessingJobModel{}).
-		Where("id = ? AND state = ? AND lease_owner = ?", job.ID, domainmedia.JobStateProcessing, leaseOwner).
+		Where(`id = ? AND state = ? AND lease_owner = ?
+			AND lease_until > clock_timestamp()`,
+			job.ID, domainmedia.JobStateProcessing, leaseOwner).
 		Updates(map[string]any{
 			"state": job.State, "attempts": job.Attempts, "max_attempts": job.MaxAttempts,
 			"error_code": job.ErrorCode, "error_message": job.ErrorMessage,
@@ -315,20 +320,36 @@ func (r *Repository) UpdateProcessingJobOwned(ctx context.Context, job *domainme
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return domainmedia.ErrProcessingJobNotFound
+		return domainmedia.ErrProcessingJobLeaseLost
 	}
 	return nil
 }
 
-func (r *Repository) ExtendProcessingLease(ctx context.Context, jobID int64, leaseOwner string, leaseUntil time.Time) error {
+func (r *Repository) ExtendProcessingLease(
+	ctx context.Context,
+	jobID int64,
+	leaseOwner string,
+	leaseTTL time.Duration,
+) error {
+	if jobID <= 0 || strings.TrimSpace(leaseOwner) == "" || leaseTTL <= 0 {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
 	result := r.db.WithContext(ctx).Model(&ProcessingJobModel{}).
-		Where("id = ? AND state = ? AND lease_owner = ?", jobID, domainmedia.JobStateProcessing, leaseOwner).
-		Updates(map[string]any{"lease_until": leaseUntil, "updated_at": time.Now().UTC()})
+		Where(`id = ? AND state = ? AND lease_owner = ?
+			AND lease_until > clock_timestamp()`,
+			jobID, domainmedia.JobStateProcessing, strings.TrimSpace(leaseOwner)).
+		Updates(map[string]any{
+			"lease_until": gorm.Expr(
+				"clock_timestamp() + (? * interval '1 millisecond')",
+				leaseTTL.Milliseconds(),
+			),
+			"updated_at": gorm.Expr("clock_timestamp()"),
+		})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return domainmedia.ErrProcessingJobNotFound
+		return domainmedia.ErrProcessingJobLeaseLost
 	}
 	return nil
 }

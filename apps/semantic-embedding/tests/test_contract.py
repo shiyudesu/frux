@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import multiprocessing
 import os
 import asyncio
 from io import StringIO
@@ -41,6 +42,67 @@ class FakeRuntime:
         self.calls += 1
         value = 1 / math.sqrt(MODEL_DIMENSION)
         return [[value] * MODEL_DIMENSION for _ in texts]
+
+
+class ControlledRuntime:
+    ready = True
+
+    def __init__(self, gate=None):
+        self.gate = gate
+
+    def load(self):
+        self.ready = True
+
+    def encode(self, texts):
+        if self.gate is not None:
+            self.gate.wait()
+        return [[1.0] for _ in texts]
+
+
+class HangingRuntime:
+    ready = True
+
+    def __init__(self, gate, secret):
+        self.gate = gate
+        self.secret = secret
+
+    def load(self):
+        self.ready = True
+
+    def encode(self, texts):
+        if texts == ["hang"]:
+            print(self.secret, flush=True)
+            self.gate.wait()
+        return [[1.0] for _ in texts]
+
+
+class NotReadyRuntime(FakeRuntime):
+    ready = False
+
+    def load(self):
+        self.ready = False
+
+
+class ReplacementBlockingRuntime:
+    ready = True
+
+    def __init__(self, loads, replacement_gate, inference_gate):
+        self.loads = loads
+        self.replacement_gate = replacement_gate
+        self.inference_gate = inference_gate
+
+    def load(self):
+        with self.loads.get_lock():
+            self.loads.value += 1
+            count = self.loads.value
+        if count > 1:
+            self.replacement_gate.wait()
+        self.ready = True
+
+    def encode(self, texts):
+        if texts == ["hang"]:
+            self.inference_gate.wait()
+        return [[1.0] for _ in texts]
 
 
 def client():
@@ -237,12 +299,6 @@ def test_exact_text_and_batch_boundaries():
 
 
 def test_health_not_ready_and_safe_routes():
-    class NotReadyRuntime(FakeRuntime):
-        ready = False
-
-        def load(self):
-            self.ready = False
-
     with TestClient(create_app(Settings(token=TOKEN), NotReadyRuntime())) as api:
         assert api.get("/health/live").json() == {"status": "live"}
         assert api.get("/health/ready").status_code == 503
@@ -253,7 +309,8 @@ def test_health_not_ready_and_safe_routes():
         assert api.post("/health/live").status_code == 405
 
 async def test_capacity_bounds_and_late_native_completion():
-    release = Event()
+    process_context = multiprocessing.get_context("spawn")
+    release = process_context.Event()
     settings = Settings(
         token=TOKEN,
         max_concurrency=1,
@@ -261,21 +318,21 @@ async def test_capacity_bounds_and_late_native_completion():
         queue_timeout_ms=100,
         request_timeout_ms=1_000,
     )
-    capacity = Capacity(settings)
+    capacity = Capacity(settings, ControlledRuntime(release))
     first = asyncio.create_task(
-        capacity.run(lambda: (release.wait(), [[1.0]])[1], time.monotonic())
+        capacity.run(["first"], time.monotonic())
     )
     await asyncio.sleep(0.02)
     try:
-        await capacity.run(lambda: [[1.0]], time.monotonic())
+        await capacity.run(["overflow"], time.monotonic())
     except OverCapacity:
         pass
     else:
         raise AssertionError("overflow was admitted")
     release.set()
     assert await first == [[1.0]]
+    await capacity.close()
 
-    late_release = Event()
     timeout_capacity = Capacity(
         Settings(
             token=TOKEN,
@@ -283,28 +340,20 @@ async def test_capacity_bounds_and_late_native_completion():
             max_queue=0,
             queue_timeout_ms=100,
             request_timeout_ms=1_000,
-        )
+        ),
+        ControlledRuntime(),
     )
-    calls = 0
-
-    def expired_call():
-        nonlocal calls
-        calls += 1
-        late_release.wait()
-        return [[1.0]]
-
     try:
-        await timeout_capacity.run(expired_call, time.monotonic() - 2)
+        await timeout_capacity.run(["expired"], time.monotonic() - 2)
     except InferenceTimeout:
         pass
     else:
         raise AssertionError("late inference did not time out")
-    assert calls == 0
     assert timeout_capacity.admitted == 0
-    assert timeout_capacity.semaphore._value == 1
+    assert timeout_capacity.pool.available.qsize() == 1
+    await timeout_capacity.close()
 
-    queued_release = Event()
-    queued_calls = 0
+    queued_release = process_context.Event()
     queued_capacity = Capacity(
         Settings(
             token=TOKEN,
@@ -312,56 +361,24 @@ async def test_capacity_bounds_and_late_native_completion():
             max_queue=1,
             queue_timeout_ms=1_000,
             request_timeout_ms=200,
-        )
+        ),
+        ControlledRuntime(queued_release),
     )
     active = asyncio.create_task(
-        queued_capacity.run(
-            lambda: (queued_release.wait(), [[1.0]])[1],
-            time.monotonic(),
-        )
+        queued_capacity.run(["active"], time.monotonic())
     )
     await asyncio.sleep(0.01)
-
-    def queued_call():
-        nonlocal queued_calls
-        queued_calls += 1
-        return [[1.0]]
-
     with pytest.raises(InferenceTimeout):
-        await queued_capacity.run(queued_call, time.monotonic() - 0.15)
-    assert queued_calls == 0
+        await queued_capacity.run(["queued"], time.monotonic() - 0.15)
     assert queued_capacity.admitted == 1
-    assert queued_capacity.semaphore._value == 0
+    assert queued_capacity.pool.available.qsize() == 0
     queued_release.set()
     assert await active == [[1.0]]
     assert queued_capacity.admitted == 0
-    assert queued_capacity.semaphore._value == 1
+    assert queued_capacity.pool.available.qsize() == 1
+    await queued_capacity.close()
 
-    post_acquire_calls = 0
-    post_acquire = Capacity(
-        Settings(
-            token=TOKEN,
-            max_concurrency=1,
-            max_queue=0,
-            queue_timeout_ms=100,
-            request_timeout_ms=1_000,
-        )
-    )
-    remaining = iter((1.0, 1.0, 1.0, -1.0))
-    post_acquire._remaining = lambda _: next(remaining)
-
-    def post_acquire_call():
-        nonlocal post_acquire_calls
-        post_acquire_calls += 1
-        return [[1.0]]
-
-    with pytest.raises(InferenceTimeout):
-        await post_acquire.run(post_acquire_call, time.monotonic())
-    assert post_acquire_calls == 0
-    assert post_acquire.admitted == 0
-    assert post_acquire.semaphore._value == 1
-
-    release_many = Event()
+    release_many = process_context.Event()
     bounded = Capacity(
         Settings(
             token=TOKEN,
@@ -369,18 +386,19 @@ async def test_capacity_bounds_and_late_native_completion():
             max_queue=8,
             queue_timeout_ms=2_000,
             request_timeout_ms=15_000,
-        )
+        ),
+        ControlledRuntime(release_many),
     )
     tasks = [
         asyncio.create_task(
-            bounded.run(lambda: (release_many.wait(), [[1.0]])[1], time.monotonic())
+            bounded.run([f"request-{index}"], time.monotonic())
         )
-        for _ in range(10)
+        for index in range(10)
     ]
     await asyncio.sleep(0.05)
     assert bounded.admitted == 10
     try:
-        await bounded.run(lambda: [[1.0]], time.monotonic())
+        await bounded.run(["eleventh"], time.monotonic())
     except OverCapacity:
         pass
     else:
@@ -388,6 +406,78 @@ async def test_capacity_bounds_and_late_native_completion():
     release_many.set()
     await asyncio.gather(*tasks)
     assert bounded.admitted == 0
+    await bounded.close()
+
+
+async def test_hung_inference_is_killed_replaced_and_does_not_leak(capsys):
+    process_context = multiprocessing.get_context("spawn")
+    hang = process_context.Event()
+    secret = "semantic-input-must-not-be-logged"
+
+    capacity = Capacity(
+        Settings(
+            token=TOKEN,
+            max_concurrency=1,
+            max_queue=0,
+            queue_timeout_ms=100,
+            request_timeout_ms=150,
+        ),
+        HangingRuntime(hang, secret),
+    )
+    original = capacity.worker_pids()
+    assert len(original) == 1
+    with pytest.raises(InferenceTimeout):
+        await capacity.run(["hang"], time.monotonic())
+    assert capacity.admitted == 0
+    deadline = time.monotonic() + 2
+    replacement = set()
+    while time.monotonic() < deadline:
+        replacement = capacity.worker_pids()
+        if replacement and replacement != original:
+            break
+        await asyncio.sleep(0.02)
+    assert len(replacement) == 1
+    assert replacement.isdisjoint(original)
+    assert await capacity.run(["recovered"], time.monotonic()) == [[1.0]]
+    all_pids = original | replacement
+    await capacity.close()
+    active = {child.pid for child in multiprocessing.active_children()}
+    assert all_pids.isdisjoint(active)
+    output = capsys.readouterr()
+    assert secret not in output.out
+    assert secret not in output.err
+
+
+async def test_shutdown_terminates_in_progress_process_replacement():
+    process_context = multiprocessing.get_context("spawn")
+    loads = process_context.Value("i", 0)
+    replacement_gate = process_context.Event()
+    inference_gate = process_context.Event()
+    capacity = Capacity(
+        Settings(
+            token=TOKEN,
+            max_concurrency=1,
+            max_queue=0,
+            queue_timeout_ms=100,
+            request_timeout_ms=150,
+        ),
+        ReplacementBlockingRuntime(loads, replacement_gate, inference_gate),
+    )
+    original = capacity.worker_pids()
+    with pytest.raises(InferenceTimeout):
+        await capacity.run(["hang"], time.monotonic())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with loads.get_lock():
+            if loads.value >= 2:
+                break
+        await asyncio.sleep(0.02)
+    with loads.get_lock():
+        assert loads.value >= 2
+    await asyncio.wait_for(capacity.close(), timeout=1)
+    active = multiprocessing.active_children()
+    assert original.isdisjoint({child.pid for child in active})
+    assert all(child.name != "semantic-embedding-inference" for child in active)
 
 
 @pytest.mark.parametrize(

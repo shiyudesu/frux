@@ -97,6 +97,12 @@ key, persists or confirms `hash-ngram-v1`, and upserts a semantic job in Postgre
 record becomes commit-eligible. Feed fanout owns a different group, so semantic lag or failure
 cannot hold Feed offsets.
 
+The shared publication contract validates only envelope, business identity, timestamps, key, and
+the video-owned payload bounds. It does not import semantic canonicalization rules. After shared
+decoding, only the embedding handler canonicalizes title/description; deterministic invalid text is
+a terminal, commit-safe result for the embedding group while the Feed group still accepts and
+processes the same publication fact.
+
 The semantic job is uniquely identified by `(video_id, model)` and stores canonical text hash,
 state, attempts, `available_at`, lease owner/until, bounded error class, and completion metadata.
 A changed text hash resets the job; the same hash leaves completed or pending work unchanged.
@@ -116,6 +122,10 @@ Retryable service failures update the job and release its lease. Disabled integr
 jobs without deleting them; re-enable or reconciliation resumes them. Expired leases are
 reclaimable. Terminal local identity or contract violations are retained as bounded failed outcomes
 until text/model changes or an operator-approved future repair boundary resets them.
+
+Lease heartbeats derive bounded child contexts from the active processing context. Shutdown cancels
+them immediately, and a stalled database heartbeat times out, cancels inference, and prevents the
+attempt from completing or retrying after lease ownership becomes uncertain.
 
 A crash after hash/job commit but before Kafka offset commit can redeliver intake; conditional hash
 upserts and semantic-job identity make that harmless. Remote calls never hold Kafka offsets because
@@ -200,7 +210,9 @@ Tests will cover:
 - exact ID/order/index validation, truncated/oversized bodies, non-finite numbers, wrong dimensions, wrong model/revision, overload, cancellation, and safe error/log behavior;
 - hash-first intake, disabled semantic behavior, duplicate events, content changes, semantic success, every retry class, suspension, expired leases, shutdown, and offset commit decisions;
 - Kafka group isolation, strict envelope/key validation, commit failure/redelivery, independent Feed progress, and publication-time preservation;
+- Feed acceptance of publication text that is valid for video but terminal for semantic canonicalization;
 - PostgreSQL semantic-job upsert/reset, stable claims, capped delays, lease reclaim, completion, terminal classification, cleanup, and backlog inspection;
+- bounded semantic heartbeat cancellation during shutdown and database stalls;
 - PostgreSQL coexistence and idempotency with 128-dimensional hash and 384-dimensional semantic rows;
 - a live contract run against the service produced by `add-semantic-embedding-service`;
 - Compose rendering and a targeted outage test proving the worker writes hash vectors while the semantic container is unavailable, then eventually fills semantic coverage for the live event after recovery;

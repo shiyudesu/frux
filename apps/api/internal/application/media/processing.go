@@ -2,9 +2,11 @@ package applicationmedia
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
+	"sync/atomic"
 	"time"
 
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
@@ -54,7 +56,7 @@ type ProcessingRepository interface {
 	LeaseProcessingJobs(ctx context.Context, owner string, now time.Time, leaseUntil time.Time, limit int) ([]*domainmedia.MediaProcessingJob, error)
 	UpdateProcessingJob(ctx context.Context, job *domainmedia.MediaProcessingJob) error
 	UpdateProcessingJobOwned(ctx context.Context, job *domainmedia.MediaProcessingJob, leaseOwner string) error
-	ExtendProcessingLease(ctx context.Context, jobID int64, leaseOwner string, leaseUntil time.Time) error
+	ExtendProcessingLease(ctx context.Context, jobID int64, leaseOwner string, leaseTTL time.Duration) error
 	CreateCleanupTasks(ctx context.Context, tasks []*domainmedia.CleanupTask) error
 }
 
@@ -72,13 +74,19 @@ type MediaProcessingWorker struct {
 	repo         ProcessingRepository
 	processor    Processor
 	consumer     ProcessingConsumer
-	owner        string
 	leaseTTL     time.Duration
+	heartbeatTTL time.Duration
 	pollInterval time.Duration
 	concurrency  int
 	now          func() time.Time
 	notifier     MediaStateNotifier
-	wakeups      chan ProcessingRequestedEvent
+	schedule     chan processingRequest
+	slots        chan struct{}
+	claimCounter atomic.Uint64
+}
+
+type processingRequest struct {
+	event *ProcessingRequestedEvent
 }
 
 type ProcessingWorkerOption func(*MediaProcessingWorker)
@@ -90,21 +98,26 @@ func WithMediaStateNotifier(notifier MediaStateNotifier) ProcessingWorkerOption 
 }
 
 func NewMediaProcessingWorker(repo ProcessingRepository, processor Processor, consumer ProcessingConsumer, leaseTTL time.Duration, concurrency int, options ...ProcessingWorkerOption) *MediaProcessingWorker {
-	owner, _ := os.Hostname()
-	if owner == "" {
-		owner = "frux-worker"
-	}
 	if leaseTTL <= 0 {
 		leaseTTL = 10 * time.Minute
 	}
 	if concurrency <= 0 {
 		concurrency = 1
 	}
+	heartbeatTTL := leaseTTL / 6
+	if heartbeatTTL < 100*time.Millisecond {
+		heartbeatTTL = 100 * time.Millisecond
+	}
+	if heartbeatTTL > 5*time.Second {
+		heartbeatTTL = 5 * time.Second
+	}
 	worker := &MediaProcessingWorker{
-		repo: repo, processor: processor, consumer: consumer, owner: owner,
+		repo: repo, processor: processor, consumer: consumer,
 		leaseTTL: leaseTTL, pollInterval: defaultProcessingPollInterval, concurrency: concurrency,
-		now:     func() time.Time { return time.Now().UTC() },
-		wakeups: make(chan ProcessingRequestedEvent, concurrency),
+		heartbeatTTL: heartbeatTTL,
+		now:          func() time.Time { return time.Now().UTC() },
+		schedule:     make(chan processingRequest, concurrency),
+		slots:        make(chan struct{}, concurrency),
 	}
 	for _, option := range options {
 		option(worker)
@@ -117,12 +130,12 @@ func (w *MediaProcessingWorker) Start(ctx context.Context) error {
 		return nil
 	}
 	if w.consumer != nil {
-		if err := w.consumer.ConsumeMediaProcessingRequested(ctx, w.HandleRequested); err != nil {
+		if err := w.consumer.ConsumeMediaProcessingRequested(ctx, w.SignalRequested); err != nil {
 			return err
 		}
 	}
 	for range w.concurrency {
-		go w.runWakeupScheduler(ctx)
+		go w.runSchedulerWorker(ctx)
 	}
 	go func() {
 		ticker := time.NewTicker(w.pollInterval)
@@ -132,8 +145,11 @@ func (w *MediaProcessingWorker) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, err := w.ProcessPending(ctx); err != nil {
-					inframetrics.ObserveWorkerJob("media_processing_poll", 0, err)
+				for range w.concurrency {
+					select {
+					case w.schedule <- processingRequest{}:
+					default:
+					}
 				}
 			}
 		}
@@ -166,7 +182,7 @@ func (w *MediaProcessingWorker) SignalRequested(
 		}
 	}
 	select {
-	case w.wakeups <- *event:
+	case w.schedule <- processingRequest{event: event}:
 		inframetrics.ObserveMediaWakeup("signaled")
 	default:
 		inframetrics.ObserveMediaWakeup("capacity_full")
@@ -174,14 +190,20 @@ func (w *MediaProcessingWorker) SignalRequested(
 	return nil
 }
 
-func (w *MediaProcessingWorker) runWakeupScheduler(ctx context.Context) {
+func (w *MediaProcessingWorker) runSchedulerWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case event := <-w.wakeups:
-			if err := w.HandleRequested(ctx, &event); err != nil {
-				inframetrics.ObserveWorkerJob("media_processing_wakeup", 0, err)
+		case request := <-w.schedule:
+			if request.event != nil {
+				if err := w.HandleRequested(ctx, request.event); err != nil {
+					inframetrics.ObserveWorkerJob("media_processing_wakeup", 0, err)
+				}
+				continue
+			}
+			if _, err := w.ProcessPending(ctx); err != nil {
+				inframetrics.ObserveWorkerJob("media_processing_poll", 0, err)
 			}
 		}
 	}
@@ -191,8 +213,18 @@ func (w *MediaProcessingWorker) HandleRequested(ctx context.Context, event *Proc
 	if event == nil || event.AssetID <= 0 || event.ProfileVersion == "" {
 		return nil
 	}
+	if err := w.acquireSlot(ctx); err != nil {
+		return err
+	}
+	defer w.releaseSlot()
 	now := w.now()
-	job, err := w.repo.LeaseProcessingJob(ctx, event.AssetID, event.ProfileVersion, w.owner, now, now.Add(w.leaseTTL))
+	claimToken, err := w.claimToken()
+	if err != nil {
+		return err
+	}
+	job, err := w.repo.LeaseProcessingJob(
+		ctx, event.AssetID, event.ProfileVersion, claimToken, now, now.Add(w.leaseTTL),
+	)
 	if errors.Is(err, domainmedia.ErrProcessingJobNotFound) {
 		return nil
 	}
@@ -203,24 +235,31 @@ func (w *MediaProcessingWorker) HandleRequested(ctx context.Context, event *Proc
 }
 
 func (w *MediaProcessingWorker) ProcessPending(ctx context.Context) (int, error) {
+	if err := w.acquireSlot(ctx); err != nil {
+		return 0, err
+	}
+	defer w.releaseSlot()
 	now := w.now()
-	jobs, err := w.repo.LeaseProcessingJobs(ctx, w.owner, now, now.Add(w.leaseTTL), w.concurrency)
+	claimToken, err := w.claimToken()
+	if err != nil {
+		return 0, err
+	}
+	jobs, err := w.repo.LeaseProcessingJobs(
+		ctx, claimToken, now, now.Add(w.leaseTTL), 1,
+	)
 	if err != nil {
 		return 0, err
 	}
 	if len(jobs) > 0 {
 		inframetrics.ObserveMediaWakeup("polling_recovery")
 	}
-	processed := 0
-	var processErr error
 	for _, job := range jobs {
 		if err := w.processLeased(ctx, job); err != nil {
-			processErr = errors.Join(processErr, err)
-			continue
+			return 0, err
 		}
-		processed++
+		return 1, nil
 	}
-	return processed, processErr
+	return 0, nil
 }
 
 func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainmedia.MediaProcessingJob) (err error) {
@@ -228,11 +267,17 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 	defer func() {
 		inframetrics.ObserveWorkerJob("media_processing", time.Since(start), err)
 	}()
+	if job == nil {
+		return nil
+	}
+	leaseOwner := job.LeaseOwner
+	if err := w.renewLease(ctx, job.ID, leaseOwner); err != nil {
+		return err
+	}
 	asset, err := w.repo.FindAssetByID(ctx, job.AssetID)
 	if err != nil {
 		return w.failJob(ctx, nil, job, &ProcessError{Code: "asset_not_found", Terminal: true, Err: err})
 	}
-	leaseOwner := job.LeaseOwner
 	if asset.State == domainmedia.AssetStateDeleted {
 		return w.failJobOwned(ctx, asset, job, leaseOwner, &ProcessError{Code: "asset_deleted", Terminal: true, Err: errors.New("media asset is deleted")})
 	}
@@ -267,28 +312,37 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 	heartbeatDone := w.startLeaseHeartbeat(processCtx, cancel, job.ID, leaseOwner)
 	defer func() {
 		cancel()
-		if heartbeatErr := <-heartbeatDone; err == nil && heartbeatErr != nil {
-			err = heartbeatErr
-		}
+		err = errors.Join(err, <-heartbeatDone)
 	}()
-	result, err := w.processor.Process(processCtx, asset, job)
-	if err != nil {
-		return w.failJobOwned(ctx, asset, job, leaseOwner, err)
+	result, processErr := w.processor.Process(processCtx, asset, job)
+	select {
+	case heartbeatErr := <-heartbeatDone:
+		heartbeatDone = closedHeartbeatResult()
+		if heartbeatErr != nil {
+			return heartbeatErr
+		}
+	default:
 	}
-	currentAsset, err := w.repo.FindAssetByID(ctx, asset.ID)
+	if processErr != nil {
+		return w.failJobOwned(processCtx, asset, job, leaseOwner, processErr)
+	}
+	if err := w.renewLease(processCtx, job.ID, leaseOwner); err != nil {
+		return err
+	}
+	currentAsset, err := w.repo.FindAssetByID(processCtx, asset.ID)
 	if err != nil {
 		return err
 	}
 	if currentAsset.State == domainmedia.AssetStateDeleted {
-		return w.abortDeletedAsset(ctx, currentAsset, job, leaseOwner, result)
+		return w.abortDeletedAsset(processCtx, currentAsset, job, leaseOwner, result)
 	}
 	if result == nil || len(result.Variants) == 0 {
-		return w.failJobOwned(ctx, asset, job, leaseOwner, &ProcessError{Code: "empty_outputs", Terminal: true, Err: errors.New("media processor produced no outputs")})
+		return w.failJobOwned(processCtx, asset, job, leaseOwner, &ProcessError{Code: "empty_outputs", Terminal: true, Err: errors.New("media processor produced no outputs")})
 	}
 
-	if err := w.repo.UpsertVariants(ctx, result.Variants); err != nil {
+	if err := w.repo.UpsertVariants(processCtx, result.Variants); err != nil {
 		inframetrics.ObserveMediaRenditions(len(result.Variants), err)
-		return w.failJobOwned(ctx, asset, job, leaseOwner, &ProcessError{Code: "variant_persistence", Err: err})
+		return w.failJobOwned(processCtx, asset, job, leaseOwner, &ProcessError{Code: "variant_persistence", Err: err})
 	}
 	inframetrics.ObserveMediaRenditions(len(result.Variants), nil)
 	asset.Width = result.Width
@@ -298,15 +352,15 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 	asset.AudioCodec = result.AudioCodec
 	asset.State = domainmedia.AssetStateReady
 	asset.ErrorCode = ""
-	if err := w.repo.UpdateAsset(ctx, asset); err != nil {
+	if err := w.repo.UpdateAsset(processCtx, asset); err != nil {
 		return err
 	}
 	if w.notifier != nil {
-		if err := w.notifier.MediaReady(ctx, asset.ID); err != nil {
+		if err := w.notifier.MediaReady(processCtx, asset.ID); err != nil {
 			return err
 		}
 	}
-	return w.completeJob(ctx, job, leaseOwner)
+	return w.completeJob(processCtx, job, leaseOwner)
 }
 
 func (w *MediaProcessingWorker) abortDeletedAsset(ctx context.Context, asset *domainmedia.MediaAsset, job *domainmedia.MediaProcessingJob, leaseOwner string, result *ProcessResult) error {
@@ -404,8 +458,8 @@ func (w *MediaProcessingWorker) failJobOwned(ctx context.Context, asset *domainm
 func (w *MediaProcessingWorker) startLeaseHeartbeat(ctx context.Context, cancel context.CancelFunc, jobID int64, leaseOwner string) <-chan error {
 	done := make(chan error, 1)
 	interval := w.leaseTTL / 3
-	if interval < time.Second {
-		interval = time.Second
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -416,7 +470,7 @@ func (w *MediaProcessingWorker) startLeaseHeartbeat(ctx context.Context, cancel 
 				done <- nil
 				return
 			case <-ticker.C:
-				if err := w.repo.ExtendProcessingLease(context.Background(), jobID, leaseOwner, w.now().Add(w.leaseTTL)); err != nil {
+				if err := w.renewLease(ctx, jobID, leaseOwner); err != nil {
 					cancel()
 					done <- err
 					return
@@ -424,6 +478,50 @@ func (w *MediaProcessingWorker) startLeaseHeartbeat(ctx context.Context, cancel 
 			}
 		}
 	}()
+	return done
+}
+
+func (w *MediaProcessingWorker) renewLease(
+	ctx context.Context,
+	jobID int64,
+	claimToken string,
+) error {
+	heartbeatCtx, cancel := context.WithTimeout(ctx, w.heartbeatTTL)
+	defer cancel()
+	return w.repo.ExtendProcessingLease(
+		heartbeatCtx, jobID, claimToken, w.leaseTTL,
+	)
+}
+
+func (w *MediaProcessingWorker) acquireSlot(ctx context.Context) error {
+	select {
+	case w.slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *MediaProcessingWorker) releaseSlot() {
+	<-w.slots
+}
+
+func (w *MediaProcessingWorker) claimToken() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err == nil {
+		return "media:" + hex.EncodeToString(value[:]), nil
+	}
+
+	sequence := w.claimCounter.Add(1)
+	if sequence == 0 {
+		return "", errors.New("media claim token unavailable")
+	}
+	return fmt.Sprintf("media:fallback:%d:%d", time.Now().UnixNano(), sequence), nil
+}
+
+func closedHeartbeatResult() <-chan error {
+	done := make(chan error, 1)
+	done <- nil
 	return done
 }
 

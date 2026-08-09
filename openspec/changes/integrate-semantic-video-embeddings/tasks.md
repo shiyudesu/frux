@@ -46,3 +46,9 @@
 - [x] 7.2 Compile `./cmd/feed` and `./cmd/worker`, then run the complete Go test suite.
 - [ ] 7.3 Run targeted Compose outage/recovery verification with a strong test token and `docker compose -f apps/docker-compose.yml config`.
 - [x] 7.4 Confirm no main OpenSpec specs, recommendation recall/ranking/policy code, backfill binary/job, or pgvector/ANN artifacts were added, then run `openspec validate --all --strict`.
+
+## 8. Review Remediation
+
+- [x] 8.1 Remove semantic text compatibility from the shared `video.published` Kafka contract and prove Feed accepts video-valid records that embedding intake terminally classifies.
+- [x] 8.2 Bound semantic lease-heartbeat database calls with processing-derived contexts and cover shutdown/database-stall behavior.
+- [x] 8.3 Re-run Python, offline contract, targeted/full Go, binary build, Compose, strict OpenSpec, and diff validation after cross-change remediation.

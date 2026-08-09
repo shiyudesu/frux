@@ -26,9 +26,12 @@ The service is optimized for Chinese title/description text, predictable CPU ope
 
 ### 1. Create `apps/semantic-embedding` as an independent Python service
 
-The app will contain `pyproject.toml`, `uv.lock`, source under `src/frux_embedding`, tests, a model-fixture directory, and its own `Dockerfile`. It will use Python `3.12.*`, FastAPI/Pydantic for strict HTTP contracts, Uvicorn with exactly one worker, Sentence Transformers/PyTorch CPU inference, and `uv` for hash-locked installation. Direct and transitive package versions are committed in `uv.lock`; the final Python base image and `uv` bootstrap image are referenced by digest.
+The app will contain `pyproject.toml`, `uv.lock`, source under `src/frux_embedding`, tests, a model-fixture directory, and its own `Dockerfile`. It will use Python `3.12.*`, FastAPI/Pydantic for strict HTTP contracts, one Uvicorn coordinator, a fixed pool of at most two killable inference child processes, Sentence Transformers/PyTorch CPU inference, and `uv` for hash-locked installation. Direct and transitive package versions are committed in `uv.lock`; the final Python base image and `uv` bootstrap image are referenced by digest.
 
-One process avoids duplicate model memory and cross-process scheduling ambiguity. The service is separate from Frux's Go four-layer module convention because it owns no Frux domain facts or persistence.
+The coordinator owns authentication, validation, admission, deadlines, and response assembly. Native
+model execution occurs only in isolated child processes so a hung PyTorch/native kernel can be
+terminated without wedging the HTTP process. The service is separate from Frux's Go four-layer
+module convention because it owns no Frux domain facts or persistence.
 
 Alternative considered: embed Python or ONNX inference in the Go worker. Rejected because this proposal must not integrate with the worker, and it would mix model/runtime lifecycle with queue processing.
 
@@ -123,7 +126,13 @@ Alternative considered: accept one arbitrary `text` field. Rejected because pres
 
 ### 5. Make inference ordered and deterministic
 
-At startup, the process sets deterministic CPU seeds/settings, enables evaluation and no-gradient/inference mode, disables tokenizer parallelism, and fixes PyTorch/BLAS/OpenMP threads to two. The server always uses one process. A request is split into consecutive chunks of 8 and encoded sequentially with `normalize_embeddings=True`, without dynamic batching across requests. Results are converted to `float32`, checked for shape `(n, 384)`, finiteness, and unit norm, then reassembled in original order.
+At startup, a killable preload process validates the packaged model and fixtures. Each fixed
+inference child repeats the same immutable preload before accepting work, sets deterministic CPU
+seeds/settings, enables evaluation and no-gradient/inference mode, disables tokenizer parallelism,
+and fixes PyTorch/BLAS/OpenMP threads to two. A request is split into consecutive chunks of 8 and
+encoded sequentially with `normalize_embeddings=True`, without dynamic batching across requests.
+Results are converted to `float32`, checked for shape `(n, 384)`, finiteness, and unit norm, then
+reassembled in original order.
 
 Every output includes the caller ID and zero-based request index. Any item failure fails the complete request; partial vectors are never returned. Committed Chinese and mixed-language fixture vectors compare all 384 components at `atol=1e-6`, `rtol=1e-5`. Tests also compare repeated, single-item, multi-item, and chunk-boundary calls.
 
@@ -141,7 +150,13 @@ Alternative considered: a new embedding-specific token. Rejected for this first 
 
 ### 7. Apply explicit capacity, timeout, and backpressure limits
 
-The runtime uses one process, two inference slots, and a bounded admission counter for eight waiting requests. Authentication and input validation occur before queue admission. If the admitted waiting capacity is full, the service returns `429 OVER_CAPACITY` and `Retry-After: 1`. An admitted request has at most 2 seconds to acquire an inference slot. The complete handler, including validation, queue time, inference, vector validation, and serialization, has a 15-second deadline; timeout returns no partial result and releases counters/semaphores in `finally` blocks.
+The runtime uses one HTTP coordinator, two inference child processes/slots, and a bounded admission
+counter for eight waiting requests. Authentication and input validation occur before queue
+admission. If the admitted waiting capacity is full, the service returns `429 OVER_CAPACITY` and
+`Retry-After: 1`. An admitted request has at most 2 seconds to acquire an inference slot. The
+complete handler, including validation, queue time, inference, vector validation, and serialization,
+has a 15-second deadline; timeout returns no partial result, terminates the executing child, releases
+admission immediately, and asynchronously replaces the slot with a freshly preloaded process.
 
 Supported configuration:
 
@@ -160,13 +175,19 @@ Any unknown `FRUX_EMBEDDING_*` variable fails startup so misspellings cannot sil
 
 Compose applies a 2-CPU/2-GiB limit and documents a 1-CPU/1-GiB minimum reservation. Operators needing more throughput scale replicas horizontally behind an internal load balancer rather than increasing per-process bounds.
 
-Python cannot forcibly interrupt every native CPU kernel at an arbitrary instant. A timed-out request therefore stops awaiting and discards any late result, while its inference slot remains occupied until the underlying call returns; this preserves the true capacity bound and prevents runaway parallelism.
+The coordinator does not rely on Python thread cancellation for native kernels. Every inference runs
+in a dedicated child process; an end-to-end timeout or request cancellation terminates that child,
+discards all output, and starts a replacement. No timed-out native call retains a slot or survives as
+an untracked background process.
 
 Alternative considered: an unbounded executor queue with only an HTTP timeout. Rejected because timed-out work would continue accumulating and exhaust memory/CPU.
 
 ### 8. Fail closed on startup and return safe bounded errors
 
-Startup has a 180-second outer timeout covering settings validation, model load, metadata checks, and the deterministic fixture. Any failure logs a stable startup result class and exits non-zero; it does not start degraded with a substitute model. Runtime model replacement is unsupported.
+Startup has a 180-second outer timeout covering settings validation, killable model preload,
+metadata checks, and the deterministic fixture. Any failure terminates the preload process, logs a
+stable startup result class, and exits non-zero; it does not start degraded with a substitute model.
+Inference-process recycling reloads only the same packaged immutable model contract.
 
 Errors use the Frux envelope:
 
@@ -207,7 +228,7 @@ Container contract tests will start the built image with network disabled after 
 - [The model image and Python/PyTorch dependencies are large] → Keep the service isolated, use a multi-stage build, package only the pinned snapshot/runtime, and document the image/resource cost.
 - [CPU floating-point output can vary slightly across supported hosts] → Pin runtime dependencies and thread settings, use full-vector fixtures with tight tolerances rather than byte equality, and version any future runtime/model change.
 - [The 128-token model limit can truncate long descriptions] → Expose the limit in metadata, keep deterministic title-first composition, and treat a different model/sequence length as a new contract.
-- [A native inference call can outlive an HTTP timeout] → Keep its slot occupied until completion, discard late results, cap total slots/queue, and rely on orchestrator restart for a wedged process.
+- [A native inference call can outlive an HTTP timeout] → Run it only in a killable child process, terminate/recycle that process at the deadline, release admission, and verify no process or input-bearing log leaks.
 - [Two concurrent inferences can approach the 2-GiB limit on some CPUs] → Add an image smoke/load test under the stated limit, permit reducing concurrency to one, and scale horizontally instead of raising limits.
 - [Sharing `FRUX_INTERNAL_TOKEN` broadens the effect of that secret] → Keep the service network-internal, never log it, validate strength, and leave per-service credentials to a coordinated future change.
 - [Unauthenticated health endpoints reveal process state] → Return status only, expose no host port, and keep all metadata/inference protected.

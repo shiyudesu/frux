@@ -185,6 +185,49 @@ func TestFeedHandlerPreservesOriginalPublicationTime(t *testing.T) {
 		!stub.publishedAt.Equal(publishedAt) {
 		t.Fatalf("outcome=%s time=%v err=%v", outcome, stub.publishedAt, err)
 	}
+
+}
+
+func TestFeedHandlerAcceptsEmbeddingIncompatiblePublicationText(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	payload := infrakafka.VideoPublishedPayload{
+		EventID: "video-published:1:1", VideoID: 1, AuthorID: 2,
+		Title: "video-domain\x00title", PublishedAt: now, OccurredAt: now,
+	}
+	key, err := infrakafka.EncodeKey(
+		infrakafka.KeyKindVideoID,
+		infrakafka.VideoKey{VideoID: payload.VideoID},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := infrakafka.EncodeEvent(
+		infrakafka.TopicVideoPublished,
+		key,
+		infrakafka.EventMetadata{
+			EventID: payload.EventID, Type: infrakafka.EventTypeVideoPublished,
+			SchemaVersion: 1, OccurredAt: now, ProducedAt: now,
+			Producer: infrakafka.ProducerVideoWorker,
+		},
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("publication encode: %v", err)
+	}
+	decoded, err := infrakafka.DecodeEvent(
+		infrakafka.TopicVideoPublished, key, record, now,
+	)
+	if err != nil {
+		t.Fatalf("publication decode: %v", err)
+	}
+	stub := &fanoutStub{}
+	outcome, err := NewFanoutHandler(stub).Handle(
+		context.Background(),
+		applicationeventstream.Event{Payload: decoded.Payload},
+	)
+	if err != nil || outcome != applicationeventstream.OutcomeDurableSuccess {
+		t.Fatalf("feed outcome=%s err=%v", outcome, err)
+	}
 }
 
 type mediaWakeupStub struct {

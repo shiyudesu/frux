@@ -22,6 +22,7 @@ type semanticRepositoryStub struct {
 	extended   int
 	claimLimit int
 	owners     []string
+	extend     func(context.Context) error
 }
 
 func (*semanticRepositoryStub) FindVideoEmbedding(
@@ -88,12 +89,17 @@ func (s *semanticRepositoryStub) RetrySemanticJob(
 	return nil
 }
 func (s *semanticRepositoryStub) ExtendSemanticJobLease(
-	_ context.Context,
+	ctx context.Context,
 	job *domainembedding.SemanticJob,
 	_ time.Time,
 	leaseUntil time.Time,
 ) error {
 	s.extended++
+	if s.extend != nil {
+		if err := s.extend(ctx); err != nil {
+			return err
+		}
+	}
 	job.LeaseUntil = &leaseUntil
 	return nil
 }
@@ -131,14 +137,20 @@ type semanticGeneratorStub struct {
 	metadataErr error
 	generateErr error
 	vector      []float64
+	generate    func(context.Context) error
 }
 
 func (g *semanticGeneratorStub) ValidateMetadata(context.Context) error {
 	return g.metadataErr
 }
 func (g *semanticGeneratorStub) Generate(
-	context.Context, []SemanticInput,
+	ctx context.Context, _ []SemanticInput,
 ) ([][]float64, error) {
+	if g.generate != nil {
+		if err := g.generate(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if g.generateErr != nil {
 		return nil, g.generateErr
 	}
@@ -169,6 +181,7 @@ func TestSemanticWorkerRetriesAndCompletesDurableJobs(t *testing.T) {
 		TextHash: "hash", Title: "title", State: domainembedding.SemanticJobProcessing,
 		Attempts: 2, LeaseOwner: "owner", AvailableAt: now,
 	}
+
 	repository := &semanticRepositoryStub{jobs: []*domainembedding.SemanticJob{job}}
 	worker := NewSemanticWorker(
 		repository,
@@ -198,5 +211,75 @@ func TestSemanticWorkerRetriesAndCompletesDurableJobs(t *testing.T) {
 	}
 	if repository.completed != 1 {
 		t.Fatalf("completed = %d", repository.completed)
+	}
+}
+
+func TestSemanticHeartbeatDatabaseStallIsBounded(t *testing.T) {
+	now := time.Now().UTC()
+	job := &domainembedding.SemanticJob{
+		VideoID: 9, Model: domainembedding.SemanticModelKey,
+		TextHash: "hash", Title: "title", State: domainembedding.SemanticJobProcessing,
+		LeaseOwner: "claim", AvailableAt: now,
+	}
+	repository := &semanticRepositoryStub{
+		jobs: []*domainembedding.SemanticJob{job},
+		extend: func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	generator := &semanticGeneratorStub{generate: func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	worker := NewSemanticWorker(
+		repository, generator, true, 1, 300*time.Millisecond, time.Hour,
+	)
+	worker.now = func() time.Time { return now }
+	started := time.Now()
+	_, err := worker.ProcessPending(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("heartbeat error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stalled heartbeat blocked processor for %v", elapsed)
+	}
+	if repository.completed != 0 || repository.retried != 0 {
+		t.Fatalf(
+			"stale processor completed=%d retried=%d",
+			repository.completed, repository.retried,
+		)
+	}
+}
+
+func TestSemanticHeartbeatStopsPromptlyOnShutdown(t *testing.T) {
+	repository := &semanticRepositoryStub{
+		extend: func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	worker := NewSemanticWorker(
+		repository, &semanticGeneratorStub{}, true,
+		1, time.Second, time.Hour,
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	processCtx, processCancel := context.WithCancel(ctx)
+	done := worker.startLeaseHeartbeat(
+		processCtx,
+		processCancel,
+		&domainembedding.SemanticJob{
+			VideoID: 1, Model: domainembedding.SemanticModelKey,
+			TextHash: "hash", LeaseOwner: "claim",
+		},
+	)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("shutdown heartbeat error = %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("heartbeat did not stop after shutdown")
 	}
 }

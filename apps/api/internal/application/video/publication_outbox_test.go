@@ -12,6 +12,8 @@ type publicationStoreStub struct {
 	ensured    int
 	dispatched int
 	failed     int
+	stats      PublicationOutboxStats
+	statsErr   error
 }
 
 func (s *publicationStoreStub) EnsurePublicationEvent(
@@ -39,10 +41,31 @@ func (s *publicationStoreStub) MarkPublicationEventFailed(
 	s.failed++
 	return nil
 }
-func (*publicationStoreStub) PublicationOutboxStats(
+func (s *publicationStoreStub) PublicationOutboxStats(
 	context.Context, time.Time,
 ) (PublicationOutboxStats, error) {
-	return PublicationOutboxStats{}, nil
+	return s.stats, s.statsErr
+}
+
+type publicationObserverStub struct {
+	pending  int64
+	oldest   *time.Time
+	statsErr error
+	results  []string
+}
+
+func (o *publicationObserverStub) ObservePublicationOutbox(
+	pending int64,
+	oldest *time.Time,
+	err error,
+) {
+	o.pending = pending
+	o.oldest = oldest
+	o.statsErr = err
+}
+
+func (o *publicationObserverStub) ObservePublicationDispatch(result string) {
+	o.results = append(o.results, result)
 }
 func (*publicationStoreStub) ReconcilePublicationEvents(
 	context.Context, int, time.Time,
@@ -68,6 +91,7 @@ func TestDurablePublicationBoundaryAndDispatcher(t *testing.T) {
 		EventID: "video-published:1:1", VideoID: 1, AuthorID: 2,
 		PublishedAt: now, OccurredAt: now,
 	}
+
 	store := &publicationStoreStub{items: []*PublicationOutboxItem{{
 		Event: event, Attempts: 1,
 	}}}
@@ -103,5 +127,38 @@ func TestDurablePublicationBoundaryAndDispatcher(t *testing.T) {
 	}
 	if store.dispatched != 2 {
 		t.Fatalf("recovery dispatched = %d", store.dispatched)
+	}
+}
+
+func TestPublicationOutboxStatsRemainObservableDuringTransportFailure(t *testing.T) {
+	now := time.Now().UTC()
+	oldest := now.Add(-10 * time.Minute)
+	event := &PublishedEvent{
+		EventID: "video-published:2:1", VideoID: 2, AuthorID: 3,
+		PublishedAt: now, OccurredAt: now,
+	}
+	store := &publicationStoreStub{
+		items: []*PublicationOutboxItem{{Event: event, Attempts: 1}},
+		stats: PublicationOutboxStats{Pending: 7, OldestPending: &oldest},
+	}
+	observer := &publicationObserverStub{}
+	dispatcher := NewPublicationOutboxDispatcher(
+		store,
+		&publicationPublisherStub{err: errors.New("transport unavailable")},
+		observer,
+	)
+	dispatcher.now = func() time.Time { return now }
+	if _, err := dispatcher.RunOnce(context.Background()); err == nil {
+		t.Fatal("transport failure was hidden")
+	}
+	if observer.statsErr != nil || observer.pending != 7 ||
+		observer.oldest == nil || !observer.oldest.Equal(oldest) {
+		t.Fatalf(
+			"stats pending=%d oldest=%v err=%v",
+			observer.pending, observer.oldest, observer.statsErr,
+		)
+	}
+	if len(observer.results) != 1 || observer.results[0] != "transport" {
+		t.Fatalf("dispatch results = %v", observer.results)
 	}
 }

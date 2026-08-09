@@ -128,6 +128,10 @@ Kafka dispatch 状态。审核、媒体 ready、恢复、运营和 reconciliatio
 不可用不会回滚真实公开状态。Worker 将事实发布到 30 天保留的 `frux.video.published.v1`，RabbitMQ
 仅在迁移模式中保留 mirror/rollback。
 
+publication outbox 的 pending/oldest 统计查询与 dispatch 操作错误分别观测。即使 Kafka transport
+失败，只要统计查询成功，pending 与 oldest-age gauge 仍按当前数据库结果更新；统计查询自身失败时才
+保留旧的 age 值。
+
 ## 4. 业务规则
 
 | 规则 | 说明 |

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import asyncio
+from contextlib import asynccontextmanager
 import hmac
 import re
 import time
-from typing import Awaitable, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -23,6 +22,12 @@ from .constants import (
     MAX_SEQUENCE_TOKENS,
 )
 from .model import ModelRuntime
+from .inference import (
+    Capacity,
+    InferenceTimeout,
+    OverCapacity,
+    QueueTimeout,
+)
 from .normalization import canonical_text
 from .schemas import (
     EmbeddingItemResponse,
@@ -102,91 +107,6 @@ class BodyTooLarge(Exception):
     pass
 
 
-class Capacity:
-    def __init__(self, settings: Settings):
-        self.settings = settings
-        self.semaphore = asyncio.Semaphore(settings.max_concurrency)
-        self.lock = asyncio.Lock()
-        self.admitted = 0
-
-    async def run(self, call: Callable[[], list[list[float]]], started: float):
-        if self._remaining(started) <= 0:
-            raise InferenceTimeout
-        async with self.lock:
-            if self._remaining(started) <= 0:
-                raise InferenceTimeout
-            if self.admitted >= self.settings.max_concurrency + self.settings.max_queue:
-                raise OverCapacity
-            self.admitted += 1
-        acquired = False
-        try:
-            remaining = self._remaining(started)
-            if remaining <= 0:
-                raise InferenceTimeout
-            queue_timeout = self.settings.queue_timeout_ms / 1000
-            deadline_limited = remaining <= queue_timeout
-            await asyncio.wait_for(
-                self.semaphore.acquire(),
-                min(queue_timeout, remaining),
-            )
-            acquired = True
-        except TimeoutError as error:
-            await self._release_admission()
-            if deadline_limited or self._remaining(started) <= 0:
-                raise InferenceTimeout from error
-            raise QueueTimeout from error
-        except BaseException:
-            if acquired:
-                await self._release_slot()
-            else:
-                await self._release_admission()
-            raise
-        if self._remaining(started) <= 0:
-            await self._release_slot()
-            raise InferenceTimeout
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(None, call)
-        remaining = self._remaining(started)
-        try:
-            result = await asyncio.wait_for(asyncio.shield(future), max(remaining, 0))
-        except TimeoutError as error:
-            future.add_done_callback(lambda _: asyncio.create_task(self._release_slot()))
-            raise InferenceTimeout from error
-        except asyncio.CancelledError:
-            future.add_done_callback(lambda _: asyncio.create_task(self._release_slot()))
-            raise
-        except Exception:
-            await self._release_slot()
-            raise
-        await self._release_slot()
-        return result
-
-    def _remaining(self, started: float) -> float:
-        return self.settings.request_timeout_ms / 1000 - (
-            time.monotonic() - started
-        )
-
-    async def _release_slot(self):
-        self.semaphore.release()
-        await self._release_admission()
-
-    async def _release_admission(self):
-        async with self.lock:
-            self.admitted -= 1
-
-
-class OverCapacity(Exception):
-    pass
-
-
-class QueueTimeout(Exception):
-    pass
-
-
-class InferenceTimeout(Exception):
-    pass
-
-
 def metadata() -> ModelMetadata:
     return ModelMetadata(
         model=MODEL_NAME,
@@ -201,14 +121,24 @@ def metadata() -> ModelMetadata:
 
 
 def create_app(settings: Settings, runtime: ModelRuntime) -> FastAPI:
+    capacity = Capacity(settings, runtime)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        try:
+            yield
+        finally:
+            await capacity.close()
+
     app = FastAPI(
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.runtime = runtime
-    app.state.capacity = Capacity(settings)
+    app.state.capacity = capacity
     app.add_middleware(RequestBoundary, settings=settings)
 
     @app.exception_handler(RequestValidationError)
@@ -269,7 +199,7 @@ def create_app(settings: Settings, runtime: ModelRuntime) -> FastAPI:
         started = getattr(request.state, "started", time.monotonic())
         try:
             vectors = await app.state.capacity.run(
-                lambda: runtime.encode([item[3] for item in normalized]), started
+                [item[3] for item in normalized], started
             )
         except OverCapacity:
             return error_response(

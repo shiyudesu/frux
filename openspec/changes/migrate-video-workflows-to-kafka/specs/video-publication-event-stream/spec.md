@@ -11,6 +11,10 @@ The first transition that establishes a stable public publication fact SHALL cre
 - **WHEN** Kafka is unavailable after the public publication fact commits
 - **THEN** the outbox retains the event for delayed retry without reverting truthful public eligibility
 
+#### Scenario: Dispatch fails while backlog statistics succeed
+- **WHEN** Kafka publication fails but the outbox pending/oldest statistics query succeeds
+- **THEN** the dispatch failure is observed separately and the pending and oldest-age gauges still update from the successful statistics result
+
 ### Requirement: Retained Video Publication Topic
 Frux SHALL publish stable first-publication facts to a registered retained Kafka topic keyed by video ID.
 

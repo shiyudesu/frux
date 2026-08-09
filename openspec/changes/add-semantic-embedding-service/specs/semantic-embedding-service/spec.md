@@ -95,7 +95,12 @@ A successful embedding response SHALL include the fixed model, revision, dimensi
 - **THEN** fixed sequential chunking preserves the same vectors, identities, and order as processing each item separately
 
 ### Requirement: Preload and Startup Self-Validation
-The service SHALL use exactly one server worker process and SHALL fully load the packaged model into CPU memory before becoming ready. Startup SHALL run a deterministic Chinese fixture through the model and verify dimension, finiteness, normalization, and the committed expected vector tolerance. Model preload and self-validation SHALL complete within 180 seconds or terminate the process non-zero. The model SHALL remain immutable and resident for the process lifetime.
+The service SHALL use exactly one HTTP server coordinator and at most two isolated inference worker
+processes. A killable preload process SHALL fully load the packaged model and run the deterministic
+Chinese fixture before readiness. Every inference worker SHALL preload the same immutable packaged
+model contract before receiving work. Preload and self-validation SHALL verify dimension,
+finiteness, normalization, and committed expected vector tolerance and SHALL complete within 180
+seconds or terminate non-zero.
 
 #### Scenario: Startup self-check succeeds
 - **WHEN** the packaged model matches the pinned contract and produces the expected fixture vector
@@ -110,7 +115,11 @@ The service SHALL use exactly one server worker process and SHALL fully load the
 - **THEN** it uses the already resident model and performs no model load, download, replacement, or warm-up mutation
 
 ### Requirement: Bounded CPU, Memory, Concurrency, and Time
-The default deployment SHALL run one process with two inference slots, at most eight admitted waiting requests, two CPU threads, a 15-second end-to-end request deadline, and a 2-second maximum queue wait. Configuration MAY reduce these bounds but MUST NOT exceed them. The Compose service SHALL apply a 2-CPU and 2-GiB memory limit and SHALL document 1 CPU and 1 GiB as the minimum reservation guidance.
+The default deployment SHALL run one HTTP coordinator with two killable inference worker processes,
+at most eight admitted waiting requests, two CPU threads per inference process, a 15-second
+end-to-end request deadline, and a 2-second maximum queue wait. Configuration MAY reduce these
+bounds but MUST NOT exceed them. The Compose service SHALL apply a 2-CPU and 2-GiB memory limit
+and SHALL document 1 CPU and 1 GiB as the minimum reservation guidance.
 
 #### Scenario: Capacity is available
 - **WHEN** a request obtains an inference slot within 2 seconds and completes within 15 seconds
@@ -122,7 +131,11 @@ The default deployment SHALL run one process with two inference slots, at most e
 
 #### Scenario: Queue or inference deadline expires
 - **WHEN** slot acquisition exceeds 2 seconds or total processing exceeds 15 seconds
-- **THEN** the request returns a safe `429` or `504` response, releases its capacity, and returns no partial vectors
+- **THEN** the request returns a safe `429` or `504` response, terminates and replaces any executing inference process, releases admission, and returns no partial vectors
+
+#### Scenario: Native inference does not return
+- **WHEN** a model/native kernel remains blocked past the end-to-end deadline
+- **THEN** the coordinator kills that isolated process, makes the old PID ineligible for reuse, restores the slot with a freshly preloaded process, and leaves no live orphan process
 
 #### Scenario: Invalid runtime bound is configured
 - **WHEN** concurrency, queue, thread, or timeout configuration exceeds its allowed maximum or is non-positive
@@ -183,4 +196,3 @@ This change SHALL NOT call or modify the Go API or recommendation worker, consum
 #### Scenario: Existing Frux components run without the service
 - **WHEN** the Go API, worker, or Web application starts while the embedding service is absent
 - **THEN** their current startup and behavior remain unchanged
-

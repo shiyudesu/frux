@@ -22,7 +22,7 @@
 
 - [x] 4.1 Implement sequential chunks of 8 with no cross-request batching, convert outputs to `float32`, and reject any wrong shape, non-finite component, or non-unit vector before returning an all-or-nothing ordered response.
 - [x] 4.2 Enforce two true inference slots and at most eight admitted waiters, returning `429 OVER_CAPACITY` with `Retry-After: 1` before enqueueing excess work.
-- [x] 4.3 Enforce the 2-second slot wait and 15-second end-to-end deadline, release admission state on every path, return no partial vectors, and keep timed-out native inference occupying its slot until the underlying call finishes.
+- [x] 4.3 Enforce the 2-second slot wait and 15-second end-to-end deadline, release admission state on every path, return no partial vectors, and terminate/recycle timed-out native inference processes.
 - [x] 4.4 Emit only bounded structured operational fields and add guards proving headers, bodies, normalized text, item IDs, vectors, tokens, paths, URLs, and raw exceptions are never logged or persisted; keep the service free of PostgreSQL, Redis, RabbitMQ, Go API, recommendation clients, and request-history storage.
 
 ## 5. Unit and Contract Tests
@@ -31,7 +31,7 @@
 - [x] 5.2 Add normalization and strict-schema tests covering NFKC/whitespace equivalence, Chinese and multilingual text, controls/surrogates, exact and over-limit title/description/ID/batch/aggregate/body boundaries, duplicate IDs, malformed/trailing JSON, and missing/unknown fields.
 - [x] 5.3 Add health, readiness, startup-failure, safe-error, and exact metadata/response tests for not-ready behavior, successful preload, timeout, missing/corrupt model files, metadata mismatch, fixture mismatch, bounded envelopes, and absence of sensitive response or log content.
 - [x] 5.4 Add real pinned-model tests for both committed fixtures, all 384 components, dtype conversion, finiteness, unit norm, repeatability, normalized-equivalent input, single/multi-item identity and order, chunk boundaries, and complete failure for any invalid model result.
-- [x] 5.5 Add concurrency and timeout tests for two active slots, eight waiters, immediate overflow, queue and total deadlines, late native completion, semaphore/counter cleanup, no partial responses, and no application-data or request-history files.
+- [x] 5.5 Add concurrency and timeout tests for two active slots, eight waiters, immediate overflow, queue and total deadlines, hung-process termination/replacement, admission cleanup, no partial responses, no process leaks, and no application-data or request-history files.
 
 ## 6. Hardened Image and Compose Service
 
@@ -44,3 +44,9 @@
 - [x] 7.1 Add `docs/modules/semantic-embedding.md` and update the module index, engineering, architecture, deployment, and root setup/configuration docs with the exact model/API/environment/health/resource contract, while explicitly deferring browser/storage exposure, Go integration, PostgreSQL/Redis, RabbitMQ, persistence/backfill, pgvector/ANN, recommendation changes, and training.
 - [x] 7.2 Run the frozen unit and HTTP suites, including real-model fixture and concurrency/timeout coverage, then build the digest-pinned image and run its offline contract suite under the declared CPU, memory, and filesystem constraints.
 - [x] 7.3 Render Compose with a strong test token, run the targeted service health/contract test, confirm existing Go API/worker/Web source and configuration gained no embedding dependency or integration changes, and finish with `openspec validate --all --strict`.
+
+## 8. Review Remediation
+
+- [x] 8.1 Move native model inference and startup self-checks into killable isolated processes.
+- [x] 8.2 Terminate and replace a hung inference process at the end-to-end deadline while preserving the two-slot/eight-waiter contract.
+- [x] 8.3 Add process replacement, capacity release, no-live-process-leak, and child-output redaction tests; prepare writable runtime tmpfs state for process spawning.

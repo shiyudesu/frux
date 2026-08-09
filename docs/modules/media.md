@@ -14,6 +14,11 @@ Consumer 只严格验证命令与数据库任务、向有界本地调度器发�
 也可提交，因为 5 秒轮询和 reconciliation 会重新发现任务。重复、丢失、延迟、重启前到达的命令均不
 改变数据库租约带来的单任务执行保证。
 
+Kafka signal 与 5 秒 polling 进入同一个有界 worker pool。worker 先占用 slot，再 claim 最多一个
+任务，因此两条入口合计不会超额租赁。每次 claim 使用随机唯一 token，不使用 hostname；heartbeat、
+complete、retry 和 failed transition 都要求 token 匹配且 lease 尚未过期。heartbeat DB 调用使用从
+处理 context 派生的短 deadline，stall 或 shutdown 会取消 ffmpeg，旧 token 不能更新已回收任务。
+
 ## 3. 恢复与监控
 
 Worker 保留处理租约续期、过期 lease 回收、重试时间、终态通知、缺失输出修复和孤儿对象清理。

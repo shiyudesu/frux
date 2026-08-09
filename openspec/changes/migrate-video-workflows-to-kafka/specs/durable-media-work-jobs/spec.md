@@ -22,6 +22,25 @@ Media processing Kafka commands SHALL be short-retention wakeup hints keyed by a
 - **WHEN** a valid wakeup arrives while no local slot is available
 - **THEN** the consumer may commit the command because the durable job remains discoverable by polling
 
+### Requirement: Slot-Bounded Fenced Media Claims
+Kafka wakeups and PostgreSQL polling SHALL submit work to one bounded scheduler/worker pool. A worker
+SHALL reserve an execution slot before claiming at most one job. Every claim SHALL use a unique
+per-claim token, and heartbeat, completion, retry, and terminal transitions SHALL require that token,
+processing state, and a current unexpired lease. Heartbeats SHALL use bounded contexts derived from
+the active processing context.
+
+#### Scenario: Wakeups and polling are both active
+- **WHEN** Kafka signals jobs while the recovery poller also finds available work
+- **THEN** their combined claims never exceed the scheduler's currently available execution slots
+
+#### Scenario: Media lease expires and is reclaimed
+- **WHEN** another token reclaims a job before the old ffmpeg attempt returns
+- **THEN** the stale attempt cannot extend, complete, retry, or terminally update the reclaimed job
+
+#### Scenario: Media heartbeat storage stalls
+- **WHEN** a lease-extension query does not return before its bounded child-context deadline
+- **THEN** processing is canceled and the worker returns without performing a stale completion or retry
+
 ### Requirement: Durable Semantic Embedding Jobs
 Remote semantic embedding work SHALL use a PostgreSQL job keyed by video and model with canonical text hash, state, attempts, availability time, lease, bounded error class, and completion metadata.
 

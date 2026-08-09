@@ -29,6 +29,7 @@ COPY --from=builder /models /opt/frux/models
 COPY fixtures /app/fixtures
 COPY image_contract.py /app/image_contract.py
 RUN groupadd --gid 10001 frux && useradd --uid 10001 --gid 10001 --no-create-home frux && \
+    mkdir -p /run/frux-tmp && chown 10001:10001 /run/frux-tmp && \
     chmod -R a-w /opt/frux/models /app
 USER 10001:10001
 EXPOSE 8081

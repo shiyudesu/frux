@@ -94,6 +94,10 @@ The registered embedding Kafka group SHALL commit a video-publication offset onl
 - **WHEN** the registered publication envelope, video-ID key, event identity, timestamp, or payload is invalid
 - **THEN** the record is terminally classified without model work
 
+#### Scenario: Publication text is incompatible only with semantic intake
+- **WHEN** a publication record satisfies the video-owned envelope, identity, timestamp, key, and payload bounds but semantic canonicalization rejects its title or description
+- **THEN** the shared publication decoder and Feed consumer accept the record, while only the embedding group classifies its intake result as terminal and commit-safe
+
 ### Requirement: PostgreSQL-Owned Semantic Retry State
 Semantic jobs SHALL store canonical text hash, bounded state, attempts, `available_at`, lease owner/until, bounded error class, and completion metadata. Claims SHALL be bounded and stably ordered. Retry delays SHALL be 5 seconds, 30 seconds, 2 minutes, 10 minutes, then capped at 30 minutes.
 
@@ -108,6 +112,10 @@ Semantic jobs SHALL store canonical text hash, bounded state, attempts, `availab
 #### Scenario: Worker exits with a lease
 - **WHEN** a semantic worker stops before completing a job and its lease expires
 - **THEN** another worker reclaims the same job without resetting a Kafka offset
+
+#### Scenario: Heartbeat storage stalls or processing shuts down
+- **WHEN** a semantic lease heartbeat blocks in PostgreSQL or the processing context is canceled
+- **THEN** the heartbeat uses a bounded child context, returns promptly, cancels inference, and the uncertain attempt cannot complete or retry the job
 
 #### Scenario: Canonical text changes
 - **WHEN** intake observes a new canonical text hash for the same video and model

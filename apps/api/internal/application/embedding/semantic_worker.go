@@ -86,6 +86,7 @@ type SemanticWorker struct {
 	owner         string
 	concurrency   int
 	leaseTTL      time.Duration
+	heartbeatTTL  time.Duration
 	pollInterval  time.Duration
 	now           func() time.Time
 	startOnce     sync.Once
@@ -113,10 +114,17 @@ func NewSemanticWorker(
 	if pollInterval <= 0 {
 		pollInterval = time.Second
 	}
+	heartbeatTTL := leaseTTL / 6
+	if heartbeatTTL < 100*time.Millisecond {
+		heartbeatTTL = 100 * time.Millisecond
+	}
+	if heartbeatTTL > 5*time.Second {
+		heartbeatTTL = 5 * time.Second
+	}
 	return &SemanticWorker{
 		repo: repo, generator: generator, enabled: enabled,
 		owner: "semantic:" + owner, concurrency: concurrency,
-		leaseTTL: leaseTTL, pollInterval: pollInterval,
+		leaseTTL: leaseTTL, heartbeatTTL: heartbeatTTL, pollInterval: pollInterval,
 		now: func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -315,14 +323,19 @@ func (w *SemanticWorker) startLeaseHeartbeat(
 				return
 			case <-ticker.C:
 				now := w.now().UTC()
+				heartbeatCtx, heartbeatCancel := context.WithTimeout(
+					ctx, w.heartbeatTTL,
+				)
 				if err := w.repo.ExtendSemanticJobLease(
-					context.Background(), job, now, now.Add(w.leaseTTL),
+					heartbeatCtx, job, now, now.Add(w.leaseTTL),
 				); err != nil {
+					heartbeatCancel()
 					inframetrics.ObserveSemanticLease("lost")
 					cancel()
 					done <- err
 					return
 				}
+				heartbeatCancel()
 				inframetrics.ObserveSemanticLease("extended")
 			}
 		}

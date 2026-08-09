@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import queue
+import multiprocessing
+import os
 import sys
-import threading
 from typing import TextIO
 
 from .constants import STARTUP_TIMEOUT_SECONDS
@@ -36,31 +36,59 @@ class StartupResult:
 
 
 def preload_runtime(runtime, timeout_seconds: float) -> StartupResult:
-    outcome: queue.Queue[Exception | None] = queue.Queue(maxsize=1)
+    process_context = multiprocessing.get_context("fork")
+    parent, child = process_context.Pipe(duplex=False)
 
-    def load() -> None:
+    def load(connection) -> None:
+        descriptor = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(descriptor, 1)
+            os.dup2(descriptor, 2)
+        finally:
+            os.close(descriptor)
         try:
             runtime.load()
         except Exception as error:
-            outcome.put(error)
+            if isinstance(error, StartupFailureError):
+                connection.send(error.category.value)
+            else:
+                connection.send(StartupFailure.DEPENDENCY.value)
         else:
-            outcome.put(None)
+            connection.send("")
+        connection.close()
 
-    thread = threading.Thread(
+    process = process_context.Process(
         target=load,
+        args=(child,),
         name="semantic-embedding-preload",
         daemon=True,
     )
-    thread.start()
-    try:
-        error = outcome.get(timeout=timeout_seconds)
-    except queue.Empty:
+    process.start()
+    child.close()
+    if not parent.poll(timeout_seconds):
+        process.terminate()
+        process.join(timeout=1)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=1)
+        parent.close()
         return StartupResult(StartupFailure.PRELOAD_TIMEOUT)
-    if error is None:
+    try:
+        failure = parent.recv()
+    except (EOFError, OSError):
+        failure = StartupFailure.DEPENDENCY.value
+    parent.close()
+    process.join(timeout=1)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=1)
+    if failure == "":
+        runtime.ready = True
         return StartupResult()
-    if isinstance(error, StartupFailureError):
-        return StartupResult(error.category)
-    return StartupResult(StartupFailure.DEPENDENCY)
+    try:
+        return StartupResult(StartupFailure(failure))
+    except ValueError:
+        return StartupResult(StartupFailure.DEPENDENCY)
 
 
 def report_failure(result: StartupResult, stream: TextIO | None = None) -> None:

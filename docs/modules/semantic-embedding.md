@@ -5,6 +5,11 @@
 `apps/semantic-embedding` 是独立 Python 3.12 CPU 服务，只提供固定文本向量推理。它不访问
 PostgreSQL、Redis、RabbitMQ、Kafka 或浏览器，不保存请求历史，也不拥有推荐、回填或 ANN 逻辑。
 
+一个 Uvicorn coordinator 负责认证、校验、排队和 deadline；原生 PyTorch 推理只在最多两个隔离子
+进程执行。启动 fixture self-check 也在可终止进程内完成。请求超过 deadline 或被取消时，服务终止
+对应推理进程、释放 admission，并预加载 replacement。挂起 native kernel 不会继续占用 slot；
+shutdown 会回收全部子进程，子进程 stdout/stderr 也不会进入服务日志。
+
 ## 2. 固定模型
 
 - 模型：`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
@@ -27,7 +32,8 @@ metadata 和中英 fixture 全向量自检。
 
 ## 4. 容量与部署
 
-默认单进程、2 个真实推理 slot、8 个 waiter、2 秒排队、15 秒总 deadline、2 CPU、2 GiB。
+默认 1 个 HTTP coordinator、2 个隔离推理进程/slot、8 个 waiter、2 秒排队、15 秒总 deadline、
+2 CPU、2 GiB。
 容器以 UID/GID 10001 运行，只允许 64 MiB `/run/frux-tmp` tmpfs 写入，root/model filesystem
 只读并 drop all capabilities。
 

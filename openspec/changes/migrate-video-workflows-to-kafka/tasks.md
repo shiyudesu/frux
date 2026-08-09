@@ -53,3 +53,9 @@
 - [x] 8.1 Run targeted video, media, embedding, Feed fanout, migration, and Kafka integration tests.
 - [x] 8.2 Run forced Kafka and semantic-service outage/recovery tests proving public-state truth, hash progress, polling recovery, and eventual job completion.
 - [x] 8.3 Run full Go tests, both Go builds, Compose configuration validation, and strict OpenSpec validation.
+
+## 9. Review Remediation
+
+- [x] 9.1 Unify media Kafka wakeups and polling under one bounded scheduler/worker pool that claims no more jobs than available slots.
+- [x] 9.2 Use unique per-claim media tokens and fence heartbeat/completion/retry by token and unexpired lease, with bounded heartbeat contexts and stale/reclaim tests.
+- [x] 9.3 Observe publication outbox statistics independently of dispatch-operation errors so oldest-age updates during transport failures.

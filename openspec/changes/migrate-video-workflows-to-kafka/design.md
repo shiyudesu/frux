@@ -46,6 +46,10 @@ The transaction that first establishes a stable public publication fact inserts 
 
 The dispatcher publishes Kafka and marks the row dispatched after acknowledgement. A lease, `available_at`, attempts, bounded error class, and stable payload support crash recovery. The publication notification outbox is not reused because creator notification delivery and domain-event publication have different recipients, payloads, readiness, retention, and consumers.
 
+Outbox statistics and dispatch operations are observed independently. A successful pending/oldest
+statistics query updates both gauges even when the same run encounters a Kafka transport failure;
+only a statistics-query failure suppresses the oldest-age update.
+
 Alternative: continue requiring the lifecycle transition to synchronously publish Kafka. Rejected because broker availability must not prevent a durable video from reaching its valid public state.
 
 ### Keep Feed fanout idempotent and isolate its recovery
@@ -73,7 +77,13 @@ Alternative: Kafka retry topics for every semantic failure. Rejected because lon
 
 `frux.media.processing-requested.v1` is a short-retention command topic keyed by `asset_id`. The upload transaction creates the PostgreSQL processing job before attempting to publish the wakeup.
 
-The Kafka consumer validates that the durable job identity exists, signals a bounded local scheduler, and commits promptly. It does not hold the Kafka record throughout ffmpeg execution. The scheduler leases jobs from PostgreSQL, and the existing poller continues to find jobs when a command is missing, duplicated, delayed, or consumed before local capacity is available.
+The Kafka consumer validates that the durable job identity exists, signals one bounded local
+scheduler/worker pool, and commits promptly. Polling submits recovery work to the same pool. A worker
+reserves a slot before claiming exactly one job, so wakeups and polling together never claim more
+jobs than executable slots. Every claim uses a unique random token rather than a hostname owner;
+heartbeat, completion, retry, and failure transitions require that token and a current unexpired
+lease. Heartbeats use bounded processing-derived contexts, and a stalled heartbeat cancels ffmpeg
+work before any stale/reclaimed attempt may complete.
 
 Alternative: consume and transcode before committing the Kafka record. Rejected because long processing would interact poorly with consumer-group liveness and duplicate the job's lease/retry state in offsets.
 
@@ -127,3 +137,6 @@ None.
   shadow/cutover gates.
 - Each semantic processor claims one job with a unique token, heartbeats during the remote request,
   fences complete/retry on token/hash/unexpired lease, and starts only after resume succeeds.
+- Media wakeups and polling share one slot-bounded scheduler; each media claim has a unique token,
+  bounded heartbeat, and unexpired-lease fencing for completion/retry.
+- Publication outbox pending/oldest statistics remain observable independently of dispatch errors.

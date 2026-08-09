@@ -349,7 +349,7 @@ func (r *e2eMediaRepo) UpdateProcessingJobOwned(_ context.Context, job *domainme
 	return nil
 }
 
-func (*e2eMediaRepo) ExtendProcessingLease(context.Context, int64, string, time.Time) error {
+func (*e2eMediaRepo) ExtendProcessingLease(context.Context, int64, string, time.Duration) error {
 	return nil
 }
 

@@ -3,6 +3,7 @@ package applicationmedia
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,27 +76,94 @@ func TestKafkaWakeupValidatesAndSignalsWithoutProcessing(t *testing.T) {
 			ID: 1, AssetID: 20, ProfileVersion: "v1", State: domainmedia.JobStatePending,
 		},
 	}
+
 	processor := &processorStub{}
 	worker := NewMediaProcessingWorker(repo, processor, nil, time.Minute, 1)
 	event := NewProcessingRequestedEvent(20, "v1", now)
 	if err := worker.SignalRequested(context.Background(), event); err != nil {
 		t.Fatal(err)
 	}
-	if processor.calls != 0 || len(worker.wakeups) != 1 {
-		t.Fatalf("processor calls=%d queued=%d", processor.calls, len(worker.wakeups))
+	if processor.calls != 0 || len(worker.schedule) != 1 {
+		t.Fatalf("processor calls=%d queued=%d", processor.calls, len(worker.schedule))
 	}
 	if err := worker.SignalRequested(context.Background(), event); err != nil {
 		t.Fatal(err)
 	}
-	if len(worker.wakeups) != 1 {
-		t.Fatalf("full scheduler changed queued wakeups: %d", len(worker.wakeups))
+	if len(worker.schedule) != 1 {
+		t.Fatalf("full scheduler changed queued wakeups: %d", len(worker.schedule))
 	}
 	stale := NewProcessingRequestedEvent(20, "v2", now)
 	if err := worker.SignalRequested(context.Background(), stale); err != nil {
 		t.Fatal(err)
 	}
-	if len(worker.wakeups) != 1 {
-		t.Fatalf("stale wakeup was queued: %d", len(worker.wakeups))
+	if len(worker.schedule) != 1 {
+		t.Fatalf("stale wakeup was queued: %d", len(worker.schedule))
+	}
+}
+
+func TestMediaSchedulerNeverClaimsBeyondAvailableSlots(t *testing.T) {
+	now := time.Now().UTC()
+	repo := newConcurrentProcessingRepository(now, 4)
+	release := make(chan struct{})
+	processor := &blockingProcessor{release: release, started: make(chan struct{}, 4)}
+	worker := NewMediaProcessingWorker(repo, processor, nil, time.Minute, 2)
+	worker.pollInterval = 5 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for id := int64(1); id <= 2; id++ {
+		if err := worker.SignalRequested(
+			context.Background(),
+			NewProcessingRequestedEvent(id, "v1", now),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		select {
+		case <-processor.started:
+		case <-time.After(time.Second):
+			t.Fatal("processing slots did not start")
+		}
+	}
+	time.Sleep(30 * time.Millisecond)
+	repo.mu.Lock()
+	claims := repo.claims
+	tokens := append([]string(nil), repo.tokens...)
+	repo.mu.Unlock()
+	if claims != 2 {
+		t.Fatalf("claimed %d jobs with only two slots", claims)
+	}
+	if len(tokens) != 2 || tokens[0] == tokens[1] {
+		t.Fatalf("claim tokens are not unique: %v", tokens)
+	}
+	close(release)
+}
+
+func TestMediaHeartbeatStallIsBoundedAndPreventsStaleCompletion(t *testing.T) {
+	now := time.Now().UTC()
+	repo := newConcurrentProcessingRepository(now, 1)
+	repo.blockHeartbeat = true
+	processor := &cancelingProcessor{}
+	worker := NewMediaProcessingWorker(repo, processor, nil, 300*time.Millisecond, 1)
+	started := time.Now()
+	err := worker.HandleRequested(
+		context.Background(),
+		NewProcessingRequestedEvent(1, "v1", now),
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("heartbeat error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stalled heartbeat blocked processing for %v", elapsed)
+	}
+	repo.mu.Lock()
+	completions := repo.ownedUpdates
+	repo.mu.Unlock()
+	if completions != 0 {
+		t.Fatalf("stale claim performed %d fenced updates", completions)
 	}
 }
 
@@ -103,6 +171,221 @@ type processorStub struct {
 	result *ProcessResult
 	err    error
 	calls  int
+}
+
+type blockingProcessor struct {
+	release <-chan struct{}
+	started chan struct{}
+}
+
+func (p *blockingProcessor) Process(
+	ctx context.Context,
+	_ *domainmedia.MediaAsset,
+	job *domainmedia.MediaProcessingJob,
+) (*ProcessResult, error) {
+	p.started <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-p.release:
+		return &ProcessResult{Variants: []*domainmedia.MediaVariant{{
+			AssetID: job.AssetID, ProfileVersion: job.ProfileVersion,
+			Role: domainmedia.VariantRoleBaseline, State: domainmedia.VariantStateReady,
+		}}}, nil
+	}
+}
+
+type cancelingProcessor struct{}
+
+func (*cancelingProcessor) Process(
+	ctx context.Context,
+	_ *domainmedia.MediaAsset,
+	_ *domainmedia.MediaProcessingJob,
+) (*ProcessResult, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type concurrentProcessingRepository struct {
+	mu             sync.Mutex
+	assets         map[int64]*domainmedia.MediaAsset
+	jobs           map[int64]*domainmedia.MediaProcessingJob
+	claims         int
+	tokens         []string
+	ownedUpdates   int
+	blockHeartbeat bool
+	extendCalls    int
+}
+
+func newConcurrentProcessingRepository(
+	now time.Time,
+	count int,
+) *concurrentProcessingRepository {
+	repository := &concurrentProcessingRepository{
+		assets: make(map[int64]*domainmedia.MediaAsset, count),
+		jobs:   make(map[int64]*domainmedia.MediaProcessingJob, count),
+	}
+	for index := 1; index <= count; index++ {
+		id := int64(index)
+		repository.assets[id] = &domainmedia.MediaAsset{
+			ID: id, Kind: domainmedia.AssetKindVideo, State: domainmedia.AssetStateUploaded,
+		}
+		repository.jobs[id] = &domainmedia.MediaProcessingJob{
+			ID: id, AssetID: id, ProfileVersion: "v1",
+			State: domainmedia.JobStatePending, MaxAttempts: 5, NextAttemptAt: now,
+		}
+	}
+	return repository
+}
+
+func (r *concurrentProcessingRepository) FindAssetByID(
+	_ context.Context,
+	assetID int64,
+) (*domainmedia.MediaAsset, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	asset := r.assets[assetID]
+	if asset == nil {
+		return nil, domainmedia.ErrMediaAssetNotFound
+	}
+	copy := *asset
+	return &copy, nil
+}
+
+func (r *concurrentProcessingRepository) FindProcessingJobByAsset(
+	_ context.Context,
+	assetID int64,
+) (*domainmedia.MediaProcessingJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[assetID]
+	if job == nil {
+		return nil, domainmedia.ErrProcessingJobNotFound
+	}
+	copy := *job
+	return &copy, nil
+}
+
+func (r *concurrentProcessingRepository) UpdateAsset(
+	_ context.Context,
+	asset *domainmedia.MediaAsset,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy := *asset
+	r.assets[asset.ID] = &copy
+	return nil
+}
+
+func (*concurrentProcessingRepository) UpsertVariants(
+	context.Context,
+	[]*domainmedia.MediaVariant,
+) error {
+	return nil
+}
+
+func (r *concurrentProcessingRepository) LeaseProcessingJob(
+	_ context.Context,
+	assetID int64,
+	profileVersion string,
+	token string,
+	_ time.Time,
+	leaseUntil time.Time,
+) (*domainmedia.MediaProcessingJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[assetID]
+	if job == nil || job.ProfileVersion != profileVersion ||
+		(job.State != domainmedia.JobStatePending &&
+			job.State != domainmedia.JobStateRetryable) {
+		return nil, domainmedia.ErrProcessingJobNotFound
+	}
+	job.State = domainmedia.JobStateProcessing
+	job.Attempts++
+	job.LeaseOwner = token
+	job.LeaseUntil = &leaseUntil
+	r.claims++
+	r.tokens = append(r.tokens, token)
+	copy := *job
+	return &copy, nil
+}
+
+func (r *concurrentProcessingRepository) LeaseProcessingJobs(
+	ctx context.Context,
+	token string,
+	now time.Time,
+	leaseUntil time.Time,
+	limit int,
+) ([]*domainmedia.MediaProcessingJob, error) {
+	r.mu.Lock()
+	var assetID int64
+	for id, job := range r.jobs {
+		if job.State == domainmedia.JobStatePending ||
+			job.State == domainmedia.JobStateRetryable {
+			assetID = id
+			break
+		}
+	}
+	r.mu.Unlock()
+	if assetID == 0 || limit <= 0 {
+		return nil, nil
+	}
+	job, err := r.LeaseProcessingJob(
+		ctx, assetID, "v1", token, now, leaseUntil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return []*domainmedia.MediaProcessingJob{job}, nil
+}
+
+func (*concurrentProcessingRepository) UpdateProcessingJob(
+	context.Context,
+	*domainmedia.MediaProcessingJob,
+) error {
+	return nil
+}
+
+func (r *concurrentProcessingRepository) UpdateProcessingJobOwned(
+	_ context.Context,
+	job *domainmedia.MediaProcessingJob,
+	token string,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.jobs[job.AssetID]
+	if current == nil || current.LeaseOwner != token ||
+		current.State != domainmedia.JobStateProcessing {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	copy := *job
+	r.jobs[job.AssetID] = &copy
+	r.ownedUpdates++
+	return nil
+}
+
+func (r *concurrentProcessingRepository) ExtendProcessingLease(
+	ctx context.Context,
+	_ int64,
+	_ string,
+	_ time.Duration,
+) error {
+	r.mu.Lock()
+	r.extendCalls++
+	shouldBlock := r.blockHeartbeat && r.extendCalls > 1
+	r.mu.Unlock()
+	if shouldBlock {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (*concurrentProcessingRepository) CreateCleanupTasks(
+	context.Context,
+	[]*domainmedia.CleanupTask,
+) error {
+	return nil
 }
 
 func (p *processorStub) Process(context.Context, *domainmedia.MediaAsset, *domainmedia.MediaProcessingJob) (*ProcessResult, error) {
@@ -170,7 +453,7 @@ func (r *processingRepositoryStub) UpdateProcessingJobOwned(_ context.Context, j
 	return nil
 }
 
-func (*processingRepositoryStub) ExtendProcessingLease(context.Context, int64, string, time.Time) error {
+func (*processingRepositoryStub) ExtendProcessingLease(context.Context, int64, string, time.Duration) error {
 	return nil
 }
 
