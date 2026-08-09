@@ -311,6 +311,9 @@ func (c ActionParityChecker) Compare(
 	if found && match {
 		return applicationeventstream.ParityMatch, nil
 	}
+	if !found {
+		return applicationeventstream.ParityPending, nil
+	}
 	return applicationeventstream.ParityMismatch, nil
 }
 
@@ -330,6 +333,9 @@ func (c ViewParityChecker) Compare(
 	}
 	if found && match {
 		return applicationeventstream.ParityMatch, nil
+	}
+	if !found {
+		return applicationeventstream.ParityPending, nil
 	}
 	return applicationeventstream.ParityMismatch, nil
 }

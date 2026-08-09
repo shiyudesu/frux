@@ -39,10 +39,17 @@ Migration modes are closed:
 - Consumer: `rabbit`, `kafka_shadow`, `kafka`.
 
 Checked-in modes remain `rabbit`; action and view may independently select the four producer modes
-and three consumer modes. An active Kafka consumer requires an RFC3339 `cutover_boundary`. View
-production/consumption cuts over before action; rollback reverses that dependency. A shadow consumer
-uses `<active-group>.shadow.<deployment>`, never invokes a mutating handler, and never commits the
-future active Group's offsets.
+and three consumer modes. The acknowledged producer transport must be the active mutating consumer's
+transport: Rabbit-active and Kafka-shadow phases use Rabbit primary, while
+`kafka_with_rabbit_mirror` is allowed only after Kafka becomes active.
+
+An active Kafka consumer requires an RFC3339 `cutover_boundary`. Before the group starts, the worker
+uses kadm to resolve the timestamp to every partition offset and commits the boundary while the group
+is inactive. Existing group commits are preserved on restart; the boundary is not reapplied. The
+explicit `Backbone.ApplyConsumerCutover(..., CutoverForceReset)` operation may reset only an inactive group.
+View production/consumption cuts over before action; rollback reverses that dependency. A shadow
+consumer uses `<active-group>.shadow.<deployment>`, never invokes a mutating handler, and never
+commits the future active Group's offsets.
 
 Registered behavior contracts:
 
@@ -59,7 +66,8 @@ Every record uses a registered Topic, Producer, Consumer Group, Event Type, Sche
 Codec. The v1 JSON envelope contains event identity, event/schema versions, occurrence/production
 timestamps, producer, optional correlation identity, and typed payload. Unknown fields, trailing
 JSON, unknown versions/types, invalid keys/timestamps/IDs, and oversized records are terminal
-contract failures.
+contract failures. Action and user keys must also equal their decode/re-encode canonical bytes;
+leading-zero, signed, and action-case aliases are rejected.
 
 Local startup creates missing topics with registered partitions, retention, cleanup policy, maximum
 record size, replication, and minimum ISR. Production startup never creates or changes topics; it
@@ -77,6 +85,12 @@ fails on missing or incompatible topology.
 - Rebalance timeout covers handler cancellation and offset commit; a blocked rebalance cancels the current batch before partition ownership is released.
 - franz-go data-loss notifications are recorded as bounded metrics and consumption continues from the client's recovered cursor instead of restarting the group.
 - Worker processes continuously probe Kafka health so broker failure and recovery update the exported health gauge after startup.
+- Consumer supervisors export bounded session lifecycle counters and a per-registered-group health
+  gauge. Transient broker/session failures restart with bounded backoff; authentication,
+  configuration, and handler-contract failures stop a required active consumer and fail the worker
+  runtime visibly.
+- Shadow parity reports a missing durable fact as pending, retries it three times with a delayed
+  supervisor restart, and records pending exhaustion separately from a true conflicting-fact mismatch.
 
 ## Validation
 

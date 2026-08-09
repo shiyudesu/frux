@@ -1,6 +1,7 @@
 package infrakafka
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"regexp"
@@ -78,7 +79,7 @@ func (actionStateKeyCodec) Encode(value any) ([]byte, error) {
 	return []byte(fmt.Sprintf("action:%d:%d:%s", key.UserID, key.VideoID, actionType)), nil
 }
 
-func (actionStateKeyCodec) Decode(data []byte) (any, error) {
+func (codec actionStateKeyCodec) Decode(data []byte) (any, error) {
 	parts := strings.Split(string(data), ":")
 	if len(parts) != 4 || parts[0] != "action" {
 		return nil, ErrInvalidEventKey
@@ -90,7 +91,12 @@ func (actionStateKeyCodec) Decode(data []byte) (any, error) {
 		(actionType != "LIKE" && actionType != "FAVORITE") {
 		return nil, ErrInvalidEventKey
 	}
-	return ActionStateKey{UserID: userID, VideoID: videoID, ActionType: actionType}, nil
+	key := ActionStateKey{UserID: userID, VideoID: videoID, ActionType: actionType}
+	canonical, err := codec.Encode(key)
+	if err != nil || !bytes.Equal(data, canonical) {
+		return nil, ErrInvalidEventKey
+	}
+	return key, nil
 }
 
 func (codec actionStateKeyCodec) Validate(data []byte) error {
@@ -108,7 +114,7 @@ func (userKeyCodec) Encode(value any) ([]byte, error) {
 	return []byte(fmt.Sprintf("user:%d", key.UserID)), nil
 }
 
-func (userKeyCodec) Decode(data []byte) (any, error) {
+func (codec userKeyCodec) Decode(data []byte) (any, error) {
 	const prefix = "user:"
 	if !strings.HasPrefix(string(data), prefix) {
 		return nil, ErrInvalidEventKey
@@ -117,7 +123,12 @@ func (userKeyCodec) Decode(data []byte) (any, error) {
 	if err != nil || userID <= 0 {
 		return nil, ErrInvalidEventKey
 	}
-	return UserKey{UserID: userID}, nil
+	key := UserKey{UserID: userID}
+	canonical, encodeErr := codec.Encode(key)
+	if encodeErr != nil || !bytes.Equal(data, canonical) {
+		return nil, ErrInvalidEventKey
+	}
+	return key, nil
 }
 
 func (codec userKeyCodec) Validate(data []byte) error {

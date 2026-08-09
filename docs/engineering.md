@@ -196,7 +196,10 @@ GORM Repository 规则：
   当前 Session，由稳定 Event ID 和耐久幂等边界承受重投。
 - Kafka 迁移只允许 registered primary/mirror Producer 与 active/shadow Consumer。Shadow Group
   必须使用独立 Group ID，只做 Envelope、Key、Age 和可选 Parity 校验，不调用变更业务状态的
-  Handler。基础设施阶段所有业务流继续保持 RabbitMQ Producer/Consumer active。
+  Handler。Primary acknowledgement 必须属于 active mutating Consumer 使用的传输；Rabbit active
+  或 Kafka shadow 阶段不得使用 Kafka primary/Rabbit mirror。Active Group 启动前按 cutover
+  timestamp 用 kadm 一次性初始化各 Partition Offset；已有 Commit 必须保留，不得在重启时回绕。
+  Shadow 未查到事实记为 pending 并有界延迟重试，只有已存在但冲突的事实记为 mismatch。
 - Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
 - DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。

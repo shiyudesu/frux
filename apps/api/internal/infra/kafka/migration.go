@@ -100,11 +100,9 @@ func validStreamPair(producer ProducerMode, consumer ConsumerMode) bool {
 	switch consumer {
 	case ConsumerModeRabbit:
 		return producer == ProducerModeRabbit ||
-			producer == ProducerModeRabbitWithKafkaMirror ||
-			producer == ProducerModeKafkaWithRabbitMirror
+			producer == ProducerModeRabbitWithKafkaMirror
 	case ConsumerModeKafkaShadow:
-		return producer == ProducerModeRabbitWithKafkaMirror ||
-			producer == ProducerModeKafkaWithRabbitMirror
+		return producer == ProducerModeRabbitWithKafkaMirror
 	case ConsumerModeKafka:
 		return producer == ProducerModeKafka ||
 			producer == ProducerModeKafkaWithRabbitMirror

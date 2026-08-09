@@ -56,6 +56,7 @@ func TestMigrationPlanRejectsProducerConsumerGaps(t *testing.T) {
 			CutoverBoundary: "2026-08-09T00:00:00Z",
 		},
 	}
+
 	for _, stream := range tests {
 		_, err := MigrationPlan(infraconfig.KafkaConfig{
 			Enabled: true,
@@ -66,6 +67,64 @@ func TestMigrationPlanRejectsProducerConsumerGaps(t *testing.T) {
 		if err == nil {
 			t.Fatalf("unsafe stream pair accepted: %+v", stream)
 		}
+	}
+}
+
+func TestBehaviorMigrationRequiresActiveConsumerTransportAcknowledgement(t *testing.T) {
+	tests := []struct {
+		name   string
+		config infraconfig.KafkaMigrationConfig
+	}{
+		{
+			name: "view Rabbit active rejects failed Rabbit mirror",
+			config: infraconfig.KafkaMigrationConfig{
+				ViewEventRecorded: infraconfig.KafkaStreamMigrationConfig{
+					ProducerMode: "kafka_with_rabbit_mirror", ConsumerMode: "rabbit",
+				},
+			},
+		},
+		{
+			name: "view Rabbit active with Kafka shadow rejects failed Rabbit mirror",
+			config: infraconfig.KafkaMigrationConfig{
+				ViewEventRecorded: infraconfig.KafkaStreamMigrationConfig{
+					ProducerMode: "kafka_with_rabbit_mirror", ConsumerMode: "kafka_shadow",
+				},
+			},
+		},
+		{
+			name: "action Rabbit active rejects failed Rabbit mirror",
+			config: infraconfig.KafkaMigrationConfig{
+				ViewEventRecorded: infraconfig.KafkaStreamMigrationConfig{
+					ProducerMode: "kafka", ConsumerMode: "kafka",
+					CutoverBoundary: "2026-08-09T00:00:00Z",
+				},
+				ActionChanged: infraconfig.KafkaStreamMigrationConfig{
+					ProducerMode: "kafka_with_rabbit_mirror", ConsumerMode: "rabbit",
+				},
+			},
+		},
+		{
+			name: "action Rabbit active with Kafka shadow rejects failed Rabbit mirror",
+			config: infraconfig.KafkaMigrationConfig{
+				ViewEventRecorded: infraconfig.KafkaStreamMigrationConfig{
+					ProducerMode: "kafka", ConsumerMode: "kafka",
+					CutoverBoundary: "2026-08-09T00:00:00Z",
+				},
+				ActionChanged: infraconfig.KafkaStreamMigrationConfig{
+					ProducerMode: "kafka_with_rabbit_mirror", ConsumerMode: "kafka_shadow",
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := MigrationPlan(infraconfig.KafkaConfig{
+				Enabled: true, Migration: test.config,
+			})
+			if err == nil {
+				t.Fatal("migration accepted a producer whose required active transport is only a mirror")
+			}
+		})
 	}
 }
 

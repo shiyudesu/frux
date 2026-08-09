@@ -15,17 +15,21 @@ func TestKafkaMetricsUseOnlyRegisteredBoundedLabels(t *testing.T) {
 	produce := KafkaProduceTotal.WithLabelValues("unknown", "unknown", "unknown")
 	consume := KafkaConsumedTotal.WithLabelValues("unknown", "unknown", "unknown")
 	topology := KafkaTopologyValidationTotal.WithLabelValues("unknown", "unknown")
+	session := KafkaConsumerSessionTotal.WithLabelValues("unknown", "unknown")
 	before := []float64{
 		testutil.ToFloat64(produce),
 		testutil.ToFloat64(consume),
 		testutil.ToFloat64(topology),
+		testutil.ToFloat64(session),
 	}
 	observer.ObserveProduce("user-42", "producer-42", "raw broker error", time.Millisecond)
 	observer.ObserveConsume("video-42", "group-42", "offset-42", time.Millisecond, time.Second)
 	observer.ObserveTopology("topic-42", "arbitrary")
+	observer.ObserveConsumerSession("group-42", "raw failure")
 	if testutil.ToFloat64(produce)-before[0] != 1 ||
 		testutil.ToFloat64(consume)-before[1] != 1 ||
-		testutil.ToFloat64(topology)-before[2] != 1 {
+		testutil.ToFloat64(topology)-before[2] != 1 ||
+		testutil.ToFloat64(session)-before[3] != 1 {
 		t.Fatal("unknown Kafka labels were not folded")
 	}
 }

@@ -47,3 +47,12 @@
 - [x] 7.1 Run targeted interaction, exposure, recommendation, Kafka adapter, and API-flow tests.
 - [x] 7.2 Run forced Kafka outage tests proving view HTTP acceptance and action PostgreSQL fallback/Redis rollback behavior.
 - [x] 7.3 Run full Go tests, both Go builds, Compose configuration validation, and strict OpenSpec validation.
+
+## 8. Code Review Remediation
+
+- [x] 8.1 Require the active consumer transport acknowledgement for action and view migration pairs.
+- [x] 8.2 Apply active Kafka cutover timestamps as durable one-time group offsets without rewinding initialized groups.
+- [x] 8.3 Retry missing shadow parity facts with bounded delay while preserving true mismatch classification.
+- [x] 8.4 Reject non-canonical action and user key aliases by exact decode/re-encode equality.
+- [x] 8.5 Expose consumer supervisor session health and fail visibly on non-retryable active-group initialization/runtime errors.
+- [x] 8.6 Update Kafka migration documentation and complete the required validation matrix.

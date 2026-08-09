@@ -153,6 +153,54 @@ func TestViewPublisherUsesUserKeyAndPrimaryAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestRabbitActiveBehaviorPathsRequireRabbitAcknowledgement(t *testing.T) {
+	rabbitErr := errors.New("Rabbit publisher confirm failed")
+	t.Run("action", func(t *testing.T) {
+		rabbit := &rabbitPublisherStub{actionErr: rabbitErr}
+		kafka := &kafkaPublisherStub{}
+		publisher, err := NewActionPublisher(
+			infrakafka.ProducerModeRabbitWithKafkaMirror,
+			rabbit,
+			kafka,
+			nil,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := publisher.PublishActionChanged(
+			context.Background(),
+			actionFixture(),
+		); !errors.Is(err, rabbitErr) {
+			t.Fatalf("error=%v", err)
+		}
+		if kafka.calls != 1 {
+			t.Fatalf("Kafka mirror calls=%d", kafka.calls)
+		}
+	})
+	t.Run("view", func(t *testing.T) {
+		rabbit := &rabbitPublisherStub{viewErr: rabbitErr}
+		kafka := &kafkaPublisherStub{}
+		publisher, err := NewViewPublisher(
+			infrakafka.ProducerModeRabbitWithKafkaMirror,
+			rabbit,
+			kafka,
+			nil,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := publisher.PublishViewEventRecorded(
+			context.Background(),
+			viewFixture(),
+		); !errors.Is(err, rabbitErr) {
+			t.Fatalf("error=%v", err)
+		}
+		if kafka.calls != 1 {
+			t.Fatalf("Kafka mirror calls=%d", kafka.calls)
+		}
+	})
+}
+
 type actionWorkerStub struct{ err error }
 
 func (w actionWorkerStub) HandleActionChanged(
@@ -248,6 +296,7 @@ func TestStableIDsAbsorbDeliveriesAroundCutoverBoundary(t *testing.T) {
 	if err := actionWorker.HandleActionChanged(context.Background(), action); err != nil {
 		t.Fatal(err)
 	}
+
 	outcome, err := NewActionHandler(actionWorker).Handle(context.Background(), applicationeventstream.Event{
 		Payload: func() *infrakafka.ActionChangedPayload {
 			payload := actionPayload(action)
@@ -272,6 +321,62 @@ func TestStableIDsAbsorbDeliveriesAroundCutoverBoundary(t *testing.T) {
 	})
 	if err != nil || outcome != applicationeventstream.OutcomeDurableSuccess || viewRepo.writes != 1 {
 		t.Fatalf("view outcome=%s err=%v writes=%d", outcome, err, viewRepo.writes)
+	}
+}
+
+type actionParityReaderStub struct {
+	found bool
+	match bool
+}
+
+func (r actionParityReaderStub) CompareAcceptedActionEvent(
+	context.Context,
+	*applicationinteraction.ActionChangedEvent,
+) (bool, bool, error) {
+	return r.found, r.match, nil
+}
+
+type viewParityReaderStub struct {
+	found bool
+	match bool
+}
+
+func (r viewParityReaderStub) CompareBehaviorEvent(
+	context.Context,
+	*applicationexposure.ViewEventRecordedEvent,
+) (bool, bool, error) {
+	return r.found, r.match, nil
+}
+
+func TestBehaviorParityDistinguishesPendingFactsFromConflicts(t *testing.T) {
+	actionPayload := actionPayload(actionFixture())
+	actionEvent := applicationeventstream.Event{Payload: &actionPayload}
+	result, err := (ActionParityChecker{
+		Reader: actionParityReaderStub{},
+	}).Compare(context.Background(), actionEvent)
+	if err != nil || result != applicationeventstream.ParityPending {
+		t.Fatalf("missing action result=%s error=%v", result, err)
+	}
+	result, err = (ActionParityChecker{
+		Reader: actionParityReaderStub{found: true},
+	}).Compare(context.Background(), actionEvent)
+	if err != nil || result != applicationeventstream.ParityMismatch {
+		t.Fatalf("conflicting action result=%s error=%v", result, err)
+	}
+
+	viewPayload := viewPayload(viewFixture())
+	viewEvent := applicationeventstream.Event{Payload: &viewPayload}
+	result, err = (ViewParityChecker{
+		Reader: viewParityReaderStub{},
+	}).Compare(context.Background(), viewEvent)
+	if err != nil || result != applicationeventstream.ParityPending {
+		t.Fatalf("missing view result=%s error=%v", result, err)
+	}
+	result, err = (ViewParityChecker{
+		Reader: viewParityReaderStub{found: true},
+	}).Compare(context.Background(), viewEvent)
+	if err != nil || result != applicationeventstream.ParityMismatch {
+		t.Fatalf("conflicting view result=%s error=%v", result, err)
 	}
 }
 

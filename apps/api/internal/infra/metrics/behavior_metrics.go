@@ -99,7 +99,8 @@ func (o BehaviorShadowObserver) ObserveShadow(result string) {
 		boundedBehaviorLabel(
 			result,
 			"invalid", "future", "expired", "parity_unavailable",
-			"parity_match", "parity_mismatch", "validated",
+			"parity_match", "parity_mismatch", "parity_pending",
+			"parity_pending_exhausted", "validated",
 		),
 	).Inc()
 }

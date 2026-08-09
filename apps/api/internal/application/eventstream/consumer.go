@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -72,6 +73,7 @@ type ParityResult string
 const (
 	ParityMatch    ParityResult = "match"
 	ParityMismatch ParityResult = "mismatch"
+	ParityPending  ParityResult = "pending"
 )
 
 type ParityChecker interface {
@@ -83,11 +85,15 @@ type ShadowObserver interface {
 }
 
 type ShadowHandler struct {
-	expectedGroup string
-	maxAge        time.Duration
-	parity        ParityChecker
-	observer      ShadowObserver
-	now           func() time.Time
+	expectedGroup  string
+	maxAge         time.Duration
+	parity         ParityChecker
+	observer       ShadowObserver
+	now            func() time.Time
+	pendingMu      sync.Mutex
+	pendingRetries map[string]int
+	maxRetries     int
+	retryDelay     time.Duration
 }
 
 func NewShadowHandler(
@@ -102,6 +108,8 @@ func NewShadowHandler(
 	return &ShadowHandler{
 		expectedGroup: expectedGroup, maxAge: maxAge,
 		parity: parity, observer: observer, now: time.Now,
+		pendingRetries: make(map[string]int),
+		maxRetries:     3, retryDelay: time.Second,
 	}, nil
 }
 
@@ -129,9 +137,17 @@ func (h *ShadowHandler) Handle(ctx context.Context, event Event) (Outcome, error
 		}
 		switch result {
 		case ParityMatch:
+			h.clearPending(event.EventID)
 			h.observe("parity_match")
 		case ParityMismatch:
+			h.clearPending(event.EventID)
 			h.observe("parity_mismatch")
+		case ParityPending:
+			if h.retryPending(event.EventID) {
+				h.observe("parity_pending")
+				return OutcomeRetryable, PendingParityError{Delay: h.retryDelay}
+			}
+			h.observe("parity_pending_exhausted")
 		default:
 			h.observe("invalid")
 			return OutcomeTerminal, nil
@@ -140,6 +156,36 @@ func (h *ShadowHandler) Handle(ctx context.Context, event Event) (Outcome, error
 		h.observe("validated")
 	}
 	return OutcomeDurableSuccess, nil
+}
+
+type PendingParityError struct {
+	Delay time.Duration
+}
+
+func (e PendingParityError) Error() string {
+	return "shadow parity fact is pending"
+}
+
+func (e PendingParityError) RetryAfter() time.Duration {
+	return e.Delay
+}
+
+func (h *ShadowHandler) retryPending(eventID string) bool {
+	h.pendingMu.Lock()
+	defer h.pendingMu.Unlock()
+	retries := h.pendingRetries[eventID]
+	if retries >= h.maxRetries {
+		delete(h.pendingRetries, eventID)
+		return false
+	}
+	h.pendingRetries[eventID] = retries + 1
+	return true
+}
+
+func (h *ShadowHandler) clearPending(eventID string) {
+	h.pendingMu.Lock()
+	delete(h.pendingRetries, eventID)
+	h.pendingMu.Unlock()
 }
 
 func (*ShadowHandler) ShadowOnly() {}

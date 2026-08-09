@@ -81,6 +81,37 @@ Metrics add registered results for:
 
 No event ID or business identity becomes a label.
 
+### Require acknowledgement from the active delivery transport
+
+Migration pairs are valid only when the producer result required for success belongs to the
+transport used by the active mutating consumer. `kafka_with_rabbit_mirror` is therefore valid only
+with an active Kafka consumer; Rabbit-active and Kafka-shadow phases require
+`rabbit_with_kafka_mirror`. A successful Kafka primary result cannot hide a failed Rabbit mirror
+while Rabbit still owns business mutation.
+
+### Apply active cutover boundaries as durable group offsets
+
+Before starting an active behavior group, the worker uses franz-go/kadm to resolve the configured
+RFC3339 boundary to one offset per topic partition and commits those offsets while the group is
+inactive. The offset metadata records the boundary. Normal startup is initialize-only: any existing
+committed offset is preserved, so changing configuration or restarting cannot rewind the group.
+An explicit reset operation is available only for an inactive group.
+
+### Retry missing shadow facts without reporting false mismatches
+
+Parity readers distinguish `pending` (no durable fact yet) from `mismatch` (a durable fact exists
+with conflicting content). Pending records receive a bounded number of delayed retries; if the fact
+still does not arrive, the record is completed as pending-exhausted rather than mismatch. Existing
+conflicts remain immediate mismatches.
+
+### Enforce canonical behavior keys and supervised consumer health
+
+Action and user keys are decoded and then re-encoded; the bytes must match exactly, rejecting
+leading-zero, signed, or case aliases that could split one logical identity across partitions.
+Consumer supervisors expose bounded session lifecycle metrics, preserve underlying authorization
+errors for classification, retry transient broker/session failures, and terminate required active
+consumer runtime on non-retryable authentication, configuration, or handler-contract failures.
+
 ## Risks / Trade-offs
 
 - [Mirror publication can miss records] -> Treat mirror data as validation only and begin active consumption at a documented cutover boundary.
@@ -89,6 +120,9 @@ No event ID or business identity becomes a label.
 - [A consumer crash after PostgreSQL commit duplicates delivery] -> Preserve event receipts, payload conflict checks, and monotonic version application.
 - [A hot user can concentrate view traffic] -> Key by user for correctness; monitor partition skew and version the topic if a future scale requires another model.
 - [Seven-day Kafka retention is not sufficient for model training] -> Continue using PostgreSQL training and behavior facts; longer analytical retention is a separate capacity decision.
+- [Concurrent cutover initialization] -> Require an inactive group, recheck committed offsets before
+  committing, and use deterministic timestamp offsets so concurrent initializers either preserve an
+  existing commit or write the same boundary.
 
 ## Migration Plan
 

@@ -106,12 +106,17 @@ func main() {
 		}
 	}()
 
-	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ, kafkaBackbone); err != nil {
+	runtimeFailures := make(chan error, 1)
+	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ, kafkaBackbone, runtimeFailures); err != nil {
 		log.Fatalf("start workers failed: %v", err)
 	}
 	log.Println("frux worker is running")
-	<-ctx.Done()
-	log.Println("frux worker stopped")
+	select {
+	case <-ctx.Done():
+		log.Println("frux worker stopped")
+	case err := <-runtimeFailures:
+		log.Fatalf("worker runtime failed: %v", err)
+	}
 }
 
 func startWorkers(
@@ -120,6 +125,7 @@ func startWorkers(
 	gormDB *gorm.DB,
 	rabbitMQ *inframq.RabbitMQ,
 	kafkaBackbone *infrakafka.Backbone,
+	runtimeFailures chan<- error,
 ) error {
 	redisClient := infracache.NewRedisClient(cfg.Redis)
 	feedCache := infracache.NewFeedCache(redisClient)
@@ -191,8 +197,10 @@ func startWorkers(
 	switch actionMigration.Consumer {
 	case infrakafka.ConsumerModeKafka:
 		if err := startKafkaConsumer(
-			ctx, cfg.Kafka, infrakafka.GroupPersistActionActive,
+			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupPersistActionActive,
+			actionMigration.CutoverBoundary,
 			infrabehaviorstream.NewActionHandler(actionWorker),
+			runtimeFailures,
 		); err != nil {
 			return err
 		}
@@ -215,7 +223,8 @@ func startWorkers(
 			return err
 		}
 		if err := startKafkaConsumer(
-			ctx, cfg.Kafka, infrakafka.GroupPersistActionShadow, shadow,
+			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupPersistActionShadow, "", shadow,
+			runtimeFailures,
 		); err != nil {
 			return err
 		}
@@ -267,8 +276,10 @@ func startWorkers(
 	switch viewMigration.Consumer {
 	case infrakafka.ConsumerModeKafka:
 		if err := startKafkaConsumer(
-			ctx, cfg.Kafka, infrakafka.GroupConsumeViewActive,
+			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupConsumeViewActive,
+			viewMigration.CutoverBoundary,
 			infrabehaviorstream.NewViewHandler(behaviorWorker),
+			runtimeFailures,
 		); err != nil {
 			return err
 		}
@@ -291,7 +302,8 @@ func startWorkers(
 			return err
 		}
 		if err := startKafkaConsumer(
-			ctx, cfg.Kafka, infrakafka.GroupConsumeViewShadow, shadow,
+			ctx, kafkaBackbone, cfg.Kafka, infrakafka.GroupConsumeViewShadow, "", shadow,
+			runtimeFailures,
 		); err != nil {
 			return err
 		}
@@ -433,22 +445,42 @@ func startWorkers(
 
 func startKafkaConsumer(
 	ctx context.Context,
+	backbone *infrakafka.Backbone,
 	cfg infraconfig.KafkaConfig,
 	group infrakafka.ConsumerGroupID,
+	cutoverBoundary string,
 	handler applicationeventstream.Handler,
+	runtimeFailures chan<- error,
 ) error {
+	observer := inframetrics.KafkaObserver{}
+	if cutoverBoundary != "" {
+		result, err := backbone.ApplyConsumerCutover(
+			ctx, group, cutoverBoundary, infrakafka.CutoverInitializeOnly,
+		)
+		if err != nil {
+			observer.ObserveConsumerSession(group, "fatal_failure")
+			return err
+		}
+		log.Printf("kafka consumer %s cutover offsets: %s", group, result)
+	}
 	first, err := infrakafka.NewConsumer(
 		ctx,
 		cfg,
 		group,
 		handler,
-		inframetrics.KafkaObserver{},
+		observer,
 	)
 	if err != nil {
+		result := "retryable_failure"
+		if !infrakafka.RetryableConsumerError(err) {
+			result = "fatal_failure"
+		}
+		observer.ObserveConsumerSession(group, result)
 		return err
 	}
 	firstSession := true
 	supervisor := infrakafka.Supervisor{
+		Group: group, Observer: observer,
 		NewConsumer: func(sessionContext context.Context) (*infrakafka.Consumer, error) {
 			if firstSession {
 				firstSession = false
@@ -459,13 +491,20 @@ func startKafkaConsumer(
 				cfg,
 				group,
 				handler,
-				inframetrics.KafkaObserver{},
+				observer,
 			)
 		},
 	}
 	go func() {
 		if err := supervisor.Run(ctx); err != nil {
 			log.Printf("kafka consumer %s stopped: %v", group, err)
+			spec, specErr := infrakafka.ConsumerGroup(group)
+			if specErr == nil && !spec.Shadow && runtimeFailures != nil {
+				select {
+				case runtimeFailures <- fmt.Errorf("kafka consumer %s: %w", group, err):
+				default:
+				}
+			}
 		}
 	}()
 	return nil

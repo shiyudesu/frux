@@ -22,6 +22,7 @@ type Diagnostics struct {
 type Backbone struct {
 	client         *Client
 	admin          *Administrator
+	cutover        *CutoverAdministrator
 	publisher      *Publisher
 	plan           []StreamMigration
 	environment    string
@@ -67,6 +68,7 @@ func Start(
 	}
 	backbone.client = client
 	backbone.admin = NewAdministrator(client, cfg, topologyObserver)
+	backbone.cutover = NewCutoverAdministrator(client, cfg)
 	backbone.publisher = NewPublisher(client, produceObserver)
 	results, err := backbone.admin.EnsureTopics(ctx)
 	backbone.mu.Lock()
@@ -83,6 +85,18 @@ func Start(
 		return nil, err
 	}
 	return backbone, nil
+}
+
+func (b *Backbone) ApplyConsumerCutover(
+	ctx context.Context,
+	group ConsumerGroupID,
+	boundary string,
+	mode CutoverMode,
+) (CutoverResult, error) {
+	if b == nil || b.cutover == nil {
+		return "", ErrKafkaUnavailable
+	}
+	return b.cutover.Apply(ctx, group, boundary, mode)
 }
 
 func (b *Backbone) Publisher() *Publisher {

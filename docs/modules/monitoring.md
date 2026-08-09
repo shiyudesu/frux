@@ -241,12 +241,17 @@ Kafka 基础暴露：
 - `frux_kafka_consumer_lag{topic,group}`、delivery delay；
 - `frux_kafka_contract_failures_total{topic,group,code}`；
 - `frux_kafka_topology_validation_total{topic,result}` 和 broker health。
+- `frux_kafka_consumer_session_total{group,result}` 与
+  `frux_kafka_consumer_session_healthy{group}`。
 
 Topic、Producer、Group、Outcome、Contract Code 和 Topology Result 均来自封闭集合。禁止使用
 event/user/video/key/partition/offset/payload/raw error 作为标签。`commit result=uncertain` 表示
 当前 Consumer Session 已停止，后续可能重投；先检查 Consumer 幂等边界，再检查 Group Coordinator。
 `topology result=invalid/missing` 在生产会阻止启动，不能临时开启 auto creation。Delivery delay 或
 lag 增长时按注册 Topic/Group 定位，不要添加动态 Partition/Offset 标签。
+`consumer_session result=fatal_failure` 表示认证、配置或 Handler 契约错误；active Group 会让
+Worker 明确失败，不能只观察 broker health。`retryable_failure` 表示暂时 Broker/DB/Parity
+依赖失败并按有界退避重建 Session。
 
 ## 15. Behavior stream migration observability
 
@@ -258,7 +263,9 @@ lag 增长时按注册 Topic/Group 定位，不要添加动态 Partition/Offset 
 - `frux_behavior_consumption_total{stream,result}`。
 
 `stream` 仅为 action/view，`role` 仅为 primary/mirror，`transport` 仅为 rabbit/kafka；
-result 使用封闭 success/failure/uncertain、match/mismatch、duplicate/superseded 等集合。不得加入
+result 使用封闭 success/failure/uncertain、parity_match/parity_mismatch/parity_pending/
+parity_pending_exhausted、
+duplicate/superseded 等集合。不得加入
 event、user、video、key、partition、offset 或错误正文。View 先 cutover；任一 stream 出现持续
 primary failure、fallback/rollback 增长、shadow mismatch、lag 或 delivery age 超门槛时按该
 stream 独立回滚。

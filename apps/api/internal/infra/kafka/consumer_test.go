@@ -3,6 +3,7 @@ package infrakafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 )
 
 type fakeConsumerSource struct {
@@ -91,6 +93,17 @@ type consumerObserver struct {
 	calls    int
 	dataLoss int
 	cancel   context.CancelFunc
+}
+
+type sessionObserver struct {
+	mu      sync.Mutex
+	results []string
+}
+
+func (o *sessionObserver) ObserveConsumerSession(_ ConsumerGroupID, result string) {
+	o.mu.Lock()
+	o.results = append(o.results, result)
+	o.mu.Unlock()
 }
 
 func TestConsumerCancelsBlockedRebalanceBeforeReleasingOwnership(t *testing.T) {
@@ -398,6 +411,7 @@ func TestSupervisorRedeliversAfterCommitFailureAndRestarts(t *testing.T) {
 			if session == 1 {
 				source.commitErr = errors.New("commit response lost")
 			}
+
 			return testConsumer(source, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
 				if deliveries.Add(1) == 2 {
 					cancel()
@@ -411,6 +425,54 @@ func TestSupervisorRedeliversAfterCommitFailureAndRestarts(t *testing.T) {
 	}
 	if sessions.Load() < 2 || deliveries.Load() != 2 {
 		t.Fatalf("sessions=%d deliveries=%d", sessions.Load(), deliveries.Load())
+	}
+}
+
+func TestSupervisorReportsFailuresAndStopsOnNonRetryableInitialization(t *testing.T) {
+	observer := &sessionObserver{}
+	var attempts atomic.Int32
+	supervisor := Supervisor{
+		Group: GroupPersistActionActive, Observer: observer,
+		MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		NewConsumer: func(context.Context) (*Consumer, error) {
+			attempts.Add(1)
+			return nil, fmt.Errorf("%w: shadow handler mismatch", ErrConsumerConfiguration)
+		},
+	}
+	err := supervisor.Run(context.Background())
+	if !errors.Is(err, ErrConsumerConfiguration) || attempts.Load() != 1 {
+		t.Fatalf("error=%v attempts=%d", err, attempts.Load())
+	}
+	if len(observer.results) != 1 || observer.results[0] != "fatal_failure" {
+		t.Fatalf("results=%v", observer.results)
+	}
+}
+
+func TestConsumerErrorClassificationRejectsAuthorizationFailures(t *testing.T) {
+	for _, err := range []error{
+		kerr.SaslAuthenticationFailed,
+		kerr.TopicAuthorizationFailed,
+		kerr.GroupAuthorizationFailed,
+	} {
+		if RetryableConsumerError(fmt.Errorf("%w: poll: %w", ErrConsumerSession, err)) {
+			t.Fatalf("authorization error was retryable: %v", err)
+		}
+	}
+	if !RetryableConsumerError(fmt.Errorf("%w: poll: %w", ErrConsumerSession, kerr.BrokerNotAvailable)) {
+		t.Fatal("broker outage was classified as fatal")
+	}
+}
+
+func TestSupervisorHonorsPendingParityRetryDelay(t *testing.T) {
+	delay := consumerRetryDelay(
+		fmt.Errorf("%w: %w", ErrConsumerSession, applicationeventstream.PendingParityError{
+			Delay: time.Second,
+		}),
+		100*time.Millisecond,
+		200*time.Millisecond,
+	)
+	if delay != time.Second {
+		t.Fatalf("delay=%s", delay)
 	}
 }
 

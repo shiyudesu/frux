@@ -12,14 +12,16 @@ import (
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 var (
-	ErrConsumerSession  = errors.New("kafka consumer session failed")
-	ErrCommitUncertain  = errors.New("kafka offset commit uncertain")
-	ErrShutdownDeadline = errors.New("kafka consumer shutdown deadline exceeded")
-	ErrRebalanceDrain   = errors.New("kafka consumer drained for rebalance")
+	ErrConsumerSession       = errors.New("kafka consumer session failed")
+	ErrConsumerConfiguration = errors.New("kafka consumer configuration invalid")
+	ErrCommitUncertain       = errors.New("kafka offset commit uncertain")
+	ErrShutdownDeadline      = errors.New("kafka consumer shutdown deadline exceeded")
+	ErrRebalanceDrain        = errors.New("kafka consumer drained for rebalance")
 )
 
 type brokerRecord struct {
@@ -84,18 +86,18 @@ func NewConsumer(
 		return nil, ErrKafkaDisabled
 	}
 	if handler == nil {
-		return nil, fmt.Errorf("%w: handler is required", ErrConsumerSession)
+		return nil, fmt.Errorf("%w: handler is required", ErrConsumerConfiguration)
 	}
 	groupSpec, err := ConsumerGroup(groupID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrConsumerConfiguration, err)
 	}
 	topicSpec, err := Topic(groupSpec.Topic)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrConsumerConfiguration, err)
 	}
 	if !groupAllowed(topicSpec, groupID) {
-		return nil, fmt.Errorf("%w: group is not registered for topic", ErrConsumerSession)
+		return nil, fmt.Errorf("%w: group is not registered for topic", ErrConsumerConfiguration)
 	}
 	topicName, err := TopicName(cfg.TopicPrefix, groupSpec.Topic)
 	if err != nil {
@@ -106,23 +108,23 @@ func NewConsumer(
 		return nil, err
 	}
 	if err := validateGroupHandler(groupSpec, groupName, handler); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrConsumerConfiguration, err)
 	}
 	options, err := clientOptions(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrConsumerConfiguration, err)
 	}
 	drainTimeout, err := time.ParseDuration(cfg.Consumer.DrainTimeout)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: drain timeout", ErrConsumerConfiguration)
 	}
 	commitTimeout, err := time.ParseDuration(cfg.Timeouts.Request)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: request timeout", ErrConsumerConfiguration)
 	}
 	closeTimeout, err := time.ParseDuration(cfg.Timeouts.Shutdown)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: shutdown timeout", ErrConsumerConfiguration)
 	}
 	rebalanceTimeout := drainTimeout + commitTimeout + 10*time.Second
 	if rebalanceTimeout < time.Minute {
@@ -161,18 +163,18 @@ func NewConsumer(
 	)
 	client, err := kgo.NewClient(options...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: initialize group client", ErrConsumerSession)
+		return nil, fmt.Errorf("%w: initialize group client", ErrConsumerConfiguration)
 	}
 	dialTimeout, err := time.ParseDuration(cfg.Timeouts.Dial)
 	if err != nil {
 		client.CloseAllowingRebalance()
-		return nil, err
+		return nil, fmt.Errorf("%w: dial timeout", ErrConsumerConfiguration)
 	}
 	pingContext, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	if err := client.Ping(pingContext); err != nil {
 		client.CloseAllowingRebalance()
-		return nil, fmt.Errorf("%w: broker ping", ErrKafkaUnavailable)
+		return nil, fmt.Errorf("%w: broker ping: %w", ErrKafkaUnavailable, err)
 	}
 	return &Consumer{
 		source:  &franzConsumerSource{client: client, admin: kadm.NewClient(client)},
@@ -209,7 +211,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil
 			}
-			return fmt.Errorf("%w: poll", ErrConsumerSession)
+			return fmt.Errorf("%w: poll: %w", ErrConsumerSession, err)
 		}
 		if len(records) == 0 {
 			c.source.AllowRebalance()
@@ -242,7 +244,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if errors.Is(processErr, ErrRebalanceDrain) {
 				return processErr
 			}
-			return fmt.Errorf("%w: handler", ErrConsumerSession)
+			return fmt.Errorf("%w: handler: %w", ErrConsumerSession, processErr)
 		}
 		if ctx.Err() != nil {
 			return nil
@@ -601,8 +603,14 @@ func cloneHeaders(headers []applicationeventstream.Header) []applicationeventstr
 
 type ConsumerFactory func(ctx context.Context) (*Consumer, error)
 
+type ConsumerSessionObserver interface {
+	ObserveConsumerSession(group ConsumerGroupID, result string)
+}
+
 type Supervisor struct {
 	NewConsumer ConsumerFactory
+	Group       ConsumerGroupID
+	Observer    ConsumerSessionObserver
 	MinBackoff  time.Duration
 	MaxBackoff  time.Duration
 }
@@ -623,25 +631,34 @@ func (s Supervisor) Run(ctx context.Context) error {
 		sessionStarted := time.Now()
 		consumer, err := s.NewConsumer(ctx)
 		if err == nil {
+			s.observe("started")
 			err = consumer.Run(ctx)
 		}
 		if ctx.Err() != nil {
+			s.observe("stopped")
 			return nil
 		}
 		if errors.Is(err, ErrRebalanceDrain) {
+			s.observe("rebalance_restart")
 			backoff = s.MinBackoff
 			if backoff <= 0 {
 				backoff = 100 * time.Millisecond
 			}
 			continue
 		}
+		if !RetryableConsumerError(err) {
+			s.observe("fatal_failure")
+			return err
+		}
+		s.observe("retryable_failure")
 		if time.Since(sessionStarted) >= maxBackoff {
 			backoff = s.MinBackoff
 			if backoff <= 0 {
 				backoff = 100 * time.Millisecond
 			}
 		}
-		timer := time.NewTimer(backoff)
+		delay := consumerRetryDelay(err, backoff, maxBackoff)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -654,5 +671,48 @@ func (s Supervisor) Run(ctx context.Context) error {
 				backoff = maxBackoff
 			}
 		}
+	}
+}
+
+func RetryableConsumerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrKafkaDisabled) ||
+		errors.Is(err, ErrConsumerConfiguration) ||
+		errors.Is(err, ErrInvalidKafkaTLS) ||
+		errors.Is(err, ErrUnknownRegistryValue) ||
+		errors.Is(err, applicationeventstream.ErrInvalidOutcome) ||
+		errors.Is(err, kerr.SaslAuthenticationFailed) ||
+		errors.Is(err, kerr.UnsupportedSaslMechanism) ||
+		errors.Is(err, kerr.TopicAuthorizationFailed) ||
+		errors.Is(err, kerr.GroupAuthorizationFailed) ||
+		errors.Is(err, kerr.ClusterAuthorizationFailed) {
+		return false
+	}
+	return true
+}
+
+func consumerRetryDelay(err error, backoff, maximum time.Duration) time.Duration {
+	type retryAfter interface {
+		RetryAfter() time.Duration
+	}
+	var requested retryAfter
+	if errors.As(err, &requested) && requested.RetryAfter() > backoff {
+		backoff = requested.RetryAfter()
+		if backoff > 30*time.Second {
+			backoff = 30 * time.Second
+		}
+		return backoff
+	}
+	if maximum > 0 && backoff > maximum {
+		return maximum
+	}
+	return backoff
+}
+
+func (s Supervisor) observe(result string) {
+	if s.Observer != nil {
+		s.Observer.ObserveConsumerSession(s.Group, result)
 	}
 }

@@ -90,6 +90,20 @@ var (
 		},
 		[]string{"topic", "result"},
 	)
+	KafkaConsumerSessionTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux", Name: "kafka_consumer_session_total",
+			Help: "Kafka consumer supervisor session lifecycle outcomes.",
+		},
+		[]string{"group", "result"},
+	)
+	KafkaConsumerSessionHealthy = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "frux", Name: "kafka_consumer_session_healthy",
+			Help: "Whether a registered Kafka consumer group currently has a healthy session.",
+		},
+		[]string{"group"},
+	)
 	KafkaBrokerHealthy = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "frux", Name: "kafka_broker_healthy",
@@ -111,6 +125,8 @@ func init() {
 		KafkaContractFailuresTotal,
 		KafkaDataLossTotal,
 		KafkaTopologyValidationTotal,
+		KafkaConsumerSessionTotal,
+		KafkaConsumerSessionHealthy,
 		KafkaBrokerHealthy,
 	)
 }
@@ -201,6 +217,18 @@ func (KafkaObserver) ObserveTopology(topic infrakafka.TopicID, result string) {
 	).Inc()
 }
 
+func (KafkaObserver) ObserveConsumerSession(group infrakafka.ConsumerGroupID, result string) {
+	groupLabel := kafkaGroupLabel(group)
+	resultLabel := kafkaConsumerSessionResultLabel(result)
+	KafkaConsumerSessionTotal.WithLabelValues(groupLabel, resultLabel).Inc()
+	switch resultLabel {
+	case "started":
+		KafkaConsumerSessionHealthy.WithLabelValues(groupLabel).Set(1)
+	case "retryable_failure", "fatal_failure", "stopped":
+		KafkaConsumerSessionHealthy.WithLabelValues(groupLabel).Set(0)
+	}
+}
+
 func ObserveKafkaLag(topic infrakafka.TopicID, group infrakafka.ConsumerGroupID, lag int64) {
 	if lag < 0 {
 		lag = 0
@@ -267,6 +295,13 @@ func kafkaContractCodeLabel(value infrakafka.ContractFailureCode) string {
 
 func kafkaTopologyResultLabel(value string) string {
 	return boundedKafkaLabel(value, "valid", "provisioned", "missing", "invalid", "provision_failed", "broker_error")
+}
+
+func kafkaConsumerSessionResultLabel(value string) string {
+	return boundedKafkaLabel(
+		value,
+		"started", "retryable_failure", "fatal_failure", "rebalance_restart", "stopped",
+	)
 }
 
 func boundedKafkaLabel(value string, allowed ...string) string {

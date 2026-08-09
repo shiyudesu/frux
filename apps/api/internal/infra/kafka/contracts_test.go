@@ -33,6 +33,7 @@ func TestBehaviorKeyCodecsStableFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if string(action) != "action:42:99:LIKE" {
 		t.Fatalf("action key = %q", action)
 	}
@@ -42,6 +43,28 @@ func TestBehaviorKeyCodecsStableFixtures(t *testing.T) {
 	}
 	if string(user) != "user:42" {
 		t.Fatalf("user key = %q", user)
+	}
+}
+
+func TestBehaviorKeyCodecsRejectNonCanonicalAliases(t *testing.T) {
+	tests := []struct {
+		name string
+		kind KeyKind
+		key  string
+	}{
+		{name: "action leading user zero", kind: KeyKindActionState, key: "action:042:99:LIKE"},
+		{name: "action leading video zero", kind: KeyKindActionState, key: "action:42:099:LIKE"},
+		{name: "action lowercase type", kind: KeyKindActionState, key: "action:42:99:like"},
+		{name: "action signed user", kind: KeyKindActionState, key: "action:+42:99:LIKE"},
+		{name: "user leading zero", kind: KeyKindUserID, key: "user:042"},
+		{name: "user signed", kind: KeyKindUserID, key: "user:+42"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := DecodeKey(test.kind, []byte(test.key)); !errors.Is(err, ErrInvalidEventKey) {
+				t.Fatalf("error=%v", err)
+			}
+		})
 	}
 }
 
@@ -118,6 +141,8 @@ func TestBehaviorContractsRejectMalformedIdentityVersionKeySizeAndTime(t *testin
 			return value
 		}(), payload: payload, code: ContractUnsupportedVersion},
 		{name: "key mismatch", key: []byte("action:43:99:LIKE"), metadata: base, payload: payload, code: ContractInvalidPayload},
+		{name: "key alias lowercase", key: []byte("action:42:99:like"), metadata: base, payload: payload, code: ContractInvalidKey},
+		{name: "key alias leading zero", key: []byte("action:042:99:LIKE"), metadata: base, payload: payload, code: ContractInvalidKey},
 		{name: "payload id mismatch", key: []byte("action:42:99:LIKE"), metadata: base, payload: func() ActionChangedPayload {
 			value := payload
 			value.EventID = "other-event"
@@ -148,6 +173,22 @@ func TestBehaviorContractsRejectMalformedIdentityVersionKeySizeAndTime(t *testin
 	var contract *ContractError
 	if !errors.As(err, &contract) || contract.Code != ContractOversizedRecord {
 		t.Fatalf("oversized error = %v", err)
+	}
+}
+
+func TestViewContractRejectsNonCanonicalUserKey(t *testing.T) {
+	now := time.Date(2026, 8, 9, 2, 0, 0, 0, time.UTC)
+	payload := ViewEventRecordedPayload{
+		EventID: "view-event-alias", ViewEventID: 101, UserID: 42, VideoID: 99,
+		Scene: "recommend", EventType: "play", RecordedAt: now, OccurredAt: now,
+	}
+	_, err := EncodeEvent(TopicViewEventRecorded, []byte("user:042"), EventMetadata{
+		EventID: payload.EventID, Type: EventTypeViewEventRecorded, SchemaVersion: 1,
+		OccurredAt: now, ProducedAt: now, Producer: ProducerExposureWorker,
+	}, payload)
+	var contract *ContractError
+	if !errors.As(err, &contract) || contract.Code != ContractInvalidKey {
+		t.Fatalf("error=%v", err)
 	}
 }
 
