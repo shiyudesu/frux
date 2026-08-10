@@ -124,16 +124,6 @@ media:
     use_path_style: true
     auto_create_bucket: false
 
-semantic_embedding:
-  enabled: false
-  base_url: ""
-  metadata_timeout: "3s"
-  request_timeout: "17s"
-  coverage_interval: "5m"
-  lease_ttl: "30s"
-  poll_interval: "1s"
-  worker_concurrency: 2
-
 moderation:
   mode: "${FRUX_MODERATION_MODE}"
   provider_config_version: 1

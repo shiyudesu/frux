@@ -2,19 +2,18 @@ package infraconfig
 
 // Config 是应用启动配置的根结构，对应 configs/config.yaml。
 type Config struct {
-	Port              int                     `yaml:"port"`
-	JWT               JWTConfig               `yaml:"jwt"`
-	Internal          InternalConfig          `yaml:"internal"`
-	Database          DatabaseConfig          `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	RabbitMQ          RabbitMQConfig          `yaml:"rabbitmq"`
-	Kafka             KafkaConfig             `yaml:"kafka"`
-	Media             MediaConfig             `yaml:"media"`
-	Moderation        ModerationConfig        `yaml:"moderation"`
-	Playback          PlaybackConfig          `yaml:"playback"`
-	Governance        GovernanceConfig        `yaml:"governance"`
-	RateLimit         RateLimitConfig         `yaml:"rate_limit"`
-	SemanticEmbedding SemanticEmbeddingConfig `yaml:"semantic_embedding"`
+	Port       int              `yaml:"port"`
+	JWT        JWTConfig        `yaml:"jwt"`
+	Internal   InternalConfig   `yaml:"internal"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Redis      RedisConfig      `yaml:"redis"`
+	RabbitMQ   RabbitMQConfig   `yaml:"rabbitmq"`
+	Kafka      KafkaConfig      `yaml:"kafka"`
+	Media      MediaConfig      `yaml:"media"`
+	Moderation ModerationConfig `yaml:"moderation"`
+	Playback   PlaybackConfig   `yaml:"playback"`
+	Governance GovernanceConfig `yaml:"governance"`
+	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
 }
 
 type KafkaConfig struct {
@@ -142,17 +141,6 @@ type MediaProcessingConfig struct {
 	WorkerConcurrency int    `yaml:"worker_concurrency"`
 	LeaseTTL          string `yaml:"lease_ttl"`
 	CleanupDelay      string `yaml:"cleanup_delay"`
-}
-
-type SemanticEmbeddingConfig struct {
-	Enabled           bool   `yaml:"enabled"`
-	BaseURL           string `yaml:"base_url"`
-	MetadataTimeout   string `yaml:"metadata_timeout"`
-	RequestTimeout    string `yaml:"request_timeout"`
-	CoverageInterval  string `yaml:"coverage_interval"`
-	LeaseTTL          string `yaml:"lease_ttl"`
-	PollInterval      string `yaml:"poll_interval"`
-	WorkerConcurrency int    `yaml:"worker_concurrency"`
 }
 
 type PlaybackConfig struct {

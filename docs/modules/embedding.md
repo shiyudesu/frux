@@ -1,43 +1,44 @@
 # 视频向量模块设计
 
-## 1. Live publication intake
+## 1. 模块边界
 
-Embedding 使用 `frux.embedding.video-published.v1` 独立 Group 消费 30 天保留的视频首次发布事实。
-每条记录先按 NFKC 与 Unicode 空白规则规范化标题/简介，计算文本 hash，并条件写入
-`hash-ngram-v1`；随后在同一 PostgreSQL 事务 upsert 固定
-`semantic-minilm-l12-v2@e8f8c211226b894f` job。两者提交后才允许 Kafka Offset commit。
+当前视频向量模块只提供确定性的 `hash-ngram-v1` 文本向量。它不调用远端模型服务，不创建语义
+任务，不扫描历史视频，也不参与推荐策略、pgvector 或 ANN 召回。
 
-## 2. 固定语义契约
+语义服务与语义视频向量属于 `docs/recommendation-roadmap.md` 的未来步骤，必须在可信训练数据和
+离线评估前置阶段完成后单独实施。
 
-HTTP client 只接受
-`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` revision
-`e8f8c211226b894fcb81acc59f3b34ba3efd5f42`、384 维、finite、L2-normalized、float32、CPU
-契约。它使用 `X-Internal-Token`、最多两个连接/并发、16 KiB metadata 和 1 MiB embedding response
-上限，不自动重试，严格拒绝未知字段、顺序/ID/index/维度/模型不匹配和尾随 JSON。
+## 2. Live publication intake
 
-## 3. Durable semantic jobs
+Embedding 使用 `frux.embedding.video-published.v1` 独立 Group 消费保留 30 天的首次发布事实。
+处理顺序固定为：
 
-`semantic_embedding_job` 按 `(video_id, model)` 唯一，保存 canonical text hash、pending /
-processing / retry / completed / failed（并兼容读取历史 suspended 行）、attempts、available_at、
-lease 和 bounded error class。重试为 5s、30s、2m、10m，之后封顶 30m；过期 lease 可回收，文本
-变化会重置 job 并阻止旧 worker 覆盖新结果。禁用或 metadata 不匹配只关闭当前副本的本地 claim
-gate，不批量改写共享 job；其他健康副本可继续处理。
-运行时 response contract 失败同样关闭当前副本 gate，并把 job 作为 retryable 释放，避免一个坏副本
-把共享 job 永久标记失败。
+1. 校验 Kafka envelope、视频 ID key、事件身份、时间和有界视频字段；
+2. 仅拒绝无效 UTF-8 和非空白控制字符，再使用既有 `BuildVideoText` 规则拼接标题和简介；
+3. 生成确定性的 `hash-ngram-v1` 向量与文本 hash；
+4. 条件持久化 `(video_id, hash-ngram-v1)`；
+5. 仅在持久化成功后提交 Kafka Offset。
 
-该 live 路径不扫描历史视频，也不改变推荐 recall/ranking。部署到已有目录后，没有再次产生正常
-`video.published` 事件的历史视频保持不变。本 change 不提供历史 scan、command/job、cursor、
-checkpoint、dry-run、re-embedding mode 或 backfill 专用 retry。未来独立
-`backfill-semantic-video-embeddings` change 单向依赖这里的固定模型 identity、canonicalization、
-validated client、conditional persistence 和 coverage 接口，并自行负责历史选择、可恢复进度与
-operator control；live integration 不反向依赖或调度它。
+重复或回放事件使用相同文本 hash，不创建重复事实，也不刷新未变化记录的 `updated_at`。文本变化时
+更新同一模型行。Feed 使用独立 Group，因此 embedding 延迟或失败不会阻塞 Feed fanout。
 
-每个 processor 一次只 claim 一个 job，并使用每次 claim 唯一 token；complete、retry 和 heartbeat
-都同时按 token、text hash、未过期 lease fencing。远程请求期间每 `lease_ttl/3` 续租，旧 attempt
-不能完成或重试已回收 job。heartbeat 使用从处理 context 派生的短 deadline，shutdown 或 PostgreSQL
-stall 会取消推理，不会挂住 processor。metadata validator 只控制当前进程的 processor；恢复后直接
-打开本地 gate，不执行 cluster-wide suspend/resume。
+## 3. Persistence and parity
 
-共享 `video.published` 契约只校验 envelope、业务 identity、时间、key 和视频字段边界，不引入语义文本
-规则。只有 embedding Group 在解码后执行 canonicalization；确定性 input 错误作为该 Group 的 terminal
-结果安全提交，同一记录仍可被 Feed Group 正常消费。
+`video_embedding` 以 `(video_id, model)` 唯一保存维度、JSON 向量、文本 hash 和时间戳。当前唯一由
+发布消费链路写入的模型是 `hash-ngram-v1`。
+
+Kafka shadow 模式只读取该 hash 事实并比较预期文本 hash：
+
+- 尚未出现持久化事实时返回 pending 并进行有界内联重试；
+- 已存在且 hash 一致时返回 match；
+- 已存在但 hash 冲突时返回 mismatch；
+- shadow 路径不得生成或更新向量。
+
+## 4. Failure and observability
+
+数据库失败属于 retryable consumer failure，当前 Kafka Session 结束并依靠稳定事件 ID 和条件写入
+承受重投。确定性 hash 生成不依赖外部网络或模型容量。
+
+指标使用 `frux_video_embedding_vectors_total{model="hash",source="event",outcome}`，outcome 仅为
+`generated`、`skipped` 或 `failed`。Kafka Group lag、commit 和 delivery delay 由通用 Kafka 指标
+提供；标签不得包含视频 ID、文本、向量或错误正文。

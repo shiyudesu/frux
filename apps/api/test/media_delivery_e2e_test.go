@@ -146,13 +146,122 @@ func TestProductionMediaDeliveryEndToEnd(t *testing.T) {
 	if err := videoService.Delete(ctx, 42, ready.ID); err != nil {
 		t.Fatalf("delete production video: %v", err)
 	}
+	deleted, err := videoRepo.FindByIDAnyStatus(ctx, ready.ID)
+	if err != nil {
+		t.Fatalf("load deleted video: %v", err)
+	}
+	lifecycleTask, err := domainmedia.NewVideoLifecycleTask(
+		"e2e-delete", deleted.ID, deleted.MediaAssetID, deleted.CoverAssetID,
+		domainmedia.LifecycleActionDelete, domainvideo.StatusDeleted, "", 3,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycleRepo := &e2eLifecycleRepository{task: lifecycleTask}
+	lifecycle := applicationmedia.NewVideoLifecycleService(
+		lifecycleRepo,
+		e2eLifecycleVideoReader{repository: videoRepo},
+		e2eLifecycleDelivery{catalog: catalog, publication: publication},
+		cleanup,
+	)
+	if completed, err := lifecycle.RunOnce(
+		ctx, "lifecycle-worker", 1, time.Minute,
+	); err != nil || completed != 1 {
+		t.Fatalf("run durable delete intent: completed=%d err=%v", completed, err)
+	}
 	time.Sleep(2 * time.Millisecond)
 	if _, err := cleanup.RunCleanupOnce(ctx, "cleanup-worker", 20, time.Minute); err != nil {
 		t.Fatalf("cleanup deleted media: %v", err)
 	}
+
 	if len(store.objects) != 0 {
 		t.Fatalf("expected all media objects deleted, got %+v", store.objects)
 	}
+}
+
+type e2eLifecycleRepository struct {
+	task *domainmedia.VideoLifecycleTask
+}
+
+func (r *e2eLifecycleRepository) ClaimVideoLifecycleTasks(
+	_ context.Context,
+	owner string,
+	_, leaseUntil time.Time,
+	_ int,
+) ([]*domainmedia.VideoLifecycleTask, error) {
+	if r.task == nil || r.task.State == domainmedia.JobStateCompleted {
+		return nil, nil
+	}
+	r.task.ID = 1
+	r.task.State = domainmedia.JobStateProcessing
+	r.task.Attempts++
+	r.task.LeaseOwner = owner
+	r.task.LeaseUntil = &leaseUntil
+	copyTask := *r.task
+	return []*domainmedia.VideoLifecycleTask{&copyTask}, nil
+}
+
+func (r *e2eLifecycleRepository) UpdateVideoLifecycleTaskOwned(
+	_ context.Context,
+	task *domainmedia.VideoLifecycleTask,
+	_ string,
+) error {
+	*r.task = *task
+	return nil
+}
+
+func (r *e2eLifecycleRepository) VideoLifecycleBacklog(
+	context.Context,
+) (int64, *time.Time, error) {
+	if r.task == nil || r.task.State == domainmedia.JobStateCompleted {
+		return 0, nil, nil
+	}
+	oldest := r.task.CreatedAt
+	return 1, &oldest, nil
+}
+
+type e2eLifecycleVideoReader struct {
+	repository *memoryVideoRepo
+}
+
+func (r e2eLifecycleVideoReader) ReadVideoLifecycleState(
+	ctx context.Context,
+	videoID int64,
+) (applicationmedia.VideoLifecycleState, error) {
+	video, err := r.repository.FindByIDAnyStatus(ctx, videoID)
+	if err != nil {
+		return applicationmedia.VideoLifecycleState{}, err
+	}
+	return applicationmedia.VideoLifecycleState{
+		Exists: true, Status: video.Status, Visibility: video.Visibility,
+		PublicEligible: video.Status == domainvideo.StatusPublished &&
+			video.Visibility == domainvideo.VisibilityPublic,
+	}, nil
+}
+
+type e2eLifecycleDelivery struct {
+	catalog     *inframedia.DeliveryCatalog
+	publication *applicationvideo.MediaPublicationService
+}
+
+func (d e2eLifecycleDelivery) ProtectVideo(
+	ctx context.Context,
+	videoID, mediaAssetID, coverAssetID int64,
+) error {
+	return d.catalog.ProtectVideo(ctx, videoID, mediaAssetID, coverAssetID)
+}
+
+func (d e2eLifecycleDelivery) RestoreVideo(
+	ctx context.Context,
+	_ int64,
+	mediaAssetID int64,
+	_ int64,
+) error {
+	if mediaAssetID <= 0 {
+		return nil
+	}
+	return d.publication.MediaReady(ctx, mediaAssetID)
 }
 
 func TestCreateWithAssetsRejectsAlreadyFailedVideoAsset(t *testing.T) {

@@ -146,11 +146,9 @@ deadline 约束。服务实例还以 16 个全局 provider slots 限制忽略取
 标记 degraded，返回前重新验证 `published + public + media ready`。本地 hash n-gram embedding
 是可替换模型接口的保底实现。
 
-视频发布 intake 始终先写 `hash-ngram-v1`，再在同一 PostgreSQL 边界创建
-`semantic_embedding_job`，之后才提交独立 embedding Kafka Group 的 Offset。固定语义模型不可用或
-禁用时，job 保持 pending/suspended 并以 30 分钟封顶退避恢复；hash 覆盖不受影响。当前推荐召回、
-排序、策略和请求路径不读取语义向量，历史目录也不会由该 live intake 扫描；历史覆盖继续属于独立
-`backfill-semantic-video-embeddings` 边界。
+视频发布 intake 当前只条件写入 `hash-ngram-v1`，成功后提交独立 embedding Kafka Group 的 Offset。
+语义服务、新视频实时语义接入、历史回填、语义画像和 ANN 召回尚未实施，必须按
+`docs/recommendation-roadmap.md` 的步骤 1-12 顺序推进。
 
 观看行为 Worker 通过 `frux.recommendation.consume-view.v1` 在 raw fact 与 profile/outcome
 handoff 同事务提交后才允许 Kafka offset commit；不等待 embedding 或后续画像投影。Worker

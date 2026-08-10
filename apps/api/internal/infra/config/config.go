@@ -26,7 +26,6 @@ var ErrInvalidRabbitMQConfig = errors.New("invalid rabbitmq config")
 var ErrInvalidKafkaConfig = errors.New("invalid kafka config")
 var ErrInvalidJWTConfig = errors.New("invalid jwt config")
 var ErrInvalidModerationConfig = errors.New("invalid moderation config")
-var ErrInvalidSemanticEmbeddingConfig = errors.New("invalid semantic embedding config")
 
 const minInternalTokenLength = 32
 const maxAdminAccessTTL = 8 * time.Hour
@@ -73,55 +72,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err := normalizeAndValidateKafkaConfig(&cfg.Kafka); err != nil {
 		return nil, err
 	}
-	if err := normalizeAndValidateSemanticEmbeddingConfig(
-		&cfg.SemanticEmbedding,
-		&cfg.Internal,
-	); err != nil {
-		return nil, err
-	}
 	return cfg, nil
-}
-
-func normalizeAndValidateSemanticEmbeddingConfig(
-	cfg *SemanticEmbeddingConfig,
-	internal *InternalConfig,
-) error {
-	if cfg == nil {
-		return ErrInvalidSemanticEmbeddingConfig
-	}
-	cfg.BaseURL = strings.TrimSpace(strings.TrimSuffix(cfg.BaseURL, "/"))
-	cfg.MetadataTimeout = defaultDuration(cfg.MetadataTimeout, "3s")
-	cfg.RequestTimeout = defaultDuration(cfg.RequestTimeout, "17s")
-	cfg.CoverageInterval = defaultDuration(cfg.CoverageInterval, "5m")
-	cfg.LeaseTTL = defaultDuration(cfg.LeaseTTL, "30s")
-	cfg.PollInterval = defaultDuration(cfg.PollInterval, "1s")
-	if cfg.WorkerConcurrency == 0 {
-		cfg.WorkerConcurrency = 2
-	}
-	if !cfg.Enabled {
-		return nil
-	}
-	endpoint, err := url.Parse(cfg.BaseURL)
-	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
-		endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" ||
-		endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") ||
-		internal == nil || !internal.Enabled || !ValidStrongInternalToken(internal.Token) {
-		return ErrInvalidSemanticEmbeddingConfig
-	}
-	metadataTimeout, metadataErr := time.ParseDuration(cfg.MetadataTimeout)
-	requestTimeout, requestErr := time.ParseDuration(cfg.RequestTimeout)
-	coverageInterval, coverageErr := time.ParseDuration(cfg.CoverageInterval)
-	leaseTTL, leaseErr := time.ParseDuration(cfg.LeaseTTL)
-	pollInterval, pollErr := time.ParseDuration(cfg.PollInterval)
-	if metadataErr != nil || metadataTimeout < 500*time.Millisecond || metadataTimeout > 5*time.Second ||
-		requestErr != nil || requestTimeout < time.Second || requestTimeout > 20*time.Second ||
-		coverageErr != nil || coverageInterval < time.Minute || coverageInterval > time.Hour ||
-		leaseErr != nil || leaseTTL < 5*time.Second || leaseTTL > 5*time.Minute ||
-		pollErr != nil || pollInterval < 100*time.Millisecond || pollInterval > time.Minute ||
-		cfg.WorkerConcurrency < 1 || cfg.WorkerConcurrency > 2 {
-		return ErrInvalidSemanticEmbeddingConfig
-	}
-	return nil
 }
 
 func normalizeAndValidateModerationConfig(cfg *ModerationConfig) error {
@@ -676,22 +627,18 @@ func normalizeAndValidateInternalConfig(cfg *InternalConfig) error {
 	if cfg == nil {
 		return ErrInvalidInternalToken
 	}
-	cfg.Token = strings.Trim(cfg.Token, " ")
+	cfg.Token = strings.TrimSpace(cfg.Token)
 	if !cfg.Enabled {
 		return nil
 	}
-	if !ValidStrongInternalToken(cfg.Token) {
+	if strings.EqualFold(cfg.Token, "replace-with-internal-token") || !strongInternalToken(cfg.Token) {
 		return ErrInvalidInternalToken
 	}
 	return nil
 }
 
-func ValidStrongInternalToken(token string) bool {
-	token = strings.Trim(token, " ")
+func strongInternalToken(token string) bool {
 	if len(token) < minInternalTokenLength {
-		return false
-	}
-	if strings.EqualFold(token, "replace-with-internal-token") {
 		return false
 	}
 	classes := 0

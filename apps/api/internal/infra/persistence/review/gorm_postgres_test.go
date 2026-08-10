@@ -21,6 +21,7 @@ import (
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
+	inframedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -347,6 +348,16 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		}
 		if video.Status != domainvideo.StatusRejected || video.PublishedAt != nil {
 			t.Fatalf("rejected video = %#v", video)
+		}
+		var lifecycleTask inframedia.VideoLifecycleTaskModel
+		if err := db.Where(
+			"video_id = ? AND action = ?",
+			video.ID, domainmedia.LifecycleActionProtect,
+		).Take(&lifecycleTask).Error; err != nil {
+			t.Fatalf("machine reject media intent: %v", err)
+		}
+		if lifecycleTask.RequiredStatus != domainvideo.StatusRejected {
+			t.Fatalf("machine reject media intent=%+v", lifecycleTask)
 		}
 		assertReviewNotification(
 			t, db, domainmessage.ReviewEventID(
@@ -724,6 +735,50 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 			Scope: domainreview.HumanQueueScopeRecent, ReviewerID: 7,
 			MinPriority: 0, MaxPriority: 100, Limit: 10,
 		})
+
+		t.Run("human reject persists media protection intent", func(t *testing.T) {
+			db := openReviewPostgres(t, dsn, "human_reject")
+			insertReviewVideo(t, db, 302, 1)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			if err := db.Create(&CaseModel{
+				ID: 302, VideoID: 302, ReviewVersion: 1,
+				Status:        domainreview.CaseStatusPendingHuman,
+				PolicyVersion: 1, Priority: 50, Version: 1,
+				CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			repo := New(db, WithAuditWriter(infraadminaudit.New(db)))
+			tokenHash := strings.Repeat("b", 64)
+			claimed, err := repo.ClaimHumanCase(
+				context.Background(), 302, 7, tokenHash, 1,
+				domainreview.DefaultHumanLeaseDuration,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision := newPostgresHumanDecision(
+				t, claimed, 7, domainreview.OutcomeReject,
+				domainreview.ReasonRejectSpam, "reject-302",
+			)
+			fact := newPostgresReviewAuditFact(t, decision, "reject-302")
+			committed, err := repo.CommitHumanDecision(
+				context.Background(), decision, tokenHash, fact,
+			)
+			if err != nil || committed.Case.Status != domainreview.CaseStatusRejected {
+				t.Fatalf("human reject=%+v err=%v", committed, err)
+			}
+			var lifecycleTask inframedia.VideoLifecycleTaskModel
+			if err := db.Where(
+				"video_id = ? AND action = ?",
+				302, domainmedia.LifecycleActionProtect,
+			).Take(&lifecycleTask).Error; err != nil {
+				t.Fatalf("human reject media intent: %v", err)
+			}
+			if lifecycleTask.RequiredStatus != domainvideo.StatusRejected {
+				t.Fatalf("human reject media intent=%+v", lifecycleTask)
+			}
+		})
 		if err != nil || len(recent) != 1 || recent[0].Case.ID != 301 {
 			t.Fatalf("recent decisions = %#v err=%v", recent, err)
 		}
@@ -1050,6 +1105,7 @@ func openReviewPostgres(t *testing.T, dsn, suffix string) *gorm.DB {
 		&infravideo.VideoModel{}, &infravideo.VideoStatModel{}, &infravideo.UserContentStatModel{},
 		&infravideo.NotificationOutboxModel{}, &infravideo.PublicationEventFactModel{},
 		&infravideo.PublicationEventOutboxModel{},
+		&inframedia.VideoLifecycleTaskModel{},
 		&CaseModel{}, &ResultModel{}, &SignalModel{}, &DecisionModel{}, &ModerationJobModel{}, &PolicyModel{},
 		&AssignmentModel{}, &HumanDecisionModel{}, &HumanDecisionIdempotencyModel{},
 		&NotificationOutboxModel{}, &infraadminaudit.EventModel{},

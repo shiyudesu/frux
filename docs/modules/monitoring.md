@@ -286,15 +286,11 @@ stream 独立回滚。
 - `frux_video_workflow_publication_total{workflow,role,transport,result}`；
 - Kafka Feed/embedding/media Group lag、commit 和 delivery delay；
 - `frux_video_embedding_vectors_total{model,source,outcome}`；
-- `frux_video_embedding_coverage_videos{model,state}`；
-- `frux_video_embedding_semantic_jobs{state}` 与 oldest age；
+- `frux_media_video_lifecycle_tasks_total{result}`；
+- `frux_media_video_lifecycle_backlog` 与 oldest age；
 - `frux_media_processing_wakeups_total{result}`。
 
 告警优先级：publication outbox 增长但公开视频事实保持真实；Feed lag 影响关注分发但不影响 embedding
-Offset；semantic pending/retry/suspended 增长时 hash 应继续生成；media `publish_failed` 或
+Offset；hash `failed` 增长时检查 embedding Group 和 PostgreSQL；media `publish_failed` 或
 `capacity_full` 增长时确认 `polling_recovery` 与数据库 job 仍推进。标签只允许封闭 workflow、
 transport、result、model 和 state，禁止 video/asset/text/model string/raw error。
-
-语义 lease 使用 `frux_video_embedding_semantic_lease_total{outcome}`，outcome 只允许
-`extended/lost`。`lost` 上升时检查服务延迟、lease TTL、数据库连接和 reclaimed attempt；
-claim token、text hash、输入、向量和错误正文不得作为标签。

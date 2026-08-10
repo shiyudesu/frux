@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
-	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
@@ -18,79 +16,6 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kerr"
 )
-
-type semanticSamplerStub struct {
-	mutex    sync.Mutex
-	backlog  int
-	coverage int
-	cleanup  int
-	sampled  chan struct{}
-}
-
-func (s *semanticSamplerStub) SemanticBacklog(
-	context.Context,
-) ([]domainembedding.SemanticBacklog, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.backlog++
-	return []domainembedding.SemanticBacklog{{
-		State: domainembedding.SemanticJobPending, Count: 1,
-	}}, nil
-}
-
-func (s *semanticSamplerStub) SemanticCoverage(context.Context) (int64, int64, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.coverage++
-	return 1, 2, nil
-}
-
-func (s *semanticSamplerStub) CleanupSemanticJobs(
-	context.Context,
-	time.Time,
-	int,
-) (int64, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.cleanup++
-	if s.cleanup == 2 {
-		close(s.sampled)
-	}
-	return 0, nil
-}
-
-func TestSemanticSamplerRunsAndStopsWithWorkerContext(t *testing.T) {
-	repository := &semanticSamplerStub{sampled: make(chan struct{})}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		sampleSemanticBacklog(ctx, repository, 5*time.Millisecond)
-	}()
-	select {
-	case <-repository.sampled:
-	case <-time.After(time.Second):
-		t.Fatal("semantic sampler did not repeat")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("semantic sampler did not stop on shutdown")
-	}
-	repository.mutex.Lock()
-	defer repository.mutex.Unlock()
-	if repository.backlog < 2 ||
-		repository.coverage != repository.backlog ||
-		repository.cleanup != repository.backlog {
-		t.Fatalf(
-			"sampler calls backlog=%d coverage=%d cleanup=%d",
-			repository.backlog,
-			repository.coverage,
-			repository.cleanup,
-		)
-	}
-}
 
 type publicationReadinessStub struct {
 	ready bool
@@ -190,6 +115,24 @@ type workerPublishedEventPublisherStub struct {
 	calls int
 }
 
+type workerMediaPublicationStub struct {
+	protectCalls int
+}
+
+func (*workerMediaPublicationStub) MediaReady(context.Context, int64) error {
+	return nil
+}
+
+func (s *workerMediaPublicationStub) ProtectVideo(
+	context.Context,
+	int64,
+	int64,
+	int64,
+) error {
+	s.protectCalls++
+	return nil
+}
+
 func (s *workerPublishedEventPublisherStub) PublishVideoPublished(
 	context.Context, *applicationvideo.PublishedEvent,
 ) error {
@@ -227,6 +170,21 @@ func TestAdminTransitionLegacyRestoreAlwaysRepairsDurableHandoff(t *testing.T) {
 	}
 	if publisher.calls != 2 || readiness.marks != 0 {
 		t.Fatalf("publisher calls=%d marks=%d", publisher.calls, readiness.marks)
+	}
+}
+
+func TestAdminTransitionLegacyOfflineIntentStillProtectsMedia(t *testing.T) {
+	media := &workerMediaPublicationStub{}
+	applier := workerVideoAdminTransitionApplier{mediaPublication: media}
+	err := applier.ApplyAdminTransition(
+		context.Background(),
+		&domainvideo.Video{
+			ID: 10, Status: domainvideo.StatusOffline,
+			MediaAssetID: 21, CoverAssetID: 22,
+		},
+	)
+	if err != nil || media.protectCalls != 1 {
+		t.Fatalf("protect calls=%d err=%v", media.protectCalls, err)
 	}
 }
 

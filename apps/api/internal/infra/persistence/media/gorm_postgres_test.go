@@ -24,6 +24,7 @@ func TestCleanupTaskPostgreSQLFencingAndDeadline(t *testing.T) {
 	if dsn == "" {
 		t.Skip("FRUX_POSTGRES_TEST_DSN is not set")
 	}
+
 	db := openMediaPostgres(t, dsn)
 	repository := New(db)
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -77,6 +78,78 @@ func TestCleanupTaskPostgreSQLFencingAndDeadline(t *testing.T) {
 		context.Background(), leased[0], "cleanup-owner",
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVideoLifecycleTaskPostgreSQLDuplicateLeaseAndReclaim(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set")
+	}
+	db := openMediaPostgres(t, dsn)
+	repository := New(db)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task, err := domainmedia.NewVideoLifecycleTask(
+		"video-private:7:1", 7, 11, 12,
+		domainmedia.LifecycleActionProtect, 0, "private", 3, now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := AppendVideoLifecycleTask(tx, task); err != nil {
+			return err
+		}
+		return AppendVideoLifecycleTask(tx, task)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := db.Model(&VideoLifecycleTaskModel{}).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("duplicate count=%d err=%v", count, err)
+	}
+	leased, err := repository.ClaimVideoLifecycleTasks(
+		context.Background(), "owner-one", now, now.Add(time.Minute), 1,
+	)
+	if err != nil || len(leased) != 1 || leased[0].Attempts != 1 {
+		t.Fatalf("first lease=%+v err=%v", leased, err)
+	}
+	if second, err := repository.ClaimVideoLifecycleTasks(
+		context.Background(), "owner-two", now.Add(30*time.Second),
+		now.Add(90*time.Second), 1,
+	); err != nil || len(second) != 0 {
+		t.Fatalf("live lease reclaimed=%+v err=%v", second, err)
+	}
+	reclaimed, err := repository.ClaimVideoLifecycleTasks(
+		context.Background(), "owner-two", now.Add(2*time.Minute),
+		now.Add(3*time.Minute), 1,
+	)
+	if err != nil || len(reclaimed) != 1 || reclaimed[0].Attempts != 2 {
+		t.Fatalf("expired lease reclaim=%+v err=%v", reclaimed, err)
+	}
+	count, oldest, err := repository.VideoLifecycleBacklog(context.Background())
+	if err != nil || count != 1 || oldest == nil {
+		t.Fatalf("lifecycle backlog count=%d oldest=%v err=%v", count, oldest, err)
+	}
+	finishedAt := now.Add(2 * time.Minute)
+	leased[0].State = domainmedia.JobStateCompleted
+	leased[0].CompletedAt = &finishedAt
+	if err := repository.UpdateVideoLifecycleTaskOwned(
+		context.Background(), leased[0], "owner-one",
+	); !errors.Is(err, domainmedia.ErrLifecycleTaskLeaseLost) {
+		t.Fatalf("stale owner error=%v", err)
+	}
+	reclaimed[0].State = domainmedia.JobStateCompleted
+	reclaimed[0].ErrorCode = "success"
+	reclaimed[0].CompletedAt = &finishedAt
+	if err := repository.UpdateVideoLifecycleTaskOwned(
+		context.Background(), reclaimed[0], "owner-two",
+	); err != nil {
+		t.Fatal(err)
+	}
+	count, oldest, err = repository.VideoLifecycleBacklog(context.Background())
+	if err != nil || count != 0 || oldest != nil {
+		t.Fatalf("completed lifecycle backlog count=%d oldest=%v err=%v", count, oldest, err)
 	}
 }
 
@@ -217,7 +290,8 @@ func openMediaPostgres(t *testing.T, dsn string) *gorm.DB {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
-		&CleanupTaskModel{}, &UploadSessionModel{}, &AssetModel{}, &VariantModel{},
+		&CleanupTaskModel{}, &VideoLifecycleTaskModel{},
+		&UploadSessionModel{}, &AssetModel{}, &VariantModel{},
 	); err != nil {
 		t.Fatal(err)
 	}

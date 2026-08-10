@@ -577,6 +577,19 @@ func (r *Repository) CommitHumanDecision(
 		}
 		video.Status = current.Status
 		video.PublishedAt = current.PublishedAt
+		if decision.Outcome == domainreview.OutcomeReject {
+			if err := infravideo.AppendMediaLifecycleTask(
+				tx,
+				fmt.Sprintf("review-human-decision:%d:protect", humanModel.ID),
+				video,
+				domainmedia.LifecycleActionProtect,
+				domainvideo.StatusRejected,
+				"",
+				now,
+			); err != nil {
+				return err
+			}
+		}
 		publicDelta, privateDelta := reviewContentWorkDeltas(video, current.Status)
 		if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
 			return err

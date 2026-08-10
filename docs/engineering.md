@@ -210,10 +210,9 @@ GORM Repository 规则：
   Shadow 未查到事实记为 pending 并有界延迟重试，只有已存在但冲突的事实记为 mismatch。
 - 视频首次公开事实在视频拥有的 `video_publication_event_outbox` 中耐久保存，再由 Worker 发布到
   30 天保留的 `frux.video.published.v1`。Feed 与 embedding 使用独立 Group；前者在幂等 Redis
-  fanout/preheat 后提交，后者在 hash 向量与 `semantic_embedding_job` 同一事务提交后提交。
-- `video.published` 共享契约只校验 envelope、业务 identity、时间、key 与视频字段边界，不得导入
-  embedding canonicalization。确定性语义 input 错误仅由 embedding Group terminal 提交，Feed Group
-  仍须接受同一视频发布事实。publication outbox 的 publish aggregate context 与 durable mark/stats
+  fanout/preheat 后提交，后者在 `hash-ngram-v1` 条件持久化成功后提交。
+- `video.published` 共享契约只校验 envelope、业务 identity、时间、key 与视频字段边界。
+  publication outbox 的 publish aggregate context 与 durable mark/stats
   context 分离；mark/stats 使用 `context.WithoutCancel` 加短 deadline。transport timeout 后必须尝试
   释放 lease；stats 失败保留旧 gauge 并单独计数。
 - 首次公开同时写 immutable `video_publication_event_fact` 与 operational outbox。Dispatcher
@@ -222,11 +221,11 @@ GORM Repository 规则：
   fact 缺失而不是 outbox 缺失修复，禁止 cleanup 后重新发布。
 - `frux.media.processing-requested.v1` 只是不权威的短保留唤醒提示。Consumer 校验数据库任务并
   有界 signal 后立即提交，不得在 ffmpeg 期间持有 Offset；数据库租约、心跳、轮询与 reconciliation
-  继续决定正确性。语义向量长重试同样由 PostgreSQL job 管理，不使用 Kafka retry topic。
+  继续决定正确性。
 - Media Kafka signal 与 polling 必须进入同一个有界 scheduler/worker pool，先占 slot 再 claim 一个
   job。每次 claim 使用唯一 token；heartbeat 与最终 transition 均按 token 与未过期 lease fencing。
   媒体 asset、variants、cleanup/job 最终状态必须在同一事务、验证 fence 后提交，public/notification
-  副作用只能在提交后发生。Media 与 semantic heartbeat 使用处理 context 派生的短 deadline，
+  副作用只能在提交后发生。Media heartbeat 使用处理 context 派生的短 deadline，
   DB stall/shutdown 必须取消处理，禁止 stale/reclaimed attempt 更新状态。
 - Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
 - DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
@@ -586,20 +585,9 @@ openspec validate --all --strict
 - 治理 control mutation 要求 `governance.execute`、非空 reason 和 expected revision；rollback
   选择较早且未过期 revision，但必须创建新的 immutable revision。控制面失败不得阻塞请求：
   last-known-good 在 max staleness 内继续使用，之后使用代码注册 failure default。
-- `apps/semantic-embedding` 是独立 Python 3.12 内部服务，必须提交 frozen `uv.lock`、固定模型
-  revision、offline runtime 和严格 token HTTP 契约；不得直接依赖 Go、数据库、缓存、队列、
-  浏览器、持久化、回填或推荐代码。
-- 该服务由一个 HTTP coordinator 和最多两个隔离 inference 子进程组成。模型 preload/fixture 与
-  native inference 都必须在可终止进程中执行；总 deadline 或 cancellation 要终止并替换对应进程、
-  立即释放 admission，shutdown 回收全部子进程，子进程输出不得进入业务日志。
-- 内部 token 配置与请求值都必须是可打印 ASCII；请求头必须在 `compare_digest` 前拒绝非 ASCII。
-  Go config/client 与 Python 使用同一 fixture 验证至少 32 字符、非 placeholder、至少三类及
-  ASCII 32–126 契约。Coordinator 在推理期间读取 ASGI `http.disconnect`，断开即取消并 recycle
-  子进程、释放容量。
-- 一个 180 秒外层 deadline 必须覆盖 preload、fixture validation 和完整 inference pool 初始化，
-  worker 不得各自重置完整 timeout。replacement 失败按有界退避重试，readiness 要求全部配置容量，
-  全 worker 丢失返回 503 并在恢复后自动 ready。请求 deadline 必须覆盖 ASGI receive/parsing、
-  auth、capacity、inference 和 send；慢上传与阻塞 send 都必须有界取消。生产 model/fixture 路径
-  不接受环境覆盖，测试通过显式 Settings/依赖注入。请求日志只允许 route/status/duration/result/
-  capacity，禁止 body/text/ID/vector/token/path/URL/raw error；Uvicorn access log 必须关闭，
-  bind/start `SystemExit` 只能通过清洗后的 startup category 报告。
+- 任何使视频私密、删除、拒绝或下架的事务都必须同时写入唯一 `media_video_lifecycle_task`，不能把
+  对象保护/清理留给请求路径的 post-commit best effort。Worker 使用稳定 `SKIP LOCKED` claim、
+  bounded lease/attempt/retry/terminal state；私密 reconciliation 保护 variant，删除任务通过
+  any-status 视频读取和已捕获 asset ID 调度现有 atomic cleanup。迁移按当前不可公开状态幂等补齐
+  历史任务；stale intent 发现视频已重新公开时必须修复 public delivery 后才能完成。同步事务仍立即
+  移除公开发现。

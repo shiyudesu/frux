@@ -14,6 +14,7 @@ import (
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
+	inframedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"net/url"
 	"os"
@@ -457,6 +458,16 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 	if result.Video.Status != domainvideo.StatusOffline {
 		t.Fatalf("offline result=%#v", result.Video)
 	}
+	var adminMediaIntent inframedia.VideoLifecycleTaskModel
+	if err := db.Where("video_id = ? AND action = ?", video.ID, domainmedia.LifecycleActionProtect).
+		Take(&adminMediaIntent).Error; err != nil {
+		t.Fatalf("admin media protection intent: %v", err)
+	}
+	if adminMediaIntent.RequiredStatus != domainvideo.StatusOffline ||
+		adminMediaIntent.MediaAssetID != video.MediaAssetID ||
+		adminMediaIntent.CoverAssetID != video.CoverAssetID {
+		t.Fatalf("admin media protection intent=%+v", adminMediaIntent)
+	}
 	restoreAt := now.Add(time.Minute)
 	restoreFact, err := domainadminaudit.NewFact(domainadminaudit.FactInput{
 		ActorID: 9, Permission: domainaccount.PermissionContentEnforce,
@@ -474,6 +485,7 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	restored, err := repository.CommitAdminTransition(
 		context.Background(),
 		domainvideo.AdminTransitionCommand{
@@ -613,6 +625,119 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 		Count(&synthesized).Error; err != nil || synthesized != 1 {
 		t.Fatalf("historical make-public notifications=%d err=%v", synthesized, err)
 	}
+}
+
+func TestPostgresPrivateAndDeleteBatchPersistMediaIntentsAtomically(t *testing.T) {
+	t.Run("crash after commit and duplicate replay", func(t *testing.T) {
+		db := openSearchPostgres(t)
+		now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+		privateVideo := searchVideoModel(
+			801, "private", "", domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now,
+		)
+		privateVideo.MediaAssetID = int64Pointer(1801)
+		privateVideo.CoverAssetID = int64Pointer(1802)
+		deleteVideo := searchVideoModel(
+			802, "delete", "", domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now,
+		)
+		deleteVideo.MediaAssetID = int64Pointer(2801)
+		deleteVideo.CoverAssetID = int64Pointer(2802)
+		if err := db.Create(&[]infravideo.VideoModel{privateVideo, deleteVideo}).Error; err != nil {
+			t.Fatal(err)
+		}
+		repository := infravideo.New(db)
+		if _, _, err := repository.ApplyBatch(
+			context.Background(), 1, domainvideo.BatchActionMakePrivate,
+			[]int64{privateVideo.ID}, "durable-private", "durable-private",
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, replayed, err := repository.ApplyBatch(
+			context.Background(), 1, domainvideo.BatchActionMakePrivate,
+			[]int64{privateVideo.ID}, "durable-private", "durable-private",
+		); err != nil || !replayed {
+			t.Fatalf("private replay=%v err=%v", replayed, err)
+		}
+		if _, _, err := repository.ApplyBatch(
+			context.Background(), 1, domainvideo.BatchActionDelete,
+			[]int64{deleteVideo.ID}, "durable-delete", "durable-delete",
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		var intents []inframedia.VideoLifecycleTaskModel
+		if err := db.Order("video_id ASC").Find(&intents).Error; err != nil {
+			t.Fatal(err)
+		}
+		if len(intents) != 2 {
+			t.Fatalf("durable intents=%+v", intents)
+		}
+		if intents[0].VideoID != privateVideo.ID ||
+			intents[0].Action != domainmedia.LifecycleActionProtect ||
+			intents[0].RequiredVisibility != domainvideo.VisibilityPrivate ||
+			intents[0].MediaAssetID != 1801 || intents[0].CoverAssetID != 1802 {
+			t.Fatalf("private intent=%+v", intents[0])
+		}
+		if intents[1].VideoID != deleteVideo.ID ||
+			intents[1].Action != domainmedia.LifecycleActionDelete ||
+			intents[1].RequiredStatus != domainvideo.StatusDeleted ||
+			intents[1].MediaAssetID != 2801 || intents[1].CoverAssetID != 2802 {
+			t.Fatalf("delete intent=%+v", intents[1])
+		}
+		var privateCurrent, deletedCurrent infravideo.VideoModel
+		if err := db.Where("id = ?", privateVideo.ID).Take(&privateCurrent).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Where("id = ?", deleteVideo.ID).Take(&deletedCurrent).Error; err != nil {
+			t.Fatal(err)
+		}
+		if privateCurrent.Visibility != domainvideo.VisibilityPrivate ||
+			deletedCurrent.Status != domainvideo.StatusDeleted {
+			t.Fatalf(
+				"public discovery state private=%s delete=%d",
+				privateCurrent.Visibility, deletedCurrent.Status,
+			)
+		}
+		recovered, err := repository.FindByIDAnyStatus(
+			context.Background(), deleteVideo.ID,
+		)
+		if err != nil || recovered.MediaAssetID != 2801 || recovered.CoverAssetID != 2802 {
+			t.Fatalf("deleted recovery video=%+v err=%v", recovered, err)
+		}
+	})
+
+	t.Run("intent failure rolls back visibility", func(t *testing.T) {
+		db := openSearchPostgres(t)
+		now := time.Date(2026, 8, 10, 11, 0, 0, 0, time.UTC)
+		video := searchVideoModel(
+			803, "rollback", "", domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now,
+		)
+		if err := db.Create(&video).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Exec(`
+			ALTER TABLE media_video_lifecycle_task
+			ADD CONSTRAINT reject_private_media_intent CHECK (action <> 'protect')
+		`).Error; err != nil {
+			t.Fatal(err)
+		}
+		repository := infravideo.New(db)
+		if _, _, err := repository.ApplyBatch(
+			context.Background(), 1, domainvideo.BatchActionMakePrivate,
+			[]int64{video.ID}, "rollback-private", "rollback-private",
+		); err == nil {
+			t.Fatal("expected media intent failure")
+		}
+		var current infravideo.VideoModel
+		if err := db.Where("id = ?", video.ID).Take(&current).Error; err != nil {
+			t.Fatal(err)
+		}
+		if current.Visibility != domainvideo.VisibilityPublic {
+			t.Fatalf("visibility committed without media intent: %s", current.Visibility)
+		}
+	})
 }
 
 func TestPostgresVideoCreationRollsBackWhenNotificationFails(t *testing.T) {
@@ -878,6 +1003,7 @@ func openSearchPostgres(t *testing.T) *gorm.DB {
 		&infravideo.NotificationOutboxModel{},
 		&infravideo.PublicationEventFactModel{},
 		&infravideo.PublicationEventOutboxModel{},
+		&inframedia.VideoLifecycleTaskModel{},
 	); err != nil {
 		t.Fatalf("migrate search tables: %v", err)
 	}

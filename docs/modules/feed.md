@@ -170,7 +170,7 @@ feed:hot:window:v1:{windowEndUnix}
 
 首次公开视频由 `frux.video.published.v1` 提供 30 天保留事实。Feed 使用独立
 `frux.feed.video-published.v1` Group，在卡片预热和 inbox/author-outbox 幂等 ZSET 写入成功后才提交
-Offset。Embedding 的延迟、语义服务故障和重放不会阻塞 Feed Group；重复记录继续使用原始
+Offset。Embedding Group 的延迟和重放不会阻塞 Feed Group；重复记录继续使用原始
 `published_at`，不会改变 Timeline 顺序。切换前使用独立 shadow Group 做信封、key、年龄和事实校验，
 异常时只回滚 Feed responsibility 到 RabbitMQ。
 

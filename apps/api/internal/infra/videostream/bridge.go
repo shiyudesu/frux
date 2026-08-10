@@ -273,7 +273,7 @@ func (h *EmbeddingHandler) Handle(
 		return applicationeventstream.OutcomeTerminal, nil
 	}
 	if err := h.intake.HandleVideoPublished(ctx, publishedEvent(payload)); err != nil {
-		if errors.Is(err, domainembedding.ErrInvalidSemanticText) {
+		if errors.Is(err, domainembedding.ErrInvalidHashText) {
 			return applicationeventstream.OutcomeTerminal, err
 		}
 		return applicationeventstream.OutcomeRetryable, err

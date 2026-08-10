@@ -170,8 +170,8 @@ HTTP Handler
 
 - 发布接口响应时间与粉丝数解耦。
 - Worker 可重复消费同一发布事件。
-- Feed 与 embedding lag 隔离；语义服务长故障只增长 PostgreSQL job backlog，不占用 publication
-  Partition。媒体 command 在本地容量满时仍快速提交，由轮询恢复，避免 ffmpeg 时长影响 Group liveness。
+- Feed 与 hash embedding lag 隔离。媒体 command 在本地容量满时仍快速提交，由轮询恢复，避免
+  ffmpeg 时长影响 Group liveness。
 - inbox 长度受控。
 
 ## 10. Hot Feed

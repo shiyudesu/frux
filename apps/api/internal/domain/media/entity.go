@@ -41,6 +41,9 @@ const (
 	CleanupStateCompleted  = "completed"
 	CleanupStateFailed     = "failed"
 
+	LifecycleActionProtect = "protect"
+	LifecycleActionDelete  = "delete"
+
 	MediaStatusLegacyReady = "legacy_ready"
 	MediaStatusPending     = "pending"
 	MediaStatusProcessing  = "processing"
@@ -171,6 +174,27 @@ type CleanupTask struct {
 	CompletedAt    *time.Time
 }
 
+type VideoLifecycleTask struct {
+	ID                 int64
+	DedupeKey          string
+	VideoID            int64
+	MediaAssetID       int64
+	CoverAssetID       int64
+	Action             string
+	RequiredStatus     int
+	RequiredVisibility string
+	State              string
+	Attempts           int
+	MaxAttempts        int
+	ErrorCode          string
+	LeaseOwner         string
+	LeaseUntil         *time.Time
+	NextAttemptAt      time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	CompletedAt        *time.Time
+}
+
 type PlaybackSource struct {
 	Type       string `json:"type"`
 	URL        string `json:"url"`
@@ -282,6 +306,32 @@ func NewCleanupTask(assetID int64, backend, objectKey string, notBefore time.Tim
 	return &CleanupTask{
 		AssetID: assetID, StorageBackend: backend, ObjectKey: objectKey,
 		State: CleanupStatePending, NotBefore: notBefore, MaxAttempts: maxAttempts,
+	}, nil
+}
+
+func NewVideoLifecycleTask(
+	dedupeKey string,
+	videoID, mediaAssetID, coverAssetID int64,
+	action string,
+	requiredStatus int,
+	requiredVisibility string,
+	maxAttempts int,
+	now time.Time,
+) (*VideoLifecycleTask, error) {
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	action = strings.ToLower(strings.TrimSpace(action))
+	requiredVisibility = strings.ToLower(strings.TrimSpace(requiredVisibility))
+	if dedupeKey == "" || len(dedupeKey) > 256 || videoID <= 0 ||
+		mediaAssetID < 0 || coverAssetID < 0 || maxAttempts <= 0 ||
+		(action != LifecycleActionProtect && action != LifecycleActionDelete) {
+		return nil, ErrInvalidLifecycleTask
+	}
+	return &VideoLifecycleTask{
+		DedupeKey: dedupeKey, VideoID: videoID,
+		MediaAssetID: mediaAssetID, CoverAssetID: coverAssetID,
+		Action: action, RequiredStatus: requiredStatus,
+		RequiredVisibility: requiredVisibility,
+		State:              JobStatePending, MaxAttempts: maxAttempts, NextAttemptAt: now,
 	}, nil
 }
 

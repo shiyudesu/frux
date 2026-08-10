@@ -11,21 +11,26 @@ import (
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 )
 
-type intakeRepositoryStub struct {
-	mutex      sync.Mutex
-	embedding  *domainembedding.VideoEmbedding
-	job        *domainembedding.SemanticJob
-	persisted  int
-	persistErr error
+type hashIntakeRepository struct {
+	mutex     sync.Mutex
+	embedding *domainembedding.VideoEmbedding
+	saveErr   error
 }
 
-func (r *intakeRepositoryStub) SaveVideoEmbedding(
-	context.Context,
-	*domainembedding.VideoEmbedding,
+func (r *hashIntakeRepository) SaveVideoEmbedding(
+	_ context.Context,
+	embedding *domainembedding.VideoEmbedding,
 ) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if r.saveErr != nil {
+		return r.saveErr
+	}
+	r.embedding = embedding
 	return nil
 }
-func (r *intakeRepositoryStub) FindVideoEmbedding(
+
+func (r *hashIntakeRepository) FindVideoEmbedding(
 	context.Context,
 	int64,
 	string,
@@ -37,163 +42,83 @@ func (r *intakeRepositoryStub) FindVideoEmbedding(
 	}
 	return r.embedding, nil
 }
-func (r *intakeRepositoryStub) PersistHashAndSemanticJob(
-	_ context.Context,
-	embedding *domainembedding.VideoEmbedding,
-	job *domainembedding.SemanticJob,
-) error {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	if r.persistErr != nil {
-		return r.persistErr
-	}
-	r.embedding = embedding
-	r.job = job
-	r.persisted++
-	return nil
-}
 
-func TestPublicationIntakePersistsHashAndSemanticJobTogether(t *testing.T) {
+func TestPublicationIntakePersistsOnlyHashEmbedding(t *testing.T) {
 	now := time.Now().UTC()
-	repository := &intakeRepositoryStub{}
+	repository := &hashIntakeRepository{}
 	service := New(repository, nil)
-	service.now = func() time.Time { return now }
 	event := &applicationvideo.PublishedEvent{
 		EventID: "video-published:8:1", VideoID: 8, AuthorID: 2,
-		Title: "  Ｆｒｕｘ  ", Description: " 语义\t内容 ",
+		Title: " title ", Description: " description ",
 		PublishedAt: now, OccurredAt: now,
 	}
 	result, err := service.GenerateForPublishedVideo(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repository.persisted != 1 || repository.embedding == nil || repository.job == nil {
-		t.Fatalf("intake boundary = %+v", repository)
-	}
-	if repository.job.State != domainembedding.SemanticJobPending ||
-		repository.job.TextHash != repository.embedding.TextHash ||
-		repository.job.Title != "Frux" ||
-		repository.job.Description != "语义 内容" {
-		t.Fatalf("semantic job = %+v", repository.job)
+	if repository.embedding == nil ||
+		repository.embedding.Model != domainembedding.HashNgramModel ||
+		repository.embedding.TextHash != domainembedding.TextHash("title\ndescription") {
+		t.Fatalf("hash embedding=%+v", repository.embedding)
 	}
 	if !result.CreatedOrUpdated {
 		t.Fatal("new hash fact reported skipped")
 	}
-	service.SetSemanticEnabled(true)
+
 	result, err = service.GenerateForPublishedVideo(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.CreatedOrUpdated {
-		t.Fatal("duplicate publication churned the hash fact")
+		t.Fatal("duplicate publication reported a changed hash fact")
 	}
 }
 
-func TestPublicationIntakeChangedTextResetsOneSemanticJob(t *testing.T) {
+func TestPublicationIntakeUpdatesChangedHashText(t *testing.T) {
 	now := time.Now().UTC()
-	repository := &intakeRepositoryStub{}
+	repository := &hashIntakeRepository{}
 	service := New(repository, nil)
-	service.SetSemanticEnabled(true)
-	service.now = func() time.Time { return now }
 	event := &applicationvideo.PublishedEvent{
-		EventID: "video-published:8:1", VideoID: 8, AuthorID: 2,
+		EventID: "video-published:9:1", VideoID: 9, AuthorID: 2,
 		Title: "first", PublishedAt: now, OccurredAt: now,
 	}
 	first, err := service.GenerateForPublishedVideo(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstHash := first.Embedding.TextHash
 	event.Title = "second"
 	second, err := service.GenerateForPublishedVideo(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.CreatedOrUpdated || second.Embedding.TextHash == firstHash ||
-		repository.job.TextHash != second.Embedding.TextHash ||
-		repository.job.State != domainembedding.SemanticJobPending {
-		t.Fatalf("changed intake result=%+v job=%+v", second, repository.job)
+	if !second.CreatedOrUpdated || second.Embedding.TextHash == first.Embedding.TextHash {
+		t.Fatalf("first=%+v second=%+v", first, second)
 	}
 }
 
-type hashFailureRepository struct {
-	err error
-}
-
-func (r hashFailureRepository) SaveVideoEmbedding(
-	context.Context,
-	*domainembedding.VideoEmbedding,
-) error {
-	return r.err
-}
-
-func (hashFailureRepository) FindVideoEmbedding(
-	context.Context,
-	int64,
-	string,
-) (*domainembedding.VideoEmbedding, error) {
-	return nil, domainembedding.ErrVideoEmbeddingNotFound
-}
-
-func TestPublicationIntakeStopsAtHashOrSemanticHandoffFailure(t *testing.T) {
-	now := time.Now().UTC()
-	event := &applicationvideo.PublishedEvent{
-		EventID: "video-published:9:1", VideoID: 9, AuthorID: 2,
-		Title: "title", PublishedAt: now, OccurredAt: now,
-	}
-	service := New(hashFailureRepository{err: errors.New("hash down")}, nil)
-	if _, err := service.GenerateForPublishedVideo(
-		context.Background(),
-		event,
-	); !errors.Is(err, ErrSaveVideoEmbeddingFailed) {
-		t.Fatalf("hash failure = %v", err)
-	}
-	repository := &intakeRepositoryStub{persistErr: errors.New("handoff down")}
-	service = New(repository, nil)
-	service.SetSemanticEnabled(true)
-	if _, err := service.GenerateForPublishedVideo(
-		context.Background(),
-		event,
-	); !errors.Is(err, ErrSaveVideoEmbeddingFailed) {
-		t.Fatalf("handoff failure = %v", err)
-	}
-	if repository.embedding != nil || repository.job != nil {
-		t.Fatal("failed atomic handoff exposed partial durable state")
-	}
-}
-
-func TestPublicationIntakeConcurrentDuplicatesRemainOneFact(t *testing.T) {
-	now := time.Now().UTC()
-	repository := &intakeRepositoryStub{}
+func TestPublicationIntakeSurfacesHashPersistenceFailure(t *testing.T) {
+	repository := &hashIntakeRepository{saveErr: errors.New("database unavailable")}
 	service := New(repository, nil)
-	service.SetSemanticEnabled(true)
-	service.now = func() time.Time { return now }
-	event := &applicationvideo.PublishedEvent{
-		EventID: "video-published:10:1", VideoID: 10, AuthorID: 2,
-		Title: "title", PublishedAt: now, OccurredAt: now,
+	_, err := service.GenerateForPublishedVideo(
+		context.Background(),
+		&applicationvideo.PublishedEvent{VideoID: 10, Title: "title"},
+	)
+	if !errors.Is(err, ErrSaveVideoEmbeddingFailed) {
+		t.Fatalf("hash failure=%v", err)
 	}
-	var wait sync.WaitGroup
-	errs := make(chan error, 16)
-	for range 16 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			_, err := service.GenerateForPublishedVideo(context.Background(), event)
-			errs <- err
-		}()
+}
+
+func TestPublicationIntakeRejectsInvalidHashText(t *testing.T) {
+	repository := &hashIntakeRepository{}
+	service := New(repository, nil)
+	_, err := service.GenerateForPublishedVideo(
+		context.Background(),
+		&applicationvideo.PublishedEvent{VideoID: 11, Title: "title\x00"},
+	)
+	if !errors.Is(err, domainembedding.ErrInvalidHashText) {
+		t.Fatalf("invalid hash text error=%v", err)
 	}
-	wait.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	repository.mutex.Lock()
-	defer repository.mutex.Unlock()
-	if repository.embedding == nil || repository.job == nil ||
-		repository.embedding.VideoID != event.VideoID ||
-		repository.job.VideoID != event.VideoID {
-		t.Fatalf("concurrent fact=%+v job=%+v", repository.embedding, repository.job)
+	if repository.embedding != nil {
+		t.Fatalf("invalid hash text persisted=%+v", repository.embedding)
 	}
 }

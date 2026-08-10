@@ -632,11 +632,14 @@ flowchart LR
   claim token 与未过期 lease；只有 fenced commit 成功后才允许媒体公开投影和生命周期通知。
 - `frux.media.processing-requested.v1` Consumer 只校验 job 并有界 signal 后提交，不在转码期间持有
   Offset；轮询与 reconciliation 覆盖命令丢失、重复、延迟、满容量和重启。
-- `frux.video.published.v1` 保留 30 天首次发布事实。Embedding intake 先提交 hash 与
-  `semantic_embedding_job`；远端语义请求由独立数据库租约 worker 执行，长重试不占 Kafka Partition。
+- `frux.video.published.v1` 保留 30 天首次发布事实。Feed 与 `hash-ngram-v1` 使用独立 Group，
+  各自在幂等副作用或条件向量持久化成功后提交 Offset。
 - Worker 只在临时对象通过大小与 SHA-256 校验后发布受保护的内容寻址输出；只有审核已通过且公开的视频才提升到 `media/` 公共前缀。基线先就绪时仅更新 `media_status=ready` 并保持公共 URL 为空；批准先发生时也等待基线，双门满足后才投影 URL 和发送发布事件。
-- 公共变体使用版本化 `media/v2/{exposure-generation}/...` URL、60 秒可重验证缓存、ETag 和 Range/HEAD；私密、下架、拒绝、媒体失败或删除转换会将变体降回保护前缀，本地 `/media` 还实时校验数据库公开资格。状态撤销允许最多一个短缓存窗口，失败返回错误并由幂等请求重试；首次上线需 purge 旧 `media/*` 一年缓存条目。原始对象和未完成资产只能由不可变 owner 获取短期签名 URL。
-- 删除视频立即停止 API 发现，并通过 `media_cleanup_task` 延迟删除对象；Reconciler 修复过期租约、缺失对象、不完整变体和孤儿对象。
+- 公共变体使用版本化 `media/v2/{exposure-generation}/...` URL、60 秒可重验证缓存、ETag 和 Range/HEAD；私密、下架、拒绝、媒体失败或删除转换会将变体降回保护前缀，本地 `/media` 还实时校验数据库公开资格。状态撤销允许最多一个短缓存窗口；首次上线需 purge 旧 `media/*` 一年缓存条目。原始对象和未完成资产只能由不可变 owner 获取短期签名 URL。
+- 私密、删除、拒绝和下架事务与 `media_video_lifecycle_task` 原子提交。媒体 worker 通过租约、重试和
+  any-status 视频状态执行保护；stale private intent 在视频重新公开后终结为 superseded。删除视频
+  立即停止 API 发现，随后由 durable lifecycle task 调用 `media_cleanup_task` 延迟删除对象；
+  Reconciler 修复过期租约、缺失对象、不完整变体和孤儿对象。
 
 ## 8. 播放观测链路
 
@@ -651,15 +654,3 @@ flowchart LR
 ```
 
 首帧优先使用渲染回调，卡顿排除暂停和 seek。数据库保留诊断标识，指标标签只允许固定技术维度；看板和告警无法按用户、视频、请求或播放会话展开。
-
-## 语义向量服务边界
-
-`apps/semantic-embedding` 是独立 Python 3.12 CPU 服务，只提供固定 revision 的受保护 HTTP
-metadata/embedding 接口，不访问 Frux 数据库、缓存、队列或浏览器。Go Worker 按 hash-first
-边界写 PostgreSQL semantic job，再用唯一 claim token、lease heartbeat 和 fencing 调用服务。
-服务用一个 180 秒外层 deadline 初始化 preload/fixture/完整进程池；readiness 绑定全部 live
-capacity，replacement 有界重试。每个 Go replica 只用本地 metadata gate 控制 claims，不批量
-suspend/resume 共享 jobs；健康副本仍可 claim 遗留 `suspended` 行。Python 服务拒绝非 printable
-ASCII token，并以一个 request deadline 覆盖 ASGI body receive/parsing、鉴权、capacity、推理与
-response send；超时或 `http.disconnect` 会立即取消/recycle 推理。生产 model/fixture 路径不可由
-环境变量覆盖。运营日志只含 route/status/duration/result/capacity。

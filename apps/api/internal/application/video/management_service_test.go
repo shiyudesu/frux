@@ -156,7 +156,7 @@ func TestBatchNormalizationAndFingerprint(t *testing.T) {
 	}
 }
 
-func TestReplayedPrivateBatchDoesNotDemoteCurrentlyPublicVideo(t *testing.T) {
+func TestPrivateBatchNeverPerformsPostCommitMediaMutation(t *testing.T) {
 	publisher := &managementMediaPublisherStub{}
 	repo := &managementRepoStub{
 		replayed: true,
@@ -180,6 +180,7 @@ func TestReplayedPrivateBatchDoesNotDemoteCurrentlyPublicVideo(t *testing.T) {
 		t.Fatalf("old replay demoted current public video: %d", publisher.protectCalls)
 	}
 
+	repo.replayed = false
 	repo.mediaRefs[0].Visibility = domainvideo.VisibilityPrivate
 	if _, err := service.ApplyBatch(
 		context.Background(),
@@ -190,8 +191,8 @@ func TestReplayedPrivateBatchDoesNotDemoteCurrentlyPublicVideo(t *testing.T) {
 	); err != nil {
 		t.Fatalf("retry current private batch: %v", err)
 	}
-	if publisher.protectCalls != 1 {
-		t.Fatalf("current private state was not protected: %d", publisher.protectCalls)
+	if publisher.protectCalls != 0 {
+		t.Fatalf("private batch performed post-commit protection: %d", publisher.protectCalls)
 	}
 }
 

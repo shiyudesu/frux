@@ -211,7 +211,6 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"account_profile_setting",
 		"admin_audit_event",
 		"video_embedding",
-		"semantic_embedding_job",
 		"video",
 		"media_asset",
 		"media_variant",
@@ -219,6 +218,7 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"media_processing_job",
 		"media_upload_session",
 		"media_cleanup_task",
+		"media_video_lifecycle_task",
 		"local_upload_asset",
 		"video_stat",
 		"user_content_stat",
@@ -276,11 +276,12 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infravideo.VideoModel{}, "idx_video_public_timeline"},
 		{&infravideo.PublicationEventFactModel{}, "idx_video_publication_fact_video"},
 		{&infravideo.PublicationEventOutboxModel{}, "idx_video_publication_outbox_pending"},
-		{&infraembedding.SemanticJobModel{}, "idx_semantic_embedding_job_ready"},
 		{&inframedia.AssetModel{}, "uk_media_asset_backend_key"},
 		{&inframedia.VariantModel{}, "idx_media_variant_video_order"},
 		{&inframedia.ProcessingJobModel{}, "uk_media_processing_job_asset_profile"},
 		{&inframedia.UploadSessionModel{}, "idx_media_upload_session_expiry"},
+		{&inframedia.VideoLifecycleTaskModel{}, "uk_media_video_lifecycle_dedupe"},
+		{&inframedia.VideoLifecycleTaskModel{}, "idx_media_video_lifecycle_ready"},
 		{&infrafeed.InboxModel{}, "uk_feed_inbox_user_video"},
 		{&infraexposure.ExposureModel{}, "uk_exposures_user_video"},
 		{&infraexposure.ViewEventModel{}, "uk_video_view_events_user_event"},
@@ -451,6 +452,73 @@ func TestPostgreSQLMigration(t *testing.T) {
 	}
 	if missingStats != 0 {
 		t.Fatalf("expected complete video_stat rows, found %d missing", missingStats)
+	}
+}
+
+func TestPostgreSQLMigrationBackfillsMediaLifecycleTasks(t *testing.T) {
+	fixture := newPostgresFixture(t)
+	db := fixture.openGORM(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("initial migration: %v", err)
+	}
+	now := time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC)
+	baseID := time.Now().UTC().UnixNano()
+	privateMediaAssetID := baseID + 101
+	privateCoverAssetID := baseID + 102
+	deletedMediaAssetID := baseID + 103
+	deletedCoverAssetID := baseID + 104
+	videos := []infravideo.VideoModel{
+		{
+			ID: baseID + 1, AuthorID: 1, Title: "private",
+			Status: domainvideo.StatusPublished, Visibility: domainvideo.VisibilityPrivate,
+			MediaStatus:  domainmedia.MediaStatusReady,
+			MediaAssetID: &privateMediaAssetID, CoverAssetID: &privateCoverAssetID,
+			ReviewVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: baseID + 2, AuthorID: 1, Title: "deleted",
+			Status: domainvideo.StatusDeleted, Visibility: domainvideo.VisibilityPublic,
+			MediaStatus:  domainmedia.MediaStatusReady,
+			MediaAssetID: &deletedMediaAssetID, CoverAssetID: &deletedCoverAssetID,
+			ReviewVersion: 1, Version: 1,
+			CreatedAt: now.Add(time.Minute), UpdatedAt: now.Add(time.Minute),
+		},
+		{
+			ID: baseID + 3, AuthorID: 1, Title: "rejected",
+			Status: domainvideo.StatusRejected, Visibility: domainvideo.VisibilityPublic,
+			MediaStatus:   domainmedia.MediaStatusReady,
+			ReviewVersion: 1, Version: 1,
+			CreatedAt: now.Add(2 * time.Minute), UpdatedAt: now.Add(2 * time.Minute),
+		},
+	}
+	if err := db.Create(&videos).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("backfill migration: %v", err)
+	}
+	var tasks []inframedia.VideoLifecycleTaskModel
+	if err := db.Order("video_id ASC").Find(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("backfilled lifecycle tasks=%+v", tasks)
+	}
+	if tasks[0].Action != domainmedia.LifecycleActionProtect ||
+		tasks[0].RequiredVisibility != domainvideo.VisibilityPrivate ||
+		tasks[1].Action != domainmedia.LifecycleActionDelete ||
+		tasks[1].RequiredStatus != domainvideo.StatusDeleted ||
+		tasks[2].Action != domainmedia.LifecycleActionProtect ||
+		tasks[2].RequiredStatus != domainvideo.StatusRejected {
+		t.Fatalf("backfilled lifecycle tasks=%+v", tasks)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("idempotent backfill migration: %v", err)
+	}
+	var count int64
+	if err := db.Model(&inframedia.VideoLifecycleTaskModel{}).Count(&count).Error; err != nil ||
+		count != 3 {
+		t.Fatalf("idempotent lifecycle task count=%d err=%v", count, err)
 	}
 }
 

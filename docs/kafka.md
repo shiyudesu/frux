@@ -77,14 +77,10 @@ Registered video workflow contracts:
 
 The video transaction/durable publication boundary writes
 `video_publication_event_outbox`; its dispatcher waits for the selected transport acknowledgement.
-Feed commits after idempotent preheat/index work. Embedding commits after hash persistence and
-PostgreSQL semantic-job handoff. Media wakeup consumers only validate the durable
+Feed commits after idempotent preheat/index work. Embedding commits after conditional
+`hash-ngram-v1` persistence. Media wakeup consumers only validate the durable
 `media_processing_job`, signal bounded local scheduling, and commit without waiting for ffmpeg.
 PostgreSQL polling and reconciliation remain the media correctness path.
-
-Semantic inference retries are not Kafka retry topics. `semantic_embedding_job` owns model/text-hash
-identity, availability, attempts, leases, suspension, completion, and the capped
-5s/30s/2m/10m/30m retry schedule.
 
 ## Contracts and topology
 
@@ -150,7 +146,5 @@ Dispatcher 异步启动并以 5×100/10 秒为单次上限，broker outage 不�
 window 后只清理已有 fact 的 dispatched outbox；Reconciliation 按 fact 缺失修复，因此清理不会
 重新发出事件，并继续排除 private/deleted 和无 lifecycle 追踪的历史视频。
 
-Feed fanout、embedding intake 和 media wakeup shadow 使用非变更 parity reader，传播缺失最多
-三次有界内联重试；配置 shadow/active Kafka gate 时 nil parity 使 Worker 启动失败。Semantic
-processor 每次只 claim 一个 job，使用唯一 token、远程调用 heartbeat，并 fencing 过期或被回收
-attempt 的 complete/retry。
+Feed fanout、hash embedding intake 和 media wakeup shadow 使用非变更 parity reader，传播缺失最多
+三次有界内联重试；配置 shadow/active Kafka gate 时 nil parity 使 Worker 启动失败。

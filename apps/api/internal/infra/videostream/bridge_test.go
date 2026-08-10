@@ -234,23 +234,24 @@ type mediaWakeupStub struct {
 	calls int
 }
 
-type poisonEmbeddingIntakeStub struct{}
+type invalidHashEmbeddingIntakeStub struct{}
 
-func (poisonEmbeddingIntakeStub) HandleVideoPublished(
-	context.Context, *applicationvideo.PublishedEvent,
+func (invalidHashEmbeddingIntakeStub) HandleVideoPublished(
+	context.Context,
+	*applicationvideo.PublishedEvent,
 ) error {
-	return domainembedding.ErrInvalidSemanticText
+	return domainembedding.ErrInvalidHashText
 }
 
-func TestEmbeddingHandlerTreatsCanonicalizationPoisonAsTerminal(t *testing.T) {
-	outcome, err := NewEmbeddingHandler(poisonEmbeddingIntakeStub{}).Handle(
+func TestEmbeddingHandlerTreatsInvalidHashTextAsTerminal(t *testing.T) {
+	outcome, err := NewEmbeddingHandler(invalidHashEmbeddingIntakeStub{}).Handle(
 		context.Background(),
 		applicationeventstream.Event{Payload: &infrakafka.VideoPublishedPayload{
-			VideoID: 1, AuthorID: 2, Title: "\x00",
+			VideoID: 1, AuthorID: 2, Title: "title\x00",
 		}},
 	)
 	if outcome != applicationeventstream.OutcomeTerminal ||
-		!errors.Is(err, domainembedding.ErrInvalidSemanticText) {
+		!errors.Is(err, domainembedding.ErrInvalidHashText) {
 		t.Fatalf("outcome=%s err=%v", outcome, err)
 	}
 }

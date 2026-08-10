@@ -59,7 +59,6 @@ func AutoMigrate(db *gorm.DB) error {
 			&infraaccount.ProfileSettingModel{},
 			&infraadminaudit.EventModel{},
 			&infraembedding.VideoEmbeddingModel{},
-			&infraembedding.SemanticJobModel{},
 			&infravideo.VideoModel{},
 			&inframedia.AssetModel{},
 			&inframedia.VariantModel{},
@@ -67,6 +66,7 @@ func AutoMigrate(db *gorm.DB) error {
 			&inframedia.ProcessingJobModel{},
 			&inframedia.UploadSessionModel{},
 			&inframedia.CleanupTaskModel{},
+			&inframedia.VideoLifecycleTaskModel{},
 			&infravideo.LocalAssetModel{},
 			&infravideo.VideoStatModel{},
 			&infravideo.UserContentStatModel{},
@@ -135,6 +135,9 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := backfillLegacyMediaStatus(tx); err != nil {
+			return err
+		}
+		if err := infravideo.EnsureMediaLifecycleTasks(tx); err != nil {
 			return err
 		}
 		if err := infraaccount.EnsureProfileSettings(tx); err != nil {

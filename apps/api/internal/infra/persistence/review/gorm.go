@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -298,6 +299,19 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 			}
 			video.Status = current.Status
 			video.PublishedAt = current.PublishedAt
+			if outcome == domainreview.OutcomeReject {
+				if err := infravideo.AppendMediaLifecycleTask(
+					tx,
+					fmt.Sprintf("review-machine-decision:%d:protect", decision.ID),
+					video,
+					domainmedia.LifecycleActionProtect,
+					domainvideo.StatusRejected,
+					"",
+					result.ReceivedAt,
+				); err != nil {
+					return err
+				}
+			}
 			publicDelta, privateDelta := reviewContentWorkDeltas(video, current.Status)
 			if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
 				return err

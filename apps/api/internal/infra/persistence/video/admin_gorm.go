@@ -130,6 +130,19 @@ func (r *Repository) CommitAdminTransition(
 		if err := tx.Create(action).Error; err != nil {
 			return err
 		}
+		if command.Transition == domainvideo.LifecycleTakeOffline {
+			if err := AppendMediaLifecycleTask(
+				tx,
+				fmt.Sprintf("video-admin-transition:%d:protect", action.ID),
+				current,
+				domainmedia.LifecycleActionProtect,
+				domainvideo.StatusOffline,
+				"",
+				command.OccurredAt,
+			); err != nil {
+				return err
+			}
+		}
 		if err := r.auditWriter.AppendInTransaction(ctx, tx, auditFact); err != nil {
 			return err
 		}

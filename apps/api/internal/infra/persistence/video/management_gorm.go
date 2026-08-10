@@ -95,6 +95,7 @@ func (r *Repository) ApplyBatch(ctx context.Context, userID int64, action string
 	var operation BatchOperationModel
 	replayed := false
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
 		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("user_id = ? AND idempotency_key = ?", userID, idempotencyKey).
 			Take(&operation).Error
@@ -170,6 +171,32 @@ func (r *Repository) ApplyBatch(ctx context.Context, userID int64, action string
 					); err != nil {
 						return err
 					}
+				}
+			}
+			switch action {
+			case domainvideo.BatchActionMakePrivate:
+				if err := AppendMediaLifecycleTask(
+					tx,
+					"creator-batch:"+idempotencyKey+":private",
+					video,
+					domainmedia.LifecycleActionProtect,
+					0,
+					domainvideo.VisibilityPrivate,
+					now,
+				); err != nil {
+					return err
+				}
+			case domainvideo.BatchActionDelete:
+				if err := AppendMediaLifecycleTask(
+					tx,
+					"creator-batch:"+idempotencyKey+":delete",
+					video,
+					domainmedia.LifecycleActionDelete,
+					domainvideo.StatusDeleted,
+					"",
+					now,
+				); err != nil {
+					return err
 				}
 			}
 		}

@@ -253,3 +253,16 @@ cleanup/job transition。过期或已被回收的 worker 不能写 asset/variant
 删除调度同样在 Repository 事务内锁定 asset、快照当前 ready variants、创建 cleanup tasks 并写入
 deleted tombstone，避免与转码 finalization 交错遗漏新输出；failed assets 继续进入 reconciliation，
 用于重试提交后失败的 media-failed 投影。
+
+创作者单条删除、批量私密/删除、审核拒绝/下线和管理员下架不再在请求提交后直接调用对象存储。
+视频状态、统计和 `media_video_lifecycle_task` 在同一事务提交；因此 API 公开发现立即移除，而 API
+进程在 commit 后崩溃也不会丢失媒体保护/清理。Worker 以 `SKIP LOCKED`、稳定顺序、租约、attempts
+和 retryable/failed 终态领取任务：私密/下线仍成立时降回保护前缀，删除时先保护再调用现有
+`media_cleanup_task` 调度。任务通过 any-status 读取删除视频并保留 media/cover asset ID；较新的
+公开转换会把旧私密任务标记为 `superseded`，不会错误降级当前公开媒体。
+
+生命周期 worker 暴露 `frux_media_video_lifecycle_tasks_total{result}`、
+`frux_media_video_lifecycle_backlog` 和 oldest age。result 只允许 completed、superseded、
+retryable、failed、lease_lost，不包含 video、asset、对象键或错误正文。
+对象存储等基础设施错误始终保留为 retryable，并使用封顶退避持续恢复；只有目标永久缺失等确定性
+终态才进入 failed。

@@ -22,6 +22,7 @@ type Service struct {
 	mediaDelivery    MediaDeliveryResolver
 	mediaCleanup     MediaCleanupScheduler
 	reviewIntake     ReviewIntake
+	now              func() time.Time
 }
 
 type PublishedEventPublisher interface {
@@ -63,7 +64,10 @@ type CreateResult struct {
 }
 
 func New(repo domainvideo.Repository, options ...Option) *Service {
-	service := &Service{repo: repo}
+	service := &Service{
+		repo: repo,
+		now:  func() time.Time { return time.Now().UTC() },
+	}
 	for _, option := range options {
 		option(service)
 	}
@@ -339,12 +343,8 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 		return err
 	}
 	if alreadyDeleted {
-		protectErr := s.protectVideoDelivery(ctx, video)
-		var cleanupErr error
-		if s.mediaCleanup != nil {
-			cleanupErr = s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID)
-		}
-		return errors.Join(protectErr, cleanupErr)
+		_, err := s.repo.UpdateStatus(ctx, video)
+		return err
 	}
 	if _, err := s.repo.UpdateStatus(ctx, video); err != nil {
 		if errors.Is(err, domainvideo.ErrVideoNotFound) {
@@ -355,12 +355,7 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 	if s.cacheInvalidator != nil {
 		_ = s.cacheInvalidator.InvalidateVideo(ctx, video.ID)
 	}
-	protectErr := s.protectVideoDelivery(ctx, video)
-	var cleanupErr error
-	if s.mediaCleanup != nil {
-		cleanupErr = s.mediaCleanup.ScheduleMediaCleanup(ctx, video.MediaAssetID, video.CoverAssetID)
-	}
-	return errors.Join(protectErr, cleanupErr)
+	return nil
 }
 
 func (s *Service) SetOffline(ctx context.Context, videoID int64) error {
@@ -387,6 +382,13 @@ func (s *Service) applyLifecycleTransition(
 ) error {
 	if videoID <= 0 {
 		return domainvideo.ErrInvalidVideoID
+	}
+	if at.IsZero() {
+		if s.now != nil {
+			at = s.now()
+		} else {
+			at = time.Now().UTC()
+		}
 	}
 	applied, err := s.repo.ApplyLifecycleTransition(ctx, videoID, transition, at)
 	if err != nil {

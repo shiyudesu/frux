@@ -132,3 +132,28 @@ type CleanupTaskModel struct {
 func (CleanupTaskModel) TableName() string {
 	return "media_cleanup_task"
 }
+
+type VideoLifecycleTaskModel struct {
+	ID                 int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	DedupeKey          string     `gorm:"column:dedupe_key;size:256;not null;uniqueIndex:uk_media_video_lifecycle_dedupe"`
+	VideoID            int64      `gorm:"column:video_id;not null;index:idx_media_video_lifecycle_video"`
+	MediaAssetID       int64      `gorm:"column:media_asset_id;not null;default:0"`
+	CoverAssetID       int64      `gorm:"column:cover_asset_id;not null;default:0"`
+	Action             string     `gorm:"column:action;size:16;not null"`
+	RequiredStatus     int        `gorm:"column:required_status;not null;default:0"`
+	RequiredVisibility string     `gorm:"column:required_visibility;size:16;not null;default:''"`
+	State              string     `gorm:"column:state;size:24;not null;index:idx_media_video_lifecycle_ready,priority:1"`
+	Attempts           int        `gorm:"column:attempts;not null;default:0"`
+	MaxAttempts        int        `gorm:"column:max_attempts;not null"`
+	ErrorCode          string     `gorm:"column:error_code;size:64;not null;default:''"`
+	LeaseOwner         string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil         *time.Time `gorm:"column:lease_until;index:idx_media_video_lifecycle_lease"`
+	NextAttemptAt      time.Time  `gorm:"column:next_attempt_at;not null;index:idx_media_video_lifecycle_ready,priority:2"`
+	CompletedAt        *time.Time `gorm:"column:completed_at"`
+	CreatedAt          time.Time  `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt          time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (VideoLifecycleTaskModel) TableName() string {
+	return "media_video_lifecycle_task"
+}

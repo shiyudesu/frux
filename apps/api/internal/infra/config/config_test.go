@@ -345,6 +345,8 @@ func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
 		{name: "placeholder token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "replace-with-internal-token"}}, valid: false},
 		{name: "short token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "short-token"}}, valid: false},
 		{name: "single character class", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, valid: false},
+		{name: "embedded newline", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "rT8v0%PzL2kQ7mX4\ncN9wA6dF1hJ5sB3y"}}, valid: false},
+		{name: "non ascii", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB中"}}, valid: false},
 		{name: "strong token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: validToken}}, valid: true},
 	}
 

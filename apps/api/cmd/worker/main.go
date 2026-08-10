@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os/signal"
@@ -21,7 +22,6 @@ import (
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
-	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
@@ -48,7 +48,6 @@ import (
 	infrarelation "github.com/shiyudesu/frux/internal/infra/persistence/relation"
 	infrareview "github.com/shiyudesu/frux/internal/infra/persistence/review"
 	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
-	infrasemanticembedding "github.com/shiyudesu/frux/internal/infra/semanticembedding"
 	infravideostream "github.com/shiyudesu/frux/internal/infra/videostream"
 
 	gormpostgres "gorm.io/driver/postgres"
@@ -436,6 +435,22 @@ func startWorkers(
 	mediaCleanup := applicationmedia.NewCleanupService(
 		mediaRepo, mediaStore, cfg.Media.Backend, cleanupDelay, cfg.Media.Processing.MaxAttempts,
 	)
+	lifecycleOwner, err := newWorkerOwner("media-lifecycle")
+	if err != nil {
+		return err
+	}
+	applicationmedia.NewVideoLifecycleWorker(
+		applicationmedia.NewVideoLifecycleService(
+			mediaRepo,
+			workerVideoLifecycleReader{repository: videoRepo},
+			workerVideoLifecycleDelivery{
+				protector: mediaCatalog,
+				publisher: mediaPublication,
+			},
+			mediaCleanup,
+		),
+		lifecycleOwner,
+	).Start(ctx)
 	cleanupOwner, err := newWorkerOwner("cleanup")
 	if err != nil {
 		return err
@@ -467,7 +482,6 @@ func startWorkers(
 
 	embeddingRepo := infraembedding.New(gormDB)
 	embeddingService := applicationembedding.New(embeddingRepo, nil)
-	embeddingService.SetSemanticEnabled(cfg.SemanticEmbedding.Enabled)
 	var embeddingSource applicationembedding.PublishedEventConsumer
 	if embeddingMigration.Consumer != infrakafka.ConsumerModeKafka {
 		embeddingSource = rabbitMQ
@@ -478,43 +492,6 @@ func startWorkers(
 	if err := embeddingWorker.Start(ctx); err != nil {
 		return err
 	}
-	semanticClient, err := infrasemanticembedding.New(
-		cfg.SemanticEmbedding,
-		cfg.Internal.Token,
-	)
-	if err != nil {
-		return err
-	}
-	if semanticClient != nil {
-		go func() {
-			<-ctx.Done()
-			semanticClient.Close()
-		}()
-	}
-	semanticLeaseTTL, err := time.ParseDuration(cfg.SemanticEmbedding.LeaseTTL)
-	if err != nil {
-		return err
-	}
-	semanticPollInterval, err := time.ParseDuration(cfg.SemanticEmbedding.PollInterval)
-	if err != nil {
-		return err
-	}
-	semanticWorker := applicationembedding.NewSemanticWorker(
-		embeddingRepo,
-		semanticClient,
-		cfg.SemanticEmbedding.Enabled,
-		cfg.SemanticEmbedding.WorkerConcurrency,
-		semanticLeaseTTL,
-		semanticPollInterval,
-	)
-	if err := semanticWorker.Start(ctx); err != nil {
-		return err
-	}
-	coverageInterval, err := time.ParseDuration(cfg.SemanticEmbedding.CoverageInterval)
-	if err != nil {
-		return err
-	}
-	go sampleSemanticBacklog(ctx, embeddingRepo, coverageInterval)
 
 	var mediaSource applicationmedia.ProcessingConsumer
 	if mediaMigration.Consumer != infrakafka.ConsumerModeKafka {
@@ -1113,6 +1090,58 @@ type workerVideoAdminTransitionApplier struct {
 	}
 }
 
+type workerVideoLifecycleReader struct {
+	repository interface {
+		FindByIDAnyStatus(ctx context.Context, videoID int64) (*domainvideo.Video, error)
+	}
+}
+
+func (r workerVideoLifecycleReader) ReadVideoLifecycleState(
+	ctx context.Context,
+	videoID int64,
+) (applicationmedia.VideoLifecycleState, error) {
+	video, err := r.repository.FindByIDAnyStatus(ctx, videoID)
+	if errors.Is(err, domainvideo.ErrVideoNotFound) {
+		return applicationmedia.VideoLifecycleState{}, nil
+	}
+	if err != nil {
+		return applicationmedia.VideoLifecycleState{}, err
+	}
+	return applicationmedia.VideoLifecycleState{
+		Exists: true, Status: video.Status, Visibility: video.Visibility,
+		PublicEligible: video.Status == domainvideo.StatusPublished &&
+			video.Visibility == domainvideo.VisibilityPublic,
+	}, nil
+}
+
+type workerVideoLifecycleDelivery struct {
+	protector interface {
+		ProtectVideo(context.Context, int64, int64, int64) error
+	}
+	publisher interface {
+		MediaReady(context.Context, int64) error
+	}
+}
+
+func (d workerVideoLifecycleDelivery) ProtectVideo(
+	ctx context.Context,
+	videoID, mediaAssetID, coverAssetID int64,
+) error {
+	return d.protector.ProtectVideo(ctx, videoID, mediaAssetID, coverAssetID)
+}
+
+func (d workerVideoLifecycleDelivery) RestoreVideo(
+	ctx context.Context,
+	_ int64,
+	mediaAssetID int64,
+	_ int64,
+) error {
+	if mediaAssetID <= 0 {
+		return nil
+	}
+	return d.publisher.MediaReady(ctx, mediaAssetID)
+}
+
 func (a workerVideoAdminTransitionApplier) ApplyAdminTransition(
 	ctx context.Context,
 	video *domainvideo.Video,
@@ -1257,61 +1286,5 @@ func closeSQL(db *sql.DB) {
 func closeRabbitMQ(rabbitMQ interface{ Close() error }) {
 	if rabbitMQ != nil {
 		_ = rabbitMQ.Close()
-	}
-}
-
-func sampleSemanticBacklog(
-	ctx context.Context,
-	repository interface {
-		SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error)
-		SemanticCoverage(context.Context) (int64, int64, error)
-		CleanupSemanticJobs(context.Context, time.Time, int) (int64, error)
-	},
-	interval time.Duration,
-) {
-	if repository == nil {
-		return
-	}
-	if interval <= 0 {
-		interval = 5 * time.Minute
-	}
-	sampleSemanticBacklogOnce(ctx, repository, time.Now().UTC())
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			sampleSemanticBacklogOnce(ctx, repository, time.Now().UTC())
-		}
-	}
-}
-
-func sampleSemanticBacklogOnce(
-	ctx context.Context,
-	repository interface {
-		SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error)
-		SemanticCoverage(context.Context) (int64, int64, error)
-		CleanupSemanticJobs(context.Context, time.Time, int) (int64, error)
-	},
-	now time.Time,
-) {
-	rows, err := repository.SemanticBacklog(ctx)
-	if err != nil {
-		inframetrics.ObserveWorkerJob("semantic_backlog_sample", 0, err)
-		return
-	}
-	inframetrics.ObserveSemanticBacklog(rows, now)
-	present, missing, coverageErr := repository.SemanticCoverage(ctx)
-	if coverageErr != nil {
-		inframetrics.ObserveWorkerJob("semantic_coverage_sample", 0, coverageErr)
-		return
-	}
-	inframetrics.ObserveSemanticCoverage(present, missing)
-	if _, cleanupErr := repository.CleanupSemanticJobs(
-		ctx, now.Add(-30*24*time.Hour), 100,
-	); cleanupErr != nil {
-		inframetrics.ObserveWorkerJob("semantic_job_cleanup", 0, cleanupErr)
 	}
 }

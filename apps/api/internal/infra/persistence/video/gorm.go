@@ -341,6 +341,17 @@ func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video)
 		}
 		if current.Status == video.Status {
 			video.PublishedAt = current.PublishedAt
+			if video.Status == domainvideo.StatusDeleted {
+				return AppendMediaLifecycleTask(
+					tx,
+					"creator-delete",
+					current,
+					domainmedia.LifecycleActionDelete,
+					domainvideo.StatusDeleted,
+					"",
+					time.Now().UTC(),
+				)
+			}
 			return nil
 		}
 		if video.Status != domainvideo.StatusDeleted ||
@@ -365,6 +376,17 @@ func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video)
 			receivedLikeDelta = -stat.LikeCount
 		}
 		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, receivedLikeDelta, 0); err != nil {
+			return err
+		}
+		if err := AppendMediaLifecycleTask(
+			tx,
+			"creator-delete",
+			current,
+			domainmedia.LifecycleActionDelete,
+			domainvideo.StatusDeleted,
+			"",
+			time.Now().UTC(),
+		); err != nil {
 			return err
 		}
 		video.PublishedAt = publishedAt
@@ -420,6 +442,19 @@ func (r *Repository) ApplyLifecycleTransition(
 			domainmedia.IsPublicReadyStatus(current.MediaStatus) {
 			if err := AppendPublicationHandoff(
 				tx, current, at, current.MediaAssetID == nil,
+			); err != nil {
+				return err
+			}
+		}
+		if current.Status != domainvideo.StatusPublished {
+			if err := AppendMediaLifecycleTask(
+				tx,
+				"video-lifecycle:"+string(transition)+":"+at.UTC().Format(time.RFC3339Nano),
+				current,
+				domainmedia.LifecycleActionProtect,
+				current.Status,
+				"",
+				at,
 			); err != nil {
 				return err
 			}

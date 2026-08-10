@@ -192,9 +192,7 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 		return nil, err
 	}
 	var mediaRefs []MediaAssetRef
-	if (action == domainvideo.BatchActionDelete && (s.mediaCleanup != nil || s.mediaPublisher != nil)) ||
-		action == domainvideo.BatchActionMakePublic ||
-		(action == domainvideo.BatchActionMakePrivate && s.mediaPublisher != nil) {
+	if action == domainvideo.BatchActionMakePublic {
 		if reader, ok := s.repo.(MediaAssetRefReader); ok {
 			mediaRefs, err = reader.ListMediaAssetRefs(ctx, ids)
 			if err != nil {
@@ -207,55 +205,22 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 			_ = s.cacheInvalidator.InvalidateVideo(ctx, videoID)
 		}
 	}
-	var sideEffectErr error
 	for _, ref := range mediaRefs {
-		var mediaErr error
-		switch action {
-		case domainvideo.BatchActionMakePublic:
-			if s.mediaPublisher != nil && ref.MediaAssetID > 0 &&
-				ref.Visibility == domainvideo.VisibilityPublic &&
-				ref.Status != domainvideo.StatusDeleted && ref.Status != domainvideo.StatusOffline &&
-				(domainmedia.IsPublicReadyStatus(ref.MediaStatus) ||
-					ref.MediaErrorCode == "publication_event_failed") {
-				mediaErr = errors.Join(mediaErr, s.mediaPublisher.MediaReady(ctx, ref.MediaAssetID))
-			} else if ref.MediaAssetID == 0 &&
-				ref.Visibility == domainvideo.VisibilityPublic &&
-				ref.Status == domainvideo.StatusPublished &&
-				domainmedia.IsPublicReadyStatus(ref.MediaStatus) {
-				// The repository commits the stable publication handoff atomically
-				// with the visibility transition.
+		if s.mediaPublisher != nil && ref.MediaAssetID > 0 &&
+			ref.Visibility == domainvideo.VisibilityPublic &&
+			ref.Status != domainvideo.StatusDeleted && ref.Status != domainvideo.StatusOffline &&
+			(domainmedia.IsPublicReadyStatus(ref.MediaStatus) ||
+				ref.MediaErrorCode == "publication_event_failed") {
+			if err := s.mediaPublisher.MediaReady(ctx, ref.MediaAssetID); err != nil {
+				return nil, err
 			}
-		case domainvideo.BatchActionMakePrivate:
-			if s.mediaPublisher != nil && ref.Visibility == domainvideo.VisibilityPrivate &&
-				ref.Status != domainvideo.StatusDeleted {
-				mediaErr = errors.Join(
-					mediaErr,
-					s.mediaPublisher.ProtectVideo(ctx, ref.VideoID, ref.MediaAssetID, ref.CoverAssetID),
-				)
-			}
-		case domainvideo.BatchActionDelete:
-			if ref.Status != domainvideo.StatusDeleted {
-				continue
-			}
-			if s.mediaPublisher != nil {
-				mediaErr = errors.Join(
-					mediaErr,
-					s.mediaPublisher.ProtectVideo(ctx, ref.VideoID, ref.MediaAssetID, ref.CoverAssetID),
-				)
-			}
-			if s.mediaCleanup != nil {
-				mediaErr = errors.Join(
-					mediaErr,
-					s.mediaCleanup.ScheduleMediaCleanup(ctx, ref.MediaAssetID, ref.CoverAssetID),
-				)
-			}
+		} else if ref.MediaAssetID == 0 &&
+			ref.Visibility == domainvideo.VisibilityPublic &&
+			ref.Status == domainvideo.StatusPublished &&
+			domainmedia.IsPublicReadyStatus(ref.MediaStatus) {
+			// The repository commits the stable publication handoff atomically
+			// with the visibility transition.
 		}
-		if mediaErr != nil {
-			sideEffectErr = errors.Join(sideEffectErr, mediaErr)
-		}
-	}
-	if sideEffectErr != nil {
-		return nil, sideEffectErr
 	}
 	return &BatchResult{Action: operation.Action, VideoIDs: operation.VideoIDs, Replayed: replayed}, nil
 }

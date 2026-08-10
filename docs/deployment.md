@@ -68,24 +68,11 @@ Delivery Limit 和 Replay timeout 必须在发布前压测。
 内确认对应 Rabbit source/quorum/DLQ 全部 drain；已有 Kafka Group Offset 在重启时保留，future
 boundary 或 Offset/data-loss 检测必须使 Worker 显式失败。
 
-Compose 默认启用语义 integration；非 Compose 部署可显式关闭。覆盖配置时设置：
-
-```bash
-export FRUX_SEMANTIC_EMBEDDING_ENABLED=true
-export FRUX_SEMANTIC_EMBEDDING_URL=http://semantic-embedding:8081
-```
-
-目标服务必须实现固定 metadata/embedding 契约并复用强 `FRUX_INTERNAL_TOKEN`。服务不可用不会阻止
-Worker 的 hash、Feed 或媒体轮询；观察 `semantic_embedding_job` backlog，恢复 metadata 后当前副本
-自动恢复 claim，不执行共享 job 的批量 suspend/resume；健康副本可直接 claim 遗留 `suspended`
-行。`FRUX_EMBEDDING_MODEL_PATH` 与 `FRUX_EMBEDDING_FIXTURE_PATH` 不是生产覆盖项，出现时配置启动
-失败，镜像内固定路径只能通过显式构造的测试 Settings 替换。
-
 API/Worker 对 RabbitMQ 与 Kafka 的 Compose 依赖使用 `service_started`，不使用 broker health gate。
 Kafka topology/publisher、active/shadow consumer 和 Rabbit consumer 在有界退避 supervisor 中重连；
 对应 `frux_kafka_broker_healthy`、`frux_kafka_consumer_session_healthy` 与
-`frux_rabbitmq_transport_healthy` 会显示故障，但 PostgreSQL outbox/job、媒体轮询、审核和 semantic
-poller 继续启动。Active Kafka group 仍须在 Rabbit drain 与 cutover offset 初始化成功后才启动。
+`frux_rabbitmq_transport_healthy` 会显示故障，但 PostgreSQL outbox/job、媒体轮询和审核 worker
+继续启动。Active Kafka group 仍须在 Rabbit drain 与 cutover offset 初始化成功后才启动。
 
 ## 生产审核推理网关
 
@@ -145,20 +132,17 @@ Prometheus 加载 `apps/monitoring/alerts/rabbitmq_dead_letter.yml`，Grafana �
 5. 回滚时把 `media.backend` 切回 `local` 并让 Web 根据 `mode=multipart` 自动回退。已生成的 `ready` 记录、`media_url` 和 `cover_url` 继续可读，不删除新增表或对象。
 6. 若 Worker 异常，停止新直传并保留任务表；修复后由数据库 pending/retryable 任务和 Reconciler 恢复，不需要重放用户请求。
 
-## Semantic embedding Compose service
+## 视频工作流故障隔离
 
-Compose 包含内部 `semantic-embedding` 服务，固定 MiniLM revision，复用强
-`FRUX_INTERNAL_TOKEN`，无 host port，read-only root，UID 10001、64 MiB tmpfs、2 CPU/2 GiB
-limit 和 180 秒 readiness allowance。Worker 只使用 `condition: service_started`；服务启动后
-不可用时 hash intake、Feed 和媒体轮询仍运行，semantic jobs 保持 pending/retry，健康副本不受其他
-副本 metadata/connectivity 状态影响。
-
-服务内部使用同一个 180 秒 deadline 完成 preload、fixture validation 和全部 inference worker
-初始化。运行中 live capacity 少于配置值时 readiness 为 503；replacement 以最多 5 秒退避重试，
-容量恢复后 readiness 自动恢复。请求日志仅含 route/status/duration/result/capacity，Uvicorn
-access log 关闭。Kafka/RabbitMQ publication transport outage 同样不会阻塞 Worker 启动；
-publication dispatcher 异步重试并按 5×100/10 秒运行，30 天后的 dispatched outbox 仅在 immutable
-fact 存在时分批清理。
+Kafka/RabbitMQ publication transport outage 不会阻塞 Worker 启动；publication dispatcher
+异步重试并按 5×100/10 秒运行，30 天后的 dispatched outbox 仅在 immutable fact 存在时分批清理。
 发布 timeout 后使用脱离 aggregate cancellation 的短 deadline 标记 retry，stats 也使用独立短
 deadline；stats 失败保留上一组 gauges，并增加
 `frux_video_publication_outbox_stats_total{result="failure"}`。
+
+视频私密/删除/拒绝/下架会与 `media_video_lifecycle_task` 同事务提交。Worker 即使在 API commit 后
+崩溃场景下也会通过租约重试保护对象；删除任务保留 asset ID 并继续调度现有 cleanup tasks。发布
+发现由视频事务立即撤销，不依赖对象存储成功。运营应同时观察 media lifecycle worker 失败和
+`media_cleanup_backlog`，修复后无需重放用户请求。升级迁移会按当前 private/deleted/rejected/offline
+状态幂等补齐历史 lifecycle tasks；旧 admin transition intent 在过渡期仍执行保护，避免升级窗口
+遗留公开对象。

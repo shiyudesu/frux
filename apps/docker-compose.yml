@@ -111,41 +111,6 @@ services:
         mc mb --ignore-existing local/frux-media &&
         mc anonymous set download local/frux-media/media
 
-  semantic-embedding:
-    build:
-      context: ./semantic-embedding
-      dockerfile: Dockerfile
-    container_name: frux-semantic-embedding
-    environment:
-      FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN to a strong random value}
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-      TOKENIZERS_PARALLELISM: "false"
-      OMP_NUM_THREADS: "2"
-      MKL_NUM_THREADS: "2"
-      OPENBLAS_NUM_THREADS: "2"
-      NUMEXPR_NUM_THREADS: "2"
-    expose:
-      - "8081"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health/ready', timeout=2)"]
-      interval: 5s
-      timeout: 3s
-      retries: 36
-      start_period: 180s
-    read_only: true
-    tmpfs:
-      - /run/frux-tmp:size=64m,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 2G
-
   api:
     build:
       context: ./api
@@ -159,8 +124,6 @@ services:
       FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
       FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
       FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
-      FRUX_SEMANTIC_EMBEDDING_ENABLED: ${FRUX_SEMANTIC_EMBEDDING_ENABLED:-true}
-      FRUX_SEMANTIC_EMBEDDING_URL: ${FRUX_SEMANTIC_EMBEDDING_URL:-http://semantic-embedding:8081}
     depends_on:
       postgres:
         condition: service_healthy
@@ -197,8 +160,6 @@ services:
       FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
       FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
       FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
-      FRUX_SEMANTIC_EMBEDDING_ENABLED: ${FRUX_SEMANTIC_EMBEDDING_ENABLED:-true}
-      FRUX_SEMANTIC_EMBEDDING_URL: ${FRUX_SEMANTIC_EMBEDDING_URL:-http://semantic-embedding:8081}
     command: ["./frux-worker"]
     depends_on:
       postgres:
@@ -211,8 +172,6 @@ services:
         condition: service_started
       minio-init:
         condition: service_completed_successfully
-      semantic-embedding:
-        condition: service_started
     volumes:
       - ./api/configs/config.docker.yaml:/app/configs/config.yaml:ro
 
