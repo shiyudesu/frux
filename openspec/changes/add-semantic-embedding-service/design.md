@@ -224,6 +224,11 @@ normalized text, item IDs, vectors, tokens, raw paths, URLs, model filesystem pa
 raw exception text. Uvicorn access logging remains disabled. The service has no database, queue,
 cache, request-history file, or analytics sink.
 
+The ASGI boundary reserves the two active plus eight waiting request budget before reading an
+embedding body, and Uvicorn applies a small bounded coordinator connection limit. The Linux-only
+production runtime uses `fork` inference children so stdout/stderr redirection is inherited before
+model loading and no spawn-bootstrap traceback can bypass bounded startup reporting.
+
 ### 9. Package the model in a hardened Compose service
 
 The multi-stage image resolves locked Python dependencies and downloads the model revision during build. The runtime stage copies only the virtual environment, app, fixtures, and model snapshot. It runs as a numeric non-root user, sets the root filesystem read-only in Compose, sets `TMPDIR=/run/frux-tmp`, mounts only that path as a small `tmpfs` with size/noexec/nosuid/nodev options, drops all Linux capabilities, and uses `no-new-privileges`.

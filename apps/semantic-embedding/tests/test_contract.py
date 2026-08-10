@@ -1131,6 +1131,7 @@ def test_uvicorn_access_logging_remains_disabled(monkeypatch):
     assert observed["access_log"] is False
     assert observed["server_header"] is False
     assert observed["date_header"] is False
+    assert observed["limit_concurrency"] == 14
     assert observed["log_config"]["handlers"]["null"]["class"] == "logging.NullHandler"
 
 

@@ -57,6 +57,9 @@ class RequestBoundary:
         self.app = app
         self.settings = settings
         self.capacity = capacity
+        self.admission_lock = asyncio.Lock()
+        self.admitted_requests = 0
+        self.request_limit = settings.max_concurrency + settings.max_queue
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -96,6 +99,23 @@ class RequestBoundary:
                         401, "AUTH_INVALID_INTERNAL_TOKEN", "invalid internal token"
                     )(scope, receive, observed_send)
                     return
+            admitted = False
+            if path == "/internal/v1/embeddings":
+                over_capacity = False
+                async with self.admission_lock:
+                    if self.admitted_requests >= self.request_limit:
+                        over_capacity = True
+                    else:
+                        self.admitted_requests += 1
+                        admitted = True
+                if over_capacity:
+                    await error_response(
+                        429,
+                        "OVER_CAPACITY",
+                        "over capacity",
+                        {"Retry-After": "1"},
+                    )(scope, receive, observed_send)
+                    return
             try:
                 content_length = int(headers.get("content-length", "0"))
             except ValueError:
@@ -116,13 +136,18 @@ class RequestBoundary:
                         raise BodyTooLarge
                 return message
 
-            scope["state"]["disconnect_receive"] = bounded_receive
             try:
-                await self.app(scope, bounded_receive, observed_send)
-            except BodyTooLarge:
-                await error_response(413, "REQUEST_TOO_LARGE", "request too large")(
-                    scope, receive, observed_send
-                )
+                scope["state"]["disconnect_receive"] = bounded_receive
+                try:
+                    await self.app(scope, bounded_receive, observed_send)
+                except BodyTooLarge:
+                    await error_response(413, "REQUEST_TOO_LARGE", "request too large")(
+                        scope, receive, observed_send
+                    )
+            finally:
+                if admitted:
+                    async with self.admission_lock:
+                        self.admitted_requests -= 1
 
         try:
             try:

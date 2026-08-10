@@ -174,6 +174,11 @@ def run_server(
                     workers=1,
                     log_level=configuration.log_level.lower(),
                     access_log=False,
+                    limit_concurrency=(
+                        configuration.max_concurrency
+                        + configuration.max_queue
+                        + 4
+                    ),
                     server_header=False,
                     date_header=False,
                     log_config=UVICORN_LOG_CONFIG,

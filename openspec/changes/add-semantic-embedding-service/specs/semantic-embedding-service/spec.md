@@ -141,6 +141,10 @@ and SHALL document 1 CPU and 1 GiB as the minimum reservation guidance.
 - **WHEN** two requests are inferring and eight requests are already admitted to wait
 - **THEN** another request receives `429 OVER_CAPACITY` with `Retry-After: 1` without entering inference
 
+#### Scenario: Excess request begins uploading
+- **WHEN** both inference slots and all waiting positions are already reserved
+- **THEN** the ASGI boundary returns `429 OVER_CAPACITY` before buffering or decoding the request body
+
 #### Scenario: Queue or inference deadline expires
 - **WHEN** slot acquisition exceeds 2 seconds or total processing exceeds 15 seconds
 - **THEN** the request returns a safe `429` or `504` response, terminates and replaces any executing inference process, releases admission, and returns no partial vectors

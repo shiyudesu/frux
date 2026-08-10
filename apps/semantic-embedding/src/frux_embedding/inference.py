@@ -132,7 +132,9 @@ class ProcessPool:
     ) -> None:
         self.runtime = runtime
         self.size = size
-        self.context = multiprocessing.get_context("spawn")
+        # The production image is Linux-only. Fork lets the child inherit
+        # redirected descriptors before Python bootstrap can emit tracebacks.
+        self.context = multiprocessing.get_context("fork")
         self.available: asyncio.Queue[InferenceWorker] = asyncio.Queue(maxsize=size)
         self.workers: set[InferenceWorker] = set()
         self.starting: set[InferenceWorker] = set()

@@ -64,3 +64,4 @@
 - [x] 10.1 Apply the request deadline to body receive/parsing, authentication, capacity, inference, and response send with slow-upload and stalled-send coverage.
 - [x] 10.2 Remove production model/fixture environment overrides, reject unknown overrides, and use explicit test injection.
 - [x] 10.3 Convert Uvicorn bind/start `SystemExit` into sanitized bounded startup reporting with subprocess coverage.
+- [x] 10.4 Redirect production inference worker output before model loading and reserve bounded request capacity before body parsing with Uvicorn connection limits.
