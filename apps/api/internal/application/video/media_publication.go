@@ -71,6 +71,12 @@ func (s *MediaPublicationService) MediaReady(ctx context.Context, assetID int64)
 			video.MediaErrorCode = ""
 			eligible, err := s.repo.UpdateMediaProjection(ctx, video)
 			if err != nil {
+				_ = s.delivery.ProtectVideo(
+					context.WithoutCancel(ctx),
+					video.ID,
+					video.MediaAssetID,
+					video.CoverAssetID,
+				)
 				return err
 			}
 			if eligible {
@@ -92,6 +98,12 @@ func (s *MediaPublicationService) MediaReady(ctx context.Context, assetID int64)
 		video.MediaErrorCode = ""
 		eligible, err := s.repo.UpdateMediaProjection(ctx, video)
 		if err != nil {
+			_ = s.delivery.ProtectVideo(
+				context.WithoutCancel(ctx),
+				video.ID,
+				video.MediaAssetID,
+				video.CoverAssetID,
+			)
 			return err
 		}
 		if !eligible {

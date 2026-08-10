@@ -332,14 +332,31 @@ func TestClientErrorsRedactTokenPayloadAndResponse(t *testing.T) {
 	if err == nil {
 		t.Fatal("authentication rejection was accepted")
 	}
+
 	for _, secret := range []string{semanticTestToken, secretText} {
 		if strings.Contains(err.Error(), secret) {
 			t.Fatalf("error exposed secret %q: %v", secret, err)
 		}
 	}
+
 	assertSemanticResult(t, err, applicationembedding.SemanticAuth)
 	if requests.Load() != 1 {
 		t.Fatalf("client retried automatically: requests=%d", requests.Load())
+	}
+}
+
+func TestSemanticClientIgnoresEnvironmentProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("NO_PROXY", "")
+	client := newSemanticTestClient(t, http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		_ *http.Request,
+	) {
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(validMetadataResponse())
+	}))
+	if err := client.ValidateMetadata(context.Background()); err != nil {
+		t.Fatalf("metadata through direct connection: %v", err)
 	}
 }
 

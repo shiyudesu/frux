@@ -265,6 +265,7 @@ type mediaProjectionRepositoryStub struct {
 	untracked        bool
 	ready            bool
 	eligibleOverride *bool
+	updateErr        error
 }
 
 func (r *mediaProjectionRepositoryStub) LifecyclePublicationTracked(
@@ -293,16 +294,45 @@ func (r *mediaProjectionRepositoryStub) ListByMediaAssetID(context.Context, int6
 
 func (r *mediaProjectionRepositoryStub) UpdateMediaProjection(_ context.Context, video *domainvideo.Video) (bool, error) {
 	r.updates++
+	if r.updateErr != nil {
+		return false, r.updateErr
+	}
 	eligible := video.IsPubliclyReadable()
 	if r.eligibleOverride != nil {
 		eligible = *r.eligibleOverride
 	}
+
 	if !eligible {
 		video.MediaURL = ""
 		video.CoverURL = ""
 		video.PlaybackSources = nil
 	}
 	return eligible, nil
+}
+
+func TestMediaReadyProtectsPromotedObjectsWhenProjectionUpdateFails(t *testing.T) {
+	publishedAt := time.Now().UTC()
+	video := domainvideo.RestoreVideoWithMedia(
+		801, 7, "video", "", "", "",
+		domainvideo.StatusPublished, domainvideo.VisibilityPublic,
+		0, 0, 0, &publishedAt, time.Now().UTC(), time.Now().UTC(), "",
+		901, domainmedia.MediaStatusProcessing, "", nil, 902,
+	)
+	repo := &mediaProjectionRepositoryStub{
+		videos:    []*domainvideo.Video{video},
+		updateErr: errors.New("publication outbox unavailable"),
+	}
+	delivery := &mediaDeliveryResolverStub{delivery: &domainmedia.ResolvedDelivery{
+		MediaURL: "https://cdn.example.test/video.mp4",
+		CoverURL: "https://cdn.example.test/cover.jpg",
+	}}
+	service := NewMediaPublicationService(repo, delivery, nil, nil)
+	if err := service.MediaReady(context.Background(), video.MediaAssetID); err == nil {
+		t.Fatal("expected projection failure")
+	}
+	if delivery.protectCalls != 1 || delivery.public {
+		t.Fatalf("promoted objects remained public: %+v", delivery)
+	}
 }
 
 type mediaDeliveryResolverStub struct {

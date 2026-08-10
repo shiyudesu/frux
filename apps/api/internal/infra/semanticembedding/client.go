@@ -99,7 +99,7 @@ func New(cfg infraconfig.SemanticEmbeddingConfig, token string) (*Client, error)
 		return nil, infraconfig.ErrInvalidSemanticEmbeddingConfig
 	}
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy: nil,
 		DialContext: (&net.Dialer{
 			Timeout: time.Second, KeepAlive: 30 * time.Second,
 		}).DialContext,

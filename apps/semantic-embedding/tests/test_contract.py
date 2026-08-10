@@ -169,6 +169,9 @@ class RaisingCapacity:
         value = 1 / math.sqrt(MODEL_DIMENSION)
         return [[value] * MODEL_DIMENSION for _ in texts]
 
+    def live_capacity(self):
+        return 1
+
 
 def client():
     return TestClient(create_app(Settings(token=TOKEN), FakeRuntime()))
@@ -1032,6 +1035,63 @@ async def test_all_worker_loss_fails_readiness_and_recovers():
             assert capacity.live_capacity() == settings.max_concurrency
     finally:
         await capacity.close()
+
+
+async def test_protected_routes_require_live_capacity():
+    process_context = multiprocessing.get_context("spawn")
+    loads = process_context.Value("i", 0)
+    recovery = process_context.Event()
+    settings = Settings(
+        token=TOKEN,
+        max_concurrency=1,
+        max_queue=0,
+        queue_timeout_ms=100,
+        request_timeout_ms=1_000,
+    )
+    app = create_app(settings, RecoveringReplacementRuntime(loads, 1, recovery))
+    capacity = app.state.capacity
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://semantic.test"
+        ) as api:
+            worker = await capacity.pool.acquire(0.1)
+            capacity.pool.recycle(worker)
+            assert capacity.live_capacity() == 0
+            headers = {"X-Internal-Token": TOKEN}
+            assert (
+                await api.get("/internal/v1/model", headers=headers)
+            ).status_code == 503
+            assert (
+                await api.post(
+                    "/internal/v1/embeddings",
+                    headers=headers,
+                    json={
+                        "items": [
+                            {"id": "one", "title": "title", "description": ""}
+                        ]
+                    },
+                )
+            ).status_code == 503
+    finally:
+        recovery.set()
+        await capacity.close()
+
+
+async def test_trailing_slash_does_not_redirect_or_reflect_query():
+    app = create_app(Settings(token=TOKEN), FakeRuntime())
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://semantic.test",
+            follow_redirects=False,
+        ) as api:
+            response = await api.get("/internal/v1/model/?token=query-secret")
+            assert response.status_code == 404
+            assert "location" not in response.headers
+    finally:
+        await app.state.capacity.close()
 
 
 def test_single_outer_startup_deadline_covers_complete_pool(capsys):

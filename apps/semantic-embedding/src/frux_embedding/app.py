@@ -246,6 +246,14 @@ def metadata() -> ModelMetadata:
     )
 
 
+def service_ready(app: FastAPI) -> bool:
+    return bool(
+        app.state.runtime.ready
+        and app.state.capacity.live_capacity()
+        >= app.state.settings.max_concurrency
+    )
+
+
 def create_app(
     settings: Settings,
     runtime: ModelRuntime,
@@ -266,6 +274,7 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        redirect_slashes=False,
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -299,22 +308,19 @@ def create_app(
 
     @app.get("/health/ready")
     async def ready():
-        if (
-            not runtime.ready
-            or app.state.capacity.live_capacity() < settings.max_concurrency
-        ):
+        if not service_ready(app):
             return JSONResponse(status_code=503, content={"status": "not_ready"})
         return {"status": "ready"}
 
     @app.get("/internal/v1/model", response_model=ModelMetadata)
     async def model_contract():
-        if not runtime.ready:
+        if not service_ready(app):
             return error_response(503, "NOT_READY", "not ready")
         return metadata()
 
     @app.post("/internal/v1/embeddings", response_model=EmbeddingResponse)
     async def embeddings(request: Request, body: EmbeddingRequest):
-        if not runtime.ready:
+        if not service_ready(app):
             return error_response(503, "NOT_READY", "not ready")
         seen: set[str] = set()
         normalized: list[tuple[str, str, str, str]] = []
