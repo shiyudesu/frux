@@ -58,3 +58,9 @@
 
 - [x] 9.1 Require printable ASCII for configured and request internal tokens; reject non-ASCII headers with bounded 401 before constant-time comparison.
 - [x] 9.2 Monitor ASGI `http.disconnect` during inference, cancel/recycle the child immediately, release admission, and verify the next request proceeds.
+
+## 10. Final Findings
+
+- [x] 10.1 Apply the request deadline to body receive/parsing, authentication, capacity, inference, and response send with slow-upload and stalled-send coverage.
+- [x] 10.2 Remove production model/fixture environment overrides, reject unknown overrides, and use explicit test injection.
+- [x] 10.3 Convert Uvicorn bind/start `SystemExit` into sanitized bounded startup reporting with subprocess coverage.

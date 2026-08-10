@@ -107,6 +107,7 @@ func AppendPublicationHandoff(
 		return tx.Model(&PublicationEventOutboxModel{}).
 			Where("event_id = ? AND dispatched_at IS NULL", event.EventID).
 			Updates(map[string]any{
+				"payload_json": string(payload),
 				"delivery_ready": gorm.Expr(
 					"video_publication_event_outbox.delivery_ready OR ?", deliveryReady,
 				),

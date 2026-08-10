@@ -659,5 +659,7 @@ metadata/embedding 接口，不访问 Frux 数据库、缓存、队列或浏览�
 边界写 PostgreSQL semantic job，再用唯一 claim token、lease heartbeat 和 fencing 调用服务。
 服务用一个 180 秒外层 deadline 初始化 preload/fixture/完整进程池；readiness 绑定全部 live
 capacity，replacement 有界重试。每个 Go replica 只用本地 metadata gate 控制 claims，不批量
-suspend/resume 共享 jobs。Python 服务拒绝非 ASCII token，并在 `http.disconnect` 时立即取消/recycle
-推理。运营日志只含 route/status/duration/result/capacity。
+suspend/resume 共享 jobs；健康副本仍可 claim 遗留 `suspended` 行。Python 服务拒绝非 printable
+ASCII token，并以一个 request deadline 覆盖 ASGI body receive/parsing、鉴权、capacity、推理与
+response send；超时或 `http.disconnect` 会立即取消/recycle 推理。生产 model/fixture 路径不可由
+环境变量覆盖。运营日志只含 route/status/duration/result/capacity。

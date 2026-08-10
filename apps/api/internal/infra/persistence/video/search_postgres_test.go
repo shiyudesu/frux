@@ -3,8 +3,10 @@ package infravideo_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
@@ -540,6 +542,17 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 	if blockedEvent.DeliveryReady {
 		t.Fatal("visibility transaction made media-backed event dispatchable")
 	}
+	var immutableEvent applicationvideo.PublishedEvent
+	if err := json.Unmarshal([]byte(blockedEvent.PayloadJSON), &immutableEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&infravideo.VideoModel{}).
+		Where("id = ?", privateVideo.ID).
+		Updates(map[string]any{
+			"title": "Current public title", "description": "Current public description",
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if _, err := repository.UpdateMediaProjection(context.Background(), &domainvideo.Video{
 		ID: privateVideo.ID, AuthorID: 1, ReviewVersion: 1,
 		Status: domainvideo.StatusPublished, Visibility: domainvideo.VisibilityPublic,
@@ -557,6 +570,27 @@ func TestPostgresVideoLifecycleNotificationFactsAreAtomicAndIdempotent(t *testin
 	if err := db.Where("event_id = ?", privatePublicationID).
 		Take(&blockedEvent).Error; err != nil || !blockedEvent.DeliveryReady {
 		t.Fatalf("completed publication event=%#v err=%v", blockedEvent, err)
+	}
+	var refreshedEvent applicationvideo.PublishedEvent
+	if err := json.Unmarshal([]byte(blockedEvent.PayloadJSON), &refreshedEvent); err != nil {
+		t.Fatal(err)
+	}
+	if refreshedEvent.Title != "Current public title" ||
+		refreshedEvent.Description != "Current public description" ||
+		refreshedEvent.MediaURL != "https://example.com/private-promoted.mp4" ||
+		refreshedEvent.CoverURL != "https://example.com/private-promoted.jpg" {
+		t.Fatalf("undispatched payload was not refreshed: %#v", refreshedEvent)
+	}
+	var publicationFact infravideo.PublicationEventFactModel
+	if err := db.Where("event_id = ?", privatePublicationID).Take(&publicationFact).Error; err != nil {
+		t.Fatal(err)
+	}
+	var retainedEvent applicationvideo.PublishedEvent
+	if err := json.Unmarshal([]byte(publicationFact.PayloadJSON), &retainedEvent); err != nil {
+		t.Fatal(err)
+	}
+	if retainedEvent != immutableEvent {
+		t.Fatalf("immutable publication fact changed: before=%#v after=%#v", immutableEvent, retainedEvent)
 	}
 	historicalPrivate := searchVideoModel(
 		102, "Historical private", "", domainvideo.StatusPublished,

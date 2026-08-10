@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
@@ -83,7 +82,8 @@ func New(cfg infraconfig.SemanticEmbeddingConfig, token string) (*Client, error)
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
-		(parsed.Path != "" && parsed.Path != "/") || !strongToken(token) {
+		(parsed.Path != "" && parsed.Path != "/") ||
+		!infraconfig.ValidStrongInternalToken(token) {
 		return nil, infraconfig.ErrInvalidSemanticEmbeddingConfig
 	}
 	metadataTimeout, err := time.ParseDuration(cfg.MetadataTimeout)
@@ -109,7 +109,7 @@ func New(cfg infraconfig.SemanticEmbeddingConfig, token string) (*Client, error)
 		IdleConnTimeout: 30 * time.Second,
 	}
 	return &Client{
-		baseURL: baseURL, token: strings.TrimSpace(token),
+		baseURL: baseURL, token: strings.Trim(token, " "),
 		metadataTimeout: metadataTimeout, requestTimeout: requestTimeout,
 		httpClient: &http.Client{
 			Transport: transport,
@@ -352,30 +352,3 @@ func semanticError(
 }
 
 var _ applicationembedding.SemanticGenerator = (*Client)(nil)
-
-func strongToken(value string) bool {
-	value = strings.TrimSpace(value)
-	if len(value) < 32 || strings.EqualFold(value, "replace-with-internal-token") {
-		return false
-	}
-	var lower, upper, digit, other bool
-	for _, item := range value {
-		switch {
-		case unicode.IsLower(item):
-			lower = true
-		case unicode.IsUpper(item):
-			upper = true
-		case unicode.IsDigit(item):
-			digit = true
-		default:
-			other = true
-		}
-	}
-	classes := 0
-	for _, present := range []bool{lower, upper, digit, other} {
-		if present {
-			classes++
-		}
-	}
-	return classes >= 3
-}

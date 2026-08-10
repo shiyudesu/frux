@@ -67,18 +67,20 @@ class RequestBoundary:
         path = scope.get("path", "")
         route = request_route(scope.get("method", ""), path)
         status = 500
+        response_started = False
 
         async def observed_send(message):
-            nonlocal status
+            nonlocal response_started, status
+            await send(message)
             if message["type"] == "http.response.start":
                 status = int(message["status"])
-            await send(message)
+                response_started = True
 
-        headers = {
-            key.decode("latin1").lower(): value.decode("latin1")
-            for key, value in scope.get("headers", [])
-        }
-        try:
+        async def dispatch():
+            headers = {
+                key.decode("latin1").lower(): value.decode("latin1")
+                for key, value in scope.get("headers", [])
+            }
             if path in PROTECTED:
                 supplied = headers.get("x-internal-token")
                 if supplied is None:
@@ -86,7 +88,7 @@ class RequestBoundary:
                         401, "AUTH_INTERNAL_TOKEN_REQUIRED", "internal token required"
                     )(scope, receive, observed_send)
                     return
-                supplied = supplied.strip()
+                supplied = supplied.strip(" ")
                 if not ascii_safe_token(supplied) or not hmac.compare_digest(
                     supplied, self.settings.token
                 ):
@@ -121,6 +123,21 @@ class RequestBoundary:
                 await error_response(413, "REQUEST_TOO_LARGE", "request too large")(
                     scope, receive, observed_send
                 )
+
+        try:
+            try:
+                async with asyncio.timeout(self.settings.request_timeout_ms / 1000):
+                    await dispatch()
+            except TimeoutError:
+                status = 504
+                if not response_started:
+                    try:
+                        async with asyncio.timeout(0.1):
+                            await error_response(
+                                504, "REQUEST_TIMEOUT", "request timeout"
+                            )(scope, receive, observed_send)
+                    except (TimeoutError, asyncio.CancelledError):
+                        pass
         finally:
             duration_ms = max(0, round((time.monotonic() - started) * 1000))
             REQUEST_LOGGER.info(

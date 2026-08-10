@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -412,5 +414,46 @@ func TestClientRejectsReorderedOrWrongContract(t *testing.T) {
 		ID: "video:7", Title: "标题",
 	}}); err == nil {
 		t.Fatal("partial response was accepted")
+	}
+}
+
+func TestClientTokenValidationMatchesSharedPythonFixtures(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source")
+	}
+	content, err := os.ReadFile(filepath.Join(
+		filepath.Dir(source),
+		"../../../../semantic-embedding/fixtures/strong-token-fixtures.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+		Valid bool   `json:"valid"`
+	}
+	if err := json.Unmarshal(content, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	cfg := infraconfig.SemanticEmbeddingConfig{
+		Enabled: true, BaseURL: "http://semantic-embedding:8081",
+		MetadataTimeout: "3s", RequestTimeout: "17s",
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.Name, func(t *testing.T) {
+			client, err := New(cfg, fixture.Value)
+			if fixture.Valid {
+				if err != nil || client == nil {
+					t.Fatalf("valid token rejected: client=%v err=%v", client, err)
+				}
+				client.Close()
+				return
+			}
+			if !errors.Is(err, infraconfig.ErrInvalidSemanticEmbeddingConfig) {
+				t.Fatalf("invalid token error=%v", err)
+			}
+		})
 	}
 }

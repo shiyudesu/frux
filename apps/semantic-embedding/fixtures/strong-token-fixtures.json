@@ -1,0 +1,62 @@
+[
+  {
+    "name": "four ASCII classes",
+    "value": "Strong-Internal-Token-For-Frux-123!",
+    "valid": true
+  },
+  {
+    "name": "trimmed printable ASCII",
+    "value": "  Strong-Internal-Token-For-Frux-123!  ",
+    "valid": true
+  },
+  {
+    "name": "three ASCII classes",
+    "value": "StrongInternalTokenForFrux123456789",
+    "valid": true
+  },
+  {
+    "name": "too short",
+    "value": "Short-Token-123!",
+    "valid": false
+  },
+  {
+    "name": "placeholder",
+    "value": "replace-with-internal-token",
+    "valid": false
+  },
+  {
+    "name": "only two classes",
+    "value": "lowercase-token-with-symbols--------",
+    "valid": false
+  },
+  {
+    "name": "embedded control",
+    "value": "Strong-Internal-\nToken-For-Frux-123!",
+    "valid": false
+  },
+  {
+    "name": "leading control",
+    "value": "\tStrong-Internal-Token-For-Frux-123!",
+    "valid": false
+  },
+  {
+    "name": "delete control",
+    "value": "Strong-Internal-Token-For-Frux-123!\u007f",
+    "valid": false
+  },
+  {
+    "name": "python-only separator control",
+    "value": "\u001cStrong-Internal-Token-For-Frux-123!",
+    "valid": false
+  },
+  {
+    "name": "non ASCII whitespace",
+    "value": "\u00a0Strong-Internal-Token-For-Frux-123!",
+    "valid": false
+  },
+  {
+    "name": "non ASCII",
+    "value": "Strong-非ASCII-Token-For-Frux-123!",
+    "valid": false
+  }
+]

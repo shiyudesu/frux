@@ -1,7 +1,11 @@
 package infraconfig
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -76,6 +80,35 @@ func TestSemanticEmbeddingConfigurationIsStrictAndOptional(t *testing.T) {
 				&auth,
 			); !errors.Is(err, ErrInvalidSemanticEmbeddingConfig) {
 				t.Fatalf("invalid semantic config error = %v", err)
+			}
+		})
+	}
+}
+
+func TestStrongInternalTokenMatchesSharedPythonFixtures(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source")
+	}
+	content, err := os.ReadFile(filepath.Join(
+		filepath.Dir(source),
+		"../../../../semantic-embedding/fixtures/strong-token-fixtures.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+		Valid bool   `json:"valid"`
+	}
+	if err := json.Unmarshal(content, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.Name, func(t *testing.T) {
+			if got := ValidStrongInternalToken(fixture.Value); got != fixture.Valid {
+				t.Fatalf("valid=%v want=%v", got, fixture.Valid)
 			}
 		})
 	}

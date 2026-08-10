@@ -194,7 +194,7 @@ Allowed values are fixed:
 - `source`: `event`;
 - vector `outcome`: `generated`, `skipped`, `retried`, `failed`;
 - coverage `state`: `present`, `missing`;
-- semantic job `state`: `pending`, `processing`, `retry`, `suspended`, `completed`, `failed`.
+- semantic job `state`: `pending`, `processing`, `retry`, legacy `suspended`, `completed`, `failed`.
 
 Every five minutes by default, the worker counts readable published videos with and without the fixed semantic model and samples PostgreSQL semantic-job count and oldest age by bounded state. Database IDs, titles, URLs, raw errors, attempts, and arbitrary model strings are never labels. A failed coverage/backlog sample preserves the previous gauge and increments the existing bounded worker-job error observation.
 

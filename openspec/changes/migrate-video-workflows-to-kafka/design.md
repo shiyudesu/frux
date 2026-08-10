@@ -85,6 +85,11 @@ A changed text hash resets or supersedes the semantic job for that model. Duplic
 
 The remote semantic request runs in a separate leased database worker. The job stores state, attempts, `available_at`, lease owner/until, bounded error class, text hash, model identity, and completion metadata. Retry delay follows the existing intended sequence and then caps at 30 minutes. Disabled semantic integration leaves jobs pending or intentionally suspended according to documented configuration; it never removes hash coverage.
 
+Semantic readiness is replica-local. A replica with failed metadata validation closes only its own
+claim gate and retries validation; it never bulk-suspends or resumes shared rows. Healthy replicas
+continue claiming pending, retry, and legacy suspended rows, preserving compatibility with rows
+written by the former cluster-wide suspension behavior.
+
 Alternative: Kafka retry topics for every semantic failure. Rejected because long outages, model gates, leases, coverage queries, cancellation, and exact text/model identity are job state rather than event-delivery state.
 
 ### Use Kafka media commands only as wakeup hints
@@ -128,7 +133,7 @@ Publication producer mirror/shadow validation precedes activation of each consum
   while retaining the immutable fact.
 - [Fanout replay repeats Redis writes] -> Preserve idempotent sorted-set/index operations and test duplicate publication events.
 - [Kafka wakeup can be lost] -> Treat PostgreSQL polling and reconciliation as mandatory correctness paths.
-- [Semantic job backlog can grow during long outages] -> Cap retry frequency, expose pending count/oldest age, support suspension, and preserve hash processing.
+- [Semantic job backlog can grow during long outages] -> Cap retry frequency, expose pending count/oldest age, use replica-local claim gates, and preserve hash processing.
 - [Updating an active OpenSpec creates planning dependency] -> Update and validate `integrate-semantic-video-embeddings` before either code change is applied.
 - [Publication retention eventually expires] -> Keep durable video/publication facts and outbox history sufficient for reconciliation; Kafka is not the only source of publication truth.
 
@@ -162,7 +167,8 @@ None.
   pending from mismatch, retry pending inline with a fixed bound, and reject nil parity at configured
   shadow/cutover gates.
 - Each semantic processor claims one job with a unique token, heartbeats during the remote request,
-  fences complete/retry on token/hash/unexpired lease, and starts only after resume succeeds.
+  fences complete/retry on token/hash/unexpired lease, and uses only its replica-local metadata gate;
+  healthy replicas may claim legacy suspended rows without a global resume.
 - Media wakeups and polling share one slot-bounded scheduler; each media claim has a unique token,
   bounded heartbeat, and unexpired-lease fencing for completion/retry.
 - Publication outbox pending/oldest statistics remain observable independently of dispatch errors.

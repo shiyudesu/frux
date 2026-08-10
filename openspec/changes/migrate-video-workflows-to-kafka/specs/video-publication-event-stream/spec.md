@@ -85,7 +85,7 @@ require non-mutating parity readers.
 
 #### Scenario: Media delivery completes after review
 - **WHEN** review first establishes database public eligibility before a media-backed public variant is ready
-- **THEN** the same transaction creates a blocked stable event row and media readiness later makes that row dispatchable without changing event identity
+- **THEN** the same transaction creates a blocked stable event row and media readiness later refreshes the undispatched operational payload from current public text and URLs while making it dispatchable without changing the immutable fact or event identity
 
 #### Scenario: Delivered notification lacks event row
 - **WHEN** reconciliation finds an eligible tracked video with a ready or delivered notification but no publication event row

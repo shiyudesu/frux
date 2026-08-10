@@ -23,6 +23,8 @@ stdout/stderr 也不会进入服务日志。
 镜像构建时下载不可变 revision；运行时启用 Hugging Face/Transformers offline，启动必须完成
 metadata 和中英 fixture 全向量自检。一个 180 秒 monotonic 外层 deadline 同时覆盖 preload、
 fixture validation 和完整 inference pool 初始化；每个 worker 只消费剩余预算，不独立重置 180 秒。
+生产 model 与 fixture 路径固定在镜像契约内；`FRUX_EMBEDDING_MODEL_PATH` 和
+`FRUX_EMBEDDING_FIXTURE_PATH` 会被视为未知配置。测试只能显式注入 `Settings` 或依赖。
 
 ## 3. HTTP 契约
 
@@ -32,13 +34,16 @@ fixture validation 和完整 inference pool 初始化；每个 worker 只消费�
 配置 token 必须是可打印 ASCII；请求头在进入 `compare_digest` 前执行相同检查，非 ASCII 值固定
 返回有界 `401 AUTH_INVALID_INTERNAL_TOKEN`，不会触发 `TypeError` 或 500。
 
+15 秒总 deadline 从 ASGI 请求进入开始，覆盖 body receive/parsing、鉴权、capacity、推理和
+response send；慢上传会收到有界 504，阻塞 send 会被取消且不会无限占用请求 task。
 请求每批 1–32 项，body 最大 131072 bytes。`id` 为 1–128 字符受限 ASCII；title/description
 分别 NFKC、折叠 Unicode 空白并限制为 1–200/0–2000 code points，总内容不超过 16384。
 错误只返回稳定 `code/error`，不回显 token、文本、ID、向量、路径或异常。
 
 每个 HTTP 请求只记录封闭 `route`、数字 `status`、`duration_ms`、封闭 `result` 和 live
 `capacity`。success、validation、auth、overload、timeout、canceled、unavailable、internal 都不记录
-header/body/text/ID/vector/token/raw path/URL/raw error。Uvicorn access log 保持关闭。
+header/body/text/ID/vector/token/raw path/URL/raw error。Uvicorn access log 保持关闭；bind/start
+产生的 `SystemExit` 只输出有界 startup category，不泄露原始 OS 错误、地址或 traceback。
 
 ## 4. 容量与部署
 

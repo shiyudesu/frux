@@ -593,8 +593,13 @@ openspec validate --all --strict
   native inference 都必须在可终止进程中执行；总 deadline 或 cancellation 要终止并替换对应进程、
   立即释放 admission，shutdown 回收全部子进程，子进程输出不得进入业务日志。
 - 内部 token 配置与请求值都必须是可打印 ASCII；请求头必须在 `compare_digest` 前拒绝非 ASCII。
-  Coordinator 在推理期间读取 ASGI `http.disconnect`，断开即取消并 recycle 子进程、释放容量。
+  Go config/client 与 Python 使用同一 fixture 验证至少 32 字符、非 placeholder、至少三类及
+  ASCII 32–126 契约。Coordinator 在推理期间读取 ASGI `http.disconnect`，断开即取消并 recycle
+  子进程、释放容量。
 - 一个 180 秒外层 deadline 必须覆盖 preload、fixture validation 和完整 inference pool 初始化，
   worker 不得各自重置完整 timeout。replacement 失败按有界退避重试，readiness 要求全部配置容量，
-  全 worker 丢失返回 503 并在恢复后自动 ready。请求日志只允许 route/status/duration/result/
-  capacity，禁止 body/text/ID/vector/token/path/URL/raw error；Uvicorn access log 必须关闭。
+  全 worker 丢失返回 503 并在恢复后自动 ready。请求 deadline 必须覆盖 ASGI receive/parsing、
+  auth、capacity、inference 和 send；慢上传与阻塞 send 都必须有界取消。生产 model/fixture 路径
+  不接受环境覆盖，测试通过显式 Settings/依赖注入。请求日志只允许 route/status/duration/result/
+  capacity，禁止 body/text/ID/vector/token/path/URL/raw error；Uvicorn access log 必须关闭，
+  bind/start `SystemExit` 只能通过清洗后的 startup category 报告。

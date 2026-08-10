@@ -86,15 +86,21 @@ Media and semantic workers SHALL use bounded leases, polling, reconciliation, re
 - **WHEN** pending semantic jobs exceed the configured age or count threshold
 - **THEN** Frux exposes an alertable backlog signal without video IDs, model strings outside the registry, text, vectors, or raw errors as labels
 
-### Requirement: Fenced Semantic Claims and Resume
+### Requirement: Fenced Semantic Claims and Replica-Local Readiness
 Each semantic processor SHALL claim one job with a unique per-claim token, heartbeat while remote
 inference is active, and fence heartbeat, complete, and retry by token, text hash, and unexpired lease.
-Processors SHALL start only after suspended jobs resume successfully.
+Each replica SHALL gate claims only on its own successful metadata validation. It SHALL NOT suspend or
+resume shared jobs when its local service is unavailable. Pending, retry, and legacy suspended rows
+SHALL remain claimable by any replica whose local gate is open.
 
 #### Scenario: Stale semantic attempt returns
 - **WHEN** a semantic lease expires, another token reclaims the job, and the old remote call returns
 - **THEN** the old attempt cannot heartbeat, complete, or retry the reclaimed job
 
-#### Scenario: Resume fails after metadata recovery
-- **WHEN** metadata validation succeeds but resuming suspended jobs fails
-- **THEN** processors remain stopped and validation retries until resume succeeds
+#### Scenario: One replica cannot validate metadata
+- **WHEN** one replica has a local metadata or connectivity failure while another replica is healthy
+- **THEN** only the unhealthy replica keeps its claim gate closed and the healthy replica continues claiming shared work
+
+#### Scenario: Legacy suspended row remains
+- **WHEN** a healthy replica claims work created by the former global suspension behavior
+- **THEN** the legacy suspended row is claimable in stable order without a global resume rewrite

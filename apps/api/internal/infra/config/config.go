@@ -105,7 +105,7 @@ func normalizeAndValidateSemanticEmbeddingConfig(
 	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
 		endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" ||
 		endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") ||
-		internal == nil || !internal.Enabled || !strongInternalToken(internal.Token) {
+		internal == nil || !internal.Enabled || !ValidStrongInternalToken(internal.Token) {
 		return ErrInvalidSemanticEmbeddingConfig
 	}
 	metadataTimeout, metadataErr := time.ParseDuration(cfg.MetadataTimeout)
@@ -676,23 +676,30 @@ func normalizeAndValidateInternalConfig(cfg *InternalConfig) error {
 	if cfg == nil {
 		return ErrInvalidInternalToken
 	}
-	cfg.Token = strings.TrimSpace(cfg.Token)
+	cfg.Token = strings.Trim(cfg.Token, " ")
 	if !cfg.Enabled {
 		return nil
 	}
-	if strings.EqualFold(cfg.Token, "replace-with-internal-token") || !strongInternalToken(cfg.Token) {
+	if !ValidStrongInternalToken(cfg.Token) {
 		return ErrInvalidInternalToken
 	}
 	return nil
 }
 
-func strongInternalToken(token string) bool {
+func ValidStrongInternalToken(token string) bool {
+	token = strings.Trim(token, " ")
 	if len(token) < minInternalTokenLength {
+		return false
+	}
+	if strings.EqualFold(token, "replace-with-internal-token") {
 		return false
 	}
 	classes := 0
 	var lower, upper, digit, other bool
 	for _, character := range token {
+		if character < 32 || character > 126 {
+			return false
+		}
 		switch {
 		case character >= 'a' && character <= 'z':
 			lower = true

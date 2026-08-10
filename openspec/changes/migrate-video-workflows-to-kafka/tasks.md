@@ -67,3 +67,12 @@
 - [x] 10.2 Run Kafka/Rabbit topology, dispatchers, and consumers under reconnect supervision without terminating unrelated durable workers.
 - [x] 10.3 Use detached bounded contexts for publication durable marks and stats, preserve previous gauges on stats error, and add a dedicated result metric.
 - [x] 10.4 Remove API/Worker Compose health gates on Kafka/Rabbit while retaining active Kafka drain/cutover correctness.
+
+## 11. Final Findings
+
+- [x] 11.1 Refresh undispatched publication outbox payloads from current public delivery fields while retaining immutable publication facts.
+- [x] 11.2 Align Go and Python strong-token validation through shared printable-ASCII fixtures.
+- [x] 11.3 Cover the complete semantic ASGI receive/auth/capacity/inference/send lifecycle with one request deadline.
+- [x] 11.4 Make production model and fixture paths immutable and require explicit test injection.
+- [x] 11.5 Sanitize Uvicorn bind/start `SystemExit` reporting with subprocess coverage.
+- [x] 11.6 Document replica-local semantic readiness and legacy suspended-row claiming.

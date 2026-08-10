@@ -151,6 +151,12 @@ non-ASCII header bytes with bounded `401 AUTH_INVALID_INTERNAL_TOKEN` before cal
 
 Logs, exceptions, validation details, and test snapshots must never contain either token. Timing tests will not attempt to prove constant-time behavior statistically; unit tests will verify the comparison path uses `hmac.compare_digest`, while HTTP tests cover all auth outcomes.
 
+Production model and fixture paths are fixed constants and are not supported environment overrides.
+Unknown `FRUX_EMBEDDING_*` variables fail configuration. Tests that need alternate artifacts inject
+`Settings` and factories explicitly. Uvicorn logging is configured so bind/start failures cannot emit
+raw OS detail; a caught `SystemExit` is converted to the same bounded startup category reporting used
+by other controlled startup failures.
+
 Alternative considered: a new embedding-specific token. Rejected for this first internal service because the requirement is consistency with current Frux internal-token practice. Secret separation can be introduced later as a coordinated security change.
 
 ### 7. Apply explicit capacity, timeout, and backpressure limits
@@ -159,9 +165,10 @@ The runtime uses one HTTP coordinator, two inference child processes/slots, and 
 counter for eight waiting requests. Authentication and input validation occur before queue
 admission. If the admitted waiting capacity is full, the service returns `429 OVER_CAPACITY` and
 `Retry-After: 1`. An admitted request has at most 2 seconds to acquire an inference slot. The
-complete handler, including validation, queue time, inference, vector validation, and serialization,
-has a 15-second deadline; timeout returns no partial result, terminates the executing child, releases
-admission immediately, and asynchronously replaces the slot with a freshly preloaded process.
+complete ASGI lifecycle, including body receive/parsing, authentication, validation, queue time,
+inference, vector validation, serialization, and response send, has a 15-second deadline; timeout
+returns no partial result, terminates the executing child, releases admission immediately, cancels a
+stalled send, and asynchronously replaces the slot with a freshly preloaded process.
 Replacement preload failures retry with bounded 100 ms, 500 ms, 1 s, 2 s, then capped 5 s backoff
 until shutdown. The pool reports currently live workers; readiness requires the full configured
 capacity and returns to ready only after all missing replacements have successfully preloaded.

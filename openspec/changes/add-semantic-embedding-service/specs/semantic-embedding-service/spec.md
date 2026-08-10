@@ -118,6 +118,14 @@ MUST consume the remaining outer budget rather than receive independent 180-seco
 - **WHEN** an authenticated embedding request is accepted
 - **THEN** it uses the already resident model and performs no model load, download, replacement, or warm-up mutation
 
+#### Scenario: Production artifact path override is supplied
+- **WHEN** `FRUX_EMBEDDING_MODEL_PATH`, `FRUX_EMBEDDING_FIXTURE_PATH`, or another unknown embedding override is present
+- **THEN** startup rejects the configuration because production model and fixture paths are immutable
+
+#### Scenario: Tests require alternate artifacts
+- **WHEN** a test needs a temporary model or fixture
+- **THEN** it injects explicit settings or runtime dependencies without mutating production path environment variables
+
 ### Requirement: Bounded CPU, Memory, Concurrency, and Time
 The default deployment SHALL run one HTTP coordinator with two killable inference worker processes,
 at most eight admitted waiting requests, two CPU threads per inference process, a 15-second
@@ -137,6 +145,14 @@ and SHALL document 1 CPU and 1 GiB as the minimum reservation guidance.
 - **WHEN** slot acquisition exceeds 2 seconds or total processing exceeds 15 seconds
 - **THEN** the request returns a safe `429` or `504` response, terminates and replaces any executing inference process, releases admission, and returns no partial vectors
 
+#### Scenario: Upload body is slow
+- **WHEN** ASGI body receive or parsing consumes the end-to-end request deadline
+- **THEN** the request is canceled and returns a bounded safe `504` without entering later capacity or inference work
+
+#### Scenario: Response send stalls
+- **WHEN** ASGI response send does not complete before the end-to-end request deadline
+- **THEN** the blocked send is canceled and timeout reporting is bounded without leaving the request task or inference work running
+
 #### Scenario: Native inference does not return
 - **WHEN** a model/native kernel remains blocked past the end-to-end deadline
 - **THEN** the coordinator kills that isolated process, makes the old PID ineligible for reuse, restores the slot with a freshly preloaded process, and leaves no live orphan process
@@ -152,6 +168,10 @@ and SHALL document 1 CPU and 1 GiB as the minimum reservation guidance.
 #### Scenario: Shutdown occurs during replacement
 - **WHEN** shutdown begins while replacement workers are sleeping or preloading
 - **THEN** retries stop, starting and live children are terminated, and shutdown leaves no inference child alive
+
+#### Scenario: Uvicorn cannot bind or start
+- **WHEN** Uvicorn raises `SystemExit` while binding or starting the server
+- **THEN** the process exits non-zero through the bounded startup category reporter without raw OS details, addresses, or traceback output
 
 #### Scenario: Invalid runtime bound is configured
 - **WHEN** concurrency, queue, thread, or timeout configuration exceeds its allowed maximum or is non-positive

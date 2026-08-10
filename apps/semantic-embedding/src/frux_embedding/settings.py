@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import ipaddress
 import os
-import unicodedata
 
 
 SUPPORTED = {
@@ -14,9 +13,10 @@ SUPPORTED = {
     "FRUX_EMBEDDING_QUEUE_TIMEOUT_MS",
     "FRUX_EMBEDDING_REQUEST_TIMEOUT_MS",
     "FRUX_EMBEDDING_LOG_LEVEL",
-    "FRUX_EMBEDDING_MODEL_PATH",
-    "FRUX_EMBEDDING_FIXTURE_PATH",
 }
+
+PRODUCTION_MODEL_PATH = "/opt/frux/models/paraphrase-multilingual-MiniLM-L12-v2"
+PRODUCTION_FIXTURE_PATH = "/app/fixtures/model-fixtures.json"
 
 
 @dataclass(frozen=True)
@@ -29,12 +29,12 @@ class Settings:
     queue_timeout_ms: int = 2_000
     request_timeout_ms: int = 15_000
     log_level: str = "INFO"
-    model_path: str = "/opt/frux/models/paraphrase-multilingual-MiniLM-L12-v2"
-    fixture_path: str = "/app/fixtures/model-fixtures.json"
+    model_path: str = PRODUCTION_MODEL_PATH
+    fixture_path: str = PRODUCTION_FIXTURE_PATH
 
 
 def strong_token(value: str) -> bool:
-    value = value.strip()
+    value = value.strip(" ")
     if (
         len(value) < 32
         or value.lower() == "replace-with-internal-token"
@@ -69,7 +69,7 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
     unknown = {name for name in values if name.startswith("FRUX_EMBEDDING_")} - SUPPORTED
     if unknown:
         raise ValueError("invalid embedding configuration")
-    token = values.get("FRUX_INTERNAL_TOKEN", "").strip()
+    token = values.get("FRUX_INTERNAL_TOKEN", "").strip(" ")
     if not strong_token(token):
         raise ValueError("invalid internal token configuration")
     host = values.get("FRUX_EMBEDDING_BIND_HOST", "0.0.0.0").strip()
@@ -107,11 +107,4 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         queue_timeout_ms=queue_timeout,
         request_timeout_ms=request_timeout,
         log_level=log_level,
-        model_path=values.get(
-            "FRUX_EMBEDDING_MODEL_PATH",
-            "/opt/frux/models/paraphrase-multilingual-MiniLM-L12-v2",
-        ),
-        fixture_path=values.get(
-            "FRUX_EMBEDDING_FIXTURE_PATH", "/app/fixtures/model-fixtures.json"
-        ),
     )

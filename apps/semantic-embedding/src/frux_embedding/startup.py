@@ -10,6 +10,17 @@ from typing import TextIO
 
 from .constants import STARTUP_TIMEOUT_SECONDS
 
+UVICORN_LOG_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"null": {"class": "logging.NullHandler"}},
+    "loggers": {
+        "uvicorn": {"handlers": ["null"], "propagate": False},
+        "uvicorn.error": {"handlers": ["null"], "propagate": False},
+        "uvicorn.access": {"handlers": ["null"], "propagate": False},
+    },
+}
+
 
 class StartupFailure(str, Enum):
     CONFIGURATION = "configuration"
@@ -165,9 +176,13 @@ def run_server(
                     access_log=False,
                     server_header=False,
                     date_header=False,
+                    log_config=UVICORN_LOG_CONFIG,
                 )
 
         server_runner(app, settings)
+    except SystemExit:
+        report_failure(StartupResult(StartupFailure.INTERNAL))
+        return 1
     except Exception as error:
         try:
             from .inference import WorkerUnavailable

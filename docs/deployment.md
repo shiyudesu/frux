@@ -77,7 +77,9 @@ export FRUX_SEMANTIC_EMBEDDING_URL=http://semantic-embedding:8081
 
 目标服务必须实现固定 metadata/embedding 契约并复用强 `FRUX_INTERNAL_TOKEN`。服务不可用不会阻止
 Worker 的 hash、Feed 或媒体轮询；观察 `semantic_embedding_job` backlog，恢复 metadata 后当前副本
-自动恢复 claim，不执行共享 job 的批量 suspend/resume。
+自动恢复 claim，不执行共享 job 的批量 suspend/resume；健康副本可直接 claim 遗留 `suspended`
+行。`FRUX_EMBEDDING_MODEL_PATH` 与 `FRUX_EMBEDDING_FIXTURE_PATH` 不是生产覆盖项，出现时配置启动
+失败，镜像内固定路径只能通过显式构造的测试 Settings 替换。
 
 API/Worker 对 RabbitMQ 与 Kafka 的 Compose 依赖使用 `service_started`，不使用 broker health gate。
 Kafka topology/publisher、active/shadow consumer 和 Rabbit consumer 在有界退避 supervisor 中重连；

@@ -25,7 +25,13 @@ from frux_embedding.app import Capacity, InferenceTimeout, OverCapacity, create_
 from frux_embedding.constants import MODEL_DIMENSION, MODEL_NAME, MODEL_REVISION
 from frux_embedding.model import ModelRuntime
 from frux_embedding.normalization import canonical_text
-from frux_embedding.settings import Settings, load_settings
+from frux_embedding.settings import (
+    PRODUCTION_FIXTURE_PATH,
+    PRODUCTION_MODEL_PATH,
+    Settings,
+    load_settings,
+    strong_token,
+)
 from frux_embedding.startup import (
     StartupFailure,
     StartupFailureError,
@@ -36,6 +42,9 @@ from frux_embedding.startup import (
 
 CANONICALIZATION_FIXTURES = (
     Path(__file__).parents[1] / "fixtures" / "canonicalization-fixtures.json"
+)
+STRONG_TOKEN_FIXTURES = (
+    Path(__file__).parents[1] / "fixtures" / "strong-token-fixtures.json"
 )
 
 class FakeRuntime:
@@ -166,10 +175,14 @@ def client():
 
 
 def test_settings_reject_unknown_and_weak_values():
-    load_settings({"FRUX_INTERNAL_TOKEN": TOKEN})
+    settings = load_settings({"FRUX_INTERNAL_TOKEN": TOKEN})
+    assert settings.model_path == PRODUCTION_MODEL_PATH
+    assert settings.fixture_path == PRODUCTION_FIXTURE_PATH
     for env in (
         {"FRUX_INTERNAL_TOKEN": "weak"},
         {"FRUX_INTERNAL_TOKEN": TOKEN, "FRUX_EMBEDDING_UNKNOWN": "1"},
+        {"FRUX_INTERNAL_TOKEN": TOKEN, "FRUX_EMBEDDING_MODEL_PATH": "/other"},
+        {"FRUX_INTERNAL_TOKEN": TOKEN, "FRUX_EMBEDDING_FIXTURE_PATH": "/other"},
         {"FRUX_INTERNAL_TOKEN": TOKEN, "FRUX_EMBEDDING_MAX_CONCURRENCY": "3"},
         {"FRUX_INTERNAL_TOKEN": "Strong-非ASCII-Token-For-Frux-123!"},
     ):
@@ -207,6 +220,12 @@ def test_settings_reject_unknown_and_weak_values():
             pass
         else:
             raise AssertionError(f"invalid {name} accepted")
+
+
+def test_shared_go_python_strong_token_fixtures():
+    fixtures = json.loads(STRONG_TOKEN_FIXTURES.read_text())
+    for fixture in fixtures:
+        assert strong_token(fixture["value"]) is fixture["valid"], fixture["name"]
 
 
 async def invoke_asgi(app, scope, messages):
@@ -709,6 +728,105 @@ async def test_request_task_cancellation_recycles_inference():
         await capacity.close()
 
 
+async def test_request_deadline_covers_slow_upload_and_returns_bounded_timeout():
+    settings = Settings(token=TOKEN, request_timeout_ms=100)
+    app = create_app(settings, FakeRuntime())
+    receive_queue = asyncio.Queue()
+    receive_queue.put_nowait(
+        {"type": "http.request", "body": b'{"items":[', "more_body": True}
+    )
+    sent = []
+
+    async def receive():
+        return await receive_queue.get()
+
+    async def send(message):
+        sent.append(message)
+
+    started = time.monotonic()
+    try:
+        await app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/internal/v1/embeddings",
+                "raw_path": b"/internal/v1/embeddings",
+                "query_string": b"",
+                "headers": [
+                    (b"x-internal-token", TOKEN.encode()),
+                    (b"content-type", b"application/json"),
+                ],
+                "client": ("127.0.0.1", 1),
+                "server": ("semantic.test", 80),
+            },
+            receive,
+            send,
+        )
+    finally:
+        await app.state.capacity.close()
+    assert time.monotonic() - started < 0.5
+    response_start = next(
+        message for message in sent if message["type"] == "http.response.start"
+    )
+    response_body = next(
+        message for message in sent if message["type"] == "http.response.body"
+    )
+    assert response_start["status"] == 504
+    assert json.loads(response_body["body"])["code"] == "REQUEST_TIMEOUT"
+
+
+async def test_request_deadline_cancels_stalled_send_and_bounds_timeout_response():
+    settings = Settings(token=TOKEN, request_timeout_ms=100)
+    app = create_app(settings, FakeRuntime())
+    first_send = True
+    canceled = asyncio.Event()
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        nonlocal first_send
+        if first_send:
+            first_send = False
+            try:
+                await asyncio.Event().wait()
+            finally:
+                canceled.set()
+        sent.append(message)
+
+    started = time.monotonic()
+    try:
+        await app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/internal/v1/model",
+                "raw_path": b"/internal/v1/model",
+                "query_string": b"",
+                "headers": [(b"x-internal-token", TOKEN.encode())],
+                "client": ("127.0.0.1", 1),
+                "server": ("semantic.test", 80),
+            },
+            receive,
+            send,
+        )
+    finally:
+        await app.state.capacity.close()
+    assert canceled.is_set()
+    assert time.monotonic() - started < 0.5
+    response_start = next(
+        message for message in sent if message["type"] == "http.response.start"
+    )
+    assert response_start["status"] == 504
+
+
 async def test_idle_worker_death_is_recycled_before_inference():
     capacity = Capacity(
         Settings(
@@ -953,6 +1071,7 @@ def test_uvicorn_access_logging_remains_disabled(monkeypatch):
     assert observed["access_log"] is False
     assert observed["server_header"] is False
     assert observed["date_header"] is False
+    assert observed["log_config"]["handlers"]["null"]["class"] == "logging.NullHandler"
 
 
 def test_bounded_structured_operational_logging():
@@ -1196,8 +1315,6 @@ def test_startup_subprocess_redacts_model_failure_details():
     env.update(
         {
             "FRUX_INTERNAL_TOKEN": secret_token,
-            "FRUX_EMBEDDING_MODEL_PATH": str(secret_path),
-            "FRUX_EMBEDDING_FIXTURE_PATH": str(secret_path / "fixture.json"),
             "OMP_NUM_THREADS": "2",
             "MKL_NUM_THREADS": "2",
             "OPENBLAS_NUM_THREADS": "2",
@@ -1206,8 +1323,19 @@ def test_startup_subprocess_redacts_model_failure_details():
             "PYTHONPATH": str(service_root / "src"),
         }
     )
+    script = f"""
+from frux_embedding.settings import Settings
+from frux_embedding.startup import run_server
+raise SystemExit(run_server(
+    settings_loader=lambda: Settings(
+        token={secret_token!r},
+        model_path={str(secret_path)!r},
+        fixture_path={str(secret_path / "fixture.json")!r},
+    )
+))
+"""
     completed = subprocess.run(
-        [sys.executable, "-m", "frux_embedding.main"],
+        [sys.executable, "-c", script],
         cwd=service_root,
         env=env,
         capture_output=True,
@@ -1227,3 +1355,65 @@ def test_startup_subprocess_redacts_model_failure_details():
         "FileNotFoundError",
     ):
         assert forbidden not in output
+
+
+def test_uvicorn_bind_system_exit_is_sanitized_in_subprocess():
+    service_root = Path(__file__).parents[1]
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("FRUX_EMBEDDING_")
+    }
+    env.update(
+        {
+            "OMP_NUM_THREADS": "2",
+            "MKL_NUM_THREADS": "2",
+            "OPENBLAS_NUM_THREADS": "2",
+            "NUMEXPR_NUM_THREADS": "2",
+            "TOKENIZERS_PARALLELISM": "false",
+            "PYTHONPATH": str(service_root / "src"),
+        }
+    )
+    script = f"""
+import socket
+from frux_embedding.settings import Settings
+from frux_embedding.startup import run_server
+
+class Runtime:
+    ready = True
+    def load(self):
+        self.ready = True
+
+listener = socket.socket()
+listener.bind(("127.0.0.1", 0))
+listener.listen(1)
+port = listener.getsockname()[1]
+code = run_server(
+    settings_loader=lambda: Settings(token={TOKEN!r}, bind_host="127.0.0.1", port=port),
+    runtime_factory=lambda *_: Runtime(),
+    app_factory=lambda *_: object(),
+    startup_timeout_seconds=2,
+)
+listener.close()
+raise SystemExit(code)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=service_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert output == "semantic_embedding_startup_failed category=internal\n"
+    for forbidden in (
+        "Traceback",
+        "uvicorn",
+        "address already in use",
+        "Errno",
+        "127.0.0.1",
+    ):
+        assert forbidden.lower() not in output.lower()
