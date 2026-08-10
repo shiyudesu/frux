@@ -513,6 +513,12 @@ func startWorkers(
 	if err != nil {
 		return err
 	}
+	if semanticClient != nil {
+		go func() {
+			<-ctx.Done()
+			semanticClient.Close()
+		}()
+	}
 	semanticLeaseTTL, err := time.ParseDuration(cfg.SemanticEmbedding.LeaseTTL)
 	if err != nil {
 		return err
@@ -1231,26 +1237,7 @@ func sampleSemanticBacklog(
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	sample := func() {
-		rows, err := repository.SemanticBacklog(ctx)
-		if err != nil {
-			inframetrics.ObserveWorkerJob("semantic_backlog_sample", 0, err)
-			return
-		}
-		inframetrics.ObserveSemanticBacklog(rows, time.Now().UTC())
-		present, missing, coverageErr := repository.SemanticCoverage(ctx)
-		if coverageErr != nil {
-			inframetrics.ObserveWorkerJob("semantic_coverage_sample", 0, coverageErr)
-			return
-		}
-		inframetrics.ObserveSemanticCoverage(present, missing)
-		if _, cleanupErr := repository.CleanupSemanticJobs(
-			ctx, time.Now().UTC().Add(-30*24*time.Hour), 100,
-		); cleanupErr != nil {
-			inframetrics.ObserveWorkerJob("semantic_job_cleanup", 0, cleanupErr)
-		}
-	}
-	sample()
+	sampleSemanticBacklogOnce(ctx, repository, time.Now().UTC())
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -1258,7 +1245,35 @@ func sampleSemanticBacklog(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sample()
+			sampleSemanticBacklogOnce(ctx, repository, time.Now().UTC())
 		}
+	}
+}
+
+func sampleSemanticBacklogOnce(
+	ctx context.Context,
+	repository interface {
+		SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error)
+		SemanticCoverage(context.Context) (int64, int64, error)
+		CleanupSemanticJobs(context.Context, time.Time, int) (int64, error)
+	},
+	now time.Time,
+) {
+	rows, err := repository.SemanticBacklog(ctx)
+	if err != nil {
+		inframetrics.ObserveWorkerJob("semantic_backlog_sample", 0, err)
+		return
+	}
+	inframetrics.ObserveSemanticBacklog(rows, now)
+	present, missing, coverageErr := repository.SemanticCoverage(ctx)
+	if coverageErr != nil {
+		inframetrics.ObserveWorkerJob("semantic_coverage_sample", 0, coverageErr)
+		return
+	}
+	inframetrics.ObserveSemanticCoverage(present, missing)
+	if _, cleanupErr := repository.CleanupSemanticJobs(
+		ctx, now.Add(-30*24*time.Hour), 100,
+	); cleanupErr != nil {
+		inframetrics.ObserveWorkerJob("semantic_job_cleanup", 0, cleanupErr)
 	}
 }

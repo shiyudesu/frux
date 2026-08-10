@@ -138,6 +138,7 @@ class ProcessPool:
         self.starting: set[InferenceWorker] = set()
         self.state_lock = threading.Lock()
         self.replacements: set[asyncio.Task[Any]] = set()
+        self.monitor: asyncio.Task[Any] | None = None
         self.closed = False
         self.closed_event = asyncio.Event()
         deadline = startup_deadline or time.monotonic() + STARTUP_TIMEOUT_SECONDS
@@ -151,6 +152,10 @@ class ProcessPool:
                 worker.terminate()
             self.workers.clear()
             raise
+        try:
+            self.start_monitor()
+        except RuntimeError:
+            pass
 
     def _new_worker(self, deadline: float) -> InferenceWorker:
         with self.state_lock:
@@ -174,10 +179,42 @@ class ProcessPool:
                 self.starting.discard(worker)
 
     async def acquire(self, timeout: float) -> InferenceWorker:
+        self.start_monitor()
         try:
             return await asyncio.wait_for(self.available.get(), timeout)
         except TimeoutError:
             raise
+
+    def start_monitor(self) -> None:
+        if self.closed or (self.monitor is not None and not self.monitor.done()):
+            return
+        self.monitor = asyncio.get_running_loop().create_task(
+            self._monitor_idle_workers()
+        )
+
+    async def _monitor_idle_workers(self) -> None:
+        while not self.closed:
+            try:
+                await asyncio.wait_for(self.closed_event.wait(), 0.05)
+                return
+            except TimeoutError:
+                pass
+            available: list[InferenceWorker] = []
+            dead: list[InferenceWorker] = []
+            while True:
+                try:
+                    worker = self.available.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if worker.process.is_alive():
+                    available.append(worker)
+                else:
+                    dead.append(worker)
+            if not self.closed:
+                for worker in available:
+                    self.available.put_nowait(worker)
+                for worker in dead:
+                    self.recycle(worker)
 
     def release(self, worker: InferenceWorker) -> None:
         if not self.closed:
@@ -223,6 +260,9 @@ class ProcessPool:
             self.closed = True
             starting = list(self.starting)
         self.closed_event.set()
+        monitor = self.monitor
+        if monitor is not None:
+            await asyncio.gather(monitor, return_exceptions=True)
         workers = list(self.workers) + starting
         self.workers.clear()
         await asyncio.gather(
@@ -327,6 +367,9 @@ class Capacity:
 
     async def close(self) -> None:
         await self.pool.close()
+
+    def start(self) -> None:
+        self.pool.start_monitor()
 
     def worker_pids(self) -> set[int]:
         return self.pool.pids()

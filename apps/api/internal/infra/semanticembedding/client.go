@@ -267,6 +267,13 @@ func (c *Client) do(
 	return response, nil
 }
 
+func (c *Client) Close() {
+	if c == nil || c.httpClient == nil {
+		return
+	}
+	c.httpClient.CloseIdleConnections()
+}
+
 func decodeBounded(reader io.Reader, limit int64, target any) error {
 	limited := &io.LimitedReader{R: reader, N: limit + 1}
 	decoder := json.NewDecoder(limited)

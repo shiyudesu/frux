@@ -1,0 +1,16 @@
+services:
+  semantic-embedding:
+    build: !reset null
+    image: python:3.12-alpine
+    command: ["python", "/app/fake_semantic_service.py"]
+    volumes:
+      - ./semantic-embedding/tests/fake_semantic_service.py:/app/fake_semantic_service.py:ro
+      - semantic_test_state:/state
+  worker:
+    environment:
+      FRUX_INTERNAL_TOKEN: Compose-Semantic-Outage-Token-123!
+      FRUX_SEMANTIC_EMBEDDING_ENABLED: "true"
+      FRUX_SEMANTIC_EMBEDDING_URL: http://semantic-embedding:8081
+
+volumes:
+  semantic_test_state:

@@ -22,8 +22,12 @@ processing / retry / suspended / completed / failed、attempts、available_at、
 class。重试为 5s、30s、2m、10m，之后封顶 30m；过期 lease 可回收，文本变化会重置 job 并阻止旧
 worker 覆盖新结果。禁用或服务 metadata 不匹配只暂停语义 job，hash 继续推进。
 
-该 live 路径不扫描历史视频，也不改变推荐 recall/ranking。历史覆盖仍由未来独立 backfill change
-负责。
+该 live 路径不扫描历史视频，也不改变推荐 recall/ranking。部署到已有目录后，没有再次产生正常
+`video.published` 事件的历史视频保持不变。本 change 不提供历史 scan、command/job、cursor、
+checkpoint、dry-run、re-embedding mode 或 backfill 专用 retry。未来独立
+`backfill-semantic-video-embeddings` change 单向依赖这里的固定模型 identity、canonicalization、
+validated client、conditional persistence 和 coverage 接口，并自行负责历史选择、可恢复进度与
+operator control；live integration 不反向依赖或调度它。
 
 每个 processor 一次只 claim 一个 job，并使用每次 claim 唯一 token；complete、retry 和 heartbeat
 都同时按 token、text hash、未过期 lease fencing。远程请求期间每 `lease_ttl/3` 续租，旧 attempt

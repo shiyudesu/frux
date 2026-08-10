@@ -12,6 +12,7 @@ import (
 
 type semanticRepositoryStub struct {
 	jobs       []*domainembedding.SemanticJob
+	existing   *domainembedding.VideoEmbedding
 	suspended  int
 	resumed    int
 	retried    int
@@ -25,9 +26,12 @@ type semanticRepositoryStub struct {
 	extend     func(context.Context) error
 }
 
-func (*semanticRepositoryStub) FindVideoEmbedding(
+func (s *semanticRepositoryStub) FindVideoEmbedding(
 	context.Context, int64, string,
 ) (*domainembedding.VideoEmbedding, error) {
+	if s.existing != nil {
+		return s.existing, nil
+	}
 	return nil, domainembedding.ErrVideoEmbeddingNotFound
 }
 func (s *semanticRepositoryStub) ClaimSemanticJobs(
@@ -212,6 +216,70 @@ func TestSemanticWorkerRetriesAndCompletesDurableJobs(t *testing.T) {
 	if repository.completed != 1 {
 		t.Fatalf("completed = %d", repository.completed)
 	}
+}
+
+func TestSemanticWorkerRejectsInvalidVectorAsTerminal(t *testing.T) {
+	now := time.Now().UTC()
+	job := &domainembedding.SemanticJob{
+		VideoID: 8, Model: domainembedding.SemanticModelKey,
+		TextHash: "hash", Title: "title", State: domainembedding.SemanticJobProcessing,
+		Attempts: 1, LeaseOwner: "owner", AvailableAt: now,
+	}
+	repository := &semanticRepositoryStub{jobs: []*domainembedding.SemanticJob{job}}
+	worker := NewSemanticWorker(
+		repository,
+		&semanticGeneratorStub{vector: []float64{1}},
+		true, 1, time.Second, time.Hour,
+	)
+	worker.now = func() time.Time { return now }
+	if _, err := worker.ProcessPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if repository.retried != 1 || !repository.terminal ||
+		repository.errorClass != string(SemanticContract) ||
+		repository.completed != 0 {
+		t.Fatalf("invalid vector outcome = %+v", repository)
+	}
+}
+
+func TestSemanticWorkerCompletesExistingSameTextWithoutInference(t *testing.T) {
+	now := time.Now().UTC()
+	job := &domainembedding.SemanticJob{
+		VideoID: 11, Model: domainembedding.SemanticModelKey,
+		TextHash: "same", Title: "title", State: domainembedding.SemanticJobProcessing,
+		Attempts: 1, LeaseOwner: "owner", AvailableAt: now,
+	}
+	repository := &semanticRepositoryStub{
+		jobs: []*domainembedding.SemanticJob{job},
+		existing: domainembedding.NewVideoEmbedding(
+			job.VideoID, job.Model, unitApplicationSemanticVector(), job.TextHash, "[]",
+		),
+	}
+	generatorCalled := false
+	worker := NewSemanticWorker(
+		repository,
+		&semanticGeneratorStub{generate: func(context.Context) error {
+			generatorCalled = true
+			return nil
+		}},
+		true, 1, time.Second, time.Hour,
+	)
+	worker.now = func() time.Time { return now }
+	if _, err := worker.ProcessPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if generatorCalled || repository.completed != 1 {
+		t.Fatalf("generator=%v completed=%d", generatorCalled, repository.completed)
+	}
+}
+
+func unitApplicationSemanticVector() []float64 {
+	vector := make([]float64, domainembedding.SemanticDimension)
+	value := 1 / math.Sqrt(float64(domainembedding.SemanticDimension))
+	for index := range vector {
+		vector[index] = value
+	}
+	return vector
 }
 
 func TestSemanticHeartbeatDatabaseStallIsBounded(t *testing.T) {

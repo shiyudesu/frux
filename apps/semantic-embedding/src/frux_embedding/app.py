@@ -193,6 +193,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        capacity.start()
         try:
             yield
         finally:

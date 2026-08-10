@@ -34,6 +34,10 @@ from frux_embedding.startup import (
     run_server,
 )
 
+CANONICALIZATION_FIXTURES = (
+    Path(__file__).parents[1] / "fixtures" / "canonicalization-fixtures.json"
+)
+
 class FakeRuntime:
     ready = True
     calls = 0
@@ -138,7 +142,8 @@ class PhasedStartupRuntime:
     def load(self):
         with self.loads.get_lock():
             self.loads.value += 1
-        time.sleep(self.delay)
+            count = self.loads.value
+        time.sleep(0.05 if count == 1 else self.delay)
         self.ready = True
 
     def encode(self, texts):
@@ -201,6 +206,17 @@ def test_settings_reject_unknown_and_weak_values():
             pass
         else:
             raise AssertionError(f"invalid {name} accepted")
+
+
+def test_shared_go_python_canonicalization_fixtures():
+    fixtures = json.loads(CANONICALIZATION_FIXTURES.read_text())
+    for fixture in fixtures:
+        title, description, text = canonical_text(
+            fixture["title"], fixture["description"]
+        )
+        assert title == fixture["canonical_title"]
+        assert description == fixture["canonical_description"]
+        assert text == fixture["text"]
 
 
 def test_authentication_precedes_body_validation():
@@ -499,6 +515,99 @@ async def test_hung_inference_is_killed_replaced_and_does_not_leak(capsys):
     assert secret not in output.err
 
 
+async def test_idle_worker_death_is_recycled_before_inference():
+    capacity = Capacity(
+        Settings(
+            token=TOKEN,
+            max_concurrency=1,
+            max_queue=0,
+            queue_timeout_ms=1_000,
+            request_timeout_ms=1_000,
+        ),
+        ControlledRuntime(),
+    )
+    original = capacity.worker_pids()
+    worker = next(iter(capacity.pool.workers))
+    worker.process.terminate()
+    worker.process.join(timeout=1)
+    deadline = time.monotonic() + 3
+    replacement = set()
+    while time.monotonic() < deadline:
+        replacement = capacity.worker_pids()
+        if replacement and replacement.isdisjoint(original):
+            break
+        await asyncio.sleep(0.02)
+    assert len(replacement) == 1
+    assert replacement.isdisjoint(original)
+    assert await capacity.run(["recovered"], time.monotonic()) == [[1.0]]
+    await capacity.close()
+
+
+async def test_idle_replacement_retries_until_runtime_recovers():
+    process_context = multiprocessing.get_context("spawn")
+    loads = process_context.Value("i", 0)
+    recovery = process_context.Event()
+    capacity = Capacity(
+        Settings(
+            token=TOKEN,
+            max_concurrency=1,
+            max_queue=0,
+            queue_timeout_ms=1_000,
+            request_timeout_ms=1_000,
+        ),
+        RecoveringReplacementRuntime(loads, 1, recovery),
+    )
+    worker = next(iter(capacity.pool.workers))
+    worker.process.terminate()
+    worker.process.join(timeout=1)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with loads.get_lock():
+            if loads.value >= 2:
+                break
+        await asyncio.sleep(0.02)
+    with loads.get_lock():
+        assert loads.value >= 2
+    assert capacity.live_capacity() == 0
+    recovery.set()
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline and capacity.live_capacity() == 0:
+        await asyncio.sleep(0.05)
+    assert capacity.live_capacity() == 1
+    assert await capacity.run(["recovered"], time.monotonic()) == [[1.0]]
+    await capacity.close()
+
+
+async def test_idle_worker_loss_changes_readiness_from_503_to_200():
+    settings = Settings(
+        token=TOKEN,
+        max_concurrency=1,
+        max_queue=0,
+        queue_timeout_ms=1_000,
+        request_timeout_ms=1_000,
+    )
+    app = create_app(settings, ControlledRuntime())
+    capacity = app.state.capacity
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://semantic.test"
+        ) as api:
+            worker = next(iter(capacity.pool.workers))
+            worker.process.terminate()
+            worker.process.join(timeout=1)
+            assert (await api.get("/health/ready")).status_code == 503
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                response = await api.get("/health/ready")
+                if response.status_code == 200:
+                    break
+                await asyncio.sleep(0.02)
+            assert response.status_code == 200
+    finally:
+        await capacity.close()
+
+
 async def test_shutdown_terminates_in_progress_process_replacement():
     process_context = multiprocessing.get_context("spawn")
     loads = process_context.Value("i", 0)
@@ -517,6 +626,39 @@ async def test_shutdown_terminates_in_progress_process_replacement():
     original = capacity.worker_pids()
     with pytest.raises(InferenceTimeout):
         await capacity.run(["hang"], time.monotonic())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with loads.get_lock():
+            if loads.value >= 2:
+                break
+        await asyncio.sleep(0.02)
+    with loads.get_lock():
+        assert loads.value >= 2
+    await asyncio.wait_for(capacity.close(), timeout=1)
+    active = multiprocessing.active_children()
+    assert original.isdisjoint({child.pid for child in active})
+    assert all(child.name != "semantic-embedding-inference" for child in active)
+
+
+async def test_shutdown_stops_idle_monitor_and_replacement():
+    process_context = multiprocessing.get_context("spawn")
+    loads = process_context.Value("i", 0)
+    replacement_gate = process_context.Event()
+    inference_gate = process_context.Event()
+    capacity = Capacity(
+        Settings(
+            token=TOKEN,
+            max_concurrency=1,
+            max_queue=0,
+            queue_timeout_ms=100,
+            request_timeout_ms=150,
+        ),
+        ReplacementBlockingRuntime(loads, replacement_gate, inference_gate),
+    )
+    original = capacity.worker_pids()
+    worker = next(iter(capacity.pool.workers))
+    worker.process.terminate()
+    worker.process.join(timeout=1)
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         with loads.get_lock():
@@ -586,7 +728,7 @@ def test_single_outer_startup_deadline_covers_complete_pool(capsys):
     started = time.monotonic()
     code = run_server(
         settings_loader=lambda: Settings(token=TOKEN, max_concurrency=2),
-        runtime_factory=lambda *_: PhasedStartupRuntime(loads, 0.35),
+        runtime_factory=lambda *_: PhasedStartupRuntime(loads, 2),
         app_factory=create_app,
         server_runner=lambda *_: pytest.fail("server must not start"),
         startup_timeout_seconds=0.8,
