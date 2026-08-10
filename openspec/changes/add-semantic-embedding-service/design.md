@@ -4,6 +4,11 @@ Frux currently has only in-process fallback content vectors in the recommendatio
 
 The service is optimized for Chinese title/description text, predictable CPU operation, and local/Compose deployment. It is not a general model-serving platform. Its contract must be reproducible enough that later persisted vectors can be keyed by exact model identity and dimension.
 
+This is recommendation-roadmap step 5. Implementation is gated on completed and archived
+`persist-recommendation-training-impressions`, `export-recommendation-training-dataset`,
+`evaluate-recommendation-policies-offline`, and `learn-recommendation-policy-weights` changes and
+their acceptance criteria. It is not part of the Kafka message migration.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -14,6 +19,7 @@ The service is optimized for Chinese title/description text, predictable CPU ope
 - Match Frux internal-token strength and constant-time authentication practices.
 - Bound body size, text size, batch size, CPU threads, process count, concurrency, queueing, memory, and time.
 - Make startup readiness, overload, errors, logging, container operation, and tests implementation-ready.
+- Preserve the recommendation-roadmap gate and keep API/Worker startup independent from the service.
 
 **Non-Goals:**
 
@@ -33,9 +39,23 @@ model execution occurs only in isolated child processes so a hung PyTorch/native
 terminated without wedging the HTTP process. The service is separate from Frux's Go four-layer
 module convention because it owns no Frux domain facts or persistence.
 
+All preload, initial-pool, and replacement children use the `spawn` start method. The coordinator
+passes only an immutable importable runtime specification containing the fixed model path, fixture
+path, and bounded configuration. Each child constructs and loads its own offline `ModelRuntime`;
+the coordinator never loads Torch/model state and never pickles a loaded runtime. This remains safe
+when replacement starts from an asyncio coordinator thread or `to_thread` helper.
+
 Alternative considered: embed Python or ONNX inference in the Go worker. Rejected because this proposal must not integrate with the worker, and it would mix model/runtime lifecycle with queue processing.
 
 Alternative considered: a general-purpose model server. Rejected because model selection and broad serving features create unnecessary attack surface and an unstable downstream contract.
+
+### 1a. Enforce the roadmap and composition boundary
+
+Before implementation, the four preceding recommendation changes must be archived and their
+measurement/learning acceptance gates satisfied. When this change is eventually applied, Compose may
+build and run the standalone service, but API and Worker do not depend on, wait for, or call it.
+This change adds no Kafka topic, RabbitMQ queue, PostgreSQL table, Redis key, Go client, or
+recommendation behavior.
 
 ### 2. Pin one multilingual MiniLM contract
 
@@ -225,9 +245,11 @@ raw exception text. Uvicorn access logging remains disabled. The service has no 
 cache, request-history file, or analytics sink.
 
 The ASGI boundary reserves the two active plus eight waiting request budget before reading an
-embedding body, and Uvicorn applies a small bounded coordinator connection limit. The Linux-only
-production runtime uses `fork` inference children so stdout/stderr redirection is inherited before
-model loading and no spawn-bootstrap traceback can bypass bounded startup reporting.
+embedding body, and Uvicorn applies a small bounded coordinator connection limit. Production uses
+only importable top-level spawn targets and immutable primitive runtime specifications, so bootstrap
+does not serialize request data or loaded model state. The target redirects stdout/stderr before
+model construction, while bootstrap failures are observed as a closed pipe and reported only
+through the bounded startup or worker-unavailable category.
 
 ### 9. Package the model in a hardened Compose service
 
@@ -265,12 +287,21 @@ Container contract tests will start the built image with network disabled after 
 
 ## Migration Plan
 
-1. Add `apps/semantic-embedding` with locked Python environment, pinned model build, source, fixtures, and tests.
-2. Build and run the image independently with runtime network disabled; verify startup fixture, metadata, deterministic vectors, auth, limits, and non-root filesystem behavior.
-3. Add the internal-only `semantic-embedding` service to Compose with the shared secret, healthcheck, offline/thread settings, and resource/security bounds.
-4. Update module, engineering, architecture, deployment, and root documentation to describe operation and explicitly state that no Frux caller consumes the service yet.
-5. Validate the locked test suite, image contract tests, `docker compose config`, and strict OpenSpec validation.
-6. Rollback by removing/stopping only the semantic embedding container. Existing API, worker, Web, PostgreSQL, Redis, RabbitMQ, and recommendation behavior require no data or code rollback.
+1. Verify recommendation-roadmap steps 1–4 are completed, archived, and have met their acceptance
+   gates.
+2. Add `apps/semantic-embedding` with locked Python environment, pinned model build, source,
+   fixtures, and tests.
+3. Build and run the image independently with runtime network disabled; verify startup fixture,
+   metadata, deterministic vectors, auth, limits, and non-root filesystem behavior.
+4. Add the internal-only `semantic-embedding` service to Compose with the shared secret,
+   healthcheck, offline/thread settings, and resource/security bounds, without API/Worker
+   dependencies.
+5. Update module, engineering, architecture, deployment, and root documentation to state that no
+   Frux caller consumes the service yet.
+6. Validate the locked test suite, image contract tests, `docker compose config`, and strict
+   OpenSpec validation.
+7. Rollback by removing/stopping only the semantic embedding container. Existing API, worker, Web,
+   PostgreSQL, Redis, RabbitMQ, Kafka, and recommendation behavior require no data or code rollback.
 
 ## Open Questions
 

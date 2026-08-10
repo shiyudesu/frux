@@ -105,6 +105,10 @@ Chinese fixture before readiness. Every inference worker SHALL preload the same 
 model contract before receiving work. One 180-second outer deadline SHALL cover model preload,
 metadata and fixture validation, and initialization of the full configured inference pool; workers
 MUST consume the remaining outer budget rather than receive independent 180-second deadlines.
+Every preload, initial worker, and replacement process MUST use Python `spawn` or `forkserver`, never
+runtime `fork`. Production children SHALL receive only an immutable importable runtime specification
+containing the fixed model path, fixture path, and bounded configuration, and each child SHALL load
+its own offline model. Loaded Torch, tokenizer, or model objects MUST NOT be serialized or inherited.
 
 #### Scenario: Startup self-check succeeds
 - **WHEN** the packaged model matches the pinned contract and produces the expected fixture vector
@@ -125,6 +129,14 @@ MUST consume the remaining outer budget rather than receive independent 180-seco
 #### Scenario: Tests require alternate artifacts
 - **WHEN** a test needs a temporary model or fixture
 - **THEN** it injects explicit settings or runtime dependencies without mutating production path environment variables
+
+#### Scenario: Replacement starts after coordinator threads exist
+- **WHEN** a timed-out worker is replaced from the running multithreaded coordinator
+- **THEN** replacement uses `spawn` or `forkserver`, emits no runtime-fork warning, receives no loaded model object, and independently preloads the fixed offline contract
+
+#### Scenario: Spawn bootstrap or preload fails
+- **WHEN** child bootstrap or model construction fails
+- **THEN** the coordinator observes bounded unavailability/startup failure, terminates any partial child, retries replacement when applicable, and exposes no traceback, path, model detail, request content, or secret
 
 ### Requirement: Bounded CPU, Memory, Concurrency, and Time
 The default deployment SHALL run one HTTP coordinator with two killable inference worker processes,
@@ -225,6 +237,25 @@ The service SHALL include unit and HTTP contract tests that use the real package
 #### Scenario: Implementation validation runs
 - **WHEN** implementation is complete
 - **THEN** locked-environment tests, image build, image contract tests, `docker compose config`, and `openspec validate --all --strict` succeed
+
+### Requirement: Recommendation Roadmap Gate
+This capability SHALL be implemented only after
+`persist-recommendation-training-impressions`, `export-recommendation-training-dataset`,
+`evaluate-recommendation-policies-offline`, and `learn-recommendation-policy-weights` are completed,
+archived, and have met their documented acceptance gates. Kafka message migration SHALL NOT be
+treated as a substitute for these prerequisites.
+
+#### Scenario: Measurement prerequisites are incomplete
+- **WHEN** any recommendation-roadmap step 1–4 remains active, incomplete, or unaccepted
+- **THEN** this semantic service change remains unimplemented and unarchived
+
+#### Scenario: Standalone service step is implemented
+- **WHEN** all four prerequisites are complete and this step is applied
+- **THEN** the service remains standalone and API/Worker still do not depend on or call it
+
+#### Scenario: Kafka migration is complete first
+- **WHEN** Kafka event-stream migration finishes before the recommendation measurement track
+- **THEN** the semantic service remains gated until the measurement and learning prerequisites complete
 
 ### Requirement: No Recommendation or Persistence Integration
 This change SHALL NOT call or modify the Go API or recommendation worker, consume or publish RabbitMQ messages, access PostgreSQL or Redis, persist or backfill video embeddings, add vector columns or ANN indexes, change recommendation policies, or train a recommendation model. A later `integrate-semantic-video-embeddings` change SHALL own consumption and persistence integration.
