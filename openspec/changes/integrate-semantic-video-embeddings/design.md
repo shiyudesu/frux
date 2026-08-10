@@ -1,271 +1,188 @@
 ## Context
 
-Frux already publishes `application/video.PublishedEvent` messages to a dedicated embedding queue. `application/embedding` uses the domain `Vectorizer` interface and the in-process `hash-ngram-v1` implementation, then persists JSON vectors through `domain/embedding.Repository`. PostgreSQL already identifies facts by `(video_id, model)` and can therefore hold multiple model versions for one video.
+`docs/recommendation-roadmap.md` makes this change step 6 of the recommendation sequence. It must
+not be implemented until the trusted-impression, dataset-export, offline-evaluation, learned-weight,
+and standalone semantic-service changes are complete and archived.
 
-The active planned change `add-semantic-embedding-service` defines, but has not yet integrated, an authenticated internal service with:
+Separately, `migrate-video-workflows-to-kafka` moves video publication to the retained
+`frux.video.published.v1` Kafka topic. Feed and `hash-ngram-v1` processing use independent consumer
+groups, while PostgreSQL remains authoritative for long-running media work. This change builds on
+that completed transport design rather than preserving the former RabbitMQ delivery topology.
 
-- `GET /internal/v1/model`;
-- `POST /internal/v1/embeddings`;
-- fixed model `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`;
-- revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`;
-- 384 finite L2-normalized components;
-- ordered batches of at most 32 title/description items;
-- a 15-second service deadline and bounded overload responses.
-
-This proposal depends on that change. It does not redefine the Python service or make semantic vectors part of recommendation behavior. It must preserve hash coverage when the service is absent, slow, overloaded, misconfigured, or returning an invalid contract.
-
-The current video embedding consumer is RabbitMQ-based. The `migrate-video-workflows-to-kafka` change replaces that intake with an independent Kafka group and establishes PostgreSQL-owned semantic jobs so a remote dependency never holds publication delivery state.
-
-Historical coverage is intentionally split out. This change establishes the reusable live-integration contracts, while a future separate change named `backfill-semantic-video-embeddings` will own historical selection and resumable operator workflows.
+The semantic HTTP service is deterministic but remote and comparatively expensive. A Kafka
+publication offset therefore cannot remain uncommitted while inference retries occur. The intake
+boundary must first preserve the existing hash embedding and then record semantic work durably in
+PostgreSQL.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Keep `hash-ngram-v1` available and generated independently of semantic configuration or service health.
-- Add a small authenticated Go client that validates the exact planned service contract at startup and on every response.
-- Store the semantic revision beside hash vectors under the fixed persistence key `semantic-minilm-l12-v2@e8f8c211226b894f`.
-- Give video-published semantic work durable delayed retry semantics without duplicate database facts or unbounded blocking.
-- Expose bounded-cardinality request, generation, retry, coverage, and backlog metrics.
-- Reuse the existing table and composite identity if migration tests confirm the fixed key and 384-component JSON payload fit.
-- Establish stable producer-side contracts that the future `backfill-semantic-video-embeddings` change can consume without coupling this live-event integration to a backfill command or job.
+- Generate fixed-version semantic embeddings for newly published videos.
+- Preserve `hash-ngram-v1` as the mandatory first and fallback representation.
+- Use Kafka only for retained publication intake and PostgreSQL for semantic execution state,
+  leases, retries, and terminal outcomes.
+- Keep duplicate delivery, uncertain offset commits, worker restarts, and service outages safe.
+- Validate the semantic service and every returned vector before persistence.
+- Keep semantic failures isolated from Feed, hash generation, media processing, and unrelated
+  workers.
 
 **Non-Goals:**
 
-- Reading semantic vectors from recommendation recall, ranking, profiles, or request paths.
-- Adding pgvector columns, vector indexes, ANN queries, similarity providers, or recommendation policy fields.
-- Dynamic model selection, online model downloads, model training, fine-tuning, or GPU inference.
-- Removing, disabling, or replacing the hash n-gram fallback.
-- Changing the semantic service contract defined by `add-semantic-embedding-service`.
-- Scanning or embedding existing historical videos, including any backfill command/job, cursor, checkpoint, dry-run, re-embedding control, or backfill-specific retry policy.
+- Implementing any recommendation-roadmap step before its predecessors are archived.
+- Historical video scanning or backfill.
+- Semantic user-interest projection or rebuild.
+- pgvector, ANN indexes, recall providers, ranking features, policy changes, or online request-path
+  inference.
+- RabbitMQ publication, retry, delay, dead-letter, or compatibility queues.
+- Media processing, media lifecycle revocation, or object-store cleanup changes.
+- Mutable model selection, training, or automatic model upgrades.
 
 ## Decisions
 
-### 1. Preserve the local domain vectorizer and add a separate fallible semantic port
+### 1. Gate implementation on both roadmap and transport prerequisites
 
-`domainembedding.Vectorizer` remains the deterministic, synchronous interface used by `HashNgramVectorizer`. Remote inference needs context cancellation, batching, authentication, and errors, so it will not be forced into that interface.
+Implementation starts only after recommendation steps 1-5 and
+`migrate-video-workflows-to-kafka` are archived. The semantic service contract and the Kafka
+publication contract are therefore dependencies, not code that this change may create early.
 
-The application layer will instead define a narrow `SemanticGenerator` port with fixed metadata and bounded batch generation methods. Infrastructure will implement it with HTTP. The application embedding coordinator will own both:
+This gate is stricter than the roadmap's optional parallelization guidance because the requested
+execution mode is a single ordered sequence. Planning artifacts may remain active, but no task is
+considered implemented until its prerequisites are archived.
 
-1. the existing hash `Vectorizer`, which is mandatory;
-2. an optional semantic generator, enabled only by validated configuration.
+### 2. Extend the Kafka hash-embedding intake instead of introducing a retry stream
 
-The domain package will own the fixed persistence model key, expected dimension, canonical title/description normalization and text hashing, finite/unit-vector validation, and immutable embedding construction. The persistence key is intentionally shorter than the existing `model VARCHAR(64)` while mapping one-to-one to the full model and immutable revision.
+The existing embedding consumer group reads `frux.video.published.v1`, validates the versioned
+envelope and video-ID key, and processes each record independently from Feed. Its durable success
+boundary becomes:
 
-Alternative considered: replace `Vectorizer` with the HTTP client. Rejected because a remote, fallible batch API has different semantics and would make the always-available fallback depend on network behavior.
+1. canonicalize the bounded title and description;
+2. look up or persist `hash-ngram-v1`;
+3. upsert the semantic job for the fixed semantic model and canonical text hash;
+4. allow the Kafka offset to commit.
 
-### 2. Use a strictly bounded authenticated HTTP client
+If either durable write fails, the record remains uncommitted. If the offset commit is uncertain,
+redelivery is safe because both the hash fact and semantic job have stable identities. Semantic
+inference is never performed in the Kafka handler.
 
-When semantic generation is enabled, local configuration validation requires:
+An alternative semantic Kafka consumer group would duplicate canonicalization and could race hash
+coverage. Extending the existing hash group gives one explicit hash-first boundary. Kafka retry
+topics and uncommitted-record retry loops are rejected because remote inference may remain
+unavailable far longer than a consumer session.
 
-- an absolute `http` or `https` base URL with no userinfo, query, fragment, or path outside the service root;
-- `internal.enabled=true` and the existing validated strong `internal.token`;
-- metadata timeout from 500 milliseconds to 5 seconds, default 3 seconds;
-- embedding request timeout from 1 to 20 seconds, default 17 seconds;
-- coverage sampling interval from 1 minute to 1 hour, default 5 minutes.
+### 3. PostgreSQL owns semantic execution and retry state
 
-Connection and payload bounds are fixed rather than operator-expandable: at most two connections and two in-flight requests per host, 1-second dial/TLS timeouts, no automatic client retry, disabled compression, 16 KiB metadata responses, 1 MiB embedding responses, and batches of at most 32. The request timeout is slightly longer than the service's 15-second deadline so its bounded timeout response can arrive.
+One semantic job is identified by `(video_id, model)`. It records canonical text hash, bounded
+state, attempts, `available_at`, lease owner and expiry, bounded error class, completion metadata,
+and timestamps. A publication with the same text hash is idempotent; a different hash resets the
+same model job to pending and fences stale completion.
 
-The client sends only `X-Internal-Token`, `Content-Type: application/json`, and bounded items using IDs `video:<id>`. It never logs tokens, request bodies, title/description text, vectors, full response bodies, or raw transport errors. Errors are mapped to bounded classes: `canceled`, `timeout`, `over_capacity`, `auth`, `unavailable`, `contract`, and `internal`.
+Workers claim bounded batches in stable order with `FOR UPDATE SKIP LOCKED`. Processing uses a
+bounded lease and heartbeat. Expired processing leases are reclaimable. Retry delays are 5 seconds,
+30 seconds, 2 minutes, 10 minutes, then capped at 30 minutes. Local cancellation or uncertain lease
+ownership prevents completion writes.
 
-At worker startup, one metadata probe runs with the metadata deadline. Local invalid configuration fails worker startup. Remote unavailability, authentication rejection, or metadata mismatch does not stop the worker, because doing so would also remove hash generation. Instead, the semantic gate remains closed and a single background validator retries after 5 seconds, 30 seconds, 2 minutes, then every 5 minutes. Events arriving while the gate is closed follow the durable semantic retry path.
+Transport, timeout, overload, authentication, readiness, and service-contract failures close the
+affected replica's local semantic gate and release work retryably. Deterministic invalid input may
+be terminally classified. Shared jobs are not rewritten into a cluster-wide suspended state merely
+because one replica cannot reach or validate the service.
 
-Metadata validation requires exact model, revision, dimension 384, `float32`, normalized true, CPU device, and the planned limits. Every embedding response again verifies model, revision, dimension, item count, exact IDs, zero-based indexes, request order, exactly 384 values, finiteness, and unit norm within `1e-4`. Valid vectors are L2-normalized once more in Go before bounded JSON serialization.
+### 4. Fix model identity and text canonicalization
 
-Alternative considered: fail the worker when the startup probe fails. Rejected because semantic inference is an optional enhancement and must not suppress hash coverage.
+The only accepted semantic contract is:
 
-### 3. Make hash persistence the first and independent event step
+- model: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`;
+- revision: `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`;
+- dimension: 384;
+- dtype: `float32`;
+- device: CPU;
+- output: finite L2-normalized vectors;
+- persistence key: `semantic-minilm-l12-v2@e8f8c211226b894f`.
 
-For every decoded video-published event, application processing is ordered:
+Go canonicalization matches the standalone service contract exactly. The job and persisted row
+carry a canonical text hash so duplicate publications and stale workers cannot overwrite a newer
+fact. A future model or revision must use a new persistence key and separate job identity.
 
-1. Canonicalize title and description according to the semantic service's NFKC, whitespace, and `title + "\n" + description` contract and compute the text hash.
-2. Find `hash-ngram-v1`; if the same text hash already exists, record `skipped`, otherwise generate and conditionally upsert it.
-3. If hash persistence fails, do not create semantic work and leave the Kafka record uncommitted.
-4. Upsert one pending semantic job for the fixed model and canonical text hash. Disabled or unavailable replicas retain the shared job without claiming or rewriting it.
-5. Commit the Kafka publication offset only after the hash fact and semantic-job handoff commit.
-6. A separate leased worker checks whether the fixed semantic model already exists for the same text hash, calls the semantic generator when needed, and conditionally upserts the vector.
+### 5. Use a bounded authenticated client with strict response validation
 
-Repository writes use `(video_id, model)` conflict handling and only update vector fields when the stored text hash or vector metadata differs. Concurrent duplicate deliveries may perform duplicate computation, but they cannot create duplicate facts or churn `updated_at` for an identical fact. A changed publication event may replace each model's row for the new canonical text.
+The Go client uses only the configured `X-Internal-Token`, bounded connection and in-flight request
+counts, explicit metadata and embedding deadlines, response-size limits, and no automatic retries.
+It validates service metadata before opening the local claim gate.
 
-Alternative considered: attempt semantic generation before hash persistence. Rejected because a semantic outage would delay the fallback that current recommendation code can already use.
+Every response is checked for exact model metadata, item count, IDs, indexes, order, dimensions,
+finite components, and unit norm. A complete batch is rejected if any item is missing, reordered,
+duplicated, unknown, non-finite, wrongly dimensioned, or wrongly versioned. Valid vectors are
+normalized once more before bounded JSON persistence.
 
-### 4. Use Kafka only for bounded intake and PostgreSQL for semantic execution
+Invalid local configuration fails worker startup. Remote unavailability or metadata mismatch does
+not fail the process: the local semantic gate remains closed and background probes retry with
+bounded delay while other workers continue.
 
-The retained `frux.video.published.v1` topic is consumed by the independent
-`frux.embedding.video-published.v1` group. Intake validates the registered envelope and video-ID
-key, persists or confirms `hash-ngram-v1`, and upserts a semantic job in PostgreSQL before the
-record becomes commit-eligible. Feed fanout owns a different group, so semantic lag or failure
-cannot hold Feed offsets.
+### 6. Persist semantic and hash facts side by side
 
-The shared publication contract validates only envelope, business identity, timestamps, key, and
-the video-owned payload bounds. It does not import semantic canonicalization rules. After shared
-decoding, only the embedding handler canonicalizes title/description; deterministic invalid text is
-a terminal, commit-safe result for the embedding group while the Feed group still accepts and
-processes the same publication fact.
+The existing video embedding identity `(video_id, model)` remains authoritative.
+`hash-ngram-v1` and the fixed semantic model therefore coexist as separate rows. Semantic rows
+contain model key, dimension 384, canonical text hash, finite normalized bounded JSON, and
+timestamps.
 
-The semantic job is uniquely identified by `(video_id, model)` and stores canonical text hash,
-state, attempts, `available_at`, lease owner/until, bounded error class, and completion metadata.
-A changed text hash resets the job; the same hash leaves completed or pending work unchanged.
-Claims use stable `available_at, video_id, model` ordering and `FOR UPDATE SKIP LOCKED`.
+Conditional persistence avoids updating an identical `(video_id, model, text_hash)` fact and
+requires the active job lease and expected text hash before writing a changed fact. This change
+does not add a pgvector column, ANN index, or new recommendation vector table.
 
-The leased semantic worker uses a replica-local metadata gate and the retry schedule already selected
-for the integration:
+### 7. Separate durable handoff from optional execution capacity
 
-| Failed attempt | Delay |
-| --- | --- |
-| 1 | 5 seconds |
-| 2 | 30 seconds |
-| 3 | 2 minutes |
-| 4 | 10 minutes |
-| 5 and later | 30 minutes |
+Once this integration is deployed, Kafka intake always creates semantic jobs after hash success.
+Semantic execution is independently enabled and capacity-limited. A disabled or unready replica
+does not claim jobs; shared pending/retry work remains durable and visible for healthy replicas or a
+later enablement.
 
-Retryable service failures update the job and release its lease. Disabled or locally unhealthy
-replicas do not claim jobs and do not rewrite cluster-wide state; jobs remain pending/retryable so
-another healthy replica may claim them. Historical suspended rows remain claimable for compatibility.
-Expired leases are reclaimable. Terminal local identity or contract violations are retained as
-bounded failed outcomes until text/model changes or an operator-approved future repair boundary
-resets them.
+Compose enables execution and points the worker at the internal-only semantic service with the
+shared strong token. The worker uses a `service_started` dependency rather than a health-gated
+dependency so semantic readiness cannot block unrelated worker startup.
 
-Lease heartbeats derive bounded child contexts from the active processing context. Shutdown cancels
-them immediately, and a stalled database heartbeat times out, cancels inference, and prevents the
-attempt from completing or retrying after lease ownership becomes uncertain.
+### 8. Bound observability and operational controls
 
-A crash after hash/job commit but before Kafka offset commit can redeliver intake; conditional hash
-upserts and semantic-job identity make that harmless. Remote calls never hold Kafka offsets because
-they run only after intake has committed. Kafka retry topics, RabbitMQ retry queues, delivery
-attempt headers, and broker backlog are intentionally not used for semantic execution.
+Metrics cover metadata/embedding request count and latency by bounded result, hash and semantic
+intake outcomes, semantic job count and oldest age by bounded state, local gate readiness, active
+leases, retry outcomes, and readable-video semantic coverage.
 
-Alternative considered: delayed broker retries. Rejected because service outages, disablement,
-leases, text/model identity, coverage, and backlog are durable job state rather than event-delivery
-state.
+Labels never include video IDs, text, URLs, tokens, vectors, raw errors, retry numbers, or arbitrary
+model strings. Logs use bounded operation and result classes and never emit request text or
+authentication material.
 
-### 5. Reuse `video_embedding` without a schema change
+### 9. Roll out without changing recommendation behavior
 
-The existing columns already contain all required facts:
+Rollout order is:
 
-- `video_id`;
-- revision-bearing `model`;
-- `dimension`;
-- normalized vector JSONB;
-- canonical `text_hash`;
-- timestamps.
+1. verify all roadmap and Kafka migration dependencies are archived;
+2. deploy the standalone semantic service and confirm its fixed metadata contract;
+3. migrate semantic-job persistence;
+4. deploy worker code with execution disabled and verify hash-first job handoff;
+5. enable bounded semantic execution and monitor backlog, retries, coverage, and unrelated worker
+   health;
+6. retain all current recommendation policies unchanged.
 
-The existing composite primary/unique identity allows `hash-ngram-v1` and the semantic model row to coexist. No pgvector type, new vector column, or ANN index is added. Migration work is limited to assertions that:
-
-- the semantic key fits the 64-character model column;
-- a 384-component finite normalized JSON vector round-trips;
-- one video can store both model rows;
-- repeated same-model writes remain one fact.
-
-If those assertions fail during implementation, the change must be revised rather than silently introducing an unrelated vector schema.
-
-### 6. Define the future backfill dependency and consumer boundary
-
-This change owns the producer-side primitives needed by live event processing:
-
-- the immutable semantic model identity and canonical text contract;
-- bounded metadata and embedding client behavior;
-- domain vector validation and normalization;
-- same-text lookup and conditional `(video_id, model)` persistence;
-- semantic coverage counts and bounded metrics.
-
-The future `backfill-semantic-video-embeddings` change will depend on this change and `add-semantic-embedding-service`. It may consume those stable primitives, but it will own every historical concern: eligible-video scans, batching policy, cursors, checkpoints, cancellation summaries, dry-run, re-embedding safeguards, backfill-specific retries, command/job composition, and operator documentation.
-
-There is no reverse dependency. This integration does not wait for, invoke, schedule, or expose a backfill component. Existing historical videos without the fixed semantic row remain untouched unless they later emit the normal video-published event handled here.
-
-Alternative considered: retain the command in this change. Rejected because live delivery correctness and historical catalog migration have different operational boundaries, failure modes, rollout controls, and test matrices.
-
-### 7. Add bounded operational metrics
-
-The worker registers:
-
-- `frux_semantic_embedding_client_requests_total{operation,result}`;
-- `frux_semantic_embedding_client_request_duration_seconds{operation,result}`;
-- `frux_video_embedding_vectors_total{model,source,outcome}`;
-- `frux_video_embedding_coverage_videos{model,state}`;
-- `frux_video_embedding_semantic_jobs{state}`;
-- `frux_video_embedding_semantic_job_oldest_seconds{state}`.
-
-Allowed values are fixed:
-
-- `operation`: `metadata`, `embed`;
-- client `result`: `success`, `canceled`, `timeout`, `over_capacity`, `auth`, `unavailable`, `contract`, `internal`;
-- `model`: `hash`, `semantic`;
-- `source`: `event`;
-- vector `outcome`: `generated`, `skipped`, `retried`, `failed`;
-- coverage `state`: `present`, `missing`;
-- semantic job `state`: `pending`, `processing`, `retry`, legacy `suspended`, `completed`, `failed`.
-
-Every five minutes by default, the worker counts readable published videos with and without the fixed semantic model and samples PostgreSQL semantic-job count and oldest age by bounded state. Database IDs, titles, URLs, raw errors, attempts, and arbitrary model strings are never labels. A failed coverage/backlog sample preserves the previous gauge and increments the existing bounded worker-job error observation.
-
-### 8. Compose enables integration without making hash startup depend on readiness
-
-The local sample configuration keeps semantic generation disabled by default. Compose enables it by
-default, uses `http://semantic-embedding:8081`, and reuses `FRUX_INTERNAL_TOKEN`. The worker declares `semantic-embedding` with `condition: service_started`, not `service_healthy`: this establishes startup ordering and service discovery while still allowing the worker to start, validate for at most 3 seconds, and provide hash coverage if model preload later fails.
-
-The worker has no host access to a browser route and the semantic service remains internal-only as defined by `add-semantic-embedding-service`. Configuration documentation states that enabling semantic integration requires the service capability to be implemented and deployed, but stopping that container must not stop unrelated worker consumers.
-
-### 9. Verify at unit, contract, persistence, Kafka, and Compose levels
-
-Tests will cover:
-
-- canonical text equivalence, model constants, dimension, finite/unit checks, JSON bounds, and conditional same-hash persistence;
-- URL/token/timeout validation and all metadata/embedding response failures using `httptest`;
-- exact ID/order/index validation, truncated/oversized bodies, non-finite numbers, wrong dimensions, wrong model/revision, overload, cancellation, and safe error/log behavior;
-- hash-first intake, disabled semantic behavior, duplicate events, content changes, semantic success, every retry class, suspension, expired leases, shutdown, and offset commit decisions;
-- Kafka group isolation, strict envelope/key validation, commit failure/redelivery, independent Feed progress, and publication-time preservation;
-- Feed acceptance of publication text that is valid for video but terminal for semantic canonicalization;
-- PostgreSQL semantic-job upsert/reset, stable claims, capped delays, lease reclaim, completion, terminal classification, cleanup, and backlog inspection;
-- bounded semantic heartbeat cancellation during shutdown and database stalls;
-- PostgreSQL coexistence and idempotency with 128-dimensional hash and 384-dimensional semantic rows;
-- a live contract run against the service produced by `add-semantic-embedding-service`;
-- Compose rendering and a targeted outage test proving the worker writes hash vectors while the semantic container is unavailable, then eventually fills semantic coverage for the live event after recovery;
-- scope tests or assertions proving no historical scan, command/job entry point, cursor/checkpoint behavior, dry-run, re-embedding mode, or backfill-specific retry loop is introduced.
-
-### 10. Preserve cross-change startup, readiness, logging, and publication lifecycle guarantees
-
-The semantic service dependency uses one 180-second startup deadline across preload, fixture
-validation, and full pool initialization. Replacement failures retry with bounded backoff, expose
-live capacity, and keep readiness failed until required capacity recovers. Its request logs contain
-only route/status/duration/result/capacity and Uvicorn access logs remain disabled.
-
-Publication dispatch starts asynchronously so Kafka or RabbitMQ outage cannot block the worker or
-unrelated consumers. Runs are aggregate-bounded. Immutable publication facts survive bounded
-replay-window cleanup of dispatched operational outbox rows, and reconciliation uses the fact so
-cleanup cannot cause semantic intake or Feed fanout to receive a newly synthesized publication.
-
-Kafka topology/publisher initialization and Kafka/Rabbit consumers run under reconnect supervisors.
-Transport health is visible through bounded broker/session gauges, but transport failure does not
-terminate PostgreSQL jobs, media polling, moderation, or semantic polling. Active Kafka groups still
-wait for Rabbit drain and cutover offset initialization. Publication failure marking and statistics
-use short `context.WithoutCancel` contexts separate from the aggregate publish deadline; failed stats
-retain previous gauges and increment a dedicated result counter.
-
-Semantic service tokens are printable ASCII at configuration and request boundaries. Non-ASCII
-headers are rejected before `compare_digest`. The coordinator consumes ASGI `http.disconnect` while
-inference runs; disconnect cancels and recycles the child immediately and releases admission.
+Rollback disables semantic job claims first. Kafka hash intake, durable job rows, and existing
+semantic facts remain intact. The worker can then be rolled back only to a version whose Kafka
+consumer contract is compatible; no RabbitMQ semantic route is restored. Recommendation behavior
+is unaffected because no current provider consumes the semantic rows.
 
 ## Risks / Trade-offs
 
-- [The dependent semantic service change is still active and may not yet be implemented] → Treat its accepted spec as the contract, include a live cross-service contract gate, and do not mark integration implementation complete until that service is available.
-- [An indefinite semantic outage accumulates durable retries] → Use capped 30-minute PostgreSQL retry spacing, explicit backlog and missing-coverage gauges, and suspension while retaining hash generation.
-- [Disabling semantic integration leaves pending work] → Keep jobs pending/retryable and close only the local claim gate; hash coverage remains current and healthy replicas may continue.
-- [A service contract bug can retain poison work indefinitely] → Classify and expose `contract` failures, close the semantic gate until metadata validates again, cap retry frequency, and never block hash writes or unrelated consumers.
-- [Worker and Python normalization could drift] → Share committed contract fixtures covering NFKC, Unicode whitespace, empty descriptions, and title/description composition; fail semantic integration tests on hash/input drift.
-- [Historical semantic coverage remains incomplete] → Make missing coverage explicit in metrics and documentation; defer remediation to `backfill-semantic-video-embeddings` rather than hiding migration work inside the live worker.
-- [JSONB vectors are not efficient for ANN retrieval] → Accept the current storage because this change only generates durable facts; `add-pgvector-recommendation-recall` owns future vector indexing and consumption.
-
-## Migration Plan
-
-1. Complete and validate `add-semantic-embedding-service`, including its fixed model metadata and Compose service.
-2. Add domain constants/validation, application ports and orchestration, bounded HTTP client, repository methods, metrics, and configuration with semantic disabled by default.
-3. Add the independent Kafka embedding intake group and PostgreSQL semantic jobs; deploy with semantic execution disabled and verify hash progress plus pending durable work.
-4. Run migration/persistence tests and confirm no schema DDL is needed.
-5. Wire Compose to the internal service with `service_started`, enable semantic integration, and verify startup metadata validation plus hash behavior during a forced semantic outage.
-6. Monitor live-event request results, PostgreSQL job backlog, and semantic coverage. Existing historical videos remain unprocessed until the future `backfill-semantic-video-embeddings` change is separately proposed and implemented.
-
-Rollback disables semantic generation or restores RabbitMQ publication intake for the embedding responsibility. Hash processing continues. Existing semantic rows and jobs remain versioned facts and need not be deleted; disabled replicas simply stop claiming until re-enabled. No database rollback or recommendation rollback is required.
+- [Semantic backlog grows during an outage] -> Keep claims bounded, expose count/oldest-age metrics,
+  cap retry delay, and alert without blocking Kafka intake.
+- [Service revision or response shape drifts] -> Require exact metadata and response validation and
+  keep the local claim gate closed on mismatch.
+- [Kafka redelivery repeats durable work] -> Use stable hash and job identities plus conditional
+  persistence.
+- [A stale worker overwrites changed text] -> Fence completion by lease ownership and expected
+  canonical text hash.
+- [Semantic execution consumes worker resources] -> Bound HTTP connections, concurrency, claim
+  batches, leases, and database operations independently from other workers.
+- [Historical coverage remains incomplete] -> Defer scanning and resumability to
+  `backfill-semantic-video-embeddings` and report coverage explicitly.
 
 ## Open Questions
 
-None. The dependent service contract, persistence model key, timeout bounds, acknowledgement matrix, live-event retry schedule, Compose dependency semantics, future backfill boundary, and recommendation deferral are fixed by this proposal.
+None. Model identity, roadmap order, Kafka source, PostgreSQL retry ownership, and future boundaries
+are fixed by prerequisite changes and the recommendation roadmap.
