@@ -17,9 +17,21 @@ transaction or durable publication boundary.
 - **WHEN** Kafka publication fails but the outbox pending/oldest statistics query succeeds
 - **THEN** the dispatch failure is observed separately and the pending and oldest-age gauges still update from the successful statistics result
 
+#### Scenario: Publish consumes the aggregate deadline
+- **WHEN** transport publication times out after an outbox row was claimed
+- **THEN** a separate short uncancelled context attempts the fenced failure transition so the lease is not left solely because the publish context expired
+
+#### Scenario: Backlog statistics fail
+- **WHEN** the bounded statistics query fails
+- **THEN** prior pending/oldest gauges remain unchanged and a separate bounded statistics-failure result is reported
+
 #### Scenario: Broker is unavailable during worker startup
 - **WHEN** Kafka or RabbitMQ publication transport is unavailable while the worker starts
 - **THEN** the dispatcher starts initial delivery asynchronously, worker startup succeeds, and unrelated workers remain able to start while the outbox retains retryable rows
+
+#### Scenario: Active Kafka transport is unavailable
+- **WHEN** an active group cannot connect or complete cutover preflight
+- **THEN** its supervisor remains unhealthy and retries without opening a mutating session or terminating unrelated database workers
 
 #### Scenario: One aggregate dispatch run executes
 - **WHEN** a large publication backlog is available

@@ -50,7 +50,7 @@ The worker SHALL always compose and run `hash-ngram-v1` generation. Semantic gen
 
 #### Scenario: Semantic integration is disabled
 - **WHEN** the worker receives a video-published event with semantic generation disabled
-- **THEN** it generates or skips the current hash vector, persists a pending or suspended semantic job, and commits the Kafka record without calling the semantic service
+- **THEN** it generates or skips the current hash vector, persists a pending semantic job, and commits the Kafka record without calling the semantic service
 
 #### Scenario: Enabled service is unavailable at startup
 - **WHEN** the startup metadata probe fails within its bounded deadline
@@ -107,7 +107,15 @@ Semantic jobs SHALL store canonical text hash, bounded state, attempts, `availab
 
 #### Scenario: Semantic integration is disabled
 - **WHEN** semantic execution is intentionally disabled
-- **THEN** pending jobs remain durably suspended or pending and hash coverage continues
+- **THEN** the disabled replica refrains from claims, pending/retry jobs remain shared durable work, and hash coverage continues without a cluster-wide state rewrite
+
+#### Scenario: One replica cannot validate metadata
+- **WHEN** a semantic replica has local metadata or connectivity failure while another replica is healthy
+- **THEN** only the unhealthy replica keeps its claim gate closed and the healthy replica may continue claiming pending, retry, or legacy suspended jobs
+
+#### Scenario: One replica receives an invalid service response
+- **WHEN** runtime response validation fails on one replica
+- **THEN** that replica closes its local gate and releases the job retryably rather than terminally poisoning shared work
 
 #### Scenario: Worker exits with a lease
 - **WHEN** a semantic worker stops before completing a job and its lease expires
@@ -160,7 +168,7 @@ Compose SHALL configure the worker to call the internal `semantic-embedding` ser
 
 #### Scenario: Compose configuration is rendered
 - **WHEN** Compose is rendered with a strong `FRUX_INTERNAL_TOKEN`
-- **THEN** the worker has the internal service URL, semantic enablement, token, bounded configuration, and a `service_started` dependency
+- **THEN** the worker has semantic enablement on by default, the internal service URL, token, bounded configuration, and a `service_started` dependency
 
 #### Scenario: Semantic container is unhealthy
 - **WHEN** the semantic container fails readiness or becomes unavailable
@@ -172,7 +180,7 @@ Compose SHALL configure the worker to call the internal `semantic-embedding` ser
 
 #### Scenario: Publication transport is unavailable during worker startup
 - **WHEN** Kafka or RabbitMQ publication dispatch cannot connect
-- **THEN** publication retry starts asynchronously and hash, semantic, Feed, media, and unrelated workers remain eligible to start
+- **THEN** reconnect supervisors expose unhealthy transport/session metrics, publication retry remains durable, and hash, semantic, Feed, media, moderation, and unrelated database workers remain eligible to start
 
 #### Scenario: Semantic inference capacity is lost
 - **WHEN** one or all required inference workers are unavailable

@@ -20,15 +20,123 @@ type Diagnostics struct {
 }
 
 type Backbone struct {
-	client         *Client
-	admin          *Administrator
-	cutover        *CutoverAdministrator
-	publisher      *Publisher
-	plan           []StreamMigration
-	environment    string
-	healthObserver BrokerHealthObserver
-	mu             sync.RWMutex
-	diagnostics    Diagnostics
+	client           *Client
+	admin            *Administrator
+	cutover          *CutoverAdministrator
+	publisher        *Publisher
+	plan             []StreamMigration
+	environment      string
+	healthObserver   BrokerHealthObserver
+	mu               sync.RWMutex
+	diagnostics      Diagnostics
+	supervisorCancel context.CancelFunc
+	supervisorDone   chan struct{}
+	closed           bool
+}
+
+func StartSupervised(
+	ctx context.Context,
+	cfg infraconfig.KafkaConfig,
+	topologyObserver TopologyObserver,
+	produceObserver ProduceObserver,
+) (*Backbone, error) {
+	plan, err := MigrationPlan(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Enabled {
+		if _, err := clientOptions(cfg); err != nil {
+			return nil, err
+		}
+	}
+	publisher, publisherErr := NewSupervisedPublisher(cfg, produceObserver)
+	if publisherErr != nil && cfg.Enabled {
+		return nil, publisherErr
+	}
+	supervisorCtx, cancel := context.WithCancel(ctx)
+	backbone := &Backbone{
+		plan: plan, environment: cfg.Environment, publisher: publisher,
+		supervisorCancel: cancel, supervisorDone: make(chan struct{}),
+		diagnostics: Diagnostics{
+			Enabled: cfg.Enabled, Environment: cfg.Environment,
+			RegisteredTopics: len(topics),
+		},
+	}
+	if observer, ok := topologyObserver.(BrokerHealthObserver); ok {
+		backbone.healthObserver = observer
+	}
+	if !cfg.Enabled {
+		backbone.diagnostics.Healthy = true
+		backbone.observeHealth(false)
+		close(backbone.supervisorDone)
+		return backbone, nil
+	}
+	backbone.observeHealth(false)
+	go func() {
+		defer close(backbone.supervisorDone)
+		backbone.runConnectionSupervisor(supervisorCtx, cfg, topologyObserver)
+	}()
+	return backbone, nil
+}
+
+func (b *Backbone) runConnectionSupervisor(
+	ctx context.Context,
+	cfg infraconfig.KafkaConfig,
+	topologyObserver TopologyObserver,
+) {
+	backoff := 100 * time.Millisecond
+	for ctx.Err() == nil {
+		client, err := NewClient(ctx, cfg)
+		var results []TopicValidation
+		if err == nil {
+			admin := NewAdministrator(client, cfg, topologyObserver)
+			results, err = admin.EnsureTopics(ctx)
+			if err == nil {
+				b.mu.Lock()
+				if b.closed || ctx.Err() != nil {
+					b.mu.Unlock()
+					_ = client.Close(context.Background())
+					return
+				}
+				b.client = client
+				b.admin = admin
+				b.cutover = NewCutoverAdministrator(client, cfg)
+				b.diagnostics.LastValidatedAt = time.Now().UTC()
+				b.diagnostics.ValidationResults = append(
+					[]TopicValidation(nil), results...,
+				)
+				b.diagnostics.Healthy = true
+				b.diagnostics.FailureCode = ""
+				b.mu.Unlock()
+				b.publisher.setClient(client)
+				b.observeHealth(true)
+				return
+			}
+			_ = client.Close(context.Background())
+		}
+		b.mu.Lock()
+		b.diagnostics.LastValidatedAt = time.Now().UTC()
+		b.diagnostics.ValidationResults = append(
+			[]TopicValidation(nil), results...,
+		)
+		b.diagnostics.Healthy = false
+		b.diagnostics.FailureCode = sanitizeKafkaError(err)
+		b.mu.Unlock()
+		b.observeHealth(false)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+		}
+	}
 }
 
 type BrokerHealthObserver interface {
@@ -93,20 +201,32 @@ func (b *Backbone) ApplyConsumerCutover(
 	boundary string,
 	mode CutoverMode,
 ) (CutoverResult, error) {
-	if b == nil || b.cutover == nil {
+	if b == nil {
 		return "", ErrKafkaUnavailable
 	}
-	return b.cutover.Apply(ctx, group, boundary, mode)
+	b.mu.RLock()
+	cutover := b.cutover
+	b.mu.RUnlock()
+	if cutover == nil {
+		return "", ErrKafkaUnavailable
+	}
+	return cutover.Apply(ctx, group, boundary, mode)
 }
 
 func (b *Backbone) ConsumerCutoverInitialized(
 	ctx context.Context,
 	group ConsumerGroupID,
 ) (bool, error) {
-	if b == nil || b.cutover == nil {
+	if b == nil {
 		return false, ErrKafkaUnavailable
 	}
-	return b.cutover.Initialized(ctx, group)
+	b.mu.RLock()
+	cutover := b.cutover
+	b.mu.RUnlock()
+	if cutover == nil {
+		return false, ErrKafkaUnavailable
+	}
+	return cutover.Initialized(ctx, group)
 }
 
 func (b *Backbone) Publisher() *Publisher {
@@ -133,7 +253,14 @@ func (b *Backbone) Health(ctx context.Context) error {
 	if !enabled {
 		return nil
 	}
-	if err := b.client.Ping(ctx); err != nil {
+	b.mu.RLock()
+	client := b.client
+	b.mu.RUnlock()
+	if client == nil {
+		b.observeHealth(false)
+		return ErrKafkaUnavailable
+	}
+	if err := client.Ping(ctx); err != nil {
 		b.mu.Lock()
 		b.diagnostics.Healthy = false
 		b.diagnostics.FailureCode = sanitizeKafkaError(err)
@@ -195,10 +322,29 @@ func (b *Backbone) RunHealthObserver(
 }
 
 func (b *Backbone) Close(ctx context.Context) error {
-	if b == nil || b.client == nil {
+	if b == nil {
 		return nil
 	}
-	err := b.client.Close(ctx)
+	if b.supervisorCancel != nil {
+		b.supervisorCancel()
+	}
+	b.mu.Lock()
+	b.closed = true
+	client := b.client
+	b.client = nil
+	done := b.supervisorDone
+	b.mu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if client == nil {
+		return nil
+	}
+	err := client.Close(ctx)
 	if errors.Is(err, ErrKafkaShutdown) {
 		b.mu.Lock()
 		b.diagnostics.Healthy = false

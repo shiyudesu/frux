@@ -367,6 +367,54 @@ func TestBehaviorKafkaConsumersWaitForViewReadinessBeforeAction(t *testing.T) {
 	}
 }
 
+func TestKafkaConsumerSupervisorDoesNotBlockUnrelatedWorkerStartup(t *testing.T) {
+	starterEntered := make(chan struct{})
+	release := make(chan struct{})
+	starter := func(
+		_ context.Context,
+		_ *infrakafka.Backbone,
+		_ infraconfig.KafkaConfig,
+		_ infrakafka.ConsumerGroupID,
+		_ string,
+		_ applicationeventstream.Handler,
+		_ chan<- error,
+	) error {
+		close(starterEntered)
+		<-release
+		return errors.New("broker unavailable")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := time.Now()
+	if err := superviseBehaviorKafkaConsumers(
+		ctx,
+		nil,
+		nil,
+		nil,
+		infraconfig.KafkaConfig{},
+		[]behaviorKafkaConsumer{{
+			migration: infrakafka.StreamMigration{
+				Consumer: infrakafka.ConsumerModeKafka,
+			},
+			activeGroup: infrakafka.GroupConsumeViewActive,
+			parity:      workerParityStub{},
+		}},
+		nil,
+		starter,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("supervisor blocked worker composition: %v", elapsed)
+	}
+	select {
+	case <-starterEntered:
+	case <-time.After(time.Second):
+		t.Fatal("transport supervisor did not attempt consumer startup")
+	}
+	close(release)
+}
+
 func TestWaitForKafkaConsumerStartup(t *testing.T) {
 	t.Run("assignment ready", func(t *testing.T) {
 		consumerCtx, cancel := context.WithCancel(context.Background())

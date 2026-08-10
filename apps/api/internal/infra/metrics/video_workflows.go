@@ -37,6 +37,14 @@ var (
 		},
 		[]string{"result"},
 	)
+	VideoPublicationStatsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "frux",
+			Name:      "video_publication_outbox_stats_total",
+			Help:      "Video-publication outbox statistics query outcomes.",
+		},
+		[]string{"result"},
+	)
 	VideoPublicationCleanupTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "frux",
@@ -76,6 +84,7 @@ func init() {
 		VideoPublicationOutboxPending,
 		VideoPublicationOutboxLagSeconds,
 		VideoPublicationDispatchTotal,
+		VideoPublicationStatsTotal,
 		VideoPublicationCleanupTotal,
 		VideoPublicationCleanupDeletedTotal,
 		MediaWakeupsTotal,
@@ -116,6 +125,9 @@ func (VideoWorkflowObserver) ObservePublicationOutbox(
 	oldest *time.Time,
 	err error,
 ) {
+	if err != nil {
+		return
+	}
 	VideoPublicationOutboxPending.Set(float64(pending))
 	lag := 0.0
 	if err == nil && pending > 0 && oldest != nil {
@@ -125,6 +137,13 @@ func (VideoWorkflowObserver) ObservePublicationOutbox(
 		}
 	}
 	VideoPublicationOutboxLagSeconds.Set(lag)
+}
+
+func (VideoWorkflowObserver) ObservePublicationStats(result string) {
+	if result != "success" {
+		result = "failure"
+	}
+	VideoPublicationStatsTotal.WithLabelValues(result).Inc()
 }
 
 func (VideoWorkflowObserver) ObservePublicationDispatch(result string) {

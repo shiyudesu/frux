@@ -13,13 +13,10 @@ import (
 type semanticRepositoryStub struct {
 	jobs       []*domainembedding.SemanticJob
 	existing   *domainembedding.VideoEmbedding
-	suspended  int
-	resumed    int
 	retried    int
 	completed  int
 	terminal   bool
 	errorClass string
-	resumeErr  error
 	extended   int
 	claimLimit int
 	owners     []string
@@ -64,6 +61,7 @@ func TestSemanticWorkerClaimsOneJobWithUniqueTokenPerProcessor(t *testing.T) {
 		true, 2, time.Second, time.Hour,
 	)
 	worker.now = func() time.Time { return now }
+	worker.ready.Store(true)
 	_, _ = worker.ProcessPending(context.Background())
 	_, _ = worker.ProcessPending(context.Background())
 	if repository.claimLimit != 1 || len(repository.owners) != 2 ||
@@ -107,29 +105,6 @@ func (s *semanticRepositoryStub) ExtendSemanticJobLease(
 	job.LeaseUntil = &leaseUntil
 	return nil
 }
-func (s *semanticRepositoryStub) SuspendSemanticJobs(context.Context, time.Time) (int64, error) {
-	s.suspended++
-	return 1, nil
-}
-func (s *semanticRepositoryStub) ResumeSemanticJobs(context.Context, time.Time) (int64, error) {
-	s.resumed++
-	return 1, s.resumeErr
-}
-
-func TestSemanticWorkerPropagatesResumeFailureBeforeStartingProcessors(t *testing.T) {
-	repository := &semanticRepositoryStub{resumeErr: errors.New("resume failed")}
-	worker := NewSemanticWorker(
-		repository,
-		&semanticGeneratorStub{},
-		true, 1, time.Second, time.Hour,
-	)
-	if err := worker.Start(context.Background()); !errors.Is(err, repository.resumeErr) {
-		t.Fatalf("start error = %v", err)
-	}
-	if repository.resumed != 1 {
-		t.Fatalf("resume attempts = %d", repository.resumed)
-	}
-}
 func (*semanticRepositoryStub) SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error) {
 	return nil, nil
 }
@@ -161,8 +136,11 @@ func (g *semanticGeneratorStub) Generate(
 	return [][]float64{g.vector}, nil
 }
 
-func TestSemanticWorkerSuspendsWhenServiceIsUnavailable(t *testing.T) {
-	repository := &semanticRepositoryStub{}
+func TestSemanticWorkerDoesNotClaimWhenLocalServiceIsUnavailable(t *testing.T) {
+	repository := &semanticRepositoryStub{jobs: []*domainembedding.SemanticJob{{
+		VideoID: 1, Model: domainembedding.SemanticModelKey,
+		TextHash: "hash", State: domainembedding.SemanticJobPending,
+	}}}
 	worker := NewSemanticWorker(
 		repository,
 		&semanticGeneratorStub{metadataErr: errors.New("unavailable")},
@@ -173,8 +151,12 @@ func TestSemanticWorkerSuspendsWhenServiceIsUnavailable(t *testing.T) {
 	if err := worker.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if repository.suspended != 1 {
-		t.Fatalf("suspended = %d", repository.suspended)
+	if processed, err := worker.ProcessPending(ctx); err != nil || processed != 0 {
+		t.Fatalf("locally unready processed=%d err=%v", processed, err)
+	}
+	if len(repository.jobs) != 1 || len(repository.owners) != 0 {
+		t.Fatalf("locally unready replica claimed cluster work: jobs=%d owners=%v",
+			len(repository.jobs), repository.owners)
 	}
 }
 
@@ -195,6 +177,7 @@ func TestSemanticWorkerRetriesAndCompletesDurableJobs(t *testing.T) {
 		true, 1, time.Second, time.Hour,
 	)
 	worker.now = func() time.Time { return now }
+	worker.ready.Store(true)
 	if _, err := worker.ProcessPending(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +201,7 @@ func TestSemanticWorkerRetriesAndCompletesDurableJobs(t *testing.T) {
 	}
 }
 
-func TestSemanticWorkerRejectsInvalidVectorAsTerminal(t *testing.T) {
+func TestSemanticWorkerClosesLocalGateForInvalidVector(t *testing.T) {
 	now := time.Now().UTC()
 	job := &domainembedding.SemanticJob{
 		VideoID: 8, Model: domainembedding.SemanticModelKey,
@@ -232,12 +215,13 @@ func TestSemanticWorkerRejectsInvalidVectorAsTerminal(t *testing.T) {
 		true, 1, time.Second, time.Hour,
 	)
 	worker.now = func() time.Time { return now }
+	worker.ready.Store(true)
 	if _, err := worker.ProcessPending(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if repository.retried != 1 || !repository.terminal ||
+	if repository.retried != 1 || repository.terminal ||
 		repository.errorClass != string(SemanticContract) ||
-		repository.completed != 0 {
+		repository.completed != 0 || worker.ready.Load() {
 		t.Fatalf("invalid vector outcome = %+v", repository)
 	}
 }
@@ -265,6 +249,7 @@ func TestSemanticWorkerCompletesExistingSameTextWithoutInference(t *testing.T) {
 		true, 1, time.Second, time.Hour,
 	)
 	worker.now = func() time.Time { return now }
+	worker.ready.Store(true)
 	if _, err := worker.ProcessPending(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +289,7 @@ func TestSemanticHeartbeatDatabaseStallIsBounded(t *testing.T) {
 		repository, generator, true, 1, 300*time.Millisecond, time.Hour,
 	)
 	worker.now = func() time.Time { return now }
+	worker.ready.Store(true)
 	started := time.Now()
 	_, err := worker.ProcessPending(context.Background())
 	if !errors.Is(err, context.DeadlineExceeded) {

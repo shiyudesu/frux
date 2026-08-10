@@ -68,7 +68,7 @@ Delivery Limit 和 Replay timeout 必须在发布前压测。
 内确认对应 Rabbit source/quorum/DLQ 全部 drain；已有 Kafka Group Offset 在重启时保留，future
 boundary 或 Offset/data-loss 检测必须使 Worker 显式失败。
 
-语义 integration 默认关闭。启用时设置：
+Compose 默认启用语义 integration；非 Compose 部署可显式关闭。覆盖配置时设置：
 
 ```bash
 export FRUX_SEMANTIC_EMBEDDING_ENABLED=true
@@ -76,8 +76,14 @@ export FRUX_SEMANTIC_EMBEDDING_URL=http://semantic-embedding:8081
 ```
 
 目标服务必须实现固定 metadata/embedding 契约并复用强 `FRUX_INTERNAL_TOKEN`。服务不可用不会阻止
-Worker 的 hash、Feed 或媒体轮询；观察 `semantic_embedding_job` backlog，恢复 metadata 后 job 自动
-resume。当前 Compose 仓库未实现 `add-semantic-embedding-service` 的容器时应保持该开关关闭。
+Worker 的 hash、Feed 或媒体轮询；观察 `semantic_embedding_job` backlog，恢复 metadata 后当前副本
+自动恢复 claim，不执行共享 job 的批量 suspend/resume。
+
+API/Worker 对 RabbitMQ 与 Kafka 的 Compose 依赖使用 `service_started`，不使用 broker health gate。
+Kafka topology/publisher、active/shadow consumer 和 Rabbit consumer 在有界退避 supervisor 中重连；
+对应 `frux_kafka_broker_healthy`、`frux_kafka_consumer_session_healthy` 与
+`frux_rabbitmq_transport_healthy` 会显示故障，但 PostgreSQL outbox/job、媒体轮询、审核和 semantic
+poller 继续启动。Active Kafka group 仍须在 Rabbit drain 与 cutover offset 初始化成功后才启动。
 
 ## 生产审核推理网关
 
@@ -142,8 +148,8 @@ Prometheus 加载 `apps/monitoring/alerts/rabbitmq_dead_letter.yml`，Grafana �
 Compose 包含内部 `semantic-embedding` 服务，固定 MiniLM revision，复用强
 `FRUX_INTERNAL_TOKEN`，无 host port，read-only root，UID 10001、64 MiB tmpfs、2 CPU/2 GiB
 limit 和 180 秒 readiness allowance。Worker 只使用 `condition: service_started`；服务启动后
-不可用时 hash intake、Feed 和媒体轮询仍运行，semantic jobs suspended/retry 并在 metadata 与
-resume 成功后恢复。
+不可用时 hash intake、Feed 和媒体轮询仍运行，semantic jobs 保持 pending/retry，健康副本不受其他
+副本 metadata/connectivity 状态影响。
 
 服务内部使用同一个 180 秒 deadline 完成 preload、fixture validation 和全部 inference worker
 初始化。运行中 live capacity 少于配置值时 readiness 为 503；replacement 以最多 5 秒退避重试，
@@ -151,3 +157,6 @@ resume 成功后恢复。
 access log 关闭。Kafka/RabbitMQ publication transport outage 同样不会阻塞 Worker 启动；
 publication dispatcher 异步重试并按 5×100/10 秒运行，30 天后的 dispatched outbox 仅在 immutable
 fact 存在时分批清理。
+发布 timeout 后使用脱离 aggregate cancellation 的短 deadline 标记 retry，stats 也使用独立短
+deadline；stats 失败保留上一组 gauges，并增加
+`frux_video_publication_outbox_stats_total{result="failure"}`。

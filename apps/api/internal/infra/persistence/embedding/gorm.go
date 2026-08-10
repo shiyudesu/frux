@@ -167,7 +167,11 @@ func (r *Repository) ClaimSemanticJobs(
 				) OR (
 					state = ? AND lease_until <= ?
 				)`,
-				[]string{domainembedding.SemanticJobPending, domainembedding.SemanticJobRetry},
+				[]string{
+					domainembedding.SemanticJobPending,
+					domainembedding.SemanticJobRetry,
+					domainembedding.SemanticJobSuspended,
+				},
 				now,
 				domainembedding.SemanticJobProcessing,
 				now,
@@ -307,29 +311,6 @@ func (r *Repository) ExtendSemanticJobLease(
 	}
 	job.LeaseUntil = &leaseUntil
 	return nil
-}
-
-func (r *Repository) SuspendSemanticJobs(ctx context.Context, now time.Time) (int64, error) {
-	result := r.db.WithContext(ctx).Model(&SemanticJobModel{}).
-		Where("state IN ?", []string{
-			domainembedding.SemanticJobPending,
-			domainembedding.SemanticJobRetry,
-		}).
-		Updates(map[string]any{
-			"state":       domainembedding.SemanticJobSuspended,
-			"lease_owner": "", "lease_until": nil, "updated_at": now.UTC(),
-		})
-	return result.RowsAffected, result.Error
-}
-
-func (r *Repository) ResumeSemanticJobs(ctx context.Context, now time.Time) (int64, error) {
-	result := r.db.WithContext(ctx).Model(&SemanticJobModel{}).
-		Where("state = ?", domainembedding.SemanticJobSuspended).
-		Updates(map[string]any{
-			"state":        domainembedding.SemanticJobPending,
-			"available_at": now.UTC(), "updated_at": now.UTC(),
-		})
-	return result.RowsAffected, result.Error
 }
 
 func (r *Repository) SemanticBacklog(

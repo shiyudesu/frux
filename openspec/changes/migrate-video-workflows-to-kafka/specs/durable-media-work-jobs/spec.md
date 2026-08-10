@@ -35,7 +35,19 @@ the active processing context.
 
 #### Scenario: Media lease expires and is reclaimed
 - **WHEN** another token reclaims a job before the old ffmpeg attempt returns
-- **THEN** the stale attempt cannot extend, complete, retry, or terminally update the reclaimed job
+- **THEN** the stale attempt cannot extend, mutate the asset or variants, create cleanup/public state, notify, complete, retry, or terminally update the reclaimed job
+
+#### Scenario: Reclaimed media attempt completes
+- **WHEN** the current token still owns an unexpired lease and valid outputs are ready
+- **THEN** asset metadata, variants, and the completed job transition commit atomically before public projection or notification effects run
+
+#### Scenario: Deletion races media finalization
+- **WHEN** cleanup scheduling and a fenced media finalization overlap
+- **THEN** asset tombstoning, current variant snapshot, and cleanup-task creation are transactional so either finalization is included or its outputs are separately cleanup-scheduled
+
+#### Scenario: Post-commit failed notification fails
+- **WHEN** a terminal media transition commits but its notification/projection call fails
+- **THEN** failed assets remain reconciliation candidates and the idempotent failed projection is retried
 
 #### Scenario: Media heartbeat storage stalls
 - **WHEN** a lease-extension query does not return before its bounded child-context deadline

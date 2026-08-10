@@ -1,10 +1,11 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
+import os
 from pathlib import Path
 
 TOKEN = "Compose-Semantic-Outage-Token-123!"
-READY = Path("/state/ready")
+READY = Path(os.environ.get("FRUX_FAKE_SEMANTIC_READY_FILE", "/state/ready"))
 MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 REVISION = "e8f8c211226b894fcb81acc59f3b34ba3efd5f42"
 DIMENSION = 384

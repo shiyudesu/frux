@@ -59,6 +59,11 @@ Outbox statistics and dispatch operations are observed independently. A successf
 statistics query updates both gauges even when the same run encounters a Kafka transport failure;
 only a statistics-query failure suppresses the oldest-age update.
 
+The aggregate publish run context does not own durable lease release or statistics. Mark-dispatched,
+mark-failed, and stats operations derive short deadlines from `context.WithoutCancel`, so a publish
+timeout still attempts a fenced retry transition. Stats failure retains previous gauges and reports
+a separate bounded operation result.
+
 Alternative: continue requiring the lifecycle transition to synchronously publish Kafka. Rejected because broker availability must not prevent a durable video from reaching its valid public state.
 
 ### Keep Feed fanout idempotent and isolate its recovery
@@ -93,6 +98,11 @@ jobs than executable slots. Every claim uses a unique random token rather than a
 heartbeat, completion, retry, and failure transitions require that token and a current unexpired
 lease. Heartbeats use bounded processing-derived contexts, and a stalled heartbeat cancels ffmpeg
 work before any stale/reclaimed attempt may complete.
+
+Final media output persistence is one repository transaction: it locks and validates the processing
+job fence before mutating asset metadata, variants, cleanup tasks, or job state. Public projection and
+notifications occur only after that transaction commits; a stale or reclaimed attempt performs none
+of those effects.
 
 Alternative: consume and transcode before committing the Kafka record. Rejected because long processing would interact poorly with consumer-group liveness and duplicate the job's lease/retry state in offsets.
 
@@ -133,6 +143,11 @@ Publication producer mirror/shadow validation precedes activation of each consum
 7. Stop the corresponding RabbitMQ consumers after observation windows; retain rollback configuration until final retirement.
 
 Rollback restores the RabbitMQ consumer or publisher for the affected workflow. Publication outbox rows, media jobs, and semantic jobs remain valid and idempotent across rollback.
+
+Kafka topology/publish initialization and Kafka/Rabbit consumer sessions are supervised with bounded
+reconnect. Broker unavailability marks transport/session metrics unhealthy but does not stop durable
+database workers. Active Kafka consumers still wait for Rabbit drain and cutover offset initialization
+before opening mutating sessions.
 
 ## Open Questions
 

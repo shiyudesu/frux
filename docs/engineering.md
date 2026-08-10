@@ -204,17 +204,18 @@ GORM Repository 规则：
   `message.timestamp.type=LogAppendTime`；Active Group 启动前按 broker append-time cutover timestamp
   用 kadm 一次性初始化各 Partition Offset，不能使用 producer clock；已有 Commit 必须保留，不得在
   重启时回绕。Consumer 只有在 `OnPartitionsAssigned` 收到非空 Partition 后才可标记 Session
-  started/healthy；Worker 以有界 assignment timeout 等待首次分配，失败时取消该 Consumer。
-  Action boundary 必须严格晚于 view boundary，且 Worker 必须等待 view assignment ready 后才启动
-  action Kafka group。
+  started/healthy；broker outage 时 supervisor 保持未就绪并重连，不阻止数据库型 Worker 启动。
+  Action boundary 必须严格晚于 view boundary；active Group 仍须先完成 Rabbit drain 与 cutover
+  offset 初始化，view/action 的有序启动不得因异步 supervisor 被绕过。
   Shadow 未查到事实记为 pending 并有界延迟重试，只有已存在但冲突的事实记为 mismatch。
 - 视频首次公开事实在视频拥有的 `video_publication_event_outbox` 中耐久保存，再由 Worker 发布到
   30 天保留的 `frux.video.published.v1`。Feed 与 embedding 使用独立 Group；前者在幂等 Redis
   fanout/preheat 后提交，后者在 hash 向量与 `semantic_embedding_job` 同一事务提交后提交。
 - `video.published` 共享契约只校验 envelope、业务 identity、时间、key 与视频字段边界，不得导入
   embedding canonicalization。确定性语义 input 错误仅由 embedding Group terminal 提交，Feed Group
-  仍须接受同一视频发布事实。publication outbox 的 stats query 与 dispatch error 分开观测，transport
-  失败不得阻止成功的 pending/oldest gauge 更新。
+  仍须接受同一视频发布事实。publication outbox 的 publish aggregate context 与 durable mark/stats
+  context 分离；mark/stats 使用 `context.WithoutCancel` 加短 deadline。transport timeout 后必须尝试
+  释放 lease；stats 失败保留旧 gauge 并单独计数。
 - 首次公开同时写 immutable `video_publication_event_fact` 与 operational outbox。Dispatcher
   初次/周期运行异步，broker outage 不得阻塞 Worker 其余 consumer 启动；每次最多 5×100 条且
   总计 10 秒。30 天后只按 100 条 batch 清理已有 fact 的 dispatched outbox，reconciliation 按
@@ -223,9 +224,10 @@ GORM Repository 规则：
   有界 signal 后立即提交，不得在 ffmpeg 期间持有 Offset；数据库租约、心跳、轮询与 reconciliation
   继续决定正确性。语义向量长重试同样由 PostgreSQL job 管理，不使用 Kafka retry topic。
 - Media Kafka signal 与 polling 必须进入同一个有界 scheduler/worker pool，先占 slot 再 claim 一个
-  job。每次 claim 使用唯一 token；heartbeat、complete、retry/failed 均按 token 与未过期 lease
-  fencing。Media 与 semantic heartbeat 使用处理 context 派生的短 deadline，DB stall/shutdown
-  必须取消处理，禁止 stale/reclaimed attempt 更新状态。
+  job。每次 claim 使用唯一 token；heartbeat 与最终 transition 均按 token 与未过期 lease fencing。
+  媒体 asset、variants、cleanup/job 最终状态必须在同一事务、验证 fence 后提交，public/notification
+  副作用只能在提交后发生。Media 与 semantic heartbeat 使用处理 context 派生的短 deadline，
+  DB stall/shutdown 必须取消处理，禁止 stale/reclaimed attempt 更新状态。
 - Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
 - DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。
@@ -590,6 +592,8 @@ openspec validate --all --strict
 - 该服务由一个 HTTP coordinator 和最多两个隔离 inference 子进程组成。模型 preload/fixture 与
   native inference 都必须在可终止进程中执行；总 deadline 或 cancellation 要终止并替换对应进程、
   立即释放 admission，shutdown 回收全部子进程，子进程输出不得进入业务日志。
+- 内部 token 配置与请求值都必须是可打印 ASCII；请求头必须在 `compare_digest` 前拒绝非 ASCII。
+  Coordinator 在推理期间读取 ASGI `http.disconnect`，断开即取消并 recycle 子进程、释放容量。
 - 一个 180 秒外层 deadline 必须覆盖 preload、fixture validation 和完整 inference pool 初始化，
   worker 不得各自重置完整 timeout。replacement 失败按有界退避重试，readiness 要求全部配置容量，
   全 worker 丢失返回 503 并在恢复后自动 ready。请求日志只允许 route/status/duration/result/

@@ -171,6 +171,7 @@ def test_settings_reject_unknown_and_weak_values():
         {"FRUX_INTERNAL_TOKEN": "weak"},
         {"FRUX_INTERNAL_TOKEN": TOKEN, "FRUX_EMBEDDING_UNKNOWN": "1"},
         {"FRUX_INTERNAL_TOKEN": TOKEN, "FRUX_EMBEDDING_MAX_CONCURRENCY": "3"},
+        {"FRUX_INTERNAL_TOKEN": "Strong-非ASCII-Token-For-Frux-123!"},
     ):
         try:
             load_settings(env)
@@ -206,6 +207,50 @@ def test_settings_reject_unknown_and_weak_values():
             pass
         else:
             raise AssertionError(f"invalid {name} accepted")
+
+
+async def invoke_asgi(app, scope, messages):
+    queue = asyncio.Queue()
+    for message in messages:
+        queue.put_nowait(message)
+    sent = []
+
+    async def receive():
+        return await queue.get()
+
+    async def send(message):
+        sent.append(message)
+
+    await app(scope, receive, send)
+    return sent
+
+
+async def test_non_ascii_internal_header_is_bounded_401():
+    app = create_app(Settings(token=TOKEN), FakeRuntime())
+    try:
+        sent = await invoke_asgi(
+            app,
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/internal/v1/model",
+                "raw_path": b"/internal/v1/model",
+                "query_string": b"",
+                "headers": [(b"x-internal-token", b"\xff" * 40)],
+                "client": ("127.0.0.1", 1),
+                "server": ("semantic.test", 80),
+            },
+            [{"type": "http.request", "body": b"", "more_body": False}],
+        )
+        start = next(item for item in sent if item["type"] == "http.response.start")
+        body = next(item for item in sent if item["type"] == "http.response.body")
+        assert start["status"] == 401
+        assert json.loads(body["body"])["code"] == "AUTH_INVALID_INTERNAL_TOKEN"
+    finally:
+        await app.state.capacity.close()
 
 
 def test_shared_go_python_canonicalization_fixtures():
@@ -513,6 +558,155 @@ async def test_hung_inference_is_killed_replaced_and_does_not_leak(capsys):
     output = capsys.readouterr()
     assert secret not in output.out
     assert secret not in output.err
+
+
+async def test_client_disconnect_cancels_inference_and_releases_capacity():
+    process_context = multiprocessing.get_context("spawn")
+    hang = process_context.Event()
+    settings = Settings(
+        token=TOKEN,
+        max_concurrency=1,
+        max_queue=0,
+        queue_timeout_ms=100,
+        request_timeout_ms=5_000,
+    )
+    app = create_app(settings, HangingRuntime(hang, "disconnect-secret"))
+    capacity = app.state.capacity
+    original = capacity.worker_pids()
+    body = json.dumps(
+        {"items": [{"id": "video:1", "title": "hang", "description": ""}]}
+    ).encode()
+    receive_queue = asyncio.Queue()
+    receive_queue.put_nowait(
+        {"type": "http.request", "body": body, "more_body": False}
+    )
+    sent = []
+
+    async def receive():
+        return await receive_queue.get()
+
+    async def send(message):
+        sent.append(message)
+
+    request_task = asyncio.create_task(
+        app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/internal/v1/embeddings",
+                "raw_path": b"/internal/v1/embeddings",
+                "query_string": b"",
+                "headers": [
+                    (b"x-internal-token", TOKEN.encode()),
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+                "client": ("127.0.0.1", 1),
+                "server": ("semantic.test", 80),
+            },
+            receive,
+            send,
+        )
+    )
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and capacity.admitted == 0:
+            await asyncio.sleep(0.01)
+        assert capacity.admitted == 1
+        receive_queue.put_nowait({"type": "http.disconnect"})
+        await asyncio.wait_for(request_task, timeout=1)
+        assert capacity.admitted == 0
+        deadline = time.monotonic() + 3
+        replacement = set()
+        while time.monotonic() < deadline:
+            replacement = capacity.worker_pids()
+            if replacement and replacement.isdisjoint(original):
+                break
+            await asyncio.sleep(0.02)
+        assert replacement and replacement.isdisjoint(original)
+        assert await capacity.run(["next"], time.monotonic()) == [[1.0]]
+    finally:
+        if not request_task.done():
+            request_task.cancel()
+            await asyncio.gather(request_task, return_exceptions=True)
+        await capacity.close()
+
+
+async def test_request_task_cancellation_recycles_inference():
+    process_context = multiprocessing.get_context("spawn")
+    hang = process_context.Event()
+    settings = Settings(
+        token=TOKEN,
+        max_concurrency=1,
+        max_queue=0,
+        queue_timeout_ms=100,
+        request_timeout_ms=5_000,
+    )
+    app = create_app(settings, HangingRuntime(hang, "cancel-secret"))
+    capacity = app.state.capacity
+    original = capacity.worker_pids()
+    body = json.dumps(
+        {"items": [{"id": "video:1", "title": "hang", "description": ""}]}
+    ).encode()
+    receive_queue = asyncio.Queue()
+    receive_queue.put_nowait(
+        {"type": "http.request", "body": body, "more_body": False}
+    )
+
+    async def receive():
+        return await receive_queue.get()
+
+    async def send(_):
+        return None
+
+    request_task = asyncio.create_task(
+        app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/internal/v1/embeddings",
+                "raw_path": b"/internal/v1/embeddings",
+                "query_string": b"",
+                "headers": [
+                    (b"x-internal-token", TOKEN.encode()),
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+                "client": ("127.0.0.1", 1),
+                "server": ("semantic.test", 80),
+            },
+            receive,
+            send,
+        )
+    )
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and capacity.admitted == 0:
+            await asyncio.sleep(0.01)
+        assert capacity.admitted == 1
+        request_task.cancel()
+        await asyncio.gather(request_task, return_exceptions=True)
+        assert capacity.admitted == 0
+        deadline = time.monotonic() + 3
+        replacement = set()
+        while time.monotonic() < deadline:
+            replacement = capacity.worker_pids()
+            if replacement and replacement.isdisjoint(original):
+                break
+            await asyncio.sleep(0.02)
+        assert replacement and replacement.isdisjoint(original)
+        assert await capacity.run(["next"], time.monotonic()) == [[1.0]]
+    finally:
+        if not request_task.done():
+            request_task.cancel()
+            await asyncio.gather(request_task, return_exceptions=True)
+        await capacity.close()
 
 
 async def test_idle_worker_death_is_recycled_before_inference():

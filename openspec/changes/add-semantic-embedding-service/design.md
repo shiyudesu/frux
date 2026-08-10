@@ -145,6 +145,10 @@ Alternative considered: cross-request dynamic batching for throughput. Rejected 
 
 JWTs, cookies, query parameters, and JSON fields are not credentials. The default Compose service receives the same secret as API/worker but has no browser route or host port. Authentication executes before body parsing or capacity admission so unauthorized requests cannot consume tokenizer/model work.
 
+Both the configured token and supplied header must be printable ASCII. The request boundary rejects
+non-ASCII header bytes with bounded `401 AUTH_INVALID_INTERNAL_TOKEN` before calling
+`hmac.compare_digest`, preventing Python's non-ASCII string comparison from raising `TypeError`.
+
 Logs, exceptions, validation details, and test snapshots must never contain either token. Timing tests will not attempt to prove constant-time behavior statistically; unit tests will verify the comparison path uses `hmac.compare_digest`, while HTTP tests cover all auth outcomes.
 
 Alternative considered: a new embedding-specific token. Rejected for this first internal service because the requirement is consistency with current Frux internal-token practice. Secret separation can be introduced later as a coordinated security change.
@@ -183,6 +187,10 @@ The coordinator does not rely on Python thread cancellation for native kernels. 
 in a dedicated child process; an end-to-end timeout or request cancellation terminates that child,
 discards all output, and starts a replacement. No timed-out native call retains a slot or survives as
 an untracked background process.
+
+While inference is active, the coordinator also reads the ASGI receive channel for
+`http.disconnect`. Disconnect cancellation follows the same kill/recycle path as deadline
+cancellation and releases admission before another request is accepted.
 
 Alternative considered: an unbounded executor queue with only an HTTP timeout. Rejected because timed-out work would continue accumulating and exhaust memory/CPU.
 

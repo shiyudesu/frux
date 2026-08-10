@@ -628,6 +628,8 @@ flowchart LR
 
 - 本地开发继续支持 `/api/uploads` 和受保护 `/uploads/*`；生产模式通过 `media.backend=s3` 使用上传会话。
 - `media_asset` 保存原始资产，`media_variant` 保存基线、清晰度、manifest 和 segment，`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。
+- 转码输出的 asset metadata、variants、cleanup/job 最终 transition 在一个 PostgreSQL 事务内先验证
+  claim token 与未过期 lease；只有 fenced commit 成功后才允许媒体公开投影和生命周期通知。
 - `frux.media.processing-requested.v1` Consumer 只校验 job 并有界 signal 后提交，不在转码期间持有
   Offset；轮询与 reconciliation 覆盖命令丢失、重复、延迟、满容量和重启。
 - `frux.video.published.v1` 保留 30 天首次发布事实。Embedding intake 先提交 hash 与
@@ -656,4 +658,6 @@ flowchart LR
 metadata/embedding 接口，不访问 Frux 数据库、缓存、队列或浏览器。Go Worker 按 hash-first
 边界写 PostgreSQL semantic job，再用唯一 claim token、lease heartbeat 和 fencing 调用服务。
 服务用一个 180 秒外层 deadline 初始化 preload/fixture/完整进程池；readiness 绑定全部 live
-capacity，replacement 有界重试。运营日志只含 route/status/duration/result/capacity。
+capacity，replacement 有界重试。每个 Go replica 只用本地 metadata gate 控制 claims，不批量
+suspend/resume 共享 jobs。Python 服务拒绝非 ASCII token，并在 `http.disconnect` 时立即取消/recycle
+推理。运营日志只含 route/status/duration/result/capacity。

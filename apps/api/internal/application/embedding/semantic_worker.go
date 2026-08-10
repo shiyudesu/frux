@@ -73,24 +73,25 @@ type SemanticJobRepository interface {
 	ExtendSemanticJobLease(
 		context.Context, *domainembedding.SemanticJob, time.Time, time.Time,
 	) error
-	SuspendSemanticJobs(context.Context, time.Time) (int64, error)
-	ResumeSemanticJobs(context.Context, time.Time) (int64, error)
 	SemanticBacklog(context.Context) ([]domainembedding.SemanticBacklog, error)
 	CleanupSemanticJobs(context.Context, time.Time, int) (int64, error)
 }
 
 type SemanticWorker struct {
-	repo          SemanticJobRepository
-	generator     SemanticGenerator
-	enabled       bool
-	owner         string
-	concurrency   int
-	leaseTTL      time.Duration
-	heartbeatTTL  time.Duration
-	pollInterval  time.Duration
-	now           func() time.Time
-	startOnce     sync.Once
-	claimSequence atomic.Uint64
+	repo             SemanticJobRepository
+	generator        SemanticGenerator
+	enabled          bool
+	owner            string
+	concurrency      int
+	leaseTTL         time.Duration
+	heartbeatTTL     time.Duration
+	pollInterval     time.Duration
+	now              func() time.Time
+	startOnce        sync.Once
+	claimSequence    atomic.Uint64
+	ready            atomic.Bool
+	validatorRunning atomic.Bool
+	lifecycleCtx     context.Context
 }
 
 func NewSemanticWorker(
@@ -133,21 +134,15 @@ func (w *SemanticWorker) Start(ctx context.Context) error {
 	if w == nil || w.repo == nil {
 		return nil
 	}
-	now := w.now().UTC()
+	w.lifecycleCtx = ctx
 	if !w.enabled || w.generator == nil {
-		_, err := w.repo.SuspendSemanticJobs(ctx, now)
-		return err
-	}
-	if err := w.generator.ValidateMetadata(ctx); err != nil {
-		if _, suspendErr := w.repo.SuspendSemanticJobs(ctx, now); suspendErr != nil {
-			return suspendErr
-		}
-		go w.runMetadataValidator(ctx)
 		return nil
 	}
-	if _, err := w.repo.ResumeSemanticJobs(ctx, now); err != nil {
-		return err
+	if err := w.generator.ValidateMetadata(ctx); err != nil {
+		w.startMetadataValidator(ctx)
+		return nil
 	}
+	w.ready.Store(true)
 	w.startProcessors(ctx)
 	return nil
 }
@@ -174,7 +169,8 @@ func (w *SemanticWorker) run(ctx context.Context) {
 }
 
 func (w *SemanticWorker) ProcessPending(ctx context.Context) (int, error) {
-	if w == nil || w.repo == nil || !w.enabled || w.generator == nil {
+	if w == nil || w.repo == nil || !w.enabled || w.generator == nil ||
+		!w.ready.Load() {
 		return 0, nil
 	}
 	now := w.now().UTC()
@@ -253,6 +249,13 @@ func (w *SemanticWorker) retry(
 	terminal bool,
 	cause error,
 ) error {
+	if result == SemanticContract {
+		terminal = false
+		w.ready.Store(false)
+		if w.lifecycleCtx != nil {
+			w.startMetadataValidator(w.lifecycleCtx)
+		}
+	}
 	availableAt := w.now().UTC().Add(domainembedding.SemanticRetryDelay(job.Attempts))
 	if err := w.repo.RetrySemanticJob(
 		ctx, job, availableAt, string(result), terminal,
@@ -265,6 +268,14 @@ func (w *SemanticWorker) retry(
 		inframetrics.ObserveSemanticVector("retried")
 	}
 	return nil
+}
+
+func (w *SemanticWorker) startMetadataValidator(ctx context.Context) {
+	if w == nil || w.generator == nil ||
+		!w.validatorRunning.CompareAndSwap(false, true) {
+		return
+	}
+	go w.runMetadataValidator(ctx)
 }
 
 func (w *SemanticWorker) runMetadataValidator(ctx context.Context) {
@@ -280,17 +291,17 @@ func (w *SemanticWorker) runMetadataValidator(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				timer.Stop()
+				w.validatorRunning.Store(false)
 				return
 			case <-timer.C:
 			}
 		}
 		if err := w.generator.ValidateMetadata(ctx); err == nil {
-			if _, resumeErr := w.repo.ResumeSemanticJobs(ctx, w.now().UTC()); resumeErr == nil {
-				w.startProcessors(ctx)
-				return
-			}
+			w.validatorRunning.Store(false)
+			w.ready.Store(true)
+			w.startProcessors(ctx)
+			return
 		}
-		_, _ = w.repo.SuspendSemanticJobs(ctx, w.now().UTC())
 		index++
 	}
 }

@@ -1,7 +1,9 @@
 package inframetrics
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -33,5 +35,31 @@ func TestPublicationCleanupMetricsRemainBounded(t *testing.T) {
 		VideoPublicationCleanupDeletedTotal,
 	) - deletedBefore; got != 7 {
 		t.Fatalf("deleted cleanup delta = %v", got)
+	}
+}
+
+func TestPublicationStatsFailurePreservesGaugesAndReportsError(t *testing.T) {
+	observer := VideoWorkflowObserver{}
+	oldest := time.Now().UTC().Add(-2 * time.Minute)
+	observer.ObservePublicationOutbox(9, &oldest, nil)
+	pendingBefore := testutil.ToFloat64(VideoPublicationOutboxPending)
+	lagBefore := testutil.ToFloat64(VideoPublicationOutboxLagSeconds)
+	failuresBefore := testutil.ToFloat64(
+		VideoPublicationStatsTotal.WithLabelValues("failure"),
+	)
+
+	observer.ObservePublicationOutbox(0, nil, errors.New("stats unavailable"))
+	observer.ObservePublicationStats("failure")
+
+	if got := testutil.ToFloat64(VideoPublicationOutboxPending); got != pendingBefore {
+		t.Fatalf("pending gauge changed from %v to %v", pendingBefore, got)
+	}
+	if got := testutil.ToFloat64(VideoPublicationOutboxLagSeconds); got != lagBefore {
+		t.Fatalf("lag gauge changed from %v to %v", lagBefore, got)
+	}
+	if got := testutil.ToFloat64(
+		VideoPublicationStatsTotal.WithLabelValues("failure"),
+	) - failuresBefore; got != 1 {
+		t.Fatalf("stats failure delta = %v", got)
 	}
 }

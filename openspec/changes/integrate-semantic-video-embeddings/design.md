@@ -81,7 +81,7 @@ For every decoded video-published event, application processing is ordered:
 1. Canonicalize title and description according to the semantic service's NFKC, whitespace, and `title + "\n" + description` contract and compute the text hash.
 2. Find `hash-ngram-v1`; if the same text hash already exists, record `skipped`, otherwise generate and conditionally upsert it.
 3. If hash persistence fails, do not create semantic work and leave the Kafka record uncommitted.
-4. Upsert one semantic job for the fixed model and canonical text hash. Disabled or unavailable semantic integration retains the job as pending or suspended; it does not discard the work.
+4. Upsert one pending semantic job for the fixed model and canonical text hash. Disabled or unavailable replicas retain the shared job without claiming or rewriting it.
 5. Commit the Kafka publication offset only after the hash fact and semantic-job handoff commit.
 6. A separate leased worker checks whether the fixed semantic model already exists for the same text hash, calls the semantic generator when needed, and conditionally upserts the vector.
 
@@ -108,7 +108,8 @@ state, attempts, `available_at`, lease owner/until, bounded error class, and com
 A changed text hash resets the job; the same hash leaves completed or pending work unchanged.
 Claims use stable `available_at, video_id, model` ordering and `FOR UPDATE SKIP LOCKED`.
 
-The leased semantic worker uses the retry schedule already selected for the integration:
+The leased semantic worker uses a replica-local metadata gate and the retry schedule already selected
+for the integration:
 
 | Failed attempt | Delay |
 | --- | --- |
@@ -118,10 +119,12 @@ The leased semantic worker uses the retry schedule already selected for the inte
 | 4 | 10 minutes |
 | 5 and later | 30 minutes |
 
-Retryable service failures update the job and release its lease. Disabled integration may suspend
-jobs without deleting them; re-enable or reconciliation resumes them. Expired leases are
-reclaimable. Terminal local identity or contract violations are retained as bounded failed outcomes
-until text/model changes or an operator-approved future repair boundary resets them.
+Retryable service failures update the job and release its lease. Disabled or locally unhealthy
+replicas do not claim jobs and do not rewrite cluster-wide state; jobs remain pending/retryable so
+another healthy replica may claim them. Historical suspended rows remain claimable for compatibility.
+Expired leases are reclaimable. Terminal local identity or contract violations are retained as
+bounded failed outcomes until text/model changes or an operator-approved future repair boundary
+resets them.
 
 Lease heartbeats derive bounded child contexts from the active processing context. Shutdown cancels
 them immediately, and a stalled database heartbeat times out, cancels inference, and prevents the
@@ -197,7 +200,8 @@ Every five minutes by default, the worker counts readable published videos with 
 
 ### 8. Compose enables integration without making hash startup depend on readiness
 
-The local sample configuration keeps semantic generation disabled by default. Compose configuration enables it, uses `http://semantic-embedding:8081`, and reuses `FRUX_INTERNAL_TOKEN`. The worker declares `semantic-embedding` with `condition: service_started`, not `service_healthy`: this establishes startup ordering and service discovery while still allowing the worker to start, validate for at most 3 seconds, and provide hash coverage if model preload later fails.
+The local sample configuration keeps semantic generation disabled by default. Compose enables it by
+default, uses `http://semantic-embedding:8081`, and reuses `FRUX_INTERNAL_TOKEN`. The worker declares `semantic-embedding` with `condition: service_started`, not `service_healthy`: this establishes startup ordering and service discovery while still allowing the worker to start, validate for at most 3 seconds, and provide hash coverage if model preload later fails.
 
 The worker has no host access to a browser route and the semantic service remains internal-only as defined by `add-semantic-embedding-service`. Configuration documentation states that enabling semantic integration requires the service capability to be implemented and deployed, but stopping that container must not stop unrelated worker consumers.
 
@@ -230,11 +234,22 @@ unrelated consumers. Runs are aggregate-bounded. Immutable publication facts sur
 replay-window cleanup of dispatched operational outbox rows, and reconciliation uses the fact so
 cleanup cannot cause semantic intake or Feed fanout to receive a newly synthesized publication.
 
+Kafka topology/publisher initialization and Kafka/Rabbit consumers run under reconnect supervisors.
+Transport health is visible through bounded broker/session gauges, but transport failure does not
+terminate PostgreSQL jobs, media polling, moderation, or semantic polling. Active Kafka groups still
+wait for Rabbit drain and cutover offset initialization. Publication failure marking and statistics
+use short `context.WithoutCancel` contexts separate from the aggregate publish deadline; failed stats
+retain previous gauges and increment a dedicated result counter.
+
+Semantic service tokens are printable ASCII at configuration and request boundaries. Non-ASCII
+headers are rejected before `compare_digest`. The coordinator consumes ASGI `http.disconnect` while
+inference runs; disconnect cancels and recycles the child immediately and releases admission.
+
 ## Risks / Trade-offs
 
 - [The dependent semantic service change is still active and may not yet be implemented] → Treat its accepted spec as the contract, include a live cross-service contract gate, and do not mark integration implementation complete until that service is available.
 - [An indefinite semantic outage accumulates durable retries] → Use capped 30-minute PostgreSQL retry spacing, explicit backlog and missing-coverage gauges, and suspension while retaining hash generation.
-- [Disabling semantic integration leaves pending work] → Suspend rather than delete semantic jobs; hash coverage remains current and re-enable/reconciliation resumes the durable backlog.
+- [Disabling semantic integration leaves pending work] → Keep jobs pending/retryable and close only the local claim gate; hash coverage remains current and healthy replicas may continue.
 - [A service contract bug can retain poison work indefinitely] → Classify and expose `contract` failures, close the semantic gate until metadata validates again, cap retry frequency, and never block hash writes or unrelated consumers.
 - [Worker and Python normalization could drift] → Share committed contract fixtures covering NFKC, Unicode whitespace, empty descriptions, and title/description composition; fail semantic integration tests on hash/input drift.
 - [Historical semantic coverage remains incomplete] → Make missing coverage explicit in metrics and documentation; defer remediation to `backfill-semantic-video-embeddings` rather than hiding migration work inside the live worker.
@@ -244,12 +259,12 @@ cleanup cannot cause semantic intake or Feed fanout to receive a newly synthesiz
 
 1. Complete and validate `add-semantic-embedding-service`, including its fixed model metadata and Compose service.
 2. Add domain constants/validation, application ports and orchestration, bounded HTTP client, repository methods, metrics, and configuration with semantic disabled by default.
-3. Add the independent Kafka embedding intake group and PostgreSQL semantic jobs; deploy with semantic execution disabled and verify hash progress plus suspended durable work.
+3. Add the independent Kafka embedding intake group and PostgreSQL semantic jobs; deploy with semantic execution disabled and verify hash progress plus pending durable work.
 4. Run migration/persistence tests and confirm no schema DDL is needed.
 5. Wire Compose to the internal service with `service_started`, enable semantic integration, and verify startup metadata validation plus hash behavior during a forced semantic outage.
 6. Monitor live-event request results, PostgreSQL job backlog, and semantic coverage. Existing historical videos remain unprocessed until the future `backfill-semantic-video-embeddings` change is separately proposed and implemented.
 
-Rollback disables semantic generation or restores RabbitMQ publication intake for the embedding responsibility. Hash processing continues. Existing semantic rows and jobs remain inert, versioned facts and need not be deleted; suspended jobs resume after re-enable. No database rollback or recommendation rollback is required.
+Rollback disables semantic generation or restores RabbitMQ publication intake for the embedding responsibility. Hash processing continues. Existing semantic rows and jobs remain versioned facts and need not be deleted; disabled replicas simply stop claiming until re-enabled. No database rollback or recommendation rollback is required.
 
 ## Open Questions
 

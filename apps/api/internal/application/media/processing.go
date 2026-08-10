@@ -50,14 +50,10 @@ type Processor interface {
 
 type ProcessingRepository interface {
 	FindAssetByID(ctx context.Context, assetID int64) (*domainmedia.MediaAsset, error)
-	UpdateAsset(ctx context.Context, asset *domainmedia.MediaAsset) error
-	UpsertVariants(ctx context.Context, variants []*domainmedia.MediaVariant) error
 	LeaseProcessingJob(ctx context.Context, assetID int64, profileVersion, owner string, now time.Time, leaseUntil time.Time) (*domainmedia.MediaProcessingJob, error)
 	LeaseProcessingJobs(ctx context.Context, owner string, now time.Time, leaseUntil time.Time, limit int) ([]*domainmedia.MediaProcessingJob, error)
-	UpdateProcessingJob(ctx context.Context, job *domainmedia.MediaProcessingJob) error
-	UpdateProcessingJobOwned(ctx context.Context, job *domainmedia.MediaProcessingJob, leaseOwner string) error
+	FinalizeProcessingJob(ctx context.Context, finalization *domainmedia.ProcessingFinalization) error
 	ExtendProcessingLease(ctx context.Context, jobID int64, leaseOwner string, leaseTTL time.Duration) error
-	CreateCleanupTasks(ctx context.Context, tasks []*domainmedia.CleanupTask) error
 }
 
 type ProcessingConsumer interface {
@@ -279,34 +275,25 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 		return w.failJob(ctx, nil, job, &ProcessError{Code: "asset_not_found", Terminal: true, Err: err})
 	}
 	if asset.State == domainmedia.AssetStateDeleted {
-		return w.failJobOwned(ctx, asset, job, leaseOwner, &ProcessError{Code: "asset_deleted", Terminal: true, Err: errors.New("media asset is deleted")})
+		return w.failJobOwned(ctx, nil, job, leaseOwner, &ProcessError{Code: "asset_deleted", Terminal: true, Err: errors.New("media asset is deleted")})
 	}
 	if asset.State == domainmedia.AssetStateReady {
-		if w.notifier != nil {
-			if err := w.notifier.MediaReady(ctx, asset.ID); err != nil {
-				return err
-			}
+		if err := w.completeJob(ctx, job, leaseOwner); err != nil {
+			return err
 		}
-		return w.completeJob(ctx, job, leaseOwner)
+		return w.notifyReady(ctx, asset.ID)
 	}
 	if asset.State == domainmedia.AssetStateFailed {
-		if w.notifier != nil {
-			if err := w.notifier.MediaFailed(ctx, asset.ID, job.ProfileVersion, asset.ErrorCode); err != nil {
-				return err
-			}
-		}
 		now := w.now()
 		job.State = domainmedia.JobStateFailed
 		job.ErrorCode = asset.ErrorCode
 		job.LeaseOwner = ""
 		job.LeaseUntil = nil
 		job.CompletedAt = &now
-		return w.repo.UpdateProcessingJobOwned(ctx, job, leaseOwner)
-	}
-	asset.State = domainmedia.AssetStateProcessing
-	asset.ErrorCode = ""
-	if err := w.repo.UpdateAsset(ctx, asset); err != nil {
-		return err
+		if err := w.finalize(ctx, nil, nil, nil, job, leaseOwner, now); err != nil {
+			return err
+		}
+		return w.notifyFailed(ctx, asset.ID, job.ProfileVersion, asset.ErrorCode)
 	}
 	processCtx, cancel := context.WithCancel(ctx)
 	heartbeatDone := w.startLeaseHeartbeat(processCtx, cancel, job.ID, leaseOwner)
@@ -333,18 +320,9 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 	if err != nil {
 		return err
 	}
-	if currentAsset.State == domainmedia.AssetStateDeleted {
-		return w.abortDeletedAsset(processCtx, currentAsset, job, leaseOwner, result)
-	}
 	if result == nil || len(result.Variants) == 0 {
 		return w.failJobOwned(processCtx, asset, job, leaseOwner, &ProcessError{Code: "empty_outputs", Terminal: true, Err: errors.New("media processor produced no outputs")})
 	}
-
-	if err := w.repo.UpsertVariants(processCtx, result.Variants); err != nil {
-		inframetrics.ObserveMediaRenditions(len(result.Variants), err)
-		return w.failJobOwned(processCtx, asset, job, leaseOwner, &ProcessError{Code: "variant_persistence", Err: err})
-	}
-	inframetrics.ObserveMediaRenditions(len(result.Variants), nil)
 	asset.Width = result.Width
 	asset.Height = result.Height
 	asset.DurationMS = result.DurationMS
@@ -352,15 +330,25 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 	asset.AudioCodec = result.AudioCodec
 	asset.State = domainmedia.AssetStateReady
 	asset.ErrorCode = ""
-	if err := w.repo.UpdateAsset(processCtx, asset); err != nil {
+	now := w.now()
+	job.State = domainmedia.JobStateCompleted
+	job.ErrorCode = ""
+	job.ErrorMessage = ""
+	job.LeaseOwner = ""
+	job.LeaseUntil = nil
+	job.CompletedAt = &now
+	if err := w.finalize(
+		processCtx, asset, result.Variants, nil, job, leaseOwner, now,
+	); err != nil {
+		inframetrics.ObserveMediaRenditions(len(result.Variants), err)
+		if errors.Is(err, domainmedia.ErrMediaAssetDeletedDuringProcessing) {
+			return w.abortDeletedAsset(processCtx, currentAsset, job, leaseOwner, result)
+		}
 		return err
 	}
-	if w.notifier != nil {
-		if err := w.notifier.MediaReady(processCtx, asset.ID); err != nil {
-			return err
-		}
-	}
-	return w.completeJob(processCtx, job, leaseOwner)
+	inframetrics.ObserveMediaRenditions(len(result.Variants), nil)
+	inframetrics.ObserveMediaProcessing(domainmedia.JobStateCompleted, "")
+	return w.notifyReady(processCtx, asset.ID)
 }
 
 func (w *MediaProcessingWorker) abortDeletedAsset(ctx context.Context, asset *domainmedia.MediaAsset, job *domainmedia.MediaProcessingJob, leaseOwner string, result *ProcessResult) error {
@@ -376,16 +364,13 @@ func (w *MediaProcessingWorker) abortDeletedAsset(ctx context.Context, asset *do
 		}
 		tasks = append(tasks, task)
 	}
-	if err := w.repo.CreateCleanupTasks(ctx, tasks); err != nil {
-		return err
-	}
 	job.State = domainmedia.JobStateFailed
 	job.ErrorCode = "asset_deleted"
 	job.ErrorMessage = "media asset was deleted during processing"
 	job.LeaseOwner = ""
 	job.LeaseUntil = nil
 	job.CompletedAt = &now
-	return w.repo.UpdateProcessingJobOwned(ctx, job, leaseOwner)
+	return w.finalize(ctx, nil, nil, tasks, job, leaseOwner, now)
 }
 
 func (w *MediaProcessingWorker) completeJob(ctx context.Context, job *domainmedia.MediaProcessingJob, leaseOwner string) error {
@@ -396,7 +381,7 @@ func (w *MediaProcessingWorker) completeJob(ctx context.Context, job *domainmedi
 	job.LeaseOwner = ""
 	job.LeaseUntil = nil
 	job.CompletedAt = &now
-	err := w.repo.UpdateProcessingJobOwned(ctx, job, leaseOwner)
+	err := w.finalize(ctx, nil, nil, nil, job, leaseOwner, now)
 	if err == nil {
 		inframetrics.ObserveMediaProcessing(domainmedia.JobStateCompleted, "")
 	}
@@ -436,23 +421,49 @@ func (w *MediaProcessingWorker) failJobOwned(ctx context.Context, asset *domainm
 		} else {
 			asset.State = domainmedia.AssetStateUploaded
 		}
-		if err := w.repo.UpdateAsset(ctx, asset); err != nil {
-			return err
-		}
 	}
-	if terminal && asset != nil && w.notifier != nil {
-		if err := w.notifier.MediaFailed(ctx, asset.ID, job.ProfileVersion, code); err != nil {
-			return err
-		}
-	}
-	if err := w.repo.UpdateProcessingJobOwned(ctx, job, leaseOwner); err != nil {
+	if err := w.finalize(ctx, asset, nil, nil, job, leaseOwner, now); err != nil {
 		return err
 	}
 	inframetrics.ObserveMediaProcessing(job.State, code)
-	if terminal {
-		return nil
+	if terminal && asset != nil {
+		return w.notifyFailed(ctx, asset.ID, job.ProfileVersion, code)
 	}
 	return nil
+}
+
+func (w *MediaProcessingWorker) finalize(
+	ctx context.Context,
+	asset *domainmedia.MediaAsset,
+	variants []*domainmedia.MediaVariant,
+	cleanupTasks []*domainmedia.CleanupTask,
+	job *domainmedia.MediaProcessingJob,
+	leaseOwner string,
+	committedAt time.Time,
+) error {
+	return w.repo.FinalizeProcessingJob(ctx, &domainmedia.ProcessingFinalization{
+		Asset: asset, Variants: variants, CleanupTasks: cleanupTasks,
+		Job: job, LeaseOwner: leaseOwner, CommittedAt: committedAt,
+	})
+}
+
+func (w *MediaProcessingWorker) notifyReady(ctx context.Context, assetID int64) error {
+	if w.notifier == nil {
+		return nil
+	}
+	return w.notifier.MediaReady(ctx, assetID)
+}
+
+func (w *MediaProcessingWorker) notifyFailed(
+	ctx context.Context,
+	assetID int64,
+	profileVersion string,
+	errorCode string,
+) error {
+	if w.notifier == nil {
+		return nil
+	}
+	return w.notifier.MediaFailed(ctx, assetID, profileVersion, errorCode)
 }
 
 func (w *MediaProcessingWorker) startLeaseHeartbeat(ctx context.Context, cancel context.CancelFunc, jobID int64, leaseOwner string) <-chan error {

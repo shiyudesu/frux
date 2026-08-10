@@ -156,6 +156,40 @@ func (r *operationsRepositoryStub) CreateCleanupTasks(_ context.Context, tasks [
 	return nil
 }
 
+func (r *operationsRepositoryStub) ScheduleAssetCleanup(
+	ctx context.Context,
+	assetID int64,
+	notBefore time.Time,
+	maxAttempts int,
+) error {
+	asset, err := r.FindAssetByID(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	tasks := make([]*domainmedia.CleanupTask, 0, len(r.variants[assetID])+1)
+	original, err := domainmedia.NewCleanupTask(
+		assetID, asset.StorageBackend, asset.ObjectKey, notBefore, maxAttempts,
+	)
+	if err != nil {
+		return err
+	}
+	tasks = append(tasks, original)
+	for _, variant := range r.variants[assetID] {
+		task, err := domainmedia.NewCleanupTask(
+			assetID, asset.StorageBackend, variant.ObjectKey, notBefore, maxAttempts,
+		)
+		if err != nil {
+			return err
+		}
+		tasks = append(tasks, task)
+	}
+	if err := r.CreateCleanupTasks(ctx, tasks); err != nil {
+		return err
+	}
+	asset.State = domainmedia.AssetStateDeleted
+	return r.UpdateAsset(ctx, asset)
+}
+
 func (r *operationsRepositoryStub) LeaseCleanupTasks(_ context.Context, owner string, now time.Time, leaseUntil time.Time, limit int) ([]*domainmedia.CleanupTask, error) {
 	result := []*domainmedia.CleanupTask{}
 	for _, task := range r.cleanupTasks {

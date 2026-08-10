@@ -70,7 +70,7 @@ func TestPublicationIntakePersistsHashAndSemanticJobTogether(t *testing.T) {
 	if repository.persisted != 1 || repository.embedding == nil || repository.job == nil {
 		t.Fatalf("intake boundary = %+v", repository)
 	}
-	if repository.job.State != domainembedding.SemanticJobSuspended ||
+	if repository.job.State != domainembedding.SemanticJobPending ||
 		repository.job.TextHash != repository.embedding.TextHash ||
 		repository.job.Title != "Frux" ||
 		repository.job.Description != "语义 内容" {

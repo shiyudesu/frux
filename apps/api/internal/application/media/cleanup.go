@@ -13,6 +13,7 @@ type CleanupRepository interface {
 	FindAssetByID(ctx context.Context, assetID int64) (*domainmedia.MediaAsset, error)
 	UpdateAsset(ctx context.Context, asset *domainmedia.MediaAsset) error
 	ListReadyVariants(ctx context.Context, assetID int64) ([]*domainmedia.MediaVariant, error)
+	ScheduleAssetCleanup(ctx context.Context, assetID int64, notBefore time.Time, maxAttempts int) error
 	CreateCleanupTasks(ctx context.Context, tasks []*domainmedia.CleanupTask) error
 	LeaseCleanupTasks(ctx context.Context, owner string, now time.Time, leaseUntil time.Time, limit int) ([]*domainmedia.CleanupTask, error)
 	UpdateCleanupTask(ctx context.Context, task *domainmedia.CleanupTask) error
@@ -56,39 +57,10 @@ func (s *CleanupService) ScheduleMediaCleanup(ctx context.Context, mediaAssetID,
 			continue
 		}
 		seen[assetID] = struct{}{}
-		asset, err := s.repo.FindAssetByID(ctx, assetID)
-		if errors.Is(err, domainmedia.ErrMediaAssetNotFound) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		variants, err := s.repo.ListReadyVariants(ctx, assetID)
-		if err != nil {
-			return err
-		}
 		notBefore := s.now().Add(s.delay)
-		tasks := make([]*domainmedia.CleanupTask, 0, len(variants)+1)
-		original, err := domainmedia.NewCleanupTask(asset.ID, asset.StorageBackend, asset.ObjectKey, notBefore, s.maxAttempts)
-		if err != nil {
-			return err
-		}
-		tasks = append(tasks, original)
-		for _, variant := range variants {
-			if variant == nil {
-				continue
-			}
-			task, err := domainmedia.NewCleanupTask(asset.ID, asset.StorageBackend, variant.ObjectKey, notBefore, s.maxAttempts)
-			if err != nil {
-				return err
-			}
-			tasks = append(tasks, task)
-		}
-		if err := s.repo.CreateCleanupTasks(ctx, tasks); err != nil {
-			return err
-		}
-		asset.State = domainmedia.AssetStateDeleted
-		if err := s.repo.UpdateAsset(ctx, asset); err != nil {
+		if err := s.repo.ScheduleAssetCleanup(
+			ctx, assetID, notBefore, s.maxAttempts,
+		); err != nil && !errors.Is(err, domainmedia.ErrMediaAssetNotFound) {
 			return err
 		}
 	}

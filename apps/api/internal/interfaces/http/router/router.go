@@ -88,7 +88,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	if err := validateAPIConfig(cfg); err != nil {
 		return err
 	}
-	kafkaBackbone, err := infrakafka.Start(
+	kafkaBackbone, err := infrakafka.StartSupervised(
 		context.Background(), cfg.Kafka, inframetrics.KafkaObserver{}, inframetrics.KafkaObserver{},
 	)
 	if err != nil {
@@ -217,7 +217,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	interactionOptions := []applicationinteraction.Option{}
 	var feedCache *infracache.FeedCache
 	var distributedRateLimiter applicationratelimit.DistributedLimiter
-	var rabbitMQ *inframq.RabbitMQ
+	var rabbitMQ *inframq.SupervisedRabbitMQ
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
 		feedCache = infracache.NewFeedCache(redisClient)
@@ -309,7 +309,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		mediaRepo, mediaStore, cfg.Media.Backend, cleanupDelay, cfg.Media.Processing.MaxAttempts,
 	)
 	if cfg.RabbitMQ.URL != "" {
-		rabbitMQ, err = inframq.NewRabbitMQ(cfg.RabbitMQ)
+		rabbitMQ, err = inframq.NewSupervisedRabbitMQ(cfg.RabbitMQ)
 		if err != nil {
 			log.Printf("rabbitmq disabled: %v", err)
 		}
@@ -352,12 +352,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		}
 	}
 	var deadLetterService *applicationdeadletter.Service
-	var deadLetterManager *inframq.DeadLetterManager
 	if rabbitMQ != nil {
-		deadLetterManager = inframq.NewDeadLetterManager(rabbitMQ, cfg.RabbitMQ)
 		deadLetterService = applicationdeadletter.New(
-			deadLetterManager,
-			deadLetterManager,
+			rabbitMQ,
+			rabbitMQ,
 			adminAuditRepo,
 			applicationdeadletter.WithObserver(inframetrics.DeadLetterObserver{}),
 		)
@@ -830,9 +828,9 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			log.Printf("playback telemetry cleanup failed: %v", err)
 		},
 	)
-	if deadLetterManager != nil {
+	if rabbitMQ != nil {
 		go func() {
-			if err := deadLetterManager.RunDepthObserver(deadLetterContext, 15*time.Second); err != nil {
+			if err := rabbitMQ.RunDepthObserver(deadLetterContext, 15*time.Second); err != nil {
 				log.Printf("dead-letter depth observer stopped: %v", err)
 			}
 		}()
@@ -1010,8 +1008,7 @@ func KafkaHealthCheck(backbone *infrakafka.Backbone) app.HandlerFunc {
 		status := http.StatusOK
 		message := "All is well"
 		if diagnostics.Enabled && err != nil {
-			status = http.StatusServiceUnavailable
-			message = "Kafka is unavailable"
+			message = "Transport degraded"
 		}
 		validations := make([]utils.H, 0, len(diagnostics.ValidationResults))
 		for _, validation := range diagnostics.ValidationResults {
@@ -1021,6 +1018,7 @@ func KafkaHealthCheck(backbone *infrakafka.Backbone) app.HandlerFunc {
 		}
 		c.JSON(status, utils.H{
 			"message": message,
+			"ready":   true,
 			"kafka": utils.H{
 				"enabled": diagnostics.Enabled, "healthy": diagnostics.Healthy,
 				"environment":        diagnostics.Environment,

@@ -69,6 +69,61 @@ func TestMediaProcessingWorkerRecordsTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestMediaProcessingWorkerDoesNotResurrectDeletedAsset(t *testing.T) {
+	now := time.Date(2026, 7, 26, 7, 0, 0, 0, time.UTC)
+	repo := &processingRepositoryStub{
+		asset: &domainmedia.MediaAsset{
+			ID: 13, OwnerID: 4, Kind: domainmedia.AssetKindVideo,
+			State: domainmedia.AssetStateDeleted,
+		},
+		job: &domainmedia.MediaProcessingJob{
+			ID: 9, AssetID: 13, ProfileVersion: "v1",
+			State: domainmedia.JobStatePending, MaxAttempts: 5, NextAttemptAt: now,
+		},
+	}
+	notifier := &mediaProcessingNotifierStub{}
+	worker := NewMediaProcessingWorker(
+		repo, &processorStub{}, nil, time.Minute, 1,
+		WithMediaStateNotifier(notifier),
+	)
+	worker.now = func() time.Time { return now }
+	if err := worker.HandleRequested(
+		context.Background(),
+		NewProcessingRequestedEvent(13, "v1", now),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if repo.asset.State != domainmedia.AssetStateDeleted ||
+		repo.job.State != domainmedia.JobStateFailed ||
+		notifier.failed != 0 || notifier.ready != 0 {
+		t.Fatalf("deleted asset was resurrected or notified: asset=%+v job=%+v notifier=%+v",
+			repo.asset, repo.job, notifier)
+	}
+}
+
+type mediaProcessingNotifierStub struct {
+	ready  int
+	failed int
+}
+
+func (s *mediaProcessingNotifierStub) MediaReady(context.Context, int64) error {
+	s.ready++
+	return nil
+}
+
+func (*mediaProcessingNotifierStub) MediaRepairing(
+	context.Context, int64, string,
+) error {
+	return nil
+}
+
+func (s *mediaProcessingNotifierStub) MediaFailed(
+	context.Context, int64, string, string,
+) error {
+	s.failed++
+	return nil
+}
+
 func TestKafkaWakeupValidatesAndSignalsWithoutProcessing(t *testing.T) {
 	now := time.Now().UTC()
 	repo := &processingRepositoryStub{
@@ -167,6 +222,76 @@ func TestMediaHeartbeatStallIsBoundedAndPreventsStaleCompletion(t *testing.T) {
 	}
 }
 
+func TestMediaFinalizationFencesStaleClaimAfterReclaim(t *testing.T) {
+	now := time.Now().UTC()
+	repo := newConcurrentProcessingRepository(now, 1)
+	stale, err := repo.LeaseProcessingJob(
+		context.Background(), 1, "v1", "stale-token", now, now.Add(time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.mu.Lock()
+	repo.jobs[1].LeaseUntil = timePointer(now.Add(-time.Second))
+	repo.jobs[1].State = domainmedia.JobStateRetryable
+	repo.mu.Unlock()
+	reclaimed, err := repo.LeaseProcessingJob(
+		context.Background(), 1, "v1", "reclaimed-token", now, now.Add(2*time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stale.State = domainmedia.JobStateCompleted
+	stale.LeaseOwner = ""
+	stale.LeaseUntil = nil
+	if err := repo.FinalizeProcessingJob(
+		context.Background(),
+		&domainmedia.ProcessingFinalization{
+			Asset: &domainmedia.MediaAsset{
+				ID: 1, State: domainmedia.AssetStateReady, Width: 111,
+			},
+			Variants: []*domainmedia.MediaVariant{{
+				AssetID: 1, ObjectKey: "variants/stale.mp4",
+			}},
+			Job: stale, LeaseOwner: "stale-token", CommittedAt: now,
+		},
+	); !errors.Is(err, domainmedia.ErrProcessingJobLeaseLost) {
+		t.Fatalf("stale finalization error = %v", err)
+	}
+	repo.mu.Lock()
+	if repo.assets[1].Width != 0 || len(repo.variants) != 0 {
+		t.Fatalf("stale claim mutated asset or variants: asset=%+v variants=%+v",
+			repo.assets[1], repo.variants)
+	}
+	repo.mu.Unlock()
+
+	reclaimed.State = domainmedia.JobStateCompleted
+	reclaimed.LeaseOwner = ""
+	reclaimed.LeaseUntil = nil
+	if err := repo.FinalizeProcessingJob(
+		context.Background(),
+		&domainmedia.ProcessingFinalization{
+			Asset: &domainmedia.MediaAsset{
+				ID: 1, State: domainmedia.AssetStateReady, Width: 1920,
+			},
+			Variants: []*domainmedia.MediaVariant{{
+				AssetID: 1, ObjectKey: "variants/reclaimed.mp4",
+			}},
+			Job: reclaimed, LeaseOwner: "reclaimed-token", CommittedAt: now,
+		},
+	); err != nil {
+		t.Fatalf("reclaimed finalization: %v", err)
+	}
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if repo.assets[1].Width != 1920 || len(repo.variants) != 1 ||
+		repo.jobs[1].State != domainmedia.JobStateCompleted {
+		t.Fatalf("reclaimed finalization did not commit atomically: asset=%+v variants=%+v job=%+v",
+			repo.assets[1], repo.variants, repo.jobs[1])
+	}
+}
+
 type processorStub struct {
 	result *ProcessResult
 	err    error
@@ -215,6 +340,7 @@ type concurrentProcessingRepository struct {
 	ownedUpdates   int
 	blockHeartbeat bool
 	extendCalls    int
+	variants       []*domainmedia.MediaVariant
 }
 
 func newConcurrentProcessingRepository(
@@ -364,6 +490,32 @@ func (r *concurrentProcessingRepository) UpdateProcessingJobOwned(
 	return nil
 }
 
+func (r *concurrentProcessingRepository) FinalizeProcessingJob(
+	_ context.Context,
+	finalization *domainmedia.ProcessingFinalization,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if finalization == nil || finalization.Job == nil {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	current := r.jobs[finalization.Job.AssetID]
+	if current == nil || current.State != domainmedia.JobStateProcessing ||
+		current.LeaseOwner != finalization.LeaseOwner ||
+		current.LeaseUntil == nil || !current.LeaseUntil.After(finalization.CommittedAt) {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	if finalization.Asset != nil {
+		copyAsset := *finalization.Asset
+		r.assets[copyAsset.ID] = &copyAsset
+	}
+	r.variants = append(r.variants, finalization.Variants...)
+	copyJob := *finalization.Job
+	r.jobs[copyJob.AssetID] = &copyJob
+	r.ownedUpdates++
+	return nil
+}
+
 func (r *concurrentProcessingRepository) ExtendProcessingLease(
 	ctx context.Context,
 	_ int64,
@@ -436,7 +588,8 @@ func (r *processingRepositoryStub) LeaseProcessingJob(_ context.Context, assetID
 	r.job.Attempts++
 	r.job.LeaseOwner = owner
 	r.job.LeaseUntil = &leaseUntil
-	return r.job, nil
+	copyJob := *r.job
+	return &copyJob, nil
 }
 
 func (r *processingRepositoryStub) LeaseProcessingJobs(context.Context, string, time.Time, time.Time, int) ([]*domainmedia.MediaProcessingJob, error) {
@@ -453,10 +606,33 @@ func (r *processingRepositoryStub) UpdateProcessingJobOwned(_ context.Context, j
 	return nil
 }
 
+func (r *processingRepositoryStub) FinalizeProcessingJob(
+	_ context.Context,
+	finalization *domainmedia.ProcessingFinalization,
+) error {
+	if finalization == nil || finalization.Job == nil || r.job == nil ||
+		r.job.State != domainmedia.JobStateProcessing ||
+		r.job.LeaseOwner != finalization.LeaseOwner ||
+		r.job.LeaseUntil == nil || !r.job.LeaseUntil.After(finalization.CommittedAt) {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	if finalization.Asset != nil {
+		r.asset = finalization.Asset
+	}
+	r.variants = append(r.variants, finalization.Variants...)
+	copyJob := *finalization.Job
+	r.job = &copyJob
+	return nil
+}
+
 func (*processingRepositoryStub) ExtendProcessingLease(context.Context, int64, string, time.Duration) error {
 	return nil
 }
 
 func (*processingRepositoryStub) CreateCleanupTasks(context.Context, []*domainmedia.CleanupTask) error {
 	return nil
+}
+
+func timePointer(value time.Time) *time.Time {
+	return &value
 }

@@ -245,3 +245,11 @@ upsert lifecycle notification、immutable publication fact 与 operational publi
 readiness；notification 即使已经 ready/delivered 也不能替代 publication fact 证明。已 dispatch
 运营行可在 replay window 后有界清理，immutable fact 继续阻止 reconciliation 合成事件；私密、
 删除或没有 lifecycle 历史的旧公开视频不会被 reconciliation 合成。
+
+媒体处理最终写入不是分散的 `UpdateAsset` / `UpsertVariants` / `UpdateJob`：Repository 在单一事务
+内先锁定并验证 processing job 的 claim token 与未过期 lease，再原子提交 asset metadata、variants、
+cleanup/job transition。过期或已被回收的 worker 不能写 asset/variant、提升公共状态或发送通知；
+媒体 ready/failed 通知只在 fenced commit 成功后执行，失败由现有 reconciliation 幂等修复。
+删除调度同样在 Repository 事务内锁定 asset、快照当前 ready variants、创建 cleanup tasks 并写入
+deleted tombstone，避免与转码 finalization 交错遗漏新输出；failed assets 继续进入 reconciliation，
+用于重试提交后失败的 media-failed 投影。

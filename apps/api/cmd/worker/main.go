@@ -68,8 +68,10 @@ func main() {
 	if cfg.Redis.Addr == "" {
 		log.Fatal("redis addr is required for worker")
 	}
-	kafkaBackbone, err := infrakafka.Start(
-		context.Background(), cfg.Kafka, inframetrics.KafkaObserver{}, inframetrics.KafkaObserver{},
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	kafkaBackbone, err := infrakafka.StartSupervised(
+		ctx, cfg.Kafka, inframetrics.KafkaObserver{}, inframetrics.KafkaObserver{},
 	)
 	if err != nil {
 		log.Fatalf("init kafka backbone failed: %v", err)
@@ -94,14 +96,12 @@ func main() {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
 
-	rabbitMQ, err := inframq.NewRabbitMQ(cfg.RabbitMQ)
+	rabbitMQ, err := inframq.NewSupervisedRabbitMQ(cfg.RabbitMQ)
 	if err != nil {
 		log.Fatalf("init rabbitmq failed: %v", err)
 	}
 	defer closeRabbitMQ(rabbitMQ)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	go kafkaBackbone.RunHealthObserver(ctx, 15*time.Second, 2*time.Second)
 	go func() {
 		if err := inframetrics.RunServer(ctx, ":9091"); err != nil {
@@ -109,24 +109,44 @@ func main() {
 		}
 	}()
 
-	runtimeFailures := make(chan error, 1)
+	runtimeFailures := make(chan error, 16)
 	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ, kafkaBackbone, runtimeFailures); err != nil {
 		log.Fatalf("start workers failed: %v", err)
 	}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-runtimeFailures:
+				if err != nil {
+					log.Printf("transport worker unhealthy: %v", err)
+				}
+			}
+		}
+	}()
 	log.Println("frux worker is running")
-	select {
-	case <-ctx.Done():
-		log.Println("frux worker stopped")
-	case err := <-runtimeFailures:
-		log.Fatalf("worker runtime failed: %v", err)
-	}
+	<-ctx.Done()
+	log.Println("frux worker stopped")
+}
+
+type workerRabbitMQ interface {
+	applicationinteraction.ActionEventConsumer
+	applicationrecommendation.BehaviorEventSource
+	applicationvideo.PublishedEventConsumer
+	applicationembedding.PublishedEventConsumer
+	applicationmedia.ProcessingConsumer
+	infrabehaviorstream.RabbitViewPublisher
+	infravideostream.RabbitVideoPublisher
+	VerifyConsumerDrained(context.Context, string) error
+	Close() error
 }
 
 func startWorkers(
 	ctx context.Context,
 	cfg *infraconfig.Config,
 	gormDB *gorm.DB,
-	rabbitMQ *inframq.RabbitMQ,
+	rabbitMQ workerRabbitMQ,
 	kafkaBackbone *infrakafka.Backbone,
 	runtimeFailures chan<- error,
 ) error {
@@ -219,56 +239,6 @@ func startWorkers(
 	if err != nil {
 		return err
 	}
-	drainInspector := inframq.NewDeadLetterManager(rabbitMQ, cfg.RabbitMQ)
-	initializedCutovers, err := initializeBehaviorKafkaCutovers(
-		ctx,
-		gormDB,
-		kafkaBackbone,
-		drainInspector,
-		orderedBehaviorKafkaConsumers(
-			behaviorKafkaConsumer{
-				migration:      viewMigration,
-				activeGroup:    infrakafka.GroupConsumeViewActive,
-				rabbitConsumer: inframq.ConsumerViewEventRecorded,
-			},
-			behaviorKafkaConsumer{
-				migration:      actionMigration,
-				activeGroup:    infrakafka.GroupPersistActionActive,
-				rabbitConsumer: inframq.ConsumerActionChanged,
-			},
-		),
-	)
-	if err != nil {
-		return err
-	}
-	viewMigration = initializedCutovers[0].migration
-	actionMigration = initializedCutovers[1].migration
-	videoCutovers, err := initializeBehaviorKafkaCutovers(
-		ctx,
-		gormDB,
-		kafkaBackbone,
-		drainInspector,
-		[]behaviorKafkaConsumer{
-			{
-				migration: feedMigration, activeGroup: infrakafka.GroupFeedVideoPublishedActive,
-				rabbitConsumer: inframq.ConsumerVideoPublished,
-			},
-			{
-				migration: embeddingMigration, activeGroup: infrakafka.GroupEmbeddingVideoPublishedActive,
-				rabbitConsumer: inframq.ConsumerVideoEmbedding,
-			},
-			{
-				migration: mediaMigration, activeGroup: infrakafka.GroupMediaProcessingActive,
-				rabbitConsumer: inframq.ConsumerMediaProcessing,
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
-	feedMigration = videoCutovers[0].migration
-	embeddingMigration = videoCutovers[1].migration
-	mediaMigration = videoCutovers[2].migration
 	var actionSource applicationinteraction.ActionEventConsumer
 	if actionMigration.Consumer != infrakafka.ConsumerModeKafka {
 		actionSource = rabbitMQ
@@ -339,9 +309,11 @@ func startWorkers(
 			rabbitConsumer: inframq.ConsumerActionChanged,
 		},
 	)
-	if err := startBehaviorKafkaConsumers(
+	if err := superviseBehaviorKafkaConsumers(
 		ctx,
+		gormDB,
 		kafkaBackbone,
+		rabbitMQ,
 		cfg.Kafka,
 		behaviorConsumers,
 		runtimeFailures,
@@ -589,14 +561,80 @@ func startWorkers(
 			maxAge:         6 * time.Hour,
 		},
 	}
-	return startBehaviorKafkaConsumers(
+	return superviseBehaviorKafkaConsumers(
 		ctx,
+		gormDB,
 		kafkaBackbone,
+		rabbitMQ,
 		cfg.Kafka,
 		videoConsumers,
 		runtimeFailures,
 		startKafkaConsumer,
 	)
+}
+
+func superviseBehaviorKafkaConsumers(
+	ctx context.Context,
+	db *gorm.DB,
+	backbone *infrakafka.Backbone,
+	drainInspector interface {
+		VerifyConsumerDrained(context.Context, string) error
+	},
+	cfg infraconfig.KafkaConfig,
+	consumers []behaviorKafkaConsumer,
+	runtimeFailures chan<- error,
+	starter kafkaConsumerStarter,
+) error {
+	for _, consumer := range consumers {
+		if (consumer.migration.Consumer == infrakafka.ConsumerModeKafkaShadow ||
+			consumer.migration.Consumer == infrakafka.ConsumerModeKafka) &&
+			consumer.parity == nil {
+			return fmt.Errorf(
+				"%w: parity checker required for %s",
+				infrakafka.ErrConsumerConfiguration,
+				consumer.activeGroup,
+			)
+		}
+	}
+	go func() {
+		backoff := 100 * time.Millisecond
+		for ctx.Err() == nil {
+			attemptCtx, cancelAttempt := context.WithCancel(ctx)
+			initialized, err := initializeBehaviorKafkaCutovers(
+				attemptCtx, db, backbone, drainInspector, consumers,
+			)
+			if err == nil {
+				err = startBehaviorKafkaConsumers(
+					attemptCtx, backbone, cfg, initialized, runtimeFailures, starter,
+				)
+			}
+			if err == nil {
+				return
+			}
+			cancelAttempt()
+			inframetrics.ObserveWorkerJob("kafka_consumer_startup", 0, err)
+			if runtimeFailures != nil {
+				select {
+				case runtimeFailures <- err:
+				default:
+				}
+			}
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
+			}
+		}
+	}()
+	return nil
 }
 
 func initializeBehaviorKafkaCutovers(
@@ -1216,7 +1254,7 @@ func closeSQL(db *sql.DB) {
 	}
 }
 
-func closeRabbitMQ(rabbitMQ *inframq.RabbitMQ) {
+func closeRabbitMQ(rabbitMQ interface{ Close() error }) {
 	if rabbitMQ != nil {
 		_ = rabbitMQ.Close()
 	}

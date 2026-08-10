@@ -53,3 +53,8 @@
 - [x] 8.4 Apply one 180-second outer deadline across preload, fixture validation, and full inference-pool initialization without per-worker deadline resets.
 - [x] 8.5 Retry failed inference replacements with bounded capped backoff, expose live capacity, gate readiness on full capacity, and verify all-worker loss, recovery, and shutdown.
 - [x] 8.6 Emit only bounded route/status/duration/result/capacity request logs for success and every error class, keep Uvicorn access logs disabled, and add redaction tests.
+
+## 9. Final Review Remediation
+
+- [x] 9.1 Require printable ASCII for configured and request internal tokens; reject non-ASCII headers with bounded 401 before constant-time comparison.
+- [x] 9.2 Monitor ASGI `http.disconnect` during inference, cancel/recycle the child immediately, release admission, and verify the next request proceeds.

@@ -56,6 +56,10 @@ Every model-metadata and embedding request SHALL require `X-Internal-Token` and 
 - **WHEN** the header is absent or does not match
 - **THEN** the service returns `401` with `AUTH_INTERNAL_TOKEN_REQUIRED` or `AUTH_INVALID_INTERNAL_TOKEN` and performs no model inference
 
+#### Scenario: Internal token contains non-ASCII bytes
+- **WHEN** configuration or a request header contains a non-ASCII or control character
+- **THEN** configuration fails or the request returns bounded `401 AUTH_INVALID_INTERNAL_TOKEN` before constant-time comparison, without a `TypeError` or 500
+
 #### Scenario: Weak token is configured
 - **WHEN** the process starts with a missing, placeholder, short, or insufficiently varied `FRUX_INTERNAL_TOKEN`
 - **THEN** startup fails non-zero before the service accepts traffic
@@ -136,6 +140,10 @@ and SHALL document 1 CPU and 1 GiB as the minimum reservation guidance.
 #### Scenario: Native inference does not return
 - **WHEN** a model/native kernel remains blocked past the end-to-end deadline
 - **THEN** the coordinator kills that isolated process, makes the old PID ineligible for reuse, restores the slot with a freshly preloaded process, and leaves no live orphan process
+
+#### Scenario: Client disconnects during inference
+- **WHEN** ASGI reports `http.disconnect` while a child process is executing inference
+- **THEN** the coordinator cancels and recycles that child immediately, releases admission/capacity, returns no vector, and a subsequent request can proceed
 
 #### Scenario: Replacement preload fails
 - **WHEN** one or all inference workers are lost and replacement preload temporarily fails

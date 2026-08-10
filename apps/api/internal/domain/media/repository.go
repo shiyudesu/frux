@@ -36,6 +36,7 @@ type ProcessingRepository interface {
 	LeaseProcessingJobs(ctx context.Context, owner string, now time.Time, leaseUntil time.Time, limit int) ([]*MediaProcessingJob, error)
 	UpdateProcessingJob(ctx context.Context, job *MediaProcessingJob) error
 	UpdateProcessingJobOwned(ctx context.Context, job *MediaProcessingJob, leaseOwner string) error
+	FinalizeProcessingJob(ctx context.Context, finalization *ProcessingFinalization) error
 	ExtendProcessingLease(ctx context.Context, jobID int64, leaseOwner string, leaseTTL time.Duration) error
 	ReleaseExpiredProcessingLeases(ctx context.Context, now time.Time) (int64, error)
 	ListAssetsForReconciliation(ctx context.Context, limit int) ([]*MediaAsset, error)
@@ -43,6 +44,15 @@ type ProcessingRepository interface {
 	ResetProcessingJob(ctx context.Context, assetID int64, profileVersion string, now time.Time) error
 	ListKnownObjectKeys(ctx context.Context, prefix string) (map[string]struct{}, error)
 	MarkAssetReconciled(ctx context.Context, assetID int64, reconciledAt time.Time) error
+}
+
+type ProcessingFinalization struct {
+	Asset        *MediaAsset
+	Variants     []*MediaVariant
+	CleanupTasks []*CleanupTask
+	Job          *MediaProcessingJob
+	LeaseOwner   string
+	CommittedAt  time.Time
 }
 
 type UploadSessionRepository interface {
@@ -53,6 +63,7 @@ type UploadSessionRepository interface {
 }
 
 type CleanupRepository interface {
+	ScheduleAssetCleanup(ctx context.Context, assetID int64, notBefore time.Time, maxAttempts int) error
 	CreateCleanupTasks(ctx context.Context, tasks []*CleanupTask) error
 	LeaseCleanupTasks(ctx context.Context, owner string, now time.Time, leaseUntil time.Time, limit int) ([]*CleanupTask, error)
 	UpdateCleanupTask(ctx context.Context, task *CleanupTask) error

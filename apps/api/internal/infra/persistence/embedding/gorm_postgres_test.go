@@ -181,12 +181,13 @@ func TestPostgresSemanticJobLifecycleAndBacklogOrdering(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimed, err := repository.ClaimSemanticJobs(
-		context.Background(), "owner", now, now.Add(time.Minute), 2,
+		context.Background(), "owner", now, now.Add(time.Minute), 3,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(claimed) != 2 || claimed[0].VideoID != 1 || claimed[1].VideoID != 2 {
+	if len(claimed) != 3 || claimed[0].VideoID != 1 ||
+		claimed[1].VideoID != 2 || claimed[2].VideoID != 3 {
 		t.Fatalf("stable claims = %+v", claimed)
 	}
 	if err := repository.RetrySemanticJob(
@@ -207,21 +208,6 @@ func TestPostgresSemanticJobLifecycleAndBacklogOrdering(t *testing.T) {
 		retried.LeaseOwner != "" ||
 		retried.LeaseUntil != nil {
 		t.Fatalf("retried job = %+v", retried)
-	}
-	if _, err := repository.SuspendSemanticJobs(context.Background(), now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.ResumeSemanticJobs(context.Background(), now); err != nil {
-		t.Fatal(err)
-	}
-	var resumed int64
-	if err := db.Model(&infraembedding.SemanticJobModel{}).
-		Where("state = ?", domainembedding.SemanticJobPending).
-		Count(&resumed).Error; err != nil {
-		t.Fatal(err)
-	}
-	if resumed < 2 {
-		t.Fatalf("resumed pending jobs = %d", resumed)
 	}
 	completedAt := now.Add(-31 * 24 * time.Hour)
 	completed := infraembedding.SemanticJobModel{

@@ -98,6 +98,14 @@ func (r *Reconciler) reconcileAsset(ctx context.Context, asset *domainmedia.Medi
 	if asset == nil {
 		return nil
 	}
+	if asset.State == domainmedia.AssetStateFailed {
+		if r.notifier != nil {
+			return r.notifier.MediaFailed(
+				ctx, asset.ID, "reconcile", asset.ErrorCode,
+			)
+		}
+		return nil
+	}
 	if _, err := r.store.Head(ctx, asset.ObjectKey); err != nil {
 		if errors.Is(err, domainmedia.ErrObjectNotFound) {
 			asset.State = domainmedia.AssetStateFailed

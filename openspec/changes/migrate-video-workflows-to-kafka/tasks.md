@@ -60,3 +60,10 @@
 - [x] 9.2 Use unique per-claim media tokens and fence heartbeat/completion/retry by token and unexpired lease, with bounded heartbeat contexts and stale/reclaim tests.
 - [x] 9.3 Observe publication outbox statistics independently of dispatch-operation errors so oldest-age updates during transport failures.
 - [x] 9.4 Separate immutable publication facts from operational outbox rows, make dispatcher startup asynchronous and aggregate-bounded, add replay-window cleanup, and prove broker-outage startup plus cleanup reconciliation safety.
+
+## 10. Final Review Remediation
+
+- [x] 10.1 Make media asset/variant/job finalization one atomic token-and-unexpired-lease-fenced transaction and defer public/notification effects until commit.
+- [x] 10.2 Run Kafka/Rabbit topology, dispatchers, and consumers under reconnect supervision without terminating unrelated durable workers.
+- [x] 10.3 Use detached bounded contexts for publication durable marks and stats, preserve previous gauges on stats error, and add a dedicated result metric.
+- [x] 10.4 Remove API/Worker Compose health gates on Kafka/Rabbit while retaining active Kafka drain/cutover correctness.

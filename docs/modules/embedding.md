@@ -18,9 +18,12 @@ HTTP client 只接受
 ## 3. Durable semantic jobs
 
 `semantic_embedding_job` 按 `(video_id, model)` 唯一，保存 canonical text hash、pending /
-processing / retry / suspended / completed / failed、attempts、available_at、lease 和 bounded error
-class。重试为 5s、30s、2m、10m，之后封顶 30m；过期 lease 可回收，文本变化会重置 job 并阻止旧
-worker 覆盖新结果。禁用或服务 metadata 不匹配只暂停语义 job，hash 继续推进。
+processing / retry / completed / failed（并兼容读取历史 suspended 行）、attempts、available_at、
+lease 和 bounded error class。重试为 5s、30s、2m、10m，之后封顶 30m；过期 lease 可回收，文本
+变化会重置 job 并阻止旧 worker 覆盖新结果。禁用或 metadata 不匹配只关闭当前副本的本地 claim
+gate，不批量改写共享 job；其他健康副本可继续处理。
+运行时 response contract 失败同样关闭当前副本 gate，并把 job 作为 retryable 释放，避免一个坏副本
+把共享 job 永久标记失败。
 
 该 live 路径不扫描历史视频，也不改变推荐 recall/ranking。部署到已有目录后，没有再次产生正常
 `video.published` 事件的历史视频保持不变。本 change 不提供历史 scan、command/job、cursor、
@@ -32,8 +35,8 @@ operator control；live integration 不反向依赖或调度它。
 每个 processor 一次只 claim 一个 job，并使用每次 claim 唯一 token；complete、retry 和 heartbeat
 都同时按 token、text hash、未过期 lease fencing。远程请求期间每 `lease_ttl/3` 续租，旧 attempt
 不能完成或重试已回收 job。heartbeat 使用从处理 context 派生的短 deadline，shutdown 或 PostgreSQL
-stall 会取消推理，不会挂住 processor。metadata validator 只有在 `ResumeSemanticJobs` 成功后才启动
-processor。
+stall 会取消推理，不会挂住 processor。metadata validator 只控制当前进程的 processor；恢复后直接
+打开本地 gate，不执行 cluster-wide suspend/resume。
 
 共享 `video.published` 契约只校验 envelope、业务 identity、时间、key 和视频字段边界，不引入语义文本
 规则。只有 embedding Group 在解码后执行 canonicalization；确定性 input 错误作为该 Group 的 terminal

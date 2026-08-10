@@ -16,6 +16,57 @@ type Repository struct {
 	db *gorm.DB
 }
 
+func (r *Repository) ScheduleAssetCleanup(
+	ctx context.Context,
+	assetID int64,
+	notBefore time.Time,
+	maxAttempts int,
+) error {
+	if assetID <= 0 || maxAttempts <= 0 {
+		return domainmedia.ErrMediaAssetNotFound
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var asset AssetModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", assetID).Take(&asset).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domainmedia.ErrMediaAssetNotFound
+			}
+			return err
+		}
+		var variants []VariantModel
+		if err := tx.Where(
+			"asset_id = ? AND state = ?",
+			assetID, domainmedia.VariantStateReady,
+		).Find(&variants).Error; err != nil {
+			return err
+		}
+		tasks := make([]*domainmedia.CleanupTask, 0, len(variants)+1)
+		original, err := domainmedia.NewCleanupTask(
+			asset.ID, asset.StorageBackend, asset.ObjectKey, notBefore, maxAttempts,
+		)
+		if err != nil {
+			return err
+		}
+		tasks = append(tasks, original)
+		for _, variant := range variants {
+			task, err := domainmedia.NewCleanupTask(
+				asset.ID, asset.StorageBackend, variant.ObjectKey, notBefore, maxAttempts,
+			)
+			if err != nil {
+				return err
+			}
+			tasks = append(tasks, task)
+		}
+		if err := createCleanupTasks(tx, tasks, time.Now().UTC()); err != nil {
+			return err
+		}
+		return tx.Model(&AssetModel{}).Where("id = ?", assetID).Updates(map[string]any{
+			"state": domainmedia.AssetStateDeleted, "updated_at": time.Now().UTC(),
+		}).Error
+	})
+}
+
 func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -325,6 +376,167 @@ func (r *Repository) UpdateProcessingJobOwned(ctx context.Context, job *domainme
 	return nil
 }
 
+func (r *Repository) FinalizeProcessingJob(
+	ctx context.Context,
+	finalization *domainmedia.ProcessingFinalization,
+) error {
+	if finalization == nil || finalization.Job == nil ||
+		finalization.Job.ID <= 0 || strings.TrimSpace(finalization.LeaseOwner) == "" {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	committedAt := finalization.CommittedAt.UTC()
+	if committedAt.IsZero() {
+		committedAt = time.Now().UTC()
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var currentJob ProcessingJobModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(`id = ? AND state = ? AND lease_owner = ?
+				AND lease_until > clock_timestamp()`,
+				finalization.Job.ID, domainmedia.JobStateProcessing,
+				strings.TrimSpace(finalization.LeaseOwner)).
+			Take(&currentJob).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domainmedia.ErrProcessingJobLeaseLost
+			}
+			return err
+		}
+		if finalization.Asset != nil {
+			var currentAsset AssetModel
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ?", finalization.Asset.ID).
+				Take(&currentAsset).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return domainmedia.ErrMediaAssetNotFound
+				}
+				return err
+			}
+			if currentAsset.State == domainmedia.AssetStateDeleted {
+				if finalization.Asset.State == domainmedia.AssetStateReady {
+					return domainmedia.ErrMediaAssetDeletedDuringProcessing
+				}
+			} else if err := updateAsset(tx, finalization.Asset, committedAt); err != nil {
+				return err
+			}
+		}
+		if err := upsertVariants(tx, finalization.Variants); err != nil {
+			return err
+		}
+		if err := createCleanupTasks(tx, finalization.CleanupTasks, committedAt); err != nil {
+			return err
+		}
+		job := finalization.Job
+		result := tx.Model(&ProcessingJobModel{}).
+			Where(`id = ? AND state = ? AND lease_owner = ?
+				AND lease_until > clock_timestamp()`,
+				job.ID, domainmedia.JobStateProcessing,
+				strings.TrimSpace(finalization.LeaseOwner)).
+			Updates(map[string]any{
+				"state": job.State, "attempts": job.Attempts, "max_attempts": job.MaxAttempts,
+				"error_code": job.ErrorCode, "error_message": job.ErrorMessage,
+				"lease_owner": job.LeaseOwner, "lease_until": job.LeaseUntil,
+				"next_attempt_at": job.NextAttemptAt, "completed_at": job.CompletedAt,
+				"updated_at": committedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return domainmedia.ErrProcessingJobLeaseLost
+		}
+		return nil
+	})
+}
+
+func updateAsset(tx *gorm.DB, asset *domainmedia.MediaAsset, updatedAt time.Time) error {
+	result := tx.Model(&AssetModel{}).Where("id = ?", asset.ID).Updates(map[string]any{
+		"width": asset.Width, "height": asset.Height, "duration_ms": asset.DurationMS,
+		"video_codec": asset.VideoCodec, "audio_codec": asset.AudioCodec,
+		"state": asset.State, "error_code": asset.ErrorCode, "updated_at": updatedAt,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return domainmedia.ErrMediaAssetNotFound
+	}
+	return nil
+}
+
+func upsertVariants(tx *gorm.DB, variants []*domainmedia.MediaVariant) error {
+	if len(variants) == 0 {
+		return nil
+	}
+	models := make([]VariantModel, 0, len(variants))
+	for _, variant := range variants {
+		if variant != nil {
+			models = append(models, variantModelFromDomain(variant))
+		}
+	}
+	if len(models) == 0 {
+		return nil
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "object_key"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"asset_id", "video_id", "profile_version", "source_type", "format", "codec", "audio_codec",
+			"width", "height", "bitrate", "quality", "role", "sort_order", "state",
+			"checksum_sha256", "size_bytes", "public", "updated_at",
+		}),
+	}).Create(&models).Error
+}
+
+func createCleanupTasks(
+	tx *gorm.DB,
+	tasks []*domainmedia.CleanupTask,
+	updatedAt time.Time,
+) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	models := make([]CleanupTaskModel, 0, len(tasks))
+	for _, task := range tasks {
+		if task != nil {
+			models = append(models, cleanupTaskModelFromDomain(task))
+		}
+	}
+	if len(models) == 0 {
+		return nil
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "storage_backend"}, {Name: "object_key"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"state": gorm.Expr(
+				"CASE WHEN media_cleanup_task.state IN (?, ?) THEN ? ELSE media_cleanup_task.state END",
+				domainmedia.CleanupStateCompleted, domainmedia.CleanupStateFailed,
+				domainmedia.CleanupStatePending,
+			),
+			"attempts": gorm.Expr(
+				"CASE WHEN media_cleanup_task.state IN (?, ?) THEN 0 ELSE media_cleanup_task.attempts END",
+				domainmedia.CleanupStateCompleted, domainmedia.CleanupStateFailed,
+			),
+			"not_before": gorm.Expr(
+				`CASE
+					WHEN media_cleanup_task.state IN (?, ?) THEN EXCLUDED.not_before
+					WHEN media_cleanup_task.state = ? THEN LEAST(media_cleanup_task.not_before, EXCLUDED.not_before)
+					ELSE media_cleanup_task.not_before
+				END`,
+				domainmedia.CleanupStateCompleted, domainmedia.CleanupStateFailed,
+				domainmedia.CleanupStatePending,
+			),
+			"error_message": gorm.Expr(
+				"CASE WHEN media_cleanup_task.state IN (?, ?) THEN '' ELSE media_cleanup_task.error_message END",
+				domainmedia.CleanupStateCompleted, domainmedia.CleanupStateFailed,
+			),
+			"completed_at": gorm.Expr(
+				"CASE WHEN media_cleanup_task.state IN (?, ?) THEN NULL ELSE media_cleanup_task.completed_at END",
+				domainmedia.CleanupStateCompleted, domainmedia.CleanupStateFailed,
+			),
+			"updated_at": updatedAt,
+		}),
+	}).Create(&models).Error
+}
+
 func (r *Repository) ExtendProcessingLease(
 	ctx context.Context,
 	jobID int64,
@@ -372,6 +584,7 @@ func (r *Repository) ListAssetsForReconciliation(ctx context.Context, limit int)
 	if err := r.db.WithContext(ctx).
 		Where("state IN ?", []string{
 			domainmedia.AssetStateUploaded, domainmedia.AssetStateProcessing, domainmedia.AssetStateReady,
+			domainmedia.AssetStateFailed,
 		}).
 		Order("last_reconciled_at ASC NULLS FIRST").Order("id ASC").Limit(limit).Find(&models).Error; err != nil {
 		return nil, err

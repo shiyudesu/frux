@@ -323,6 +323,40 @@ func (r *e2eMediaRepo) UpsertVariants(_ context.Context, variants []*domainmedia
 	return nil
 }
 
+func (r *e2eMediaRepo) ScheduleAssetCleanup(
+	ctx context.Context,
+	assetID int64,
+	notBefore time.Time,
+	maxAttempts int,
+) error {
+	asset, err := r.FindAssetByID(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	tasks := make([]*domainmedia.CleanupTask, 0, len(r.variants[assetID])+1)
+	original, err := domainmedia.NewCleanupTask(
+		assetID, asset.StorageBackend, asset.ObjectKey, notBefore, maxAttempts,
+	)
+	if err != nil {
+		return err
+	}
+	tasks = append(tasks, original)
+	for _, variant := range r.variants[assetID] {
+		task, err := domainmedia.NewCleanupTask(
+			assetID, asset.StorageBackend, variant.ObjectKey, notBefore, maxAttempts,
+		)
+		if err != nil {
+			return err
+		}
+		tasks = append(tasks, task)
+	}
+	if err := r.CreateCleanupTasks(ctx, tasks); err != nil {
+		return err
+	}
+	asset.State = domainmedia.AssetStateDeleted
+	return r.UpdateAsset(ctx, asset)
+}
+
 func (r *e2eMediaRepo) LeaseProcessingJob(_ context.Context, assetID int64, profileVersion, owner string, now, leaseUntil time.Time) (*domainmedia.MediaProcessingJob, error) {
 	if r.job == nil || r.job.AssetID != assetID || r.job.ProfileVersion != profileVersion ||
 		(r.job.State != domainmedia.JobStatePending && r.job.State != domainmedia.JobStateRetryable) {
@@ -332,7 +366,8 @@ func (r *e2eMediaRepo) LeaseProcessingJob(_ context.Context, assetID int64, prof
 	r.job.Attempts++
 	r.job.LeaseOwner = owner
 	r.job.LeaseUntil = &leaseUntil
-	return r.job, nil
+	copyJob := *r.job
+	return &copyJob, nil
 }
 
 func (*e2eMediaRepo) LeaseProcessingJobs(context.Context, string, time.Time, time.Time, int) ([]*domainmedia.MediaProcessingJob, error) {
@@ -346,6 +381,26 @@ func (r *e2eMediaRepo) UpdateProcessingJob(_ context.Context, job *domainmedia.M
 
 func (r *e2eMediaRepo) UpdateProcessingJobOwned(_ context.Context, job *domainmedia.MediaProcessingJob, _ string) error {
 	r.job = job
+	return nil
+}
+
+func (r *e2eMediaRepo) FinalizeProcessingJob(
+	_ context.Context,
+	finalization *domainmedia.ProcessingFinalization,
+) error {
+	if finalization == nil || finalization.Job == nil || r.job == nil ||
+		r.job.State != domainmedia.JobStateProcessing ||
+		r.job.LeaseOwner != finalization.LeaseOwner ||
+		r.job.LeaseUntil == nil || !r.job.LeaseUntil.After(finalization.CommittedAt) {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	if finalization.Asset != nil {
+		r.assets[finalization.Asset.ID] = finalization.Asset
+	}
+	for _, variant := range finalization.Variants {
+		r.variants[variant.AssetID] = append(r.variants[variant.AssetID], variant)
+	}
+	r.job = finalization.Job
 	return nil
 }
 

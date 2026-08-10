@@ -9,19 +9,20 @@ import (
 )
 
 type publicationStoreStub struct {
-	items      []*PublicationOutboxItem
-	ensured    int
-	dispatched int
-	failed     int
-	stats      PublicationOutboxStats
-	statsErr   error
-	batches    [][]*PublicationOutboxItem
-	claimCalls int
-	reconciled int
-	cleanup    int64
-	cleanupErr error
-	cleanupAt  time.Time
-	cleanupMax int
+	items            []*PublicationOutboxItem
+	ensured          int
+	dispatched       int
+	failed           int
+	stats            PublicationOutboxStats
+	statsErr         error
+	batches          [][]*PublicationOutboxItem
+	claimCalls       int
+	reconciled       int
+	cleanup          int64
+	cleanupErr       error
+	cleanupAt        time.Time
+	cleanupMax       int
+	failedContextErr error
 }
 
 func (s *publicationStoreStub) EnsurePublicationEvent(
@@ -50,8 +51,9 @@ func (s *publicationStoreStub) MarkPublicationEventDispatched(
 	return nil
 }
 func (s *publicationStoreStub) MarkPublicationEventFailed(
-	context.Context, string, string, time.Time, string,
+	ctx context.Context, _ string, _ string, _ time.Time, _ string,
 ) error {
+	s.failedContextErr = ctx.Err()
 	s.failed++
 	return nil
 }
@@ -66,6 +68,7 @@ type publicationObserverStub struct {
 	oldest         *time.Time
 	statsErr       error
 	results        []string
+	statsResults   []string
 	cleanupResult  string
 	cleanupDeleted int64
 }
@@ -82,6 +85,9 @@ func (o *publicationObserverStub) ObservePublicationOutbox(
 
 func (o *publicationObserverStub) ObservePublicationDispatch(result string) {
 	o.results = append(o.results, result)
+}
+func (o *publicationObserverStub) ObservePublicationStats(result string) {
+	o.statsResults = append(o.statsResults, result)
 }
 func (o *publicationObserverStub) ObservePublicationCleanup(result string, deleted int64) {
 	o.cleanupResult = result
@@ -298,6 +304,41 @@ func TestPublicationDispatcherRunHasAggregateDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
 		t.Fatalf("aggregate run exceeded bound: %v", elapsed)
+	}
+	if store.failed != 1 || store.failedContextErr != nil {
+		t.Fatalf(
+			"timed out publish did not durably release lease: failed=%d context=%v",
+			store.failed, store.failedContextErr,
+		)
+	}
+}
+
+func TestPublicationStatsFailurePreservesLastObservation(t *testing.T) {
+	now := time.Now().UTC()
+	oldest := now.Add(-time.Hour)
+	store := &publicationStoreStub{
+		stats: PublicationOutboxStats{Pending: 4, OldestPending: &oldest},
+	}
+	observer := &publicationObserverStub{}
+	dispatcher := NewPublicationOutboxDispatcher(
+		store, &publicationPublisherStub{}, observer,
+	)
+	dispatcher.now = func() time.Time { return now }
+	if _, err := dispatcher.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	store.stats = PublicationOutboxStats{}
+	store.statsErr = errors.New("stats unavailable")
+	if _, err := dispatcher.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if observer.pending != 0 || observer.oldest != nil {
+		t.Fatalf("stub should receive failed sample without stale synthesis")
+	}
+	if len(observer.statsResults) != 2 ||
+		observer.statsResults[0] != "success" ||
+		observer.statsResults[1] != "failure" {
+		t.Fatalf("stats results = %v", observer.statsResults)
 	}
 }
 

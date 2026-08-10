@@ -77,15 +77,12 @@ func (s *Service) GenerateForPublishedVideo(ctx context.Context, event *applicat
 			createdOrUpdated = false
 		}
 	}
-	jobState := domainembedding.SemanticJobPending
-	if !s.semanticEnabled {
-		jobState = domainembedding.SemanticJobSuspended
-	}
 	now := s.now().UTC()
 	job := &domainembedding.SemanticJob{
 		VideoID: event.VideoID, Model: domainembedding.SemanticModelKey,
 		TextHash: embedding.TextHash, Title: title, Description: description,
-		State: jobState, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
+		State:       domainembedding.SemanticJobPending,
+		AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	if repository, ok := s.repo.(interface {
 		PersistHashAndSemanticJob(

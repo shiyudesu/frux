@@ -29,7 +29,7 @@
 ## 5. Worker Composition and Observability
 
 - [x] 5.1 Add the semantic readiness gate with one bounded startup probe and background metadata validation retries; fail startup only for invalid local configuration while remote failures leave hash intake and unrelated workers running.
-- [x] 5.2 Implement a bounded leased semantic worker with the 5s, 30s, 2m, 10m, then capped 30m retry schedule, explicit suspended state, expired-lease reclaim, and terminal contract classification.
+- [x] 5.2 Implement a bounded leased semantic worker with the 5s, 30s, 2m, 10m, then capped 30m retry schedule, locally gated disabled/unready behavior, expired-lease reclaim, and terminal contract classification.
 - [x] 5.3 Add bounded Prometheus collectors and instrumentation for semantic request count/latency/result, live-event hash/semantic outcomes, coverage, and pending/retry/suspended/in-flight PostgreSQL backlog without high-cardinality labels.
 - [x] 5.4 Update worker startup/shutdown and samplers to manage the semantic transport, validator, Kafka intake, semantic-job poller, coverage counts, and PostgreSQL backlog inspection without affecting existing workers; add lifecycle and metric-label tests.
 
@@ -57,3 +57,14 @@
 - [x] 8.6 Retry inference replacement with bounded backoff, expose live capacity, and gate readiness through all-worker loss and recovery.
 - [x] 8.7 Retain immutable publication facts while bounded cleanup removes replay-expired operational outbox rows without reconciliation re-emission.
 - [x] 8.8 Restrict semantic operational logs to route/status/duration/result/capacity and cover success and bounded failure classes with redaction tests.
+
+## 9. Final Review Remediation
+
+- [x] 9.1 Fence media finalization by current claim token and unexpired lease, atomically committing asset, variants, cleanup/job state before public or notification effects; cover stale and reclaimed claims.
+- [x] 9.2 Supervise Kafka/Rabbit startup and consumer reconnects so broker outage exposes unhealthy transport metrics without stopping database/media/moderation/semantic workers; remove Compose broker health gates.
+- [x] 9.3 Separate publication aggregate, durable mark, and stats contexts; preserve gauges on stats failure and report the operation result independently.
+- [x] 9.4 Replace cluster-wide semantic suspend/resume with replica-local readiness gating and pending/retry durable jobs.
+- [x] 9.5 Enable semantic generation by default in Compose and assert the rendered and outage-recovery contracts.
+- [x] 9.6 Reject non-ASCII configured/request tokens before constant-time comparison with bounded authentication responses.
+- [x] 9.7 Monitor ASGI disconnect during inference, cancel/recycle immediately, release admission, and prove a subsequent request proceeds.
+- [x] 9.8 Update OpenSpec, architecture, engineering, deployment, module, metrics, and validation coverage without Kafka retry/DLQ work.

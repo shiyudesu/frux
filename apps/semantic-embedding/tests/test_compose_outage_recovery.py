@@ -165,3 +165,117 @@ def test_compose_semantic_outage_hash_handoff_and_recovery():
         )
     finally:
         run("down", "-v", "--remove-orphans", check=False)
+
+
+@pytest.mark.skipif(
+    os.getenv("FRUX_RUN_COMPOSE_SEMANTIC_OUTAGE") != "1",
+    reason="set FRUX_RUN_COMPOSE_SEMANTIC_OUTAGE=1 for the destructive Compose test",
+)
+def test_worker_starts_during_broker_outage_and_reconnects():
+    if run("ps", "-q").stdout.strip():
+        pytest.fail("stop the existing Frux Compose stack before this opt-in test")
+    try:
+        run(
+            "up",
+            "-d",
+            "--build",
+            "postgres",
+            "redis",
+            "rabbitmq",
+            "kafka",
+            "minio",
+            "minio-init",
+            "semantic-embedding",
+        )
+        run("stop", "rabbitmq", "kafka")
+        run("up", "-d", "--no-deps", "worker")
+        wait_for(
+            lambda: run("ps", "--status", "running", "-q", "worker").stdout.strip()
+        )
+        assert "frux worker is running" in run("logs", "worker").stdout
+        run("start", "rabbitmq", "kafka")
+
+        def transport_metrics_recovered():
+            result = run(
+                "exec",
+                "-T",
+                "worker",
+                "wget",
+                "-qO-",
+                "http://127.0.0.1:9091/metrics",
+                check=False,
+            )
+            return (
+                result.returncode == 0
+                and "frux_kafka_broker_healthy 1" in result.stdout
+                and "frux_rabbitmq_transport_healthy 1" in result.stdout
+            )
+
+        wait_for(transport_metrics_recovered, timeout=120)
+        assert "frux worker is running" in run("logs", "worker").stdout
+        wait_for(
+            lambda: subprocess.run(
+                [
+                    "curl",
+                    "--fail",
+                    "--silent",
+                    "--user",
+                    "guest:guest",
+                    "http://127.0.0.1:15672/api/exchanges/%2F/frux.video",
+                ],
+                check=False,
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        event = json.dumps(
+            {
+                "event_id": "video-published:990002:1",
+                "video_id": 990002,
+                "author_id": 1,
+                "title": "Broker recovery",
+                "description": "consumer reconnect",
+                "media_url": "",
+                "cover_url": "",
+                "published_at": now,
+                "occurred_at": now,
+            }
+        )
+        body = json.dumps(
+            {
+                "properties": {},
+                "routing_key": "video.published",
+                "payload": event,
+                "payload_encoding": "string",
+            }
+        )
+        published = subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--silent",
+                "--user",
+                "guest:guest",
+                "--header",
+                "Content-Type: application/json",
+                "--data-binary",
+                body,
+                "http://127.0.0.1:15672/api/exchanges/%2F/frux.video/publish",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert json.loads(published.stdout)["routed"] is True
+        wait_for(
+            lambda: sql(
+                "SELECT "
+                "(SELECT COUNT(*) FROM video_embedding WHERE video_id=990002 "
+                "AND model='hash-ngram-v1') || ':' || "
+                "(SELECT COUNT(*) FROM semantic_embedding_job WHERE video_id=990002)"
+            )
+            == "1:1"
+        )
+    finally:
+        run("down", "-v", "--remove-orphans", check=False)

@@ -35,7 +35,11 @@ class Settings:
 
 def strong_token(value: str) -> bool:
     value = value.strip()
-    if len(value) < 32 or value.lower() == "replace-with-internal-token":
+    if (
+        len(value) < 32
+        or value.lower() == "replace-with-internal-token"
+        or not ascii_safe_token(value)
+    ):
         return False
     classes = {
         "lower": any(char.islower() for char in value),
@@ -44,6 +48,10 @@ def strong_token(value: str) -> bool:
         "other": any(not char.isalnum() for char in value),
     }
     return sum(classes.values()) >= 3
+
+
+def ascii_safe_token(value: str) -> bool:
+    return value.isascii() and all(32 <= ord(char) <= 126 for char in value)
 
 
 def _bounded_int(env: dict[str, str], name: str, default: int, low: int, high: int) -> int:

@@ -11,6 +11,7 @@ import (
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -84,12 +85,33 @@ type RabbitMQ struct {
 }
 
 func NewRabbitMQ(cfg infraconfig.RabbitMQConfig) (*RabbitMQ, error) {
+	return newRabbitMQ(cfg, amqp.Dial)
+}
+
+func NewRabbitMQContext(
+	ctx context.Context,
+	cfg infraconfig.RabbitMQConfig,
+) (*RabbitMQ, error) {
+	dialer := &net.Dialer{}
+	return newRabbitMQ(cfg, func(url string) (*amqp.Connection, error) {
+		return amqp.DialConfig(url, amqp.Config{
+			Dial: func(network, address string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, address)
+			},
+		})
+	})
+}
+
+func newRabbitMQ(
+	cfg infraconfig.RabbitMQConfig,
+	dial func(string) (*amqp.Connection, error),
+) (*RabbitMQ, error) {
 	cfg = normalizeRabbitMQConfig(cfg)
 	if strings.TrimSpace(cfg.URL) == "" {
 		return nil, ErrEmptyRabbitMQURL
 	}
 
-	conn, err := amqp.Dial(cfg.URL)
+	conn, err := dial(cfg.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -625,26 +647,12 @@ func (r *RabbitMQ) consumeVideoPublishedQueues(ctx context.Context, consumer str
 }
 
 func (r *RabbitMQ) consumeVideoPublishedQueue(ctx context.Context, consumer, queue string, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
-	deliveries, err := r.consumerChannel.ConsumeWithContext(
-		ctx,
-		queue,
-		"",
-		false,
-		false,
-		false,
-		false,
-		nil,
+	return r.consumeProtectedQueue(
+		ctx, consumer, queue,
+		func(delivery amqp.Delivery) bool {
+			return r.handleVideoPublishedDelivery(ctx, consumer, queue, delivery, handler)
+		},
 	)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		for delivery := range deliveries {
-			r.handleVideoPublishedDelivery(ctx, consumer, queue, delivery, handler)
-		}
-	}()
-	return nil
 }
 
 func (r *RabbitMQ) handleVideoPublishedDelivery(
@@ -742,17 +750,14 @@ func (r *RabbitMQ) ConsumeMediaProcessingRequested(ctx context.Context, handler 
 			}
 			continue
 		}
-		deliveries, err := r.mediaConsumerChannel.ConsumeWithContext(
-			ctx, queue, "", false, false, false, false, nil,
-		)
-		if err != nil {
+		if err := r.consumeProtectedQueue(
+			ctx, ConsumerMediaProcessing, queue,
+			func(delivery amqp.Delivery) bool {
+				return r.handleMediaProcessingDelivery(ctx, queue, delivery, handler)
+			},
+		); err != nil {
 			return err
 		}
-		go func(queue string, deliveries <-chan amqp.Delivery) {
-			for delivery := range deliveries {
-				r.handleMediaProcessingDelivery(ctx, queue, delivery, handler)
-			}
-		}(queue, deliveries)
 	}
 	return nil
 }

@@ -22,3 +22,11 @@ def test_compose_semantic_service_contract():
     assert worker["environment"]["FRUX_SEMANTIC_EMBEDDING_URL"].endswith(
         "http://semantic-embedding:8081}"
     )
+    assert worker["environment"]["FRUX_SEMANTIC_EMBEDDING_ENABLED"].endswith(
+        ":-true}"
+    )
+    assert worker["depends_on"]["rabbitmq"]["condition"] == "service_started"
+    assert worker["depends_on"]["kafka"]["condition"] == "service_started"
+    api = compose["services"]["api"]
+    assert api["depends_on"]["rabbitmq"]["condition"] == "service_started"
+    assert api["depends_on"]["kafka"]["condition"] == "service_started"

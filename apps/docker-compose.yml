@@ -159,7 +159,7 @@ services:
       FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
       FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
       FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
-      FRUX_SEMANTIC_EMBEDDING_ENABLED: ${FRUX_SEMANTIC_EMBEDDING_ENABLED:-false}
+      FRUX_SEMANTIC_EMBEDDING_ENABLED: ${FRUX_SEMANTIC_EMBEDDING_ENABLED:-true}
       FRUX_SEMANTIC_EMBEDDING_URL: ${FRUX_SEMANTIC_EMBEDDING_URL:-http://semantic-embedding:8081}
     depends_on:
       postgres:
@@ -167,9 +167,9 @@ services:
       redis:
         condition: service_healthy
       rabbitmq:
-        condition: service_healthy
+        condition: service_started
       kafka:
-        condition: service_healthy
+        condition: service_started
       minio-init:
         condition: service_completed_successfully
     ports:
@@ -197,7 +197,7 @@ services:
       FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
       FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
       FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
-      FRUX_SEMANTIC_EMBEDDING_ENABLED: ${FRUX_SEMANTIC_EMBEDDING_ENABLED:-false}
+      FRUX_SEMANTIC_EMBEDDING_ENABLED: ${FRUX_SEMANTIC_EMBEDDING_ENABLED:-true}
       FRUX_SEMANTIC_EMBEDDING_URL: ${FRUX_SEMANTIC_EMBEDDING_URL:-http://semantic-embedding:8081}
     command: ["./frux-worker"]
     depends_on:
@@ -206,9 +206,9 @@ services:
       redis:
         condition: service_healthy
       rabbitmq:
-        condition: service_healthy
+        condition: service_started
       kafka:
-        condition: service_healthy
+        condition: service_started
       minio-init:
         condition: service_completed_successfully
       semantic-embedding:

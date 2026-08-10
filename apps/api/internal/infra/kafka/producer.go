@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
+
+	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -51,10 +54,38 @@ type ProduceObserver interface {
 }
 
 type Publisher struct {
+	mu       sync.RWMutex
 	producer syncProducer
 	prefix   string
 	timeout  time.Duration
 	observer ProduceObserver
+}
+
+func NewSupervisedPublisher(
+	cfg infraconfig.KafkaConfig,
+	observer ProduceObserver,
+) (*Publisher, error) {
+	timeout, err := time.ParseDuration(cfg.Timeouts.Produce)
+	if err != nil || timeout <= 0 {
+		return nil, ErrKafkaUnavailable
+	}
+	if _, err := TopicName(cfg.TopicPrefix, TopicVideoPublished); err != nil {
+		return nil, err
+	}
+	return &Publisher{
+		prefix: cfg.TopicPrefix, timeout: timeout, observer: observer,
+	}, nil
+}
+
+func (p *Publisher) setClient(client *Client) {
+	if p == nil || client == nil {
+		return
+	}
+	p.mu.Lock()
+	p.producer = client.kgoClient
+	p.prefix = client.topicPrefix
+	p.timeout = client.produceTimeout
+	p.mu.Unlock()
 }
 
 func NewPublisher(client *Client, observer ProduceObserver) *Publisher {
@@ -82,23 +113,31 @@ func (p *Publisher) Publish(
 		resultLabel = "canceled"
 		return ProduceMetadata{}, fmt.Errorf("%w: %v", ErrProduceCanceled, err)
 	}
+	p.mu.RLock()
+	producer := p.producer
+	prefix := p.prefix
+	timeout := p.timeout
+	p.mu.RUnlock()
+	if producer == nil {
+		return ProduceMetadata{}, ErrKafkaUnavailable
+	}
 	value, err := EncodeEvent(topicID, key, metadata, payload)
 	if err != nil {
 		resultLabel = "contract"
 		return ProduceMetadata{}, err
 	}
-	topicName, err := TopicName(p.prefix, topicID)
+	topicName, err := TopicName(prefix, topicID)
 	if err != nil {
 		resultLabel = "contract"
 		return ProduceMetadata{}, err
 	}
-	produceContext, cancel := boundedContext(ctx, p.timeout)
+	produceContext, cancel := boundedContext(ctx, timeout)
 	defer cancel()
 	record := &kgo.Record{
 		Topic: topicName, Key: append([]byte(nil), key...),
 		Value: value,
 	}
-	results := p.producer.ProduceSync(produceContext, record)
+	results := producer.ProduceSync(produceContext, record)
 	if len(results) != 1 || results[0].Record == nil {
 		resultLabel = "uncertain"
 		return ProduceMetadata{}, &UncertainProduceError{

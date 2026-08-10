@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 import hmac
 import logging
@@ -38,7 +39,7 @@ from .schemas import (
     Limits,
     ModelMetadata,
 )
-from .settings import Settings, load_settings
+from .settings import Settings, ascii_safe_token, load_settings
 
 ITEM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 PROTECTED = {"/internal/v1/model", "/internal/v1/embeddings"}
@@ -85,7 +86,10 @@ class RequestBoundary:
                         401, "AUTH_INTERNAL_TOKEN_REQUIRED", "internal token required"
                     )(scope, receive, observed_send)
                     return
-                if not hmac.compare_digest(supplied.strip(), self.settings.token):
+                supplied = supplied.strip()
+                if not ascii_safe_token(supplied) or not hmac.compare_digest(
+                    supplied, self.settings.token
+                ):
                     await error_response(
                         401, "AUTH_INVALID_INTERNAL_TOKEN", "invalid internal token"
                     )(scope, receive, observed_send)
@@ -110,6 +114,7 @@ class RequestBoundary:
                         raise BodyTooLarge
                 return message
 
+            scope["state"]["disconnect_receive"] = bounded_receive
             try:
                 await self.app(scope, bounded_receive, observed_send)
             except BodyTooLarge:
@@ -129,6 +134,10 @@ class RequestBoundary:
 
 
 class BodyTooLarge(Exception):
+    pass
+
+
+class ClientDisconnected(Exception):
     pass
 
 
@@ -154,7 +163,44 @@ def request_result(status: int) -> str:
         return "timeout"
     if status == 503:
         return "unavailable"
+    if status == 499:
+        return "canceled"
     return "internal"
+
+
+async def run_until_disconnect(request: Request, operation):
+    operation_task = asyncio.create_task(operation)
+    disconnect_task = asyncio.create_task(wait_for_disconnect(request))
+    disconnected = False
+    try:
+        done, _ = await asyncio.wait(
+            {operation_task, disconnect_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if operation_task in done:
+            return await operation_task
+        disconnected = True
+    finally:
+        for task in (operation_task, disconnect_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(
+            operation_task, disconnect_task, return_exceptions=True
+        )
+    if disconnected:
+        raise ClientDisconnected
+
+
+async def wait_for_disconnect(request: Request) -> None:
+    receive = getattr(request.state, "disconnect_receive", None)
+    if receive is None:
+        while not await request.is_disconnected():
+            await asyncio.sleep(0.01)
+        return
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return
 
 
 def configure_request_logging(level: str) -> None:
@@ -270,9 +316,14 @@ def create_app(
             normalized.append((item.id, title, description, text))
         started = getattr(request.state, "started", time.monotonic())
         try:
-            vectors = await app.state.capacity.run(
-                [item[3] for item in normalized], started
+            vectors = await run_until_disconnect(
+                request,
+                app.state.capacity.run(
+                    [item[3] for item in normalized], started
+                ),
             )
+        except ClientDisconnected:
+            return error_response(499, "CLIENT_DISCONNECTED", "client disconnected")
         except OverCapacity:
             return error_response(
                 429, "OVER_CAPACITY", "over capacity", {"Retry-After": "1"}
