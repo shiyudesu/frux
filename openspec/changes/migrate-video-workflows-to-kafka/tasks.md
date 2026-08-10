@@ -1,78 +1,59 @@
-## 1. Reconcile Semantic Embedding Planning
+## 1. Publication Fact and Outbox
 
-- [x] 1.1 Update `integrate-semantic-video-embeddings` to remove RabbitMQ channel, TTL queue, header-attempt, and broker-backlog requirements.
-- [x] 1.2 Replace those artifacts with Kafka publication intake plus PostgreSQL semantic-job retry, lease, suspension, and backlog behavior.
-- [x] 1.3 Validate the updated semantic integration change and confirm no conflicting implementation starts before this dependency is resolved.
+- [ ] 1.1 Add immutable publication-fact and operational outbox models with stable event identity, bounded payload, delivery readiness, lease, attempts, dispatch time, and replay-window indexes.
+- [ ] 1.2 Register the models in the shared migration path and add PostgreSQL tests for exact schema/index behavior.
+- [ ] 1.3 Insert publication fact and outbox atomically in every transaction that first establishes public eligibility: review, media readiness, restore, administration, batch management, and reconciliation.
+- [ ] 1.4 Refresh only undispatched operational payloads when current public media URLs become ready, preserving immutable fact payload, event ID, and original publication time.
+- [ ] 1.5 Implement bounded leased dispatch, async outage-safe startup, fenced mark-success/failure, statistics, immutable-fact-aware cleanup, and non-reemitting reconciliation.
+- [ ] 1.6 Add crash, race, duplicate, readiness, cleanup, retry, broker-outage, and reconciliation tests.
 
-## 2. Publication Event Persistence
+## 2. Video Publication Kafka Contract
 
-- [x] 2.1 Add a compact `video_publication_event_outbox` model with stable event ID, typed payload, lease, attempts, availability, dispatched time, and bounded error class.
-- [x] 2.2 Register the model and indexes in the shared migration path with PostgreSQL integration coverage.
-- [x] 2.3 Create the outbox row idempotently when review, media readiness, restore, administration, or reconciliation first establishes public eligibility.
-- [x] 2.4 Add repository and service tests proving publication fact and outbox consistency across duplicate and racing publication edges.
+- [ ] 2.1 Register `frux.video.published.v1` with exact partitions, broker append time, 30-day retention, video-ID key, bounded payload, allowed producer, and Feed/hash consumer groups.
+- [ ] 2.2 Add strict publication envelope/key/payload validation without semantic model or remote-inference constraints.
+- [ ] 2.3 Implement Rabbit/Kafka transition publishing with concurrent dual attempts, structured acknowledgement state, bounded metrics, and stable event identity.
+- [ ] 2.4 Add contract and producer tests for malformed records, publication-time preservation, definite/uncertain transport results, duplicate events, and broker outage.
 
-## 3. Kafka Publication Stream
+## 3. Feed and Hash Embedding Consumers
 
-- [x] 3.1 Register `frux.video.published.v1`, its video-ID key, 30-day retention, producer, Feed group, embedding group, and shadow groups.
-- [x] 3.2 Implement the leased publication outbox dispatcher with acknowledged Kafka production and RabbitMQ migration modes.
-- [x] 3.3 Wire Feed fanout/preheat to its Kafka group and preserve idempotent Redis index behavior.
-- [x] 3.4 Wire embedding intake to its independent Kafka group.
-- [x] 3.5 Add tests for group independence, duplicate events, publication-time preservation, lag isolation, commit failure, and rollback.
+- [ ] 3.1 Wire Feed fanout/preheat to its active Kafka group and commit only after idempotent Redis/repository effects.
+- [ ] 3.2 Wire the existing `hash-ngram-v1` embedding worker to an independent Kafka group and commit only after conditional hash persistence.
+- [ ] 3.3 Ensure duplicate or replayed publication events preserve Feed effects, hash facts, and original publication time.
+- [ ] 3.4 Implement non-mutating Feed and hash parity readers with pending/mismatch classification and bounded inline retries.
+- [ ] 3.5 Add group-isolation, commit/redelivery, duplicate, parity, lag, and rollback tests.
+- [ ] 3.6 Prove the publication consumer creates no semantic service call, semantic vector, semantic job, semantic retry, or semantic coverage state.
 
-## 4. Durable Semantic Jobs
+## 4. PostgreSQL Media Jobs and Kafka Wakeups
 
-- [x] 4.1 Add the semantic embedding job model keyed by video and model with text hash, state, attempts, availability, lease, bounded error class, and completion metadata.
-- [x] 4.2 Add repository claim, upsert/reset, complete, retry, suspend, reclaim, backlog, and cleanup operations with stable ordering.
-- [x] 4.3 Make embedding intake persist or confirm `hash-ngram-v1` before creating or refreshing the semantic job.
-- [x] 4.4 Commit the publication offset only after hash persistence and semantic-job handoff commit.
-- [x] 4.5 Implement the bounded leased semantic worker using the existing strict HTTP client contract and capped retry schedule.
-- [x] 4.6 Add tests for disabled/unavailable semantic service, text changes, duplicate publications, expired leases, terminal contracts, and hash-first progress.
+- [ ] 4.1 Register `frux.media.processing-requested.v1` as a short-retention command keyed by asset ID.
+- [ ] 4.2 Publish wakeups only after the durable PostgreSQL media job commits and keep wakeup failure non-fatal.
+- [ ] 4.3 Route Kafka wakeups and database polling through one bounded scheduler that reserves a slot before claiming one job.
+- [ ] 4.4 Use unique per-claim tokens and current unexpired leases for heartbeat, retry, terminal transition, and finalization.
+- [ ] 4.5 Atomically finalize asset metadata, variants, cleanup tasks, and job completion before public projection/notification effects.
+- [ ] 4.6 Commit Kafka wakeups after validating/signalling the durable job, never after ffmpeg completion.
+- [ ] 4.7 Add lost, duplicate, delayed, capacity, stale-claim, lease-expiry, heartbeat-stall, restart, and polling-recovery tests.
 
-## 5. Kafka Media Wakeups
+## 5. Durable Media Lifecycle Intents
 
-- [x] 5.1 Register `frux.media.processing-requested.v1` as a short-retention command topic keyed by asset ID.
-- [x] 5.2 Publish the wakeup only after the PostgreSQL media job commits and keep publication failure non-fatal to job durability.
-- [x] 5.3 Refactor the Kafka command consumer to validate the durable job, signal bounded scheduling, and commit without holding the record through ffmpeg work.
-- [x] 5.4 Preserve PostgreSQL leasing, heartbeat, polling, reconciliation, retry timing, and terminal notification behavior.
-- [x] 5.5 Add lost, duplicate, delayed, pre-capacity, restart, and polling-recovery wakeup tests.
+- [ ] 5.1 Add durable idempotent protection/cleanup intents for private, delete, offline, and related media-lifecycle transitions.
+- [ ] 5.2 Persist lifecycle intents in the same transaction as visibility/deletion state changes.
+- [ ] 5.3 Implement bounded claim, retry, completion, reconciliation, and cleanup behavior for lifecycle intents.
+- [ ] 5.4 Ensure private/deleted content disappears from discovery immediately while physical protection/cleanup remains recoverable.
+- [ ] 5.5 Add crash-after-commit, duplicate, retry, private, delete, cleanup-race, and stale-worker tests.
 
-## 6. Migration Controls and Observability
+## 6. Migration Controls and Operations
 
-- [x] 6.1 Add independent publication, Feed, embedding, and media-wakeup migration modes with dual-active rejection.
-- [x] 6.2 Add publication outbox, fanout lag, embedding intake, semantic job backlog, media wakeup, polling recovery, and outcome metrics.
-- [x] 6.3 Add per-workflow shadow validation, observation gates, and rollback procedures.
+- [ ] 6.1 Add independent producer/consumer modes for publication, Feed, hash embedding, and media wakeups with invalid dual-active rejection.
+- [ ] 6.2 Serialize first Kafka cutover by PostgreSQL advisory lock and require past millisecond-aligned boundaries.
+- [ ] 6.3 Before first cutover, verify RabbitMQ legacy queue, quorum source queue, unacknowledged deliveries, and DLQ are drained; preserve initialized offsets on restart.
+- [ ] 6.4 Supervise Kafka/Rabbit transport connections without terminating unrelated durable database workers.
+- [ ] 6.5 Add bounded publication, fanout, hash embedding, media wakeup, polling recovery, lifecycle-intent, lease, parity, and backlog metrics/alerts.
+- [ ] 6.6 Update video, feed, media, embedding, monitoring, architecture, engineering, deployment, Kafka, and optimization documentation.
+- [ ] 6.7 Explicitly document that semantic service/model/job/backfill/profile/pgvector/ANN work remains in the recommendation roadmap and is not implemented here.
 
-## 7. Documentation
+## 7. Validation
 
-- [x] 7.1 Update video, media, feed, recommendation, architecture, engineering, deployment, optimization, and monitoring documents.
-- [x] 7.2 Document the distinction between retained publication events, non-authoritative wakeup commands, and PostgreSQL job state.
-- [x] 7.3 Document semantic disablement, backlog recovery, polling guarantees, and the unchanged historical backfill boundary.
-
-## 8. Validation
-
-- [x] 8.1 Run targeted video, media, embedding, Feed fanout, migration, and Kafka integration tests.
-- [x] 8.2 Run forced Kafka and semantic-service outage/recovery tests proving public-state truth, hash progress, polling recovery, and eventual job completion.
-- [x] 8.3 Run full Go tests, both Go builds, Compose configuration validation, and strict OpenSpec validation.
-
-## 9. Review Remediation
-
-- [x] 9.1 Unify media Kafka wakeups and polling under one bounded scheduler/worker pool that claims no more jobs than available slots.
-- [x] 9.2 Use unique per-claim media tokens and fence heartbeat/completion/retry by token and unexpired lease, with bounded heartbeat contexts and stale/reclaim tests.
-- [x] 9.3 Observe publication outbox statistics independently of dispatch-operation errors so oldest-age updates during transport failures.
-- [x] 9.4 Separate immutable publication facts from operational outbox rows, make dispatcher startup asynchronous and aggregate-bounded, add replay-window cleanup, and prove broker-outage startup plus cleanup reconciliation safety.
-
-## 10. Final Review Remediation
-
-- [x] 10.1 Make media asset/variant/job finalization one atomic token-and-unexpired-lease-fenced transaction and defer public/notification effects until commit.
-- [x] 10.2 Run Kafka/Rabbit topology, dispatchers, and consumers under reconnect supervision without terminating unrelated durable workers.
-- [x] 10.3 Use detached bounded contexts for publication durable marks and stats, preserve previous gauges on stats error, and add a dedicated result metric.
-- [x] 10.4 Remove API/Worker Compose health gates on Kafka/Rabbit while retaining active Kafka drain/cutover correctness.
-
-## 11. Final Findings
-
-- [x] 11.1 Refresh undispatched publication outbox payloads from current public delivery fields while retaining immutable publication facts.
-- [x] 11.2 Align Go and Python strong-token validation through shared printable-ASCII fixtures.
-- [x] 11.3 Cover the complete semantic ASGI receive/auth/capacity/inference/send lifecycle with one request deadline.
-- [x] 11.4 Make production model and fixture paths immutable and require explicit test injection.
-- [x] 11.5 Sanitize Uvicorn bind/start `SystemExit` reporting with subprocess coverage.
-- [x] 11.6 Document replica-local semantic readiness and legacy suspended-row claiming.
+- [ ] 7.1 Run targeted video publication, Feed, hash embedding, media job, lifecycle-intent, Kafka contract, migration, and metrics tests.
+- [ ] 7.2 Run live PostgreSQL and Kafka integration tests for atomic publication, independent groups, cutover, media claims, and wakeup recovery.
+- [ ] 7.3 Run full Go tests, both Go builds, Compose config, strict OpenSpec validation, and diff checks.
+- [ ] 7.4 Verify no semantic service source, semantic HTTP client, semantic job/worker/config, semantic Compose service, semantic vector generation, or recommendation semantic behavior is introduced by this change.
