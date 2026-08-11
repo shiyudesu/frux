@@ -1,10 +1,10 @@
 package applicationsearch
 
 import (
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
-	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"context"
 	"fmt"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"time"
 )
 

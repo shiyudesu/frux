@@ -1,14 +1,14 @@
 package infrarecommendation
 
 import (
-	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
-	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
-	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"net/url"
 	"os"
 	"strconv"

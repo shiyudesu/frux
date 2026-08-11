@@ -1,9 +1,9 @@
 package infraaccount
 
 import (
+	"context"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
-	"context"
 	"time"
 
 	"gorm.io/gorm"

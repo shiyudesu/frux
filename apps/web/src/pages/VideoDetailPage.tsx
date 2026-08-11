@@ -50,7 +50,7 @@ export function VideoDetailPage({
         try {
           profile = await fetchPublicProfile(video.author_id);
         } catch {
-          profile = null;
+          // Public profile enrichment is optional for video playback.
         }
         if (!live) return;
         setItem(mapVideoDetail(video, profile));

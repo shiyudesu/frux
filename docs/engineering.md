@@ -504,6 +504,8 @@ HTTP API 流程测试使用 Hertz `pkg/common/ut.PerformRequest` 在进程内调
 
 ```bash
 cd apps/api
+test -z "$(gofmt -l .)"
+go vet ./...
 go test ./...
 ```
 
@@ -511,6 +513,7 @@ Web 单元测试和构建命令：
 
 ```bash
 cd apps/web
+pnpm run lint
 pnpm run test
 pnpm run build
 ```
@@ -520,6 +523,15 @@ OpenSpec 校验命令：
 ```bash
 openspec validate --all --strict
 ```
+
+GitHub Actions 在 Pull Request、`main` 分支 Push 和手动触发时运行三个独立 Job：
+
+- Backend：执行全部 Go 测试并编译 API、Worker。
+- Web：使用锁定的 pnpm 安装依赖，执行 Vitest 和严格生产构建。
+- Repository：校验 Docker Compose 和全部 OpenSpec。
+
+CI 只使用只读仓库权限和非敏感测试值，不依赖仓库 Secret。真实 PostgreSQL 集成测试仍按
+`FRUX_POSTGRES_TEST_DSN` 显式启用，不在基础 PR 门禁中启动状态服务。
 
 ## 15. 文档同步
 

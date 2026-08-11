@@ -1,10 +1,10 @@
 package applicationinteraction
 
 import (
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
-	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"context"
 	"errors"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	"testing"
 	"time"
 )

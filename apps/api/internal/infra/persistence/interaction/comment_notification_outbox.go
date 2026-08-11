@@ -1,8 +1,8 @@
 package infrainteraction
 
 import (
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"context"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	"strings"
 	"time"
 

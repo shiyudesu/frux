@@ -1,11 +1,11 @@
 package applicationsearch
 
 import (
-	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"strings"
 	"testing"
 	"time"

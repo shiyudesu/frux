@@ -250,7 +250,7 @@ export function CollectionQueueViewer({
 
   const setLike = useCallback(async () => {
     if (!current || swipe || !session.token) return;
-    const nextLiked = !Boolean(liked[current.video_id]);
+    const nextLiked = !liked[current.video_id];
     try {
       const data = await likeVideo(session.token, current.video_id, nextLiked);
       const effective = Boolean(data.active);
@@ -281,7 +281,7 @@ export function CollectionQueueViewer({
 
   const setFavorite = useCallback(async () => {
     if (!current || swipe || !session.token) return;
-    const nextFavorited = !Boolean(favorited[current.video_id]);
+    const nextFavorited = !favorited[current.video_id];
     try {
       const data = await favoriteVideo(session.token, current.video_id, nextFavorited);
       const effective = Boolean(data.active);
@@ -313,7 +313,7 @@ export function CollectionQueueViewer({
   const setFollow = useCallback(async () => {
     if (!current || swipe || !session.token || current.author_id === session.user?.id) return;
     const authorID = current.author_id;
-    const nextFollowing = !Boolean(following[authorID]);
+    const nextFollowing = !following[authorID];
     followRequest.current += 1;
     setFollowBusyID(authorID);
     setFollowError("");

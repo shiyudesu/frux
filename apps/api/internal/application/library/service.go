@@ -1,11 +1,11 @@
 package applicationlibrary
 
 import (
-	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	domainlibrary "github.com/shiyudesu/frux/internal/domain/library"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	"strings"
 )
 

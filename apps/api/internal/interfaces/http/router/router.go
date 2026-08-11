@@ -756,10 +756,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	h.GET("/uploads", infrahttphertz.RedirectTo("/uploads/"))
 	h.HEAD("/uploads", infrahttphertz.RedirectTo("/uploads/"))
 
-	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
-	governanceContext, stopGovernance := context.WithCancel(context.Background())
-	kafkaFailureContext, stopKafkaFailure := context.WithCancel(context.Background())
-	notificationContext, stopNotifications := context.WithCancel(context.Background())
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
 	if err != nil {
 		return err
@@ -767,6 +763,16 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	governancePollTimeout, err := time.ParseDuration(cfg.Governance.PollTimeout)
 	if err != nil {
 		return err
+	}
+	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
+	governanceContext, stopGovernance := context.WithCancel(context.Background())
+	kafkaFailureContext, stopKafkaFailure := context.WithCancel(context.Background())
+	notificationContext, stopNotifications := context.WithCancel(context.Background())
+	stopBackgroundWorkers := func() {
+		stopTelemetryCleaner()
+		stopGovernance()
+		stopKafkaFailure()
+		stopNotifications()
 	}
 	go func() {
 		if err := governanceRuntime.Run(
@@ -799,19 +805,18 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		reviewRepo, messageWriter, reviewObserver,
 	)
 	if err := reviewNotificationWorker.Start(notificationContext); err != nil {
+		stopBackgroundWorkers()
 		return err
 	}
 	lifecycleNotificationWorker := applicationvideo.NewLifecycleNotificationWorker(
 		videoRepo, messageWriter, inframetrics.VideoLifecycleNotificationObserver{},
 	)
 	if err := lifecycleNotificationWorker.Start(notificationContext); err != nil {
+		stopBackgroundWorkers()
 		return err
 	}
 	h.Engine.OnShutdown = append(h.Engine.OnShutdown, func(context.Context) {
-		stopTelemetryCleaner()
-		stopGovernance()
-		stopKafkaFailure()
-		stopNotifications()
+		stopBackgroundWorkers()
 		_ = kafkaBackbone.Close(context.Background())
 	})
 

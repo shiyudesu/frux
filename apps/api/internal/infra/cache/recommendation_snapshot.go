@@ -1,12 +1,12 @@
 package infracache
 
 import (
-	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
-	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"time"
 
 	"github.com/redis/go-redis/v9"

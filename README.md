@@ -4,6 +4,7 @@
 
 **面向短视频场景的完整 Feed 系统工程**
 
+[![CI](https://github.com/shiyudesu/frux/actions/workflows/ci.yml/badge.svg)](https://github.com/shiyudesu/frux/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.26.1-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18.3-61DAFB?style=flat-square&logo=react&logoColor=111827)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?style=flat-square&logo=typescript&logoColor=white)
@@ -108,14 +109,19 @@ docker exec frux-postgres \
 
 ## 开发与验证
 
+Pull Request、`main` 分支 Push 和手动触发会运行 GitHub Actions CI，分别检查后端、Web 和仓库配置。
+
 ```bash
 # 后端
 cd apps/api
+test -z "$(gofmt -l .)"
+go vet ./...
 go test ./...
 go build ./cmd/feed ./cmd/worker
 
 # 前端
 pnpm -C apps/web install --frozen-lockfile
+pnpm -C apps/web run lint
 pnpm -C apps/web run test
 pnpm -C apps/web run build
 

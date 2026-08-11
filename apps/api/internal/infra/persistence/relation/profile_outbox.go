@@ -1,8 +1,8 @@
 package infrarelation
 
 import (
-	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	"context"
+	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	"time"
 
 	"gorm.io/gorm"

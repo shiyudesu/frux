@@ -1,6 +1,9 @@
 package test
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
@@ -10,9 +13,6 @@ import (
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttprecommendation "github.com/shiyudesu/frux/internal/interfaces/http/recommendation"
-	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"testing"

@@ -24,7 +24,7 @@ export function SearchPage({ query, tab }: SearchRoute) {
   const handleTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
     const tabs: SearchTab[] = ["videos", "users"];
     const index = tabs.indexOf(tab);
-    let nextIndex = index;
+    let nextIndex: number;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
     else if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
     else if (event.key === "Home") nextIndex = 0;

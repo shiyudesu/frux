@@ -1,9 +1,9 @@
 package applicationsearch
 
 import (
-	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"encoding/base64"
 	"encoding/json"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"strings"
 	"time"
 )

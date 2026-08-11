@@ -1,8 +1,8 @@
 package infravideo
 
 import (
-	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"fmt"
+	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"strings"
 	"testing"
 	"time"

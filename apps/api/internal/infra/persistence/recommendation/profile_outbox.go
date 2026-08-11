@@ -1,8 +1,8 @@
 package infrarecommendation
 
 import (
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"time"
 
 	"gorm.io/gorm"

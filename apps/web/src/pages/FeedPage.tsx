@@ -269,12 +269,12 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const setLike = useCallback(async () => {
     if (!current || swipe || !requireLogin()) return;
     try {
-      const nextLiked = !Boolean(liked[current.video_id]);
+      const nextLiked = !liked[current.video_id];
       const data = await likeVideo(session.token, current.video_id, nextLiked, recommendationOutcomeContext(current));
       updateViewerAction(
         current.video_id,
         "liked",
-        Boolean(data.active),
+        data.active,
         { like_count: data.like_count ?? current.like_count }
       );
     } catch (error) {
@@ -288,12 +288,12 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
   const setFavorite = useCallback(async () => {
     if (!current || swipe || !requireLogin()) return;
     try {
-      const nextFavorited = !Boolean(favorited[current.video_id]);
+      const nextFavorited = !favorited[current.video_id];
       const data = await favoriteVideo(session.token, current.video_id, nextFavorited, recommendationOutcomeContext(current));
       updateViewerAction(
         current.video_id,
         "favorited",
-        Boolean(data.active),
+        data.active,
         { favorite_count: data.favorite_count ?? current.favorite_count }
       );
     } catch (error) {

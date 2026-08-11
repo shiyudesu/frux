@@ -1,11 +1,11 @@
 package applicationrecommendation
 
 import (
+	"context"
+	"errors"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
-	"context"
-	"errors"
 	"math"
 	"testing"
 	"time"

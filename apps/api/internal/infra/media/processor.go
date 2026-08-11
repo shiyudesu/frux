@@ -1,7 +1,6 @@
 package inframedia
 
 import (
-	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -9,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	"io"
 	"math"
 	"mime"

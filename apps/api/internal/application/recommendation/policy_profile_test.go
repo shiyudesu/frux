@@ -1,9 +1,9 @@
 package applicationrecommendation
 
 import (
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"errors"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"testing"
 	"time"
 )

@@ -1,10 +1,10 @@
 package applicationrecommendation
 
 import (
+	"context"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
-	"context"
 	"math"
 	"strconv"
 	"strings"

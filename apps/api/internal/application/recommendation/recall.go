@@ -1,10 +1,10 @@
 package applicationrecommendation
 
 import (
-	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"errors"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"math"
 	"sort"
 	"strings"

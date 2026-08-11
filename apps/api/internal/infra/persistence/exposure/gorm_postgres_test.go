@@ -1,13 +1,13 @@
 package infraexposure
 
 import (
-	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
-	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
-	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	infravideo "github.com/shiyudesu/frux/internal/infra/persistence/video"
 	"net/url"
 	"os"
 	"strings"

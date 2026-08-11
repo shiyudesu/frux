@@ -1,7 +1,6 @@
 package applicationrecommendation
 
 import (
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -11,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"io"
 	"math"
 	"strings"

@@ -1,10 +1,10 @@
 package infracache
 
 import (
-	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"context"
 	"encoding/json"
 	"errors"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"testing"
 	"time"
 

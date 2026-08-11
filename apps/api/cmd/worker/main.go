@@ -478,6 +478,7 @@ func superviseBehaviorKafkaConsumers(
 				attemptCtx, backbone, cfg, consumers, runtimeFailures, starter,
 			)
 			if err == nil {
+				context.AfterFunc(ctx, cancelAttempt)
 				return
 			}
 			cancelAttempt()

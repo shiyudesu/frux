@@ -1,8 +1,8 @@
 package applicationplayback
 
 import (
-	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
 	"context"
+	domainplayback "github.com/shiyudesu/frux/internal/domain/playback"
 	"time"
 )
 

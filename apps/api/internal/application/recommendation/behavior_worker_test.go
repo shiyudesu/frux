@@ -1,10 +1,10 @@
 package applicationrecommendation
 
 import (
-	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"errors"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"strconv"
 	"strings"
 	"testing"
