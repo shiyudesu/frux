@@ -10,7 +10,7 @@ var (
 	BehaviorPublicationTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "frux", Name: "behavior_publication_total",
-			Help: "Behavior stream per-transport and required combined dual-publication outcomes.",
+			Help: "Kafka behavior-stream publication outcomes.",
 		},
 		[]string{"stream", "role", "transport", "result"},
 	)
@@ -28,13 +28,6 @@ var (
 		},
 		[]string{"result"},
 	)
-	BehaviorShadowTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "frux", Name: "behavior_shadow_total",
-			Help: "Non-mutating behavior shadow validation and parity outcomes.",
-		},
-		[]string{"stream", "result"},
-	)
 	BehaviorConsumptionTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "frux", Name: "behavior_consumption_total",
@@ -49,7 +42,6 @@ func init() {
 		BehaviorPublicationTotal,
 		BehaviorActionFallbackTotal,
 		BehaviorActionRollbackTotal,
-		BehaviorShadowTotal,
 		BehaviorConsumptionTotal,
 	)
 }
@@ -59,8 +51,8 @@ type BehaviorObserver struct{}
 func (BehaviorObserver) ObserveBehaviorPublication(stream, role, transport, result string) {
 	BehaviorPublicationTotal.WithLabelValues(
 		behaviorStreamLabel(stream),
-		boundedBehaviorLabel(role, "primary", "mirror", "combined"),
-		boundedBehaviorLabel(transport, "rabbit", "kafka", "dual"),
+		boundedBehaviorLabel(role, "primary"),
+		boundedBehaviorLabel(transport, "kafka"),
 		boundedBehaviorLabel(result, "success", "failure", "uncertain"),
 	).Inc()
 }
@@ -88,20 +80,6 @@ func (BehaviorObserver) ObserveViewConsumption(result string) {
 	BehaviorConsumptionTotal.WithLabelValues(
 		"view",
 		boundedBehaviorLabel(result, "applied", "duplicate", "terminal", "retryable"),
-	).Inc()
-}
-
-type BehaviorShadowObserver struct{ Stream string }
-
-func (o BehaviorShadowObserver) ObserveShadow(result string) {
-	BehaviorShadowTotal.WithLabelValues(
-		behaviorStreamLabel(o.Stream),
-		boundedBehaviorLabel(
-			result,
-			"invalid", "future", "expired", "parity_unavailable",
-			"parity_match", "parity_mismatch", "parity_pending",
-			"parity_pending_exhausted", "validated",
-		),
 	).Inc()
 }
 

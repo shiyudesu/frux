@@ -54,11 +54,10 @@
 
 ### 3.4 `view_event_outbox`
 
-与观看事实同事务写入待发布事件，保存 `event_id`、载荷、尝试次数、租约、下次重试时间、已分发时间和错误摘要。Worker 获得租约后按迁移模式向 single 或 dual 传输发布并等待确认；Kafka 路径使用
-`frux.exposure.view-event-recorded.v1`、`user:{user_id}` key 和幂等 acknowledged production，
-dual/mirror 模式同时要求 RabbitMQ acknowledgement。只有所有所需传输确认后才标记 dispatched；
-结构化发布错误保留每个传输的 acknowledgement；部分成功仍保留 pending，重试可再次投递已确认侧，
-重复投递由下游按 `event_id` 去重。
+与观看事实同事务写入待发布事件，保存 `event_id`、载荷、尝试次数、租约、下次重试时间、已分发时间和错误摘要。Worker 获得租约后向 Kafka
+`frux.exposure.view-event-recorded.v1` 发布，使用 `user:{user_id}` key 和幂等 acknowledged production。
+只有 Kafka acknowledgement 后才标记 dispatched；失败或不确定结果保留 pending，重复投递由下游按
+`event_id` 去重。
 
 ### 3.5 `video_view_history_deletion`
 
@@ -90,12 +89,11 @@ dual/mirror 模式同时要求 RabbitMQ acknowledgement。只有所有所需传�
 | 重放相同 event_id | 返回已有结果，不重复投影或入队 |
 | 同 event_id 不同载荷 | 返回 409 |
 | 旧事件晚于新事件提交 | 历史仍保留确定性较新的会话序号或 `(occurred_at, event_id)` 状态 |
-| 任一所需传输暂时不可用 | HTTP 仍接受事实，Outbox 保留事件、释放租约并在恢复后发布 |
+| Kafka 暂时不可用 | HTTP 仍接受事实，Outbox 保留事件、释放租约并在恢复后发布 |
 
-推荐 active Group 为 `frux.recommendation.consume-view.v1`；shadow Group 为
-`frux.recommendation.consume-view.v1.shadow.<deployment>`，只做契约、age 和耐久 fact parity。
-View stream 必须先于 action stream cutover；action boundary 必须严格更晚，且 Worker 先启动
-view active/shadow Group。Boundary 使用 Broker `LogAppendTime`，不使用 producer clock。
+推荐 active Group 为 `frux.recommendation.consume-view.v1`。Worker 先启动 view active Group，
+收到非空 Partition assignment 后再启动 action Group。Source offsets 由 PostgreSQL durable marker
+初始化或验证，不使用 producer clock。
 Worker 只有在 view Group 收到非空 Partition assignment 后才继续 action Group startup；首次分配超过
 有界 `assignment_timeout` 或 Supervisor 提前 fatal 会取消该 Consumer 并让启动失败。
 | 上报自己的私密已发布视频 | 允许写入 |

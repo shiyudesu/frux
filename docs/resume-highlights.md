@@ -62,7 +62,7 @@ Frux 是一个面向短视频场景的高性能 Feed 流后端系统，围绕时
 2. **异步事件拆分**
    点赞收藏、视频发布、曝光观看、视频向量生成等链路通过消息队列拆分，降低接口链路耦合。
 
-3. **RabbitMQ 持久化消息**
+3. **Kafka 保留事件与故障恢复**
    异步事件使用持久化消息，消费端显式 ACK/NACK，失败任务支持重新入队。
 
 4. **写接口幂等**
@@ -158,16 +158,16 @@ Frux 是一个面向短视频场景的高性能 Feed 流后端系统，围绕时
    后端按 Domain、Application、Infrastructure、Interfaces 分层，业务逻辑、接口层和基础设施实现清晰拆分。
 
 2. **依赖注入**
-   Redis、RabbitMQ、JWT、Repository 等能力通过接口注入，便于测试和替换实现。
+   Redis、Kafka、JWT、Repository 等能力通过接口注入，便于测试和替换实现。
 
 3. **自动迁移与索引**
    启动时自动迁移数据模型，并创建 Feed 时间线索引，优化回源查询。
 
 4. **Docker Compose 本地编排**
-   支持 API、Worker、Web、PostgreSQL、Redis、RabbitMQ 一键本地启动。
+   支持 API、Worker、Web、PostgreSQL、Redis、Kafka 一键本地启动。
 
 5. **Kubernetes 部署**
-   提供 API、Worker、Web、PostgreSQL、Redis、RabbitMQ 的部署清单、Service、PVC 和健康检查。
+   提供 API、Worker、Web、PostgreSQL、Redis、Kafka 的部署清单、Service、PVC 和健康检查。
 
 6. **测试覆盖**
    覆盖 Feed、推荐、曝光、互动、播放、上传、消息、关系、视频发布 Fanout 等核心链路。
@@ -192,4 +192,4 @@ Frux 是一个面向短视频场景的高性能 Feed 流后端系统，支持时
 2. 再讲分发链路：视频发布事件、推拉结合关注流、分批 fanout、Feed 预热。
 3. 再讲互动链路：点赞收藏缓存、异步落库、幂等、计数最终一致。
 4. 再讲推荐链路：候选召回、曝光去重、向量相似度、热度新鲜度融合、作者打散。
-5. 最后讲工程化：RabbitMQ ACK/NACK、Kubernetes 部署、测试覆盖。
+5. 最后讲工程化：Kafka 显式 Offset、retry/DLQ、Kubernetes 部署、测试覆盖。

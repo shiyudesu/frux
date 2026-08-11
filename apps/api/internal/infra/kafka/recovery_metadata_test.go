@@ -65,9 +65,9 @@ func TestRecoveryMetadataRejectsInvalidBoundsAndAllowlists(t *testing.T) {
 		code        RecoveryMetadataCode
 	}{
 		{
-			name: "unsupported shadow group", destination: TopicFeedVideoPublishedRetry5s,
+			name: "unsupported group", destination: TopicFeedVideoPublishedRetry5s,
 			headers: recoveryHeadersWith(t, valid, func(item *RecoveryMetadata) {
-				item.ConsumerGroup = GroupFeedVideoPublishedShadow
+				item.ConsumerGroup = ConsumerGroupID("unsupported")
 			}),
 			key: key, value: value, code: RecoveryMetadataUnsupportedGroup,
 		},

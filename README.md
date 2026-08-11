@@ -1,6 +1,6 @@
 # Frux
 
-Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单体、React Web 客户端、PostgreSQL、Redis 和 RabbitMQ 承载内容供给、分发、消费、互动和治理链路。
+Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单体、React Web 客户端、PostgreSQL、Redis 和 Kafka 承载内容供给、分发、消费、互动和治理链路。
 
 ## 当前状态
 
@@ -11,8 +11,7 @@ Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单�
 - PostgreSQL + GORM 持久化。
 - JWT 登录态。
 - Redis Feed 缓存、热榜和互动计数。
-- RabbitMQ 异步互动落库、视频发布事件和向量任务。
-- Kafka KRaft 本地运行、版本化事件契约、Topic/Group 注册表和显式 Offset 提交基础；业务流尚未切换。
+- Kafka KRaft 本地运行、版本化事件契约、Topic/Group 注册表、显式 Offset 提交，以及互动、观看、视频发布、Feed 和媒体唤醒链路。
 - React + Vite Web 客户端。
 - 结构化视频生命周期消息中心、评论通知和播放优化接入。
 - 当前账号驱动的 Reviewer、Operator 和 Admin 后台权限。
@@ -24,7 +23,7 @@ Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单�
 - 视频运营搜索、版本检查、下架和合规恢复。
 - 版本化运行时降级控制、本地快照和回滚。
 - 本地优先、Redis 协调的分层请求限流。
-- RabbitMQ Quorum Queue、DLQ 检查和审计重放。
+- Kafka 固定重试层、Consumer Group 专属 DLQ、精确坐标检查和非破坏审计重放。
 - API 流程测试和 Web 生产构建。
 - Prometheus 指标和 Grafana 监控面板。
 - S3 兼容对象存储、预签名直传、异步多码率 MP4/DASH 处理和审核感知的版本化媒体交付。
@@ -96,7 +95,6 @@ docker compose down -v
 | API 指标 | `http://127.0.0.1:8080/metrics` |
 | PostgreSQL | `127.0.0.1:5432` |
 | Redis | `127.0.0.1:6379` |
-| RabbitMQ 管理台 | `http://127.0.0.1:15672` |
 | Kafka（宿主机 Listener） | `127.0.0.1:29092` |
 | MinIO S3 API | `http://127.0.0.1:9000` |
 | MinIO Console | `http://127.0.0.1:9001` |
@@ -126,8 +124,8 @@ http://127.0.0.1:5173/admin/login
 | 后台登录 | `http://127.0.0.1:5173/admin/login` |
 | 审核任务 | `http://127.0.0.1:5173/admin/reviews` |
 | 视频运营 | `http://127.0.0.1:5173/admin/videos` |
-| RabbitMQ 队列与 DLQ | `http://127.0.0.1:15672` |
-| 限流、治理和死信监控 | `http://127.0.0.1:3000` |
+| Kafka 故障恢复 | `/api/admin/kafka-dead-letters*` |
+| 限流、治理和 Kafka 恢复监控 | `http://127.0.0.1:3000` |
 
 新视频默认进入待审核状态。媒体处理完成不能绕过审核；批准后才进入 Feed、搜索、
 公开主页和公共媒体交付。后台操作会写入不可变审计事实。
@@ -234,11 +232,12 @@ Prometheus 抓取目标：
 | [docs/modules/admin-audit.md](docs/modules/admin-audit.md) | 不可变后台操作审计 |
 | [docs/modules/review.md](docs/modules/review.md) | 自动审核与人工审核工作流 |
 | [docs/modules/rate-limiting.md](docs/modules/rate-limiting.md) | 分层请求限流 |
-| [docs/modules/rabbitmq-dead-letter-recovery.md](docs/modules/rabbitmq-dead-letter-recovery.md) | RabbitMQ 死信隔离、检查和重放 |
+| [docs/modules/kafka-failure-recovery.md](docs/modules/kafka-failure-recovery.md) | Kafka 重试、DLQ 检查和非破坏重放 |
+| [docs/operations/kafka-only-retirement.md](docs/operations/kafka-only-retirement.md) | Kafka-only 观察门槛、退役检查和有界回滚 |
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
 | [docs/security.md](docs/security.md) | 媒体所有权、签名访问和缓存安全 |
 | [docs/deployment.md](docs/deployment.md) | MinIO/S3 配置、灰度和回滚 |
-| [docs/kafka.md](docs/kafka.md) | Kafka 配置、契约、Topic 治理、迁移与生产要求 |
+| [docs/kafka.md](docs/kafka.md) | Kafka 配置、契约、Topic 治理、恢复与生产要求 |
 | [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
 | [docs/modules/](docs/modules/README.md) | 各业务模块设计 |
 | [openspec/](openspec/) | OpenSpec 项目基线和变更规格 |
@@ -254,5 +253,5 @@ openspec validate --all --strict
 
 新增后端模块时参考 [docs/engineering.md](docs/engineering.md) 的分层模板和 [docs/modules/README.md](docs/modules/README.md) 的模块规格入口。
 
-Kafka/RabbitMQ 使用重连 supervisor；broker outage 不阻止 PostgreSQL outbox、媒体轮询和审核
-worker 启动。视频发布、Feed、hash embedding 与媒体 wakeup 可以按责任独立迁移和回滚。
+Kafka 使用重连 supervisor；broker outage 不丢失 PostgreSQL outbox、媒体轮询和审核任务。
+可回放领域事件进入 Kafka，长耗时处理、租约和延迟重试由 PostgreSQL durable job 持有。

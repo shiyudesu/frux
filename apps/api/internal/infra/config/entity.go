@@ -7,7 +7,6 @@ type Config struct {
 	Internal   InternalConfig   `yaml:"internal"`
 	Database   DatabaseConfig   `yaml:"database"`
 	Redis      RedisConfig      `yaml:"redis"`
-	RabbitMQ   RabbitMQConfig   `yaml:"rabbitmq"`
 	Kafka      KafkaConfig      `yaml:"kafka"`
 	Media      MediaConfig      `yaml:"media"`
 	Moderation ModerationConfig `yaml:"moderation"`
@@ -22,14 +21,12 @@ type KafkaConfig struct {
 	Brokers                []string                        `yaml:"brokers"`
 	ClientID               string                          `yaml:"client_id"`
 	TopicPrefix            string                          `yaml:"topic_prefix"`
-	ShadowDeployment       string                          `yaml:"shadow_deployment"`
 	AllowLocalProvisioning bool                            `yaml:"allow_local_provisioning"`
 	Authentication         KafkaAuthenticationConfig       `yaml:"authentication"`
 	TLS                    KafkaTLSConfig                  `yaml:"tls"`
 	Timeouts               KafkaTimeoutConfig              `yaml:"timeouts"`
 	Consumer               KafkaConsumerConfig             `yaml:"consumer"`
 	ProductionValidation   KafkaProductionValidationConfig `yaml:"production_validation"`
-	Migration              KafkaMigrationConfig            `yaml:"migration"`
 }
 
 type KafkaAuthenticationConfig struct {
@@ -68,21 +65,6 @@ type KafkaProductionValidationConfig struct {
 	MinInSyncReplicas     int  `yaml:"min_in_sync_replicas"`
 	RequireAuthentication bool `yaml:"require_authentication"`
 	RequireTLS            bool `yaml:"require_tls"`
-}
-
-type KafkaMigrationConfig struct {
-	ActionChanged     KafkaStreamMigrationConfig `yaml:"action_changed"`
-	VideoPublished    KafkaStreamMigrationConfig `yaml:"video_published"`
-	VideoFeed         KafkaStreamMigrationConfig `yaml:"video_feed"`
-	VideoEmbedding    KafkaStreamMigrationConfig `yaml:"video_embedding"`
-	ViewEventRecorded KafkaStreamMigrationConfig `yaml:"view_event_recorded"`
-	MediaProcessing   KafkaStreamMigrationConfig `yaml:"media_processing"`
-}
-
-type KafkaStreamMigrationConfig struct {
-	ProducerMode    string `yaml:"producer_mode"`
-	ConsumerMode    string `yaml:"consumer_mode"`
-	CutoverBoundary string `yaml:"cutover_boundary"`
 }
 
 type ModerationConfig struct {
@@ -183,44 +165,4 @@ type RedisConfig struct {
 	Addr     string `yaml:"addr"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
-}
-
-// RabbitMQConfig 保存 RabbitMQ 连接和队列配置。
-type RabbitMQConfig struct {
-	URL                      string                   `yaml:"url"`
-	ManagementURL            string                   `yaml:"management_url"`
-	ManagementUsername       string                   `yaml:"management_username"`
-	ManagementPassword       string                   `yaml:"management_password"`
-	ManagementTimeout        string                   `yaml:"management_timeout"`
-	InteractionExchange      string                   `yaml:"interaction_exchange"`
-	ActionChangedQueue       string                   `yaml:"action_changed_queue"`
-	ActionChangedRouting     string                   `yaml:"action_changed_routing"`
-	VideoExchange            string                   `yaml:"video_exchange"`
-	VideoPublishedQueue      string                   `yaml:"video_published_queue"`
-	VideoEmbeddingQueue      string                   `yaml:"video_embedding_queue"`
-	VideoPublishedRouting    string                   `yaml:"video_published_routing"`
-	ExposureExchange         string                   `yaml:"exposure_exchange"`
-	ViewEventRecordedQueue   string                   `yaml:"view_event_recorded_queue"`
-	ViewEventRecordedRouting string                   `yaml:"view_event_recorded_routing"`
-	MediaExchange            string                   `yaml:"media_exchange"`
-	MediaProcessingQueue     string                   `yaml:"media_processing_queue"`
-	MediaProcessingRouting   string                   `yaml:"media_processing_routing"`
-	DeadLetter               RabbitMQDeadLetterConfig `yaml:"dead_letter"`
-}
-
-type RabbitMQDeadLetterConfig struct {
-	Enabled               bool   `yaml:"enabled"`
-	VersionSuffix         string `yaml:"version_suffix"`
-	ExchangeSuffix        string `yaml:"exchange_suffix"`
-	QueueSuffix           string `yaml:"queue_suffix"`
-	DeliveryLimit         int64  `yaml:"delivery_limit"`
-	SourceMaxLength       int64  `yaml:"source_max_length"`
-	DeadLetterMaxLength   int64  `yaml:"dead_letter_max_length"`
-	PreviewLimit          int    `yaml:"preview_limit"`
-	ReplayTimeout         string `yaml:"replay_timeout"`
-	ActionChangedMode     string `yaml:"action_changed_mode"`
-	VideoPublishedMode    string `yaml:"video_published_mode"`
-	VideoEmbeddingMode    string `yaml:"video_embedding_mode"`
-	ViewEventRecordedMode string `yaml:"view_event_recorded_mode"`
-	MediaProcessingMode   string `yaml:"media_processing_mode"`
 }

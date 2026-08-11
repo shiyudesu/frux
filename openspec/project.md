@@ -9,7 +9,7 @@ Frux is a short-video Feed system. It provides a practical engineering baseline 
 - Go API with Hertz and GORM.
 - PostgreSQL for durable data.
 - Redis for Feed cache, hot ranking, counters, and short-lived state.
-- RabbitMQ for asynchronous write-behind and fanout work.
+- Kafka for retained behavior/domain events and short-lived wakeup commands.
 - JWT for API authentication.
 - React and Vite for the Web client.
 - OpenSpec for change proposals and long-lived capability specifications.
@@ -20,13 +20,13 @@ Backend code lives in `apps/api` and follows four layers:
 
 - `domain/{module}`: entities, business invariants, domain errors, repository interfaces.
 - `application/{module}`: use cases, cursors, idempotency, cross-entity workflows.
-- `infra`: PostgreSQL, Redis, RabbitMQ, JWT, configuration, persistence models.
+- `infra`: PostgreSQL, Redis, Kafka, JWT, configuration, persistence models.
 - `interfaces/http`: HTTP handlers, DTOs, middleware, and route registration.
 
 The standard dependency assembly order is:
 
 ```text
-Config -> DB/Redis/RabbitMQ/JWT -> Repository -> Service -> Handler -> Router
+Config -> DB/Redis/Kafka/JWT -> Repository -> Service -> Handler -> Router
 ```
 
 ## Documentation Map

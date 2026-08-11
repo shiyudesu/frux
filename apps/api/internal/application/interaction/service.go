@@ -49,24 +49,23 @@ type StatCache interface {
 type Option func(*Service)
 
 type ActionStateResult struct {
-	UserID                     int64
-	VideoID                    int64
-	ActionType                 string
-	Active                     bool
-	LikeCount                  int
-	FavoriteCount              int
-	Delta                      int
-	IdempotencyKey             string
-	RecommendationRequestID    string
-	Version                    int64
-	EventID                    string
-	OccurredAt                 time.Time
-	ShouldPublish              bool
-	CanRollback                bool
-	Previous                   domaininteraction.ActionStateSnapshot
-	PreviousHandoffConfirmed   bool
-	PreviousHasDependency      bool
-	PreviousDeliveryIncomplete bool
+	UserID                   int64
+	VideoID                  int64
+	ActionType               string
+	Active                   bool
+	LikeCount                int
+	FavoriteCount            int
+	Delta                    int
+	IdempotencyKey           string
+	RecommendationRequestID  string
+	Version                  int64
+	EventID                  string
+	OccurredAt               time.Time
+	ShouldPublish            bool
+	CanRollback              bool
+	Previous                 domaininteraction.ActionStateSnapshot
+	PreviousHandoffConfirmed bool
+	PreviousHasDependency    bool
 }
 
 type ActionMutation struct {
@@ -85,10 +84,6 @@ type ActionStateStore interface {
 // reached a durable handoff. Older ActionStateStore implementations may omit it.
 type ActionStateHandoffConfirmer interface {
 	ConfirmActionStateHandoff(ctx context.Context, state *ActionStateResult) error
-}
-
-type ActionStateDeliveryTracker interface {
-	MarkActionStateDeliveryIncomplete(ctx context.Context, state *ActionStateResult) error
 }
 
 // ActionEventPublisher 投递点赞收藏变更事件。
@@ -436,11 +431,6 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		event := actionChangedEventFromState(userID, state)
 		if publishErr := s.actionPublisher.PublishActionChanged(ctx, event); publishErr != nil {
 			recoveryCtx, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
-			multiTransport := applicationeventstream.IsMultiTransportPublicationError(publishErr)
-			var markerErr error
-			if multiTransport {
-				markerErr = s.markActionDeliveryIncomplete(recoveryCtx, state)
-			}
 			accepted, acceptedErr := acceptedActionEvent(event)
 			if acceptedErr != nil {
 				rolledBack, rollbackErr := s.rollbackActionState(recoveryCtx, state)
@@ -455,26 +445,18 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			}
 			if persistErr := s.repo.PersistAcceptedActionEvent(recoveryCtx, accepted); persistErr != nil {
 				s.observeActionFallback("failure")
-				if applicationeventstream.AnyTransportAcknowledged(publishErr) ||
-					applicationeventstream.MayHaveTransportAcknowledgement(publishErr) {
-					var confirmErr error
-					if applicationeventstream.PrimaryTransportAcknowledged(publishErr) {
-						confirmErr = s.confirmActionStateHandoff(recoveryCtx, state)
-					}
+				if applicationeventstream.MayHaveTransportAcknowledgement(publishErr) {
 					cancelRecovery()
 					if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
 						return nil, errors.Join(
 							domaininteraction.ErrVideoNotFound,
 							publishErr,
 							persistErr,
-							confirmErr,
 						)
 					}
 					return nil, actionUpdateError(
 						publishErr,
-						markerErr,
 						persistErr,
-						confirmErr,
 					)
 				}
 				_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
@@ -486,7 +468,6 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 					}
 					return nil, actionUpdateError(
 						publishErr,
-						markerErr,
 						persistErr,
 						rollbackErr,
 						recoveryErr,
@@ -499,10 +480,6 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 			}
 			s.observeActionFallback("success")
 			cancelRecovery()
-			if multiTransport {
-				s.applyActionSideEffects(ctx, state, userID)
-				return nil, actionUpdateError(publishErr, markerErr)
-			}
 		}
 		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {
 			return nil, actionUpdateError(confirmErr)
@@ -624,17 +601,6 @@ func (s *Service) observeActionRollback(result string) {
 	if s.actionObserver != nil {
 		s.actionObserver.ObserveActionRollback(result)
 	}
-}
-
-func (s *Service) markActionDeliveryIncomplete(
-	ctx context.Context,
-	state *ActionStateResult,
-) error {
-	tracker, ok := s.actionStateStore.(ActionStateDeliveryTracker)
-	if !ok {
-		return ErrUpdateInteractionFailed
-	}
-	return tracker.MarkActionStateDeliveryIncomplete(ctx, state)
 }
 
 func (s *Service) confirmActionStateHandoff(ctx context.Context, state *ActionStateResult) error {

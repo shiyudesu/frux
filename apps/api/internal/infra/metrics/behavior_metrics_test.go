@@ -33,12 +33,3 @@ func TestBehaviorMetricDescriptorsExcludeBusinessIdentity(t *testing.T) {
 		}
 	}
 }
-
-func TestBehaviorMetricsAcceptCombinedDualOutcome(t *testing.T) {
-	metric := BehaviorPublicationTotal.WithLabelValues("view", "combined", "dual", "failure")
-	before := testutil.ToFloat64(metric)
-	BehaviorObserver{}.ObserveBehaviorPublication("view", "combined", "dual", "failure")
-	if testutil.ToFloat64(metric)-before != 1 {
-		t.Fatal("combined dual publication outcome was not recorded")
-	}
-}

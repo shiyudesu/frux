@@ -3,7 +3,6 @@ package infrabehaviorstream
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
@@ -17,14 +16,6 @@ const (
 	StreamAction = "action"
 	StreamView   = "view"
 )
-
-type RabbitActionPublisher interface {
-	PublishActionChanged(context.Context, *applicationinteraction.ActionChangedEvent) error
-}
-
-type RabbitViewPublisher interface {
-	PublishViewEventRecorded(context.Context, *applicationexposure.ViewEventRecordedEvent) error
-}
 
 type KafkaPublisher interface {
 	Publish(
@@ -40,77 +31,21 @@ type PublicationObserver interface {
 	ObserveBehaviorPublication(stream, role, transport, result string)
 }
 
-type PublicationError struct {
-	primaryTransport string
-	primaryErr       error
-	mirrorTransport  string
-	mirrorErr        error
-}
-
-func (e *PublicationError) Error() string {
-	return errors.Join(e.primaryErr, e.mirrorErr).Error()
-}
-
-func (e *PublicationError) Unwrap() []error {
-	errs := make([]error, 0, 2)
-	if e.primaryErr != nil {
-		errs = append(errs, e.primaryErr)
-	}
-	if e.mirrorErr != nil {
-		errs = append(errs, e.mirrorErr)
-	}
-	return errs
-}
-
-func (e *PublicationError) TransportAcknowledged(transport string) bool {
-	switch transport {
-	case e.primaryTransport:
-		return e.primaryErr == nil
-	case e.mirrorTransport:
-		return e.mirrorErr == nil
-	default:
-		return false
-	}
-}
-
-func (e *PublicationError) AnyTransportAcknowledged() bool {
-	return e.primaryErr == nil || e.mirrorErr == nil
-}
-
-func (e *PublicationError) PrimaryTransportAcknowledged() bool {
-	return e.primaryErr == nil
-}
-
-func (e *PublicationError) PrimaryTransportMayBeAcknowledged() bool {
-	return e.primaryErr == nil ||
-		applicationeventstream.MayHaveTransportAcknowledgement(e.primaryErr)
-}
-
-func (e *PublicationError) AnyTransportMayBeAcknowledged() bool {
-	return e.primaryErr == nil || e.mirrorErr == nil ||
-		applicationeventstream.MayHaveTransportAcknowledgement(e.primaryErr) ||
-		applicationeventstream.MayHaveTransportAcknowledgement(e.mirrorErr)
-}
-
 type ActionPublisher struct {
-	mode     infrakafka.ProducerMode
-	rabbit   RabbitActionPublisher
 	kafka    KafkaPublisher
 	observer PublicationObserver
 	now      func() time.Time
 }
 
 func NewActionPublisher(
-	mode infrakafka.ProducerMode,
-	rabbit RabbitActionPublisher,
 	kafka KafkaPublisher,
 	observer PublicationObserver,
 ) (*ActionPublisher, error) {
-	if err := validateTransports(mode, rabbit != nil, kafka != nil); err != nil {
-		return nil, err
+	if kafka == nil {
+		return nil, infrakafka.ErrKafkaUnavailable
 	}
 	return &ActionPublisher{
-		mode: mode, rabbit: rabbit, kafka: kafka, observer: observer,
+		kafka: kafka, observer: observer,
 		now: func() time.Time { return time.Now().UTC() },
 	}, nil
 }
@@ -122,56 +57,18 @@ func (p *ActionPublisher) PublishActionChanged(
 	if event == nil {
 		return nil
 	}
-	primary, mirror := transports(p.mode)
-	if mirror == "" {
-		primaryErr := p.publish(ctx, primary, event)
-		p.observe(StreamAction, "primary", primary, primaryErr)
-		return primaryErr
-	}
-	primaryErr, mirrorErr := publishConcurrently(
-		ctx,
-		func(ctx context.Context) error { return p.publish(ctx, primary, event) },
-		func(ctx context.Context) error { return p.publish(ctx, mirror, event) },
-	)
-	p.observe(StreamAction, "primary", primary, primaryErr)
-	p.observe(StreamAction, "mirror", mirror, mirrorErr)
-	combinedErr := errors.Join(primaryErr, mirrorErr)
-	p.observe(StreamAction, "combined", "dual", combinedErr)
-	if combinedErr == nil {
-		return nil
-	}
-	return &PublicationError{
-		primaryTransport: primary,
-		primaryErr:       primaryErr,
-		mirrorTransport:  mirror,
-		mirrorErr:        mirrorErr,
-	}
-}
-
-func (p *ActionPublisher) publish(
-	ctx context.Context,
-	transport string,
-	event *applicationinteraction.ActionChangedEvent,
-) error {
-	switch transport {
-	case "rabbit":
-		return p.rabbit.PublishActionChanged(ctx, event)
-	case "kafka":
-		key, err := infrakafka.EncodeKey(infrakafka.KeyKindActionState, infrakafka.ActionStateKey{
-			UserID: event.UserID, VideoID: event.VideoID, ActionType: event.ActionType,
-		})
-		if err != nil {
-			return err
-		}
+	key, err := infrakafka.EncodeKey(infrakafka.KeyKindActionState, infrakafka.ActionStateKey{
+		UserID: event.UserID, VideoID: event.VideoID, ActionType: event.ActionType,
+	})
+	if err == nil {
 		_, err = p.kafka.Publish(ctx, infrakafka.TopicActionChanged, key, infrakafka.EventMetadata{
 			EventID: event.EventID, Type: infrakafka.EventTypeActionChanged, SchemaVersion: 1,
 			OccurredAt: event.OccurredAt, ProducedAt: p.now(),
 			Producer: infrakafka.ProducerInteractionAPI,
 		}, actionPayload(event))
-		return err
-	default:
-		return errors.New("behavior transport unavailable")
 	}
+	p.observe(StreamAction, "primary", "kafka", err)
+	return err
 }
 
 func (p *ActionPublisher) observe(stream, role, transport string, err error) {
@@ -181,24 +78,20 @@ func (p *ActionPublisher) observe(stream, role, transport string, err error) {
 }
 
 type ViewPublisher struct {
-	mode     infrakafka.ProducerMode
-	rabbit   RabbitViewPublisher
 	kafka    KafkaPublisher
 	observer PublicationObserver
 	now      func() time.Time
 }
 
 func NewViewPublisher(
-	mode infrakafka.ProducerMode,
-	rabbit RabbitViewPublisher,
 	kafka KafkaPublisher,
 	observer PublicationObserver,
 ) (*ViewPublisher, error) {
-	if err := validateTransports(mode, rabbit != nil, kafka != nil); err != nil {
-		return nil, err
+	if kafka == nil {
+		return nil, infrakafka.ErrKafkaUnavailable
 	}
 	return &ViewPublisher{
-		mode: mode, rabbit: rabbit, kafka: kafka, observer: observer,
+		kafka: kafka, observer: observer,
 		now: func() time.Time { return time.Now().UTC() },
 	}, nil
 }
@@ -210,115 +103,24 @@ func (p *ViewPublisher) PublishViewEventRecorded(
 	if event == nil {
 		return nil
 	}
-	primary, mirror := transports(p.mode)
-	if mirror == "" {
-		primaryErr := p.publish(ctx, primary, event)
-		p.observe(StreamView, "primary", primary, primaryErr)
-		return primaryErr
-	}
-	primaryErr, mirrorErr := publishConcurrently(
-		ctx,
-		func(ctx context.Context) error { return p.publish(ctx, primary, event) },
-		func(ctx context.Context) error { return p.publish(ctx, mirror, event) },
+	key, err := infrakafka.EncodeKey(
+		infrakafka.KeyKindUserID,
+		infrakafka.UserKey{UserID: event.UserID},
 	)
-	p.observe(StreamView, "primary", primary, primaryErr)
-	p.observe(StreamView, "mirror", mirror, mirrorErr)
-	combinedErr := errors.Join(primaryErr, mirrorErr)
-	p.observe(StreamView, "combined", "dual", combinedErr)
-	if combinedErr == nil {
-		return nil
-	}
-
-	return &PublicationError{
-		primaryTransport: primary,
-		primaryErr:       primaryErr,
-		mirrorTransport:  mirror,
-		mirrorErr:        mirrorErr,
-	}
-}
-
-func publishConcurrently(
-	ctx context.Context,
-	primary func(context.Context) error,
-	mirror func(context.Context) error,
-) (error, error) {
-	type result struct {
-		primary bool
-		err     error
-	}
-	results := make(chan result, 2)
-	go func() {
-		results <- result{primary: true, err: primary(ctx)}
-	}()
-	go func() {
-		results <- result{err: mirror(ctx)}
-	}()
-	var primaryErr, mirrorErr error
-	for range 2 {
-		item := <-results
-		if item.primary {
-			primaryErr = item.err
-		} else {
-			mirrorErr = item.err
-		}
-	}
-	return primaryErr, mirrorErr
-}
-
-func (p *ViewPublisher) publish(
-	ctx context.Context,
-	transport string,
-	event *applicationexposure.ViewEventRecordedEvent,
-) error {
-	switch transport {
-	case "rabbit":
-		return p.rabbit.PublishViewEventRecorded(ctx, event)
-	case "kafka":
-		key, err := infrakafka.EncodeKey(
-			infrakafka.KeyKindUserID,
-			infrakafka.UserKey{UserID: event.UserID},
-		)
-		if err != nil {
-			return err
-		}
+	if err == nil {
 		_, err = p.kafka.Publish(ctx, infrakafka.TopicViewEventRecorded, key, infrakafka.EventMetadata{
 			EventID: event.EventID, Type: infrakafka.EventTypeViewEventRecorded, SchemaVersion: 1,
 			OccurredAt: event.OccurredAt, ProducedAt: p.now(),
 			Producer: infrakafka.ProducerExposureWorker,
 		}, viewPayload(event))
-		return err
-	default:
-		return errors.New("behavior transport unavailable")
 	}
+	p.observe(StreamView, "primary", "kafka", err)
+	return err
 }
 
 func (p *ViewPublisher) observe(stream, role, transport string, err error) {
 	if p.observer != nil {
 		p.observer.ObserveBehaviorPublication(stream, role, transport, publicationResult(err))
-	}
-}
-
-func validateTransports(mode infrakafka.ProducerMode, rabbit, kafka bool) error {
-	primary, mirror := transports(mode)
-	if primary == "" || primary == "rabbit" && !rabbit || primary == "kafka" && !kafka ||
-		mirror == "rabbit" && !rabbit || mirror == "kafka" && !kafka {
-		return fmt.Errorf("%w: behavior publisher transport", infrakafka.ErrUnknownRegistryValue)
-	}
-	return nil
-}
-
-func transports(mode infrakafka.ProducerMode) (string, string) {
-	switch mode {
-	case infrakafka.ProducerModeRabbit:
-		return "rabbit", ""
-	case infrakafka.ProducerModeRabbitWithKafkaMirror:
-		return "rabbit", "kafka"
-	case infrakafka.ProducerModeKafkaWithRabbitMirror:
-		return "kafka", "rabbit"
-	case infrakafka.ProducerModeKafka:
-		return "kafka", ""
-	default:
-		return "", ""
 	}
 }
 
@@ -392,66 +194,6 @@ func (h *ViewHandler) Handle(
 		return applicationeventstream.OutcomeTerminal, nil
 	}
 	return applicationeventstream.OutcomeRetryable, err
-}
-
-type ActionParityReader interface {
-	CompareAcceptedActionEvent(
-		context.Context,
-		*applicationinteraction.ActionChangedEvent,
-	) (found, match bool, err error)
-}
-
-type ViewParityReader interface {
-	CompareBehaviorEvent(
-		context.Context,
-		*applicationexposure.ViewEventRecordedEvent,
-	) (found, match bool, err error)
-}
-
-type ActionParityChecker struct{ Reader ActionParityReader }
-
-func (c ActionParityChecker) Compare(
-	ctx context.Context,
-	event applicationeventstream.Event,
-) (applicationeventstream.ParityResult, error) {
-	payload, ok := event.Payload.(*infrakafka.ActionChangedPayload)
-	if !ok || c.Reader == nil {
-		return applicationeventstream.ParityMismatch, nil
-	}
-	found, match, err := c.Reader.CompareAcceptedActionEvent(ctx, actionEvent(payload))
-	if err != nil {
-		return "", err
-	}
-	if found && match {
-		return applicationeventstream.ParityMatch, nil
-	}
-	if !found {
-		return applicationeventstream.ParityPending, nil
-	}
-	return applicationeventstream.ParityMismatch, nil
-}
-
-type ViewParityChecker struct{ Reader ViewParityReader }
-
-func (c ViewParityChecker) Compare(
-	ctx context.Context,
-	event applicationeventstream.Event,
-) (applicationeventstream.ParityResult, error) {
-	payload, ok := event.Payload.(*infrakafka.ViewEventRecordedPayload)
-	if !ok || c.Reader == nil {
-		return applicationeventstream.ParityMismatch, nil
-	}
-	found, match, err := c.Reader.CompareBehaviorEvent(ctx, viewEvent(payload))
-	if err != nil {
-		return "", err
-	}
-	if found && match {
-		return applicationeventstream.ParityMatch, nil
-	}
-	if !found {
-		return applicationeventstream.ParityPending, nil
-	}
-	return applicationeventstream.ParityMismatch, nil
 }
 
 func actionPayload(event *applicationinteraction.ActionChangedEvent) infrakafka.ActionChangedPayload {

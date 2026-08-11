@@ -70,7 +70,7 @@ type RecommendationActionOutcomeItem struct {
 
 // ActionProfileProjectionItem is a durable, idempotent input for the
 // recommendation profile projector. It intentionally mirrors the accepted
-// action receipt rather than the transient RabbitMQ message.
+// action receipt rather than the transient transport delivery.
 type ActionProfileProjectionItem struct {
 	EventID        string
 	UserID         int64
@@ -162,7 +162,7 @@ func (w *ActionWorker) HandleActionChanged(ctx context.Context, event *ActionCha
 	}
 	w.observeActionConsumption(string(outcome))
 	// Production repositories create the outcome handoff in the same
-	// transaction as the accepted action. Acknowledge RabbitMQ after that
+	// transaction as the accepted action. Acknowledge the transport after that
 	// transaction commits; the leased outbox owns delayed attribution retries.
 	if _, durable := w.repo.(RecommendationActionOutcomeStore); durable {
 		return nil

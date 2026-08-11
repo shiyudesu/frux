@@ -17,10 +17,8 @@ flowchart LR
     Client["Web Client"] --> API["Hertz API"]
     API --> PostgreSQL["PostgreSQL"]
     API --> Redis["Redis"]
-    API --> Kafka["Kafka behavior streams"]
-    API --> RabbitMQ["RabbitMQ tasks / rollback"]
+    API --> Kafka["Kafka events / wakeups"]
     Kafka --> Worker["Worker"]
-    RabbitMQ --> Worker
     Worker --> PostgreSQL
     Worker --> Redis
 
@@ -31,8 +29,7 @@ flowchart LR
 ```
 
 Redis 用于读性能和短期状态，Kafka 保留 action/view 与视频首次发布事件，并承载非权威媒体唤醒；
-RabbitMQ 保留迁移 mirror/rollback 与未迁移流程。
-mirror/rollback，PostgreSQL 保存最终事实。
+PostgreSQL 保存最终事实、Outbox 和长耗时 durable jobs。
 
 推荐召回还使用每服务 16 个有限 provider slots：不响应取消的下游调用保持占位，后续请求降级而非继续创建 goroutine。
 
@@ -139,7 +136,7 @@ mirror/rollback，PostgreSQL 保存最终事实。
 HTTP Handler
   -> Interaction Service
   -> Redis 行为状态和实时计数
-  -> Kafka/RabbitMQ transport-aware ActionChangedEvent
+  -> Kafka ActionChangedEvent
   -> Worker
   -> PostgreSQL interaction_action / interaction_comment / video_stat
 ```
@@ -149,8 +146,8 @@ HTTP Handler
 | 异常 | 处理 |
 | --- | --- |
 | Redis 不可用 | 降级为 PostgreSQL 路径或返回可识别错误 |
-| Single Kafka 或 dual/mirror 任一投递失败/确认不确定 | 同步 PostgreSQL receipt/outbox fallback；发布与 fallback 双失败条件回滚 Redis |
-| View dual/mirror 任一传输失败 | Outbox 保留 pending 并重试；稳定 event ID 吸收已成功传输上的重复 |
+| Kafka 投递失败/确认不确定 | 同步 PostgreSQL receipt/outbox fallback；发布与 fallback 双失败条件回滚 Redis |
+| View Kafka 发布失败 | Outbox 保留 pending 并重试；稳定 event ID 吸收重复 |
 | Worker 重复消费 | 使用唯一键和幂等键保证安全 |
 | 缓存计数偏差 | TTL 过期后回源修正 |
 
@@ -209,7 +206,7 @@ feed:hot:window:v1:{windowEndUnix}
 | `interaction_worker_error_count` | Worker 错误数 |
 | `postgres_query_p95_ms` | PostgreSQL 查询 P95 |
 | `redis_error_count` | Redis 错误数 |
-| `rabbitmq_publish_error_count` | MQ 投递错误数 |
+| `frux_kafka_produce_total{result}` | Kafka 投递结果 |
 
 ## 12. 落地顺序
 

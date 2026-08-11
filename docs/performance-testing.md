@@ -302,7 +302,7 @@ sum(rate(frux_feed_cache_requests_total{result="hit"}[5m])) by (area)
 - 同一 `event_id` 使用不同位置/时长时返回 409。
 - `progress` 写入后观看历史的 `last_position_ms` 前进，迟到旧事件不能回退。
 - `complete` 后到达的旧 `progress` 或 `skip` 不会取消完播状态。
-- RabbitMQ 停止时 HTTP 仍接受事实，Outbox 积压上升；恢复后积压下降且下游只应用一次。
+- Kafka 停止时 HTTP 仍接受 durable facts，Outbox 积压上升；恢复后积压下降且下游只应用一次。
 - 10 秒进度间隔下的写 QPS、PostgreSQL P95、Outbox 延迟和 Worker 成功率保持在目标范围。
 
 浏览器检查必须使用 Windows 真 Chrome，覆盖自动播放、手动暂停、seek、滚轮/拖拽切换、页面隐藏、`pagehide/pageshow` 和 React Strict Mode 开发环境。网络面板中同一播放会话不应出现重复 `exposed`/`complete`，退出请求应使用 keepalive。

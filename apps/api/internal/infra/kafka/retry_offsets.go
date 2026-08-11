@@ -116,10 +116,11 @@ type retryConsumerGroupState struct {
 }
 
 type retryOffsetAdministrator struct {
-	backend  retryOffsetBackend
-	store    RetryOffsetInitializationStore
-	identity RetryOffsetInitializationIdentity
-	timeout  time.Duration
+	backend            retryOffsetBackend
+	store              RetryOffsetInitializationStore
+	identity           RetryOffsetInitializationIdentity
+	timeout            time.Duration
+	adoptSparseOffsets bool
 }
 
 type retryOffsetSnapshot struct {
@@ -225,7 +226,14 @@ func (a *retryOffsetAdministrator) initializeOnce(
 		return retryOffsetDataLoss("durably initialized retry group is dead")
 	}
 
-	plan, err := retryOffsetPlan(snapshot, ranges, state, groupState, topic)
+	plan, err := retryOffsetPlan(
+		snapshot,
+		ranges,
+		state,
+		groupState,
+		topic,
+		a.adoptSparseOffsets,
+	)
 	if err != nil {
 		return err
 	}
@@ -403,6 +411,7 @@ func retryOffsetPlan(
 	state RetryOffsetInitializationState,
 	groupState retryConsumerGroupState,
 	topic string,
+	adoptSparseOffsets bool,
 ) ([]RetryOffsetInitializationPartition, error) {
 	if state.Exists {
 		if len(state.Partitions) == 0 {
@@ -472,7 +481,7 @@ func retryOffsetPlan(
 		})
 	}
 
-	if !state.Exists {
+	if !state.Exists && !adoptSparseOffsets {
 		if err := validateRetryOffsetGaps(
 			missingPartitions,
 			validPartitions,

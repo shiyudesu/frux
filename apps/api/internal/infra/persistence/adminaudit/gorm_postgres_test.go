@@ -97,6 +97,42 @@ func TestRepositoryAppendListAndCursorPostgres(t *testing.T) {
 	}
 }
 
+func TestRepositoryListsPreRetirementDeadLetterAuditPostgres(t *testing.T) {
+	db := newAdminAuditPostgresDB(t)
+	if err := db.AutoMigrate(&EventModel{}); err != nil {
+		t.Fatalf("migrate audit event: %v", err)
+	}
+	createdAt := time.Date(2026, 8, 10, 8, 0, 0, 0, time.UTC)
+	model := EventModel{
+		ActorID:    9,
+		Permission: string(domainaccount.PermissionGovernanceExecute),
+		Action:     string(domainadminaudit.ActionDeadLetterReplay),
+		TargetType: string(domainadminaudit.TargetDeadLetterMessage),
+		TargetID:   "legacy-action-1",
+		Outcome:    string(domainadminaudit.OutcomeSuccess),
+		RequestID:  domainadminaudit.NewRequestID(),
+		DetailJSON: `{"http_method":"POST","original_event_id":"legacy-action-1","queue":"frux.interaction.action_changed.dlq.q2","reason_code":"operator_retry","replay_id":"replay-0123456789abcdef0123456789abcdef","route":"/api/admin/dead-letter-messages/:messageId/replay"}`,
+		CreatedAt:  createdAt,
+	}
+	if err := db.Create(&model).Error; err != nil {
+		t.Fatalf("insert pre-retirement audit fact: %v", err)
+	}
+	facts, err := New(db).List(context.Background(), domainadminaudit.Query{
+		Action: domainadminaudit.ActionDeadLetterReplay,
+		From:   createdAt.Add(-time.Second),
+		To:     createdAt.Add(time.Second),
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("list pre-retirement audit fact: %v", err)
+	}
+	if len(facts) != 1 ||
+		facts[0].Action() != domainadminaudit.ActionDeadLetterReplay ||
+		facts[0].Detail()["queue"] != "frux.interaction.action_changed.dlq.q2" {
+		t.Fatalf("pre-retirement audit facts = %#v", facts)
+	}
+}
+
 func TestAppendInTransactionFailureRollsBackProtectedMutation(t *testing.T) {
 	db := newAdminAuditPostgresDB(t)
 	if err := db.AutoMigrate(&EventModel{}, &protectedMutationModel{}); err != nil {

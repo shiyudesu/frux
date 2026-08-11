@@ -1,13 +1,13 @@
 package applicationrecommendation
 
 import (
+	"context"
+	"errors"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	domainrelation "github.com/shiyudesu/frux/internal/domain/relation"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
-	"context"
-	"errors"
 	"time"
 )
 
@@ -33,7 +33,7 @@ type FollowProfileOutboxStore interface {
 	MarkFollowProfileOutboxFailed(ctx context.Context, id int64, availableAt time.Time, reason string) error
 }
 
-// ActionProfileOutboxStore is owned by interaction and survives RabbitMQ
+// ActionProfileOutboxStore is owned by interaction and survives transport
 // publish failures, allowing accepted actions to be projected eventually.
 type ActionProfileOutboxStore interface {
 	ClaimActionProfileProjections(ctx context.Context, limit int, now, leasedUntil time.Time) ([]applicationinteraction.ActionProfileProjectionItem, error)
@@ -61,7 +61,7 @@ type BehaviorProfileProjectionItem struct {
 	Attempts          int
 }
 
-// BehaviorProfileOutboxStore leases persisted behavior facts after RabbitMQ
+// BehaviorProfileOutboxStore leases persisted behavior facts after transport
 // delivery has been acknowledged. It prevents unavailable embeddings or
 // evidence propagation from spinning on the broker.
 type BehaviorProfileOutboxStore interface {

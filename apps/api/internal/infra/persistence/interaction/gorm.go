@@ -364,7 +364,7 @@ func (r *Repository) ClaimRecommendationActionOutcomes(ctx context.Context, limi
 
 // ClaimActionProfileProjections leases durable action facts for recommendation
 // profile projection. The receipt and projection fields are created in the same
-// transaction as the accepted action, so RabbitMQ is only a wake-up path.
+// transaction as the accepted action, so the event transport is only a wake-up path.
 func (r *Repository) ClaimActionProfileProjections(ctx context.Context, limit int, now, leasedUntil time.Time) ([]applicationinteraction.ActionProfileProjectionItem, error) {
 	if limit <= 0 {
 		return []applicationinteraction.ActionProfileProjectionItem{}, nil

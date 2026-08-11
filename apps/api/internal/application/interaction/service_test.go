@@ -23,14 +23,11 @@ func (r *synchronousActionRepositoryStub) PersistAcceptedActionEvent(context.Con
 }
 
 type actionStateStoreStub struct {
-	state            *ActionStateResult
-	rollbackResult   bool
-	rollbackErr      error
-	rollbackCalls    int
-	confirmCalls     int
-	incompleteCalls  int
-	incompleteCtxErr error
-	incompleteErr    error
+	state          *ActionStateResult
+	rollbackResult bool
+	rollbackErr    error
+	rollbackCalls  int
+	confirmCalls   int
 }
 
 func (s *actionStateStoreStub) SetActionState(
@@ -57,15 +54,6 @@ func (s *actionStateStoreStub) ConfirmActionStateHandoff(context.Context, *Actio
 	return nil
 }
 
-func (s *actionStateStoreStub) MarkActionStateDeliveryIncomplete(
-	ctx context.Context,
-	_ *ActionStateResult,
-) error {
-	s.incompleteCalls++
-	s.incompleteCtxErr = ctx.Err()
-	return errors.Join(s.incompleteCtxErr, s.incompleteErr)
-}
-
 type actionPublisherStub struct{ err error }
 
 func (p actionPublisherStub) PublishActionChanged(context.Context, *ActionChangedEvent) error {
@@ -78,36 +66,6 @@ func (e possiblyAcknowledgedError) Error() string { return e.err.Error() }
 func (e possiblyAcknowledgedError) Unwrap() error { return e.err }
 func (possiblyAcknowledgedError) MayHaveAcknowledged() bool {
 	return true
-}
-
-type acknowledgedPublicationError struct {
-	err          error
-	acknowledged map[string]bool
-	primary      string
-}
-
-func (e acknowledgedPublicationError) Error() string { return e.err.Error() }
-func (e acknowledgedPublicationError) Unwrap() error { return e.err }
-func (e acknowledgedPublicationError) TransportAcknowledged(transport string) bool {
-	return e.acknowledged[transport]
-}
-func (e acknowledgedPublicationError) AnyTransportAcknowledged() bool {
-	for _, acknowledged := range e.acknowledged {
-		if acknowledged {
-			return true
-		}
-	}
-	return false
-}
-
-func (e acknowledgedPublicationError) PrimaryTransportAcknowledged() bool {
-	return e.acknowledged[e.primary]
-}
-func (e acknowledgedPublicationError) PrimaryTransportMayBeAcknowledged() bool {
-	return e.PrimaryTransportAcknowledged()
-}
-func (e acknowledgedPublicationError) AnyTransportMayBeAcknowledged() bool {
-	return e.AnyTransportAcknowledged()
 }
 
 type actionDeliveryObserverStub struct {
@@ -234,108 +192,6 @@ func TestKafkaUncertainAcknowledgementFallsBackToDurableReceipt(t *testing.T) {
 	}
 }
 
-func TestDualPublicationFailuresAttemptFallbackButRemainUnconfirmed(t *testing.T) {
-	for _, test := range []struct {
-		name         string
-		acknowledged map[string]bool
-	}{
-		{name: "primary only", acknowledged: map[string]bool{"rabbit": true}},
-		{name: "mirror only", acknowledged: map[string]bool{"kafka": true}},
-		{name: "neither", acknowledged: map[string]bool{}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			repo := &synchronousActionRepositoryStub{}
-			store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
-			service := New(
-				repo,
-				WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
-					err: errors.New("dual publication incomplete"), acknowledged: test.acknowledged,
-					primary: "rabbit",
-				}}),
-			)
-			result, err := service.Like(context.Background(), 7, 11, "like-1")
-			if !errors.Is(err, ErrUpdateInteractionFailed) {
-				t.Fatalf("error = %v", err)
-			}
-
-			if result != nil || repo.persistCalls != 1 ||
-				store.rollbackCalls != 0 || store.confirmCalls != 0 ||
-				store.incompleteCalls != 1 {
-				t.Fatalf("result=%#v repo=%#v store=%#v", result, repo, store)
-			}
-		})
-	}
-}
-
-func TestDualFallbackStillAppliesActionSideEffectsOnce(t *testing.T) {
-	repo := &synchronousActionRepositoryStub{}
-	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
-	hot := &hotScoreRecorderStub{}
-	service := New(
-		repo,
-		WithHotScoreRecorder(hot),
-		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
-			err:          errors.New("dual publication incomplete"),
-			acknowledged: map[string]bool{"rabbit": true},
-			primary:      "rabbit",
-		}}),
-	)
-	_, err := service.Like(context.Background(), 7, 11, "like-1")
-	if !errors.Is(err, ErrUpdateInteractionFailed) {
-		t.Fatalf("error = %v", err)
-	}
-	if hot.calls != 1 {
-		t.Fatalf("hot score calls = %d", hot.calls)
-	}
-}
-
-func TestDualIncompleteMarkerUsesRecoveryContextAfterRequestCancellation(t *testing.T) {
-	repo := &synchronousActionRepositoryStub{}
-	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
-	service := New(
-		repo,
-		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
-			err:          errors.New("dual publication incomplete"),
-			acknowledged: map[string]bool{"rabbit": true},
-			primary:      "rabbit",
-		}}),
-	)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := service.Like(ctx, 7, 11, "like-1")
-	if !errors.Is(err, ErrUpdateInteractionFailed) {
-		t.Fatalf("error = %v", err)
-	}
-
-	if store.incompleteCalls != 1 || store.incompleteCtxErr != nil {
-		t.Fatalf("store=%#v", store)
-	}
-}
-
-func TestDualMarkerFailureStillAttemptsPostgresFallback(t *testing.T) {
-	markerErr := errors.New("Redis marker unavailable")
-	repo := &synchronousActionRepositoryStub{}
-	store := &actionStateStoreStub{
-		state: acceptedAsyncState(), rollbackResult: true,
-		incompleteErr: markerErr,
-	}
-	service := New(
-		repo,
-		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
-			err:          errors.New("dual publication incomplete"),
-			acknowledged: map[string]bool{"kafka": true},
-			primary:      "rabbit",
-		}}),
-	)
-	_, err := service.Like(context.Background(), 7, 11, "like-1")
-	if !errors.Is(err, ErrUpdateInteractionFailed) || !errors.Is(err, markerErr) {
-		t.Fatalf("error = %v", err)
-	}
-	if repo.persistCalls != 1 || store.rollbackCalls != 0 {
-		t.Fatalf("repo=%#v store=%#v", repo, store)
-	}
-}
-
 func TestKafkaAndFallbackFailureConditionallyRollBackRedis(t *testing.T) {
 	repo := &synchronousActionRepositoryStub{persistErr: errors.New("database unavailable")}
 	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
@@ -369,68 +225,6 @@ func TestUncertainKafkaAndFallbackFailureDoesNotRollBackRedis(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 	if store.rollbackCalls != 0 || store.confirmCalls != 0 {
-		t.Fatalf("store=%#v", store)
-	}
-}
-
-func TestPartialDualAcknowledgementAndFallbackFailurePreserveRedisWithoutUnsafeConfirmation(t *testing.T) {
-	for _, test := range []struct {
-		acknowledged string
-		wantConfirm  int
-	}{
-		{acknowledged: "rabbit", wantConfirm: 1},
-		{acknowledged: "kafka", wantConfirm: 0},
-	} {
-		t.Run(test.acknowledged, func(t *testing.T) {
-			persistErr := errors.New("database unavailable")
-			publishErr := errors.New("dual publication incomplete")
-			repo := &synchronousActionRepositoryStub{persistErr: persistErr}
-			store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
-			observer := &actionDeliveryObserverStub{}
-			service := New(
-				repo,
-				WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
-					err:          publishErr,
-					acknowledged: map[string]bool{test.acknowledged: true},
-					primary:      "rabbit",
-				}}),
-				WithActionDeliveryObserver(observer),
-			)
-
-			if _, err := service.Like(context.Background(), 7, 11, "like-1"); !errors.Is(err, ErrUpdateInteractionFailed) ||
-				!errors.Is(err, publishErr) ||
-				!errors.Is(err, persistErr) {
-				t.Fatalf("error = %v", err)
-			}
-			if repo.persistCalls != 1 || store.rollbackCalls != 0 ||
-				store.confirmCalls != test.wantConfirm {
-				t.Fatalf("repo=%#v store=%#v", repo, store)
-			}
-			if len(observer.fallback) != 1 || observer.fallback[0] != "failure" ||
-				len(observer.rollback) != 0 {
-				t.Fatalf("observer=%#v", observer)
-			}
-		})
-	}
-}
-
-func TestNoDualAcknowledgementAndFallbackFailureRollsBack(t *testing.T) {
-	repo := &synchronousActionRepositoryStub{persistErr: errors.New("database unavailable")}
-	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
-	service := New(
-		repo,
-		WithAsyncActionPipeline(store, actionPublisherStub{err: acknowledgedPublicationError{
-			err: errors.New("dual publication failed"),
-			acknowledged: map[string]bool{
-				"rabbit": false,
-				"kafka":  false,
-			},
-		}}),
-	)
-	if _, err := service.Like(context.Background(), 7, 11, "like-1"); !errors.Is(err, ErrUpdateInteractionFailed) {
-		t.Fatalf("error = %v", err)
-	}
-	if store.rollbackCalls != 1 || store.confirmCalls != 0 {
 		t.Fatalf("store=%#v", store)
 	}
 }

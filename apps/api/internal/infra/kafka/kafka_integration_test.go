@@ -27,25 +27,9 @@ func TestKafkaBackboneProvisionsProducesAndConsumesAfterClientRestart(t *testing
 		t.Fatalf("start first Kafka client: %v", err)
 	}
 	now := time.Now().UTC()
-	boundary := now.Add(-time.Second).Truncate(time.Millisecond)
-	var cutoverResult CutoverResult
-	var cutoverErr error
-	for attempt := 0; attempt < 20; attempt++ {
-		cutoverResult, cutoverErr = first.ApplyConsumerCutover(
-			ctx,
-			GroupBackboneProbeActive,
-			boundary.Format(time.RFC3339Nano),
-			CutoverInitializeOnly,
-		)
-		if cutoverErr == nil {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if cutoverErr != nil || cutoverResult != CutoverInitialized {
-		_ = first.Close(context.Background())
-		t.Fatalf("initialize probe cutover: result=%s err=%v", cutoverResult, cutoverErr)
-	}
+	initializeIntegrationConsumerOffsets(
+		t, ctx, cfg, first, GroupBackboneProbeActive,
+	)
 	producerClock := now.Add(4 * time.Minute)
 	key := []byte("probe:persisted")
 	produced, err := first.Publisher().Publish(ctx, TopicBackboneProbe, key, EventMetadata{

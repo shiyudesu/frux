@@ -281,27 +281,20 @@ Partition、Offset、key、payload 或 raw error。告警位于
 No-progress 告警比较 15 分钟 end-offset、backlog、oldest timestamp 和 progress counter；持续 ingress
 但成功 replay 不告警，持续 ingress 且无 durable/replay progress、oldest 不前移才告警。处置时组合
 观察 active lag、retained growth、oldest age、publication acknowledgement 和 replay outcome；Kafka
-DLQ 是 immutable retained log，不能把 end offset 解释为 RabbitMQ 可 Ack depth。
+DLQ 是 immutable retained log，不能把 end offset 解释为可 Ack 的 queue depth。
 
-## 15. Behavior stream migration observability
+## 15. Behavior stream observability
 
-行为迁移额外暴露：
+行为事件流额外暴露：
 
 - `frux_behavior_publication_total{stream,role,transport,result}`；
 - `frux_behavior_action_fallback_total{result}` 与 conditional rollback；
-- `frux_behavior_shadow_total{stream,result}`；
 - `frux_behavior_consumption_total{stream,result}`。
 
-`stream` 仅为 action/view，`role` 仅为 primary/mirror/combined，`transport` 仅为
-rabbit/kafka/dual；dual 模式的 `combined` 只有两种传输都 acknowledgement 才为 success，
-部分失败或不确定必须触发 action fallback 或保留 view outbox；
-result 使用封闭 success/failure/uncertain、parity_match/parity_mismatch/parity_pending/
-parity_pending_exhausted、
-duplicate/superseded 等集合。不得加入
-event、user、video、key、partition、offset 或错误正文。View 先 cutover，action boundary 必须严格
-更晚且 Worker 先启动 view Kafka group；任一 stream 出现持续
-primary failure、fallback/rollback 增长、shadow mismatch、lag 或 delivery age 超门槛时按该
-stream 独立回滚。
+`stream` 仅为 action/view，`role` 仅为 primary，`transport` 仅为 kafka；result 使用封闭
+success/failure/uncertain、duplicate/superseded 等集合。不得加入 event、user、video、key、
+partition、offset 或错误正文。Worker 先等待 view Kafka Group ready，再启动 action Group；任一
+stream 出现持续 publication failure、fallback/rollback 增长、lag 或 delivery age 超门槛时告警。
 
 ## 16. Video workflow migration observability
 

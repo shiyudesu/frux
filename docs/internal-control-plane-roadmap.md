@@ -46,7 +46,7 @@ openspec list
 后台权限 + 操作审计
        ├───────────────┐
        ▼               ▼
-运行时降级控制      RabbitMQ 死信恢复
+运行时降级控制      Kafka 故障恢复
        ↓
 分层请求限流
 ```
@@ -61,7 +61,7 @@ openspec list
 6. `add-content-operations-console`
 7. `add-runtime-degradation-controls`
 8. `add-layered-request-rate-limits`
-9. `add-rabbitmq-dead-letter-recovery`
+9. `add-rabbitmq-dead-letter-recovery`（历史前置，现已由 Kafka recovery 取代）
 
 该顺序优先形成完整内容治理闭环，再补稳定性治理。若允许多分支并行，应遵守第 6 节的并行边界。
 
@@ -77,7 +77,7 @@ openspec list
 | 6 | `add-content-operations-console` | 18 | 提供审核与视频运营 Web 工作台 | 人审、权限、审计 |
 | 7 | `add-runtime-degradation-controls` | 16 | 提供版本化降级开关和进程本地快照 | 权限、审计 |
 | 8 | `add-layered-request-rate-limits` | 17 | 提供本地优先、Redis 协调的分层限流 | 降级控制 |
-| 9 | `add-rabbitmq-dead-letter-recovery` | 18 | 提供有限重试、DLQ、检查和审计重放 | 权限、审计 |
+| 9 | `add-rabbitmq-dead-letter-recovery` | 18 | 历史恢复基线；当前运行时已迁移到 Kafka recovery | 权限、审计 |
 
 ## 3. 共享控制面轨道
 
@@ -344,13 +344,13 @@ Handler
 - 多实例 Redis 配额、Redis 超时、本地降级和 Map 饱和均有测试。
 - 429 返回稳定错误码和 Retry Metadata。
 
-### 5.3 RabbitMQ 死信恢复
+### 5.3 历史队列恢复与 Kafka 替代
 
-按消费者逐个迁移，不一次性修改所有 Queue。
+本节保留早期控制面实施历史。当前支持面已经切换到 Kafka retry/DLQ。
 
-实现状态：已完成基础拓扑、错误分类、检查/重放 API、审计和监控；当前以
-`action_changed` 的强 Event ID 幂等作为 `dual` 试点，其余 Consumer 保持 `legacy`，
-按 `docs/modules/rabbitmq-dead-letter-recovery.md` 的 Drain 门槛逐个切换。
+实现状态：历史 Queue 方案已退役；当前检查、重放、审计和监控由
+`docs/modules/kafka-failure-recovery.md` 与
+`docs/operations/kafka-only-retirement.md` 定义。
 
 实施顺序：
 
@@ -375,7 +375,7 @@ Handler
 
 关键约束：
 
-- RabbitMQ Queue Type 不能原地切换，必须使用新 Queue Name。
+- 历史 Queue Type 不能原地切换，必须使用新 Queue Name。
 - 重放保持原始 Event ID，新增 Replay ID 只用于审计和诊断。
 - Replay 必须在新消息获得 Publisher Confirm 后才能 Ack DLQ 消息。
 - PostgreSQL 只保存审计事实，不复制所有 DLQ Payload 成为第二套队列。
@@ -404,7 +404,7 @@ Handler
 视频状态机 → 机器审核
 
 权限 + 审计 ─┬→ 运行时降级控制 → 分层限流
-             └→ RabbitMQ 死信恢复
+             └→ Kafka 故障恢复
 ```
 
 人工审核必须等待：

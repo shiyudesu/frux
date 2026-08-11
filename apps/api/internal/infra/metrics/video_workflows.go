@@ -68,14 +68,6 @@ var (
 		},
 		[]string{"result"},
 	)
-	VideoWorkflowShadowTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "frux",
-			Name:      "video_workflow_shadow_total",
-			Help:      "Non-mutating video workflow shadow validation outcomes.",
-		},
-		[]string{"workflow", "result"},
-	)
 )
 
 func init() {
@@ -88,26 +80,10 @@ func init() {
 		VideoPublicationCleanupTotal,
 		VideoPublicationCleanupDeletedTotal,
 		MediaWakeupsTotal,
-		VideoWorkflowShadowTotal,
 	)
 }
 
 type VideoWorkflowObserver struct{}
-
-type VideoWorkflowShadowObserver struct{ Workflow string }
-
-func (o VideoWorkflowShadowObserver) ObserveShadow(result string) {
-	switch result {
-	case "invalid", "future", "expired", "validated", "parity_unavailable",
-		"parity_match", "parity_mismatch", "parity_pending", "parity_pending_exhausted":
-	default:
-		result = "invalid"
-	}
-	VideoWorkflowShadowTotal.WithLabelValues(
-		videoConsumerWorkflowLabel(o.Workflow),
-		result,
-	).Inc()
-}
 
 func (VideoWorkflowObserver) ObserveVideoWorkflowPublication(
 	workflow, role, transport, result string,
@@ -179,18 +155,9 @@ func videoWorkflowLabel(value string) string {
 	}
 }
 
-func videoConsumerWorkflowLabel(value string) string {
-	switch value {
-	case "feed", "embedding", "media_wakeup":
-		return value
-	default:
-		return "unknown"
-	}
-}
-
 func publicationRoleLabel(value string) string {
 	switch value {
-	case "primary", "mirror":
+	case "primary":
 		return value
 	default:
 		return "unknown"
@@ -199,7 +166,7 @@ func publicationRoleLabel(value string) string {
 
 func transportLabel(value string) string {
 	switch value {
-	case "rabbit", "kafka":
+	case "kafka":
 		return value
 	default:
 		return "unknown"

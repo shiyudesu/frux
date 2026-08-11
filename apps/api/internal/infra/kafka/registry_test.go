@@ -21,11 +21,11 @@ func TestRegistryIsClosedAndNamesAreStable(t *testing.T) {
 	if name != "dev.frux.platform.backbone_probe.v1" {
 		t.Fatalf("topic name = %q", name)
 	}
-	group, err := ResolvedGroupName("", "blue", GroupBackboneProbeShadow)
+	group, err := ResolvedGroupName("", GroupBackboneProbeActive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if group != "frux.platform.backbone_probe.active.v1.shadow.blue" {
+	if group != "frux.platform.backbone_probe.active.v1" {
 		t.Fatalf("group name = %q", group)
 	}
 	if _, err := Topic("arbitrary"); err == nil {
@@ -58,19 +58,6 @@ func TestRecoveryRegistryPoliciesAndFixedTiersAreClosed(t *testing.T) {
 			t.Fatalf("recovery %s = %+v", group, spec)
 		}
 	}
-	for _, shadow := range []ConsumerGroupID{
-		GroupBackboneProbeShadow,
-		GroupPersistActionShadow,
-		GroupConsumeViewShadow,
-		GroupFeedVideoPublishedShadow,
-		GroupEmbeddingVideoPublishedShadow,
-		GroupMediaProcessingShadow,
-	} {
-		if _, err := Recovery(shadow); err == nil {
-			t.Fatalf("shadow group %s received a recovery policy", shadow)
-		}
-	}
-
 	wantDelays := []time.Duration{
 		5 * time.Second, 30 * time.Second, 2 * time.Minute,
 		10 * time.Minute, 30 * time.Minute,
@@ -190,11 +177,11 @@ func TestBehaviorRegistryContractsAreStable(t *testing.T) {
 		view.MessageTimestamp != MessageTimestampLogAppendTime {
 		t.Fatalf("view topic = %+v", view)
 	}
-	actionGroup, _ := ResolvedGroupName("", "green", GroupPersistActionShadow)
-	viewGroup, _ := ResolvedGroupName("", "green", GroupConsumeViewShadow)
-	if actionGroup != "frux.interaction.persist-action.v1.shadow.green" ||
-		viewGroup != "frux.recommendation.consume-view.v1.shadow.green" {
-		t.Fatalf("shadow groups = %q %q", actionGroup, viewGroup)
+	actionGroup, _ := ResolvedGroupName("", GroupPersistActionActive)
+	viewGroup, _ := ResolvedGroupName("", GroupConsumeViewActive)
+	if actionGroup != "frux.interaction.persist-action.v1" ||
+		viewGroup != "frux.recommendation.consume-view.v1" {
+		t.Fatalf("active groups = %q %q", actionGroup, viewGroup)
 	}
 }
 
@@ -293,13 +280,13 @@ func TestRecoveryTopicsInheritSourceRecordAndHeaderCapacity(t *testing.T) {
 	}
 }
 
-func TestMigrationRegistryKeepsRabbitMQActiveByDefault(t *testing.T) {
-	for _, spec := range Migrations() {
-		if spec.DefaultProducer != ProducerModeRabbit || spec.DefaultConsumer != ConsumerModeRabbit {
-			t.Fatalf("unsafe default for %s: %+v", spec.Responsibility, spec)
-		}
+func TestRegistryContainsOnlyActiveConsumerGroups(t *testing.T) {
+	if len(ConsumerGroups()) != 6 {
+		t.Fatalf("consumer group count = %d", len(ConsumerGroups()))
 	}
-	if ValidProducerMode("dual") || ValidConsumerMode("rabbit_and_kafka") {
-		t.Fatal("unregistered dual-active mode was accepted")
+	for _, group := range ConsumerGroups() {
+		if _, err := Recovery(group.ID); err != nil {
+			t.Fatalf("active group %s has no recovery policy: %v", group.ID, err)
+		}
 	}
 }

@@ -171,8 +171,8 @@ feed:hot:window:v1:{windowEndUnix}
 首次公开视频由 `frux.video.published.v1` 提供 30 天保留事实。Feed 使用独立
 `frux.feed.video-published.v1` Group，在卡片预热和 inbox/author-outbox 幂等 ZSET 写入成功后才提交
 Offset。Embedding Group 的延迟和重放不会阻塞 Feed Group；重复记录继续使用原始
-`published_at`，不会改变 Timeline 顺序。切换前使用独立 shadow Group 做信封、key、年龄和事实校验，
-异常时只回滚 Feed responsibility 到 RabbitMQ。
+`published_at`，不会改变 Timeline 顺序。失败在 Feed Group 自己的固定 retry tiers 和 DLQ 中恢复，
+不会影响 embedding Group。
 
 关注场景在 Web 中额外展示 208px 关注目录。目录数据来自关系模块
 `GET /api/users/me/following`，拥有独立的 query、cursor、loading 和 error 状态；目录滚轮与指针
@@ -218,6 +218,5 @@ session/context、下一 refresh index 和反馈抑制集合。用户直接切�
 - 左侧导航只在当前活动 Feed 的同一高亮行内显示低强调单向刷新按钮，不使用独立凸起方块。点击栏目主体仍恢复快照；
   点击刷新按钮会关闭临时 UI、保留其他场景快照，并让当前场景从第一页和第一条卡片重新开始。
 
-Feed shadow parity 只读 PostgreSQL follower 真相与 Redis inbox/author-outbox，不执行预热或 fanout。
-缺失事实按 propagation pending 最多内联重试三次，冲突才记录 mismatch；配置 shadow/active
-cutover 时 parity reader 不能为空。
+Feed Kafka Handler 只在 follower 真相读取和 Redis inbox/author-outbox 幂等写成功后提交 Offset。
+失败进入 Feed Group 自己的固定 retry tiers，不会阻塞 embedding Group。

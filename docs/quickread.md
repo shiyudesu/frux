@@ -11,7 +11,7 @@ Frux 是一个短视频 Feed 系统。你可以把它理解成五条主线：
 | 用户 | 注册、登录、资料、隐私、关注关系 | `account`、`relation` |
 | 内容 | 发布、可见性、批量管理、合集、上传 | `video`、`upload` |
 | 分发 | Timeline、Hot、推荐、分页、缓存 | `feed`、`recommendation`、Redis |
-| 互动与观看 | 点赞、收藏、评论、曝光、观看历史 | `interaction`、`exposure`、Redis、RabbitMQ |
+| 互动与观看 | 点赞、收藏、评论、曝光、观看历史 | `interaction`、`exposure`、Redis、Kafka |
 | 个人内容中心 | 喜欢、收藏、历史、稍后再看聚合 | `library` + account/video/interaction/exposure 适配器 |
 
 读代码时优先围绕这五条主线理解项目。个人内容中心是跨模块聚合，但仍通过 Domain 窄接口保持所有权边界。
@@ -27,7 +27,7 @@ apps/api/
   internal/
     domain/                        # 领域层：实体、错误、仓储接口
     application/                   # 应用层：业务用例编排
-    infra/                         # 基础设施：PostgreSQL、Redis、RabbitMQ、JWT
+    infra/                         # 基础设施：PostgreSQL、Redis、Kafka、JWT
     infra/httphertz/               # Hertz 启动配置、静态文件适配
     interfaces/http/               # HTTP 层：路由、Handler、中间件、DTO
   test/                            # API 流程测试
@@ -40,7 +40,7 @@ apps/api/
 | `interfaces/http` | Handler 和 Router | 接口路径、请求参数、响应结构 |
 | `application` | Service | 一个业务动作如何编排 |
 | `domain` | Entity、Error、Repository | 业务规则和模块抽象 |
-| `infra` | Persistence、Cache、MQ | PostgreSQL、Redis、RabbitMQ 如何实现 |
+| `infra` | Persistence、Cache、Kafka | PostgreSQL、Redis、Kafka 如何实现 |
 
 推荐从 HTTP 层进入，再顺着 Service、Domain、Infra 往下追。
 
@@ -56,12 +56,12 @@ apps/api/
 4. `apps/api/internal/infra/httphertz`
 5. `apps/api/internal/interfaces/http/router/router.go`
 
-重点看 `router.Register`。它把 GORM 仓储、Redis 缓存、RabbitMQ、JWT、各模块 Service 和 Handler 组装到一起。
+重点看 `router.Register`。它把 GORM 仓储、Redis 缓存、Kafka、JWT、各模块 Service 和 Handler 组装到一起。
 
 你需要记住这个装配顺序：
 
 ```text
-Config -> DB/Redis/RabbitMQ/JWT -> Repository -> Service -> Handler -> Router
+Config -> DB/Redis/Kafka/JWT -> Repository -> Service -> Handler -> Router
 ```
 
 后续读任何接口，都可以回到 `router.Register` 找它的入口。
@@ -169,7 +169,7 @@ GET /api/feed-items?scene=hot
 
 ### 4.5 点赞收藏异步落库链路
 
-这条链路体现 Redis + RabbitMQ 的削峰设计。
+这条链路体现 Redis 快速状态、Kafka 事件交接和 PostgreSQL fallback 的设计。
 
 入口：
 
@@ -185,7 +185,7 @@ DELETE /api/videos/{videoId}/favorite
 1. `interfaces/http/interaction/handler.go`
 2. `application/interaction/service.go`
 3. `infra/cache/feed_cache.go`
-4. `infra/mq/rabbitmq.go`
+4. `infra/behaviorstream/bridge.go`
 5. `application/interaction/worker.go`
 6. `infra/persistence/interaction/gorm.go`
 
@@ -195,7 +195,7 @@ DELETE /api/videos/{videoId}/favorite
 HTTP Handler
   -> Interaction Service
   -> Redis 写行为状态和实时计数
-  -> RabbitMQ 投递 ActionChangedEvent
+  -> Kafka 投递 ActionChangedEvent
   -> ActionWorker 消费事件
   -> PostgreSQL 写 interaction_action 和 video_stat
 ```
@@ -208,12 +208,12 @@ video:stat:counter:v1:{video_id}
 video:stat:v1:{video_id}
 ```
 
-RabbitMQ 配置：
+Kafka 契约：
 
 ```text
-exchange: frux.interaction
-queue: frux.interaction.action_changed
-routing key: interaction.action_changed
+topic: frux.interaction.action-changed.v1
+group: frux.interaction.persist-action.v1
+key: action:{user_id}:{video_id}:{action}
 ```
 
 读这条链路时，重点理解两个结果：
@@ -289,7 +289,7 @@ go test ./...
 | 看数据库连接 | `apps/api/internal/infra/database` |
 | 看 JWT | `apps/api/internal/infra/jwt` |
 | 看 Redis 缓存 | `apps/api/internal/infra/cache/feed_cache.go` |
-| 看 RabbitMQ | `apps/api/internal/infra/mq/rabbitmq.go` |
+| 看 Kafka | `apps/api/internal/infra/kafka` |
 | 看数据库模型 | `apps/api/internal/infra/persistence/*/model.go` |
 | 看个人内容聚合 | `apps/api/internal/application/library/service.go` |
 | 看创作者管理 | `apps/api/internal/application/video/management_service.go` |
@@ -321,7 +321,7 @@ go test ./...
 | 可见性 | `video.visibility` | 公开读取为何同时检查生命周期和可见性 |
 | 跨模块适配 | `router/library_adapters.go` | library 如何不依赖其他模块 Infrastructure |
 | Redis 缓存 | `infra/cache/feed_cache.go` | Feed 页、卡片、计数、热榜如何缓存 |
-| RabbitMQ | `infra/mq/rabbitmq.go` | 事件如何发布、消费、确认 |
+| Kafka | `infra/kafka`、`infra/behaviorstream` | 事件如何发布、消费、提交 Offset 和恢复 |
 | Worker | `application/interaction/worker.go` | 异步事件如何落库 |
 | 测试替身 | `apps/api/test` | 内存仓储如何模拟真实行为 |
 
@@ -348,11 +348,11 @@ curl http://127.0.0.1:8080/health
 4. 拉取 Timeline Feed。
 5. 点赞视频。
 6. 查看 Hot Feed。
-7. 查看 RabbitMQ 队列是否消费完成。
+7. 查看 Kafka active Group lag 和 recovery dashboard。
 8. 打开 `/profile`，验证公开/私密作品、喜欢、收藏、历史和稍后再看。
 9. 查 PostgreSQL 的 `interaction_action`、`video_stat`、`user_content_stat`、`video_view_history`、`user_watch_later`。
 
-这条路径能覆盖账号、视频、Feed、Redis、RabbitMQ、PostgreSQL 的核心闭环。
+这条路径能覆盖账号、视频、Feed、Redis、Kafka、PostgreSQL 的核心闭环。
 
 ## 10. 继续深入读哪些文档
 

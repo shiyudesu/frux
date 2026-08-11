@@ -391,10 +391,45 @@ func TestRetryOffsetsRejectExistingActiveGroupWithoutOffsets(t *testing.T) {
 		ends:       listedOffsets(topic, 20),
 		groupState: retryConsumerGroupState{Exists: true},
 	}
+
 	admin, identity := testRetryOffsetAdministrator(t, backend, store, topic)
 	err := admin.Initialize(context.Background(), identity.ConsumerGroup, topic)
 	if !errors.Is(err, ErrConsumerDataLoss) || len(backend.commitCalls) != 0 {
 		t.Fatalf("error=%v commits=%v", err, backend.commitCalls)
+	}
+}
+
+func TestSourceOffsetsAdoptSparsePreMarkerGroup(t *testing.T) {
+	topic := "frux.video.published.v1"
+	store := newMemoryRetryOffsetStore()
+	backend := &fakeRetryOffsetBackend{
+		committed:  committedOffsets(topic, 9, -1, 13),
+		starts:     listedOffsets(topic, 7, 8, 9),
+		ends:       listedOffsets(topic, 20, 21, 22),
+		groupState: retryConsumerGroupState{Exists: true, Inactive: true},
+	}
+	admin, identity := testRetryOffsetAdministrator(t, backend, store, topic)
+	admin.adoptSparseOffsets = true
+	if err := admin.Initialize(context.Background(), identity.ConsumerGroup, topic); err != nil {
+		t.Fatal(err)
+	}
+	if !equalPartitions(backend.commitCalls, []int32{1}) {
+		t.Fatalf("committed partitions = %v", backend.commitCalls)
+	}
+	lease, err := store.Lock(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	state, err := lease.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Complete ||
+		state.Partitions[0].InitialOffset != 9 ||
+		state.Partitions[1].InitialOffset != 8 ||
+		state.Partitions[2].InitialOffset != 13 {
+		t.Fatalf("adopted state = %+v", state)
 	}
 }
 

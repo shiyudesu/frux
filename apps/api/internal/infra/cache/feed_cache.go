@@ -30,7 +30,6 @@ const actionIdempotencyReceiptsField = "idempotency_receipts"
 const actionIdempotencyReceiptsMaxBytes = actionIdempotencyReceiptLimit * (domaininteraction.MaxIdempotencyKeyLength*6 + 32)
 const actionStateHandoffConfirmedField = "handoff_confirmed"
 const actionStateHandoffDependencyField = "handoff_dependency"
-const actionStateDeliveryIncompleteField = "delivery_incomplete"
 
 type redisWatchCmdable interface {
 	redis.Cmdable
@@ -59,19 +58,12 @@ type redisStatCacheClient interface {
 
 // FeedCache 使用 Redis 保存 Feed 查询结果。
 type FeedCache struct {
-	client                       redisWatchCmdable
-	requireExplicitActionHandoff bool
+	client redisWatchCmdable
 }
 
 // NewFeedCache 创建 Feed 结果缓存。
 func NewFeedCache(client redisWatchCmdable) *FeedCache {
 	return &FeedCache{client: client}
-}
-
-func (c *FeedCache) RequireExplicitActionHandoff(required bool) {
-	if c != nil {
-		c.requireExplicitActionHandoff = required
-	}
 }
 
 // GetPage 读取缓存中的轻量 Feed 页。
@@ -557,16 +549,13 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 		previous, cached := actionStateSnapshotFromRedis(values)
 		receipts := actionIdempotencyReceiptsFromRedis(values[actionIdempotencyReceiptsField])
 		handoffConfirmed := actionStateHandoffConfirmed(values, receipts, previous)
-		deliveryIncomplete := actionStateHandoffStored(values[actionStateDeliveryIncompleteField])
 		baselineConfirmsCurrent := false
 		if initialState != nil && (!cached || initialState.Version > previous.Version) {
 			previous = *initialState
 			cached = false
-			handoffConfirmed = !c.requireExplicitActionHandoff ||
-				!actionStateNeedsHandoff(previous)
+			handoffConfirmed = true
 		}
-		if initialState != nil && cached && actionStateSnapshotsMatch(*initialState, previous) &&
-			!deliveryIncomplete && !c.requireExplicitActionHandoff {
+		if initialState != nil && cached && actionStateSnapshotsMatch(*initialState, previous) {
 			handoffConfirmed = true
 			baselineConfirmsCurrent = !actionStateHandoffStored(values[actionStateHandoffConfirmedField])
 		}
@@ -593,9 +582,9 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 				Version:                 receipt.Version,
 				EventID:                 receipt.EventID,
 				OccurredAt:              receipt.OccurredAt,
-				ShouldPublish: !receipt.NoEvent && (deliveryIncomplete ||
-					(!receipt.HandoffConfirmed &&
-						!(actionIdempotencyReceiptReferencesSnapshot(receipt, previous) && handoffConfirmed))),
+				ShouldPublish: !receipt.NoEvent &&
+					!receipt.HandoffConfirmed &&
+					!(actionIdempotencyReceiptReferencesSnapshot(receipt, previous) && handoffConfirmed),
 			}
 			return nil
 		}
@@ -638,7 +627,7 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 				Version:                 previous.Version,
 				EventID:                 previous.EventID,
 				OccurredAt:              previous.OccurredAt,
-				ShouldPublish:           receipt.EventID != "" && (!handoffConfirmed || deliveryIncomplete),
+				ShouldPublish:           receipt.EventID != "" && !handoffConfirmed,
 			}
 			return nil
 		}
@@ -656,8 +645,7 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 			}
 		}
 		if delta == 0 {
-			needsHandoff := actionStateNeedsHandoff(previous) &&
-				(!handoffConfirmed || deliveryIncomplete)
+			needsHandoff := actionStateNeedsHandoff(previous) && !handoffConfirmed
 			if idempotencyKey != "" {
 				if needsHandoff {
 					receipt := actionIdempotencyReceiptFromSnapshot(previous, false, true)
@@ -744,18 +732,17 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.HSet(ctx, actionKey, map[string]any{
-				"status":                           targetStatus,
-				"idempotency_key":                  idempotencyKey,
-				actionIdempotencyReceiptsField:     string(encodedReceipts),
-				"recommendation_request_id":        strings.TrimSpace(mutation.RecommendationRequestID),
-				"version_counter":                  nextVersion,
-				"state_version":                    nextVersion,
-				"event_id":                         mutation.EventID,
-				"occurred_at":                      occurredAt,
-				"updated_at":                       occurredAt,
-				actionStateHandoffConfirmedField:   0,
-				actionStateHandoffDependencyField:  0,
-				actionStateDeliveryIncompleteField: 0,
+				"status":                          targetStatus,
+				"idempotency_key":                 idempotencyKey,
+				actionIdempotencyReceiptsField:    string(encodedReceipts),
+				"recommendation_request_id":       strings.TrimSpace(mutation.RecommendationRequestID),
+				"version_counter":                 nextVersion,
+				"state_version":                   nextVersion,
+				"event_id":                        mutation.EventID,
+				"occurred_at":                     occurredAt,
+				"updated_at":                      occurredAt,
+				actionStateHandoffConfirmedField:  0,
+				actionStateHandoffDependencyField: 0,
 			})
 			pipe.Expire(ctx, actionKey, actionStateTTL)
 			queueActionStatBaseInit(ctx, pipe, counterBaseKey, baseStat)
@@ -771,22 +758,21 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID int64, videoID in
 		}
 
 		result = &applicationinteraction.ActionStateResult{
-			UserID:                     userID,
-			VideoID:                    videoID,
-			ActionType:                 actionType,
-			Active:                     active,
-			Delta:                      delta,
-			IdempotencyKey:             idempotencyKey,
-			RecommendationRequestID:    strings.TrimSpace(mutation.RecommendationRequestID),
-			Version:                    nextVersion,
-			EventID:                    mutation.EventID,
-			OccurredAt:                 mutation.OccurredAt.UTC(),
-			ShouldPublish:              delta != 0,
-			CanRollback:                true,
-			Previous:                   previous,
-			PreviousHandoffConfirmed:   handoffConfirmed,
-			PreviousHasDependency:      actionStateHasHandoffDependency(values),
-			PreviousDeliveryIncomplete: deliveryIncomplete,
+			UserID:                   userID,
+			VideoID:                  videoID,
+			ActionType:               actionType,
+			Active:                   active,
+			Delta:                    delta,
+			IdempotencyKey:           idempotencyKey,
+			RecommendationRequestID:  strings.TrimSpace(mutation.RecommendationRequestID),
+			Version:                  nextVersion,
+			EventID:                  mutation.EventID,
+			OccurredAt:               mutation.OccurredAt.UTC(),
+			ShouldPublish:            delta != 0,
+			CanRollback:              true,
+			Previous:                 previous,
+			PreviousHandoffConfirmed: handoffConfirmed,
+			PreviousHasDependency:    actionStateHasHandoffDependency(values),
 		}
 		return nil
 	}, actionKey)
@@ -856,58 +842,8 @@ func (c *FeedCache) ConfirmActionStateHandoff(ctx context.Context, state *applic
 				pipe.HSet(ctx, actionKey, actionIdempotencyReceiptsField, string(encodedReceipts))
 			}
 			if currentMatches {
-				pipe.HSet(ctx, actionKey, map[string]any{
-					actionStateHandoffConfirmedField:   1,
-					actionStateDeliveryIncompleteField: 0,
-				})
+				pipe.HSet(ctx, actionKey, actionStateHandoffConfirmedField, 1)
 			}
-			pipe.Expire(ctx, actionKey, actionStateTTL)
-			return nil
-		})
-		return err
-	}, actionKey)
-}
-
-func (c *FeedCache) MarkActionStateDeliveryIncomplete(
-	ctx context.Context,
-	state *applicationinteraction.ActionStateResult,
-) error {
-	if state == nil || state.UserID <= 0 || state.VideoID <= 0 ||
-		strings.TrimSpace(state.EventID) == "" {
-		return domaininteraction.ErrInvalidActionEvent
-	}
-	actionKey := interactionActionKey(state.UserID, state.VideoID, state.ActionType)
-	return c.client.Watch(ctx, func(tx *redis.Tx) error {
-		values, err := tx.HGetAll(ctx, actionKey).Result()
-		if err != nil {
-			return err
-		}
-		if !actionStateMatchesResult(values, state) {
-			return nil
-		}
-		receipts := actionIdempotencyReceiptsFromRedis(values[actionIdempotencyReceiptsField])
-		changed := false
-		for index := range receipts {
-			if receipts[index].EventID == state.EventID &&
-				receipts[index].Version == state.Version &&
-				receipts[index].HandoffConfirmed {
-				receipts[index].HandoffConfirmed = false
-				changed = true
-			}
-		}
-		encodedReceipts, err := json.Marshal(receipts)
-		if err != nil {
-			return err
-		}
-		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			fields := map[string]any{
-				actionStateHandoffConfirmedField:   0,
-				actionStateDeliveryIncompleteField: 1,
-			}
-			if changed {
-				fields[actionIdempotencyReceiptsField] = string(encodedReceipts)
-			}
-			pipe.HSet(ctx, actionKey, fields)
 			pipe.Expire(ctx, actionKey, actionStateTTL)
 			return nil
 		})
@@ -947,19 +883,18 @@ func (c *FeedCache) RollbackActionState(ctx context.Context, state *applicationi
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			if state.Previous.Exists {
 				pipe.HSet(ctx, actionKey, map[string]any{
-					"status":                           actionStatusValue(state.Previous.Active),
-					"idempotency_key":                  state.Previous.IdempotencyKey,
-					"recommendation_request_id":        state.Previous.RecommendationRequestID,
-					"state_version":                    state.Previous.Version,
-					"event_id":                         state.Previous.EventID,
-					"occurred_at":                      formatOptionalActionTime(state.Previous.OccurredAt),
-					"updated_at":                       formatOptionalActionTime(state.Previous.UpdatedAt),
-					actionStateHandoffConfirmedField:   actionStateHandoffFlag(state.PreviousHandoffConfirmed),
-					actionStateHandoffDependencyField:  actionStateHandoffFlag(state.PreviousHasDependency),
-					actionStateDeliveryIncompleteField: actionStateHandoffFlag(state.PreviousDeliveryIncomplete),
+					"status":                          actionStatusValue(state.Previous.Active),
+					"idempotency_key":                 state.Previous.IdempotencyKey,
+					"recommendation_request_id":       state.Previous.RecommendationRequestID,
+					"state_version":                   state.Previous.Version,
+					"event_id":                        state.Previous.EventID,
+					"occurred_at":                     formatOptionalActionTime(state.Previous.OccurredAt),
+					"updated_at":                      formatOptionalActionTime(state.Previous.UpdatedAt),
+					actionStateHandoffConfirmedField:  actionStateHandoffFlag(state.PreviousHandoffConfirmed),
+					actionStateHandoffDependencyField: actionStateHandoffFlag(state.PreviousHasDependency),
 				})
 			} else {
-				pipe.HDel(ctx, actionKey, "status", "idempotency_key", "recommendation_request_id", "state_version", "event_id", "occurred_at", "updated_at", actionStateHandoffConfirmedField, actionStateHandoffDependencyField, actionStateDeliveryIncompleteField)
+				pipe.HDel(ctx, actionKey, "status", "idempotency_key", "recommendation_request_id", "state_version", "event_id", "occurred_at", "updated_at", actionStateHandoffConfirmedField, actionStateHandoffDependencyField)
 			}
 			if len(receipts) == 0 {
 				pipe.HDel(ctx, actionKey, actionIdempotencyReceiptsField)

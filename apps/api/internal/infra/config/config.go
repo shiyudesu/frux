@@ -22,7 +22,6 @@ var ErrInvalidPlaybackConfig = errors.New("invalid playback config")
 var ErrInvalidGovernanceConfig = errors.New("invalid governance config")
 var ErrInvalidInternalToken = errors.New("invalid internal token")
 var ErrInvalidRateLimitConfig = errors.New("invalid rate limit config")
-var ErrInvalidRabbitMQConfig = errors.New("invalid rabbitmq config")
 var ErrInvalidKafkaConfig = errors.New("invalid kafka config")
 var ErrInvalidJWTConfig = errors.New("invalid jwt config")
 var ErrInvalidModerationConfig = errors.New("invalid moderation config")
@@ -236,14 +235,10 @@ func ValidateAPIConfig(cfg *Config) error {
 	if err := normalizeAndValidateRateLimitConfig(&cfg.RateLimit); err != nil {
 		return err
 	}
-	if err := normalizeAndValidateRabbitMQConfig(&cfg.RabbitMQ); err != nil {
-		return err
-	}
 	if err := normalizeAndValidateKafkaConfig(&cfg.Kafka); err != nil {
 		return err
 	}
-	if cfg.Kafka.Migration.ActionChanged.ProducerMode != "rabbit" &&
-		strings.TrimSpace(cfg.Redis.Addr) == "" {
+	if !cfg.Kafka.Enabled || strings.TrimSpace(cfg.Redis.Addr) == "" {
 		return ErrInvalidKafkaConfig
 	}
 	return nil
@@ -264,13 +259,8 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 	}
 	cfg.ClientID = defaultValue(cfg.ClientID, "frux")
 	cfg.TopicPrefix = strings.TrimSpace(strings.TrimSuffix(cfg.TopicPrefix, "."))
-	cfg.ShadowDeployment = strings.ToLower(strings.TrimSpace(cfg.ShadowDeployment))
-	if cfg.ShadowDeployment == "" {
-		cfg.ShadowDeployment = cfg.Environment
-	}
 	if !validKafkaName(cfg.ClientID, 128) ||
-		(cfg.TopicPrefix != "" && !validKafkaTopicPrefix(cfg.TopicPrefix)) ||
-		!validKafkaTopicPrefix(cfg.ShadowDeployment) {
+		(cfg.TopicPrefix != "" && !validKafkaTopicPrefix(cfg.TopicPrefix)) {
 		return ErrInvalidKafkaConfig
 	}
 	if len(cfg.Brokers) > 16 {
@@ -383,54 +373,6 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 		cfg.ProductionValidation.MinInSyncReplicas > cfg.ProductionValidation.ReplicationFactor {
 		return ErrInvalidKafkaConfig
 	}
-	streams := []*KafkaStreamMigrationConfig{
-		&cfg.Migration.ActionChanged,
-		&cfg.Migration.VideoPublished,
-		&cfg.Migration.VideoFeed,
-		&cfg.Migration.VideoEmbedding,
-		&cfg.Migration.ViewEventRecorded,
-		&cfg.Migration.MediaProcessing,
-	}
-	for _, stream := range streams {
-		stream.ProducerMode = strings.ToLower(strings.TrimSpace(stream.ProducerMode))
-		stream.ConsumerMode = strings.ToLower(strings.TrimSpace(stream.ConsumerMode))
-		stream.CutoverBoundary = strings.TrimSpace(stream.CutoverBoundary)
-		if stream.ProducerMode == "" {
-			stream.ProducerMode = "rabbit"
-		}
-		if stream.ConsumerMode == "" {
-			stream.ConsumerMode = "rabbit"
-		}
-		switch stream.ProducerMode {
-		case "rabbit", "rabbit_with_kafka_mirror", "kafka_with_rabbit_mirror", "kafka":
-		default:
-			return ErrInvalidKafkaConfig
-		}
-		switch stream.ConsumerMode {
-		case "rabbit", "kafka_shadow", "kafka":
-		default:
-			return ErrInvalidKafkaConfig
-		}
-		if stream.CutoverBoundary != "" {
-			if _, err := time.Parse(time.RFC3339, stream.CutoverBoundary); err != nil {
-				return ErrInvalidKafkaConfig
-			}
-		}
-		if stream.ConsumerMode == "kafka" && stream.CutoverBoundary == "" {
-			return ErrInvalidKafkaConfig
-		}
-		if !cfg.Enabled && (stream.ProducerMode != "rabbit" || stream.ConsumerMode != "rabbit") {
-			return ErrInvalidKafkaConfig
-		}
-	}
-	if cfg.Migration.ActionChanged.ConsumerMode == "kafka" &&
-		cfg.Migration.ViewEventRecorded.ConsumerMode != "kafka" {
-		return ErrInvalidKafkaConfig
-	}
-	if kafkaPrimary(cfg.Migration.ActionChanged.ProducerMode) &&
-		!kafkaPrimary(cfg.Migration.ViewEventRecorded.ProducerMode) {
-		return ErrInvalidKafkaConfig
-	}
 	if !cfg.Enabled {
 		return nil
 	}
@@ -456,10 +398,6 @@ func normalizeAndValidateKafkaConfig(cfg *KafkaConfig) error {
 		return ErrInvalidKafkaConfig
 	}
 	return nil
-}
-
-func kafkaPrimary(mode string) bool {
-	return mode == "kafka" || mode == "kafka_with_rabbit_mirror"
 }
 
 func validKafkaName(value string, max int) bool {
@@ -514,73 +452,6 @@ func normalizeAndValidateJWTConfig(cfg *JWTConfig) error {
 	adminTTL, err := time.ParseDuration(cfg.AdminAccessTTL)
 	if err != nil || adminTTL < 5*time.Minute || adminTTL > maxAdminAccessTTL {
 		return ErrInvalidJWTConfig
-	}
-	return nil
-}
-
-func normalizeAndValidateRabbitMQConfig(cfg *RabbitMQConfig) error {
-	if cfg == nil {
-		return ErrInvalidRabbitMQConfig
-	}
-	cfg.URL = strings.TrimSpace(cfg.URL)
-	if cfg.URL == "" {
-		return nil
-	}
-	parsed, err := url.Parse(cfg.URL)
-	if err != nil || (parsed.Scheme != "amqp" && parsed.Scheme != "amqps") || parsed.Host == "" {
-		return ErrInvalidRabbitMQConfig
-	}
-	cfg.ManagementURL = strings.TrimRight(strings.TrimSpace(cfg.ManagementURL), "/")
-	cfg.ManagementUsername = strings.TrimSpace(cfg.ManagementUsername)
-	cfg.ManagementPassword = strings.TrimSpace(cfg.ManagementPassword)
-	cfg.ManagementTimeout = defaultDuration(cfg.ManagementTimeout, "2s")
-	if _, err := time.ParseDuration(cfg.ManagementTimeout); err != nil {
-		return ErrInvalidRabbitMQConfig
-	}
-	dead := &cfg.DeadLetter
-	dead.VersionSuffix = defaultValue(dead.VersionSuffix, ".q2")
-	dead.ExchangeSuffix = defaultValue(dead.ExchangeSuffix, ".dlx.q2")
-	dead.QueueSuffix = defaultValue(dead.QueueSuffix, ".dlq.q2")
-	dead.ReplayTimeout = defaultDuration(dead.ReplayTimeout, "5s")
-	if dead.DeliveryLimit == 0 {
-		dead.DeliveryLimit = 5
-	}
-	if dead.SourceMaxLength == 0 {
-		dead.SourceMaxLength = 100_000
-	}
-	if dead.DeadLetterMaxLength == 0 {
-		dead.DeadLetterMaxLength = 10_000
-	}
-	if dead.PreviewLimit == 0 {
-		dead.PreviewLimit = 20
-	}
-	if !dead.Enabled {
-		return nil
-	}
-	if dead.DeliveryLimit < 1 || dead.DeliveryLimit > 100 ||
-		dead.SourceMaxLength < 1 || dead.DeadLetterMaxLength < 1 ||
-		dead.PreviewLimit < 1 || dead.PreviewLimit > 100 {
-		return ErrInvalidRabbitMQConfig
-	}
-	if _, err := time.ParseDuration(dead.ReplayTimeout); err != nil {
-		return ErrInvalidRabbitMQConfig
-	}
-	if cfg.ManagementURL != "" {
-		management, err := url.Parse(cfg.ManagementURL)
-		if err != nil || (management.Scheme != "http" && management.Scheme != "https") ||
-			management.Host == "" || cfg.ManagementUsername == "" || cfg.ManagementPassword == "" {
-			return ErrInvalidRabbitMQConfig
-		}
-	}
-	for _, mode := range []string{
-		dead.ActionChangedMode, dead.VideoPublishedMode, dead.VideoEmbeddingMode,
-		dead.ViewEventRecordedMode, dead.MediaProcessingMode,
-	} {
-		switch strings.ToLower(strings.TrimSpace(mode)) {
-		case "", "legacy", "dual", "new":
-		default:
-			return ErrInvalidRabbitMQConfig
-		}
 	}
 	return nil
 }

@@ -238,7 +238,7 @@ func TestKafkaDeadLetterReplayAuditIsSeparateAndStrict(t *testing.T) {
 	}
 	base.Detail["queue"] = "rabbit-queue"
 	if _, err := NewFact(base); err == nil {
-		t.Fatal("Kafka audit accepted RabbitMQ detail")
+		t.Fatal("Kafka audit accepted legacy queue detail")
 	}
 	denied := FactInput{
 		ActorID: 12, Permission: domainaccount.PermissionGovernanceExecute,

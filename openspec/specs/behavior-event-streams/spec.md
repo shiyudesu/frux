@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Defines retained Kafka streams, durable consumer boundaries, ordering, idempotency, and controlled
-RabbitMQ-to-Kafka migration for accepted action changes and committed view events.
+Defines retained Kafka streams, durable consumer boundaries, ordering, idempotency, fallback, and
+recovery for accepted action changes and committed view events.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ Frux SHALL publish accepted action changes and committed view events to separate
 
 #### Scenario: Behavior topic uses producer create time
 - **WHEN** topology validation finds `message.timestamp.type` other than `LogAppendTime`
-- **THEN** startup rejects the topic as incompatible for timestamp cutover
+- **THEN** startup rejects the topic as incompatible with retained-event ordering and recovery
 
 ### Requirement: Behavior Consumer Group Ownership
 Each behavior responsibility SHALL use one registered active Kafka consumer group and SHALL commit its offset only after the existing durable receipt, fact, and downstream outbox boundary commits.
@@ -48,52 +48,24 @@ Frux SHALL preserve action-version ordering, deterministic compatibility tie-bre
 - **WHEN** a process stops after PostgreSQL commits but before the offset commit succeeds
 - **THEN** the stable event identity prevents another business fact or projection handoff
 
-### Requirement: Behavior Stream Cutover
-Frux SHALL validate each Kafka behavior stream with mirror production and a non-mutating shadow group before enabling its active group, and SHALL record an explicit cutover boundary.
+### Requirement: Kafka-Only Behavior Runtime
+Frux SHALL publish behavior events only to Kafka and SHALL run one registered active Consumer Group per behavior responsibility.
 
-#### Scenario: One transition transport fails
-- **WHEN** either RabbitMQ or Kafka fails or cannot confirm publication in a dual transition mode
-- **THEN** publication returns an error that exposes each transport's durable acknowledgement state, action fallback may persist the business fact without confirming dual delivery, and view outbox retry remains pending until both transports acknowledge
+#### Scenario: Action publication fails
+- **WHEN** Kafka fails or cannot confirm action publication
+- **THEN** synchronous PostgreSQL fallback may persist the stable event and conditional Redis rollback is allowed only when Kafka is known not to have acknowledged it
 
-#### Scenario: Action fallback succeeds after incomplete dual publication
-- **WHEN** synchronous PostgreSQL fallback succeeds after only one or neither transition transport acknowledges
-- **THEN** the API reports a retryable update failure and leaves the Redis handoff unconfirmed so the same idempotency key republishes the missing transport
+#### Scenario: View publication fails
+- **WHEN** Kafka does not acknowledge a view event
+- **THEN** the PostgreSQL outbox row remains pending and retries the stable event
 
-#### Scenario: Active action transport acknowledged but fallback fails
-- **WHEN** dual action publication is incomplete, synchronous PostgreSQL fallback fails, and the active primary transport durably acknowledged the stable event
-- **THEN** Frux confirms the Redis handoff, returns a visible update failure, and does not roll back the acknowledged action version
+#### Scenario: Worker starts behavior groups
+- **WHEN** the Worker starts view and action consumers
+- **THEN** it waits for a non-empty view partition assignment before starting the action group
 
-#### Scenario: Only the action mirror acknowledged but fallback fails
-- **WHEN** dual action publication is incomplete, synchronous PostgreSQL fallback fails, and only the non-active mirror transport acknowledged the stable event
-- **THEN** Frux preserves the Redis mutation without confirming its handoff so an idempotent retry republishes it to the active transport
-
-#### Scenario: No action transport acknowledged and fallback fails
-- **WHEN** dual action publication and synchronous PostgreSQL fallback fail without any durable broker acknowledgement
-- **THEN** Frux may conditionally roll back only the still-current Redis version
-
-#### Scenario: Shadow action consumer receives a record
-- **WHEN** RabbitMQ remains the active action transport
-- **THEN** the Kafka shadow consumer validates the record and optional fact parity without invoking action persistence
-
-#### Scenario: RabbitMQ remains the active consumer
-- **WHEN** a migration configuration selects Kafka primary with RabbitMQ mirror
-- **THEN** Frux rejects the pair because a failed RabbitMQ mirror would bypass the active consumer
-
-#### Scenario: Active Kafka group starts at cutover
-- **WHEN** an active group has no committed offsets and starts with a cutover boundary
-- **THEN** Frux resolves the broker append-time boundary per partition and durably initializes the group before consumption
-
-#### Scenario: Producer clock differs from broker clock
-- **WHEN** an event envelope carries a producer timestamp before or after the broker clock
-- **THEN** timestamp cutover resolution uses the broker-assigned record append time rather than the producer timestamp
-
-#### Scenario: Action and view boundaries are equal
-- **WHEN** both Kafka active groups are configured with equal cutover boundaries
-- **THEN** startup rejects the configuration because the action boundary must be strictly after the view boundary
-
-#### Scenario: Worker starts behavior Kafka groups
-- **WHEN** view and action Kafka active or shadow groups are enabled in one worker
-- **THEN** the worker waits for a non-empty view partition assignment before starting the action group
+#### Scenario: New behavior group starts
+- **WHEN** a behavior group has no durable marker or committed offsets
+- **THEN** Frux initializes every partition at retained start before joining
 
 #### Scenario: Consumer client has no assignment
 - **WHEN** a Kafka consumer client is constructed but has not received any non-empty partition assignment
@@ -107,25 +79,17 @@ Frux SHALL validate each Kafka behavior stream with mirror production and a non-
 - **WHEN** the supervisor exits fatally during initialization or runtime before a non-empty assignment
 - **THEN** worker startup cancels the consumer and returns the fatal cause
 
-#### Scenario: Active Kafka group restarts
+#### Scenario: Behavior group restarts
 - **WHEN** the group already has committed offsets
-- **THEN** Frux preserves those offsets and does not reapply or rewind to the configured boundary
-
-#### Scenario: Shadow fact has not propagated yet
-- **WHEN** a valid Kafka mirror record arrives before the RabbitMQ path has created its durable fact
-- **THEN** parity is pending and receives bounded delayed retries rather than being committed as a mismatch
-
-#### Scenario: Shadow fact conflicts
-- **WHEN** a durable fact with the same identity exists but its payload conflicts
-- **THEN** parity is recorded as a mismatch without pending retries
+- **THEN** Frux preserves those offsets and does not rewind them
 
 #### Scenario: Active consumer initialization is non-retryable
 - **WHEN** authentication, configuration, or registered handler-contract initialization fails
 - **THEN** the required consumer is unhealthy and worker startup or runtime fails visibly instead of silently retrying forever
 
-#### Scenario: Behavior stream rolls back
-- **WHEN** Kafka production, lag, or correctness exceeds the rollback threshold
-- **THEN** Frux stops the Kafka active group and restores RabbitMQ consumption before returning RabbitMQ to primary production
+#### Scenario: Established behavior offset is lost
+- **WHEN** the durable marker proves a behavior offset was initialized but Kafka no longer retains it
+- **THEN** Frux reports explicit data loss and does not reset the group
 
 ### Requirement: Retained Behavior Availability
 Kafka SHALL retain behavior events for the registered operational replay window without replacing PostgreSQL as the long-term business or training source of truth.

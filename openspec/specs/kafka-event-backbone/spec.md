@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines Frux's versioned Kafka contracts, topic governance, acknowledged production, durable-boundary offset commits, supervised consumer groups, controlled transport migration, and bounded observability.
+Defines Frux's versioned Kafka contracts, topic governance, acknowledged production, durable-boundary offset commits, supervised consumer groups, durable offset initialization, and bounded observability.
 
 ## Requirements
 
@@ -28,9 +28,9 @@ Frux SHALL define topic names, versions, event-or-command classification, partit
 - **WHEN** production validation finds an unsafe replication setting or an incompatible registered topic policy
 - **THEN** startup fails explicitly instead of silently accepting or mutating the topology
 
-#### Scenario: Timestamp-cutover topic uses create time
+#### Scenario: Retained event topic uses create time
 - **WHEN** a retained event topic is configured with `message.timestamp.type=CreateTime`
-- **THEN** startup rejects it because cutover boundaries require broker `LogAppendTime`
+- **THEN** startup rejects it because retained ordering and recovery require broker `LogAppendTime`
 
 ### Requirement: Acknowledged Idempotent Production
 Frux Kafka producers SHALL use idempotent acknowledged production with bounded deadlines and SHALL report success only after the broker acknowledges the record.
@@ -65,20 +65,20 @@ Frux SHALL run registered Kafka consumer groups with bounded batches, partition 
 - **WHEN** the process context is canceled
 - **THEN** consumers stop polling, allow a bounded drain grace period, cancel handler contexts, commit eligible offsets, and close only after in-flight handlers return so another group member cannot mutate the same record concurrently
 
-### Requirement: Controlled Transport Migration
-Frux SHALL support registered primary/mirror producer modes and active/shadow consumer modes while ensuring that no migration configuration activates two uncontrolled business writers for one consumer responsibility.
+### Requirement: Durable Consumer Offset Initialization
+Frux SHALL initialize or verify every source and retry Consumer Group through a durable PostgreSQL marker before the group joins, preserving existing commits and rejecting established offset loss.
 
-#### Scenario: Dual transition publication partially succeeds
-- **WHEN** one required transport acknowledges and the other fails or is uncertain
-- **THEN** the registered publisher reports failure and the owning fallback or outbox retry remains active
+#### Scenario: New Consumer Group starts
+- **WHEN** a registered group has no committed offsets and no durable initialization marker
+- **THEN** Frux commits the retained-start offset for every partition and persists the completed marker before consumption
 
-#### Scenario: Kafka shadow validation runs
-- **WHEN** a stream remains RabbitMQ-active and its Kafka consumer is in shadow mode
-- **THEN** the registered shadow group accepts only the non-mutating shadow handler, validates contracts, and records parity metrics without mutating business state or using the future active group offset
+#### Scenario: Existing Consumer Group restarts
+- **WHEN** a registered group already has committed offsets
+- **THEN** Frux preserves those offsets and records them in the durable marker without rewinding
 
-#### Scenario: Invalid dual-active configuration is loaded
-- **WHEN** configuration would let RabbitMQ and Kafka consumers both invoke the same mutating responsibility
-- **THEN** Frux rejects startup
+#### Scenario: Established offset is missing
+- **WHEN** a completed durable marker exists but Kafka no longer retains the committed offset
+- **THEN** Frux reports explicit data loss and does not silently reset the group
 
 ### Requirement: Bounded Kafka Observability
 Frux SHALL expose bounded metrics for registered production, consumption, commits, contract failures, rebalances, lag, delivery delay, and topology validation.

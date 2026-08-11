@@ -10,39 +10,87 @@ metadata:
   namespace: frux
 type: Opaque
 stringData:
-  postgres-password: sealos123
+  postgres-password: "replace-with-postgres-password"
+  jwt-secret: "replace-with-strong-jwt-secret"
+  internal-token: "replace-with-strong-internal-token"
   api-config.yaml: |
     port: 8080
     jwt:
-      secret: "replace-with-strong-secret"
+      secret: "${FRUX_JWT_SECRET}"
       access_ttl: "15m"
-
+      admin_access_ttl: "30m"
+    internal:
+      enabled: true
+      token: "${FRUX_INTERNAL_TOKEN}"
     database:
       host: "postgres"
       port: 5432
       user: "frux"
-      password: "sealos123"
+      password: "${FRUX_POSTGRES_PASSWORD}"
       name: "frux"
       ssl_mode: "disable"
       time_zone: "UTC"
-
     redis:
       addr: "redis:6379"
       password: ""
       db: 0
-
-    rabbitmq:
-      url: "amqp://guest:guest@rabbitmq:5672/"
-      interaction_exchange: "frux.interaction"
-      action_changed_queue: "frux.interaction.action_changed"
-      action_changed_routing: "interaction.action_changed"
-      video_exchange: "frux.video"
-      video_published_queue: "frux.video.published"
-      video_embedding_queue: "frux.video.embedding"
-      video_published_routing: "video.published"
-      exposure_exchange: "frux.exposure"
-      view_event_recorded_queue: "frux.exposure.view_event_recorded"
-      view_event_recorded_routing: "exposure.view_event_recorded"
+    kafka:
+      enabled: true
+      environment: "local"
+      brokers:
+        - "kafka:9092"
+      client_id: "frux-kubernetes"
+      topic_prefix: ""
+      allow_local_provisioning: true
+      authentication:
+        mechanism: "none"
+      tls:
+        enabled: false
+      timeouts:
+        dial: "5s"
+        request: "10s"
+        produce: "10s"
+        admin: "10s"
+        shutdown: "15s"
+      consumer:
+        max_poll_records: 100
+        max_poll_bytes: 8388608
+        partition_concurrency: 8
+        drain_timeout: "10s"
+        assignment_timeout: "15s"
+      production_validation:
+        replication_factor: 1
+        min_in_sync_replicas: 1
+        require_authentication: false
+        require_tls: false
+    media:
+      backend: "local"
+      local_root: "./uploads"
+      public_base_url: "/media"
+      signed_url_ttl: "15m"
+      upload_session_ttl: "15m"
+      processing:
+        profile_version: "v1"
+        max_attempts: 5
+        worker_concurrency: 1
+        lease_ttl: "10m"
+        cleanup_delay: "24h"
+    moderation:
+      mode: "disabled"
+    playback:
+      telemetry:
+        retention: "168h"
+        cleanup_interval: "1h"
+        cleanup_batch_size: 1000
+        max_batches_per_minute: 60
+    governance:
+      poll_interval: "5s"
+      poll_timeout: "2s"
+    rate_limit:
+      max_entries: 10000
+      idle_ttl: "10m"
+      redis_timeout: "75ms"
+      trusted_proxies: []
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -71,14 +119,14 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: rabbitmq-data
+  name: kafka-data
   namespace: frux
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 2Gi
+      storage: 10Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -87,7 +135,7 @@ metadata:
   namespace: frux
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 10Gi
@@ -111,8 +159,6 @@ spec:
         - name: postgres
           image: postgres:17.5-alpine
           imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 5432
           env:
             - name: POSTGRES_DB
               value: frux
@@ -123,6 +169,9 @@ spec:
                 secretKeyRef:
                   name: frux-secret
                   key: postgres-password
+          ports:
+            - name: postgres
+              containerPort: 5432
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -134,7 +183,7 @@ spec:
                 - frux
                 - -d
                 - frux
-            initialDelaySeconds: 20
+            initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 20
@@ -146,7 +195,7 @@ spec:
                 - frux
                 - -d
                 - frux
-            initialDelaySeconds: 60
+            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
@@ -188,7 +237,8 @@ spec:
           image: redis:7.4-alpine
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 6379
+            - name: redis
+              containerPort: 6379
           volumeMounts:
             - name: redis-data
               mountPath: /data
@@ -206,7 +256,7 @@ spec:
               command:
                 - redis-cli
                 - ping
-            initialDelaySeconds: 30
+            initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
@@ -231,70 +281,103 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: rabbitmq
+  name: kafka
   namespace: frux
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app: rabbitmq
+      app: kafka
   template:
     metadata:
       labels:
-        app: rabbitmq
+        app: kafka
     spec:
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       containers:
-        - name: rabbitmq
-          image: rabbitmq:3.13-management-alpine
+        - name: kafka
+          image: apache/kafka:4.0.0
           imagePullPolicy: IfNotPresent
+          env:
+            - name: CLUSTER_ID
+              value: MkU3OEVBNTcwNTJENDM2Qk
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: broker,controller
+            - name: KAFKA_LISTENERS
+              value: PLAINTEXT://:9092,CONTROLLER://:9093
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: PLAINTEXT://kafka:9092
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: CONTROLLER
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: PLAINTEXT
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: 1@localhost:9093
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
+            - name: KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE
+              value: LogAppendTime
+            - name: KAFKA_LOG_DIRS
+              value: /var/lib/kafka/data
           ports:
-            - name: amqp
-              containerPort: 5672
-            - name: management
-              containerPort: 15672
+            - name: kafka
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
           volumeMounts:
-            - name: rabbitmq-data
-              mountPath: /var/lib/rabbitmq
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
           readinessProbe:
             exec:
               command:
-                - rabbitmq-diagnostics
-                - -q
-                - ping
+                - /opt/kafka/bin/kafka-broker-api-versions.sh
+                - --bootstrap-server
+                - 127.0.0.1:9092
             initialDelaySeconds: 20
             periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 20
+            timeoutSeconds: 10
+            failureThreshold: 30
           livenessProbe:
             exec:
               command:
-                - rabbitmq-diagnostics
-                - -q
-                - ping
+                - /opt/kafka/bin/kafka-broker-api-versions.sh
+                - --bootstrap-server
+                - 127.0.0.1:9092
             initialDelaySeconds: 60
             periodSeconds: 10
-            timeoutSeconds: 3
+            timeoutSeconds: 10
             failureThreshold: 6
       volumes:
-        - name: rabbitmq-data
+        - name: kafka-data
           persistentVolumeClaim:
-            claimName: rabbitmq-data
+            claimName: kafka-data
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: rabbitmq
+  name: kafka
   namespace: frux
 spec:
   selector:
-    app: rabbitmq
+    app: kafka
   ports:
-    - name: amqp
-      port: 5672
-      targetPort: 5672
-    - name: management
-      port: 15672
-      targetPort: 15672
+    - name: kafka
+      port: 9092
+      targetPort: 9092
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -315,8 +398,25 @@ spec:
         - name: api
           image: frux-api:latest
           imagePullPolicy: IfNotPresent
+          env:
+            - name: FRUX_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: postgres-password
+            - name: FRUX_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: jwt-secret
+            - name: FRUX_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: internal-token
           ports:
-            - containerPort: 8080
+            - name: http
+              containerPort: 8080
           volumeMounts:
             - name: api-config
               mountPath: /app/configs/config.yaml
@@ -327,7 +427,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: http
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 3
@@ -335,7 +435,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: http
             initialDelaySeconds: 60
             periodSeconds: 10
             timeoutSeconds: 3
@@ -385,11 +485,32 @@ spec:
           imagePullPolicy: IfNotPresent
           command:
             - ./frux-worker
+          env:
+            - name: FRUX_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: postgres-password
+            - name: FRUX_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: jwt-secret
+            - name: FRUX_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: internal-token
+          ports:
+            - name: metrics
+              containerPort: 9091
           volumeMounts:
             - name: api-config
               mountPath: /app/configs/config.yaml
               subPath: api-config.yaml
               readOnly: true
+            - name: api-uploads
+              mountPath: /app/uploads
       volumes:
         - name: api-config
           secret:
@@ -397,6 +518,9 @@ spec:
             items:
               - key: api-config.yaml
                 path: api-config.yaml
+        - name: api-uploads
+          persistentVolumeClaim:
+            claimName: api-uploads
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -418,11 +542,12 @@ spec:
           image: frux-web:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 80
+            - name: http
+              containerPort: 80
           readinessProbe:
             httpGet:
               path: /
-              port: 80
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
@@ -430,7 +555,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /
-              port: 80
+              port: http
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3

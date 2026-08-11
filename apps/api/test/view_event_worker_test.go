@@ -1,10 +1,10 @@
 package test
 
 import (
-	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
-	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"context"
 	"errors"
+	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	"sync"
 	"testing"
 	"time"
@@ -67,7 +67,7 @@ func (p *flakyViewEventPublisher) PublishViewEventRecorded(_ context.Context, ev
 	defer p.mu.Unlock()
 	if p.failures > 0 {
 		p.failures--
-		return errors.New("rabbitmq unavailable")
+		return errors.New("event transport unavailable")
 	}
 	p.published = append(p.published, event.EventID)
 	return nil

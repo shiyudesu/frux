@@ -22,10 +22,8 @@ type Diagnostics struct {
 type Backbone struct {
 	client           *Client
 	admin            *Administrator
-	cutover          *CutoverAdministrator
 	dlqInspector     *DLQInspector
 	publisher        *Publisher
-	plan             []StreamMigration
 	environment      string
 	healthObserver   BrokerHealthObserver
 	mu               sync.RWMutex
@@ -41,10 +39,6 @@ func StartSupervised(
 	topologyObserver TopologyObserver,
 	produceObserver ProduceObserver,
 ) (*Backbone, error) {
-	plan, err := MigrationPlan(cfg)
-	if err != nil {
-		return nil, err
-	}
 	if cfg.Enabled {
 		if _, err := clientOptions(cfg); err != nil {
 			return nil, err
@@ -56,7 +50,7 @@ func StartSupervised(
 	}
 	supervisorCtx, cancel := context.WithCancel(ctx)
 	backbone := &Backbone{
-		plan: plan, environment: cfg.Environment, publisher: publisher,
+		environment: cfg.Environment, publisher: publisher,
 		supervisorCancel: cancel, supervisorDone: make(chan struct{}),
 		diagnostics: Diagnostics{
 			Enabled: cfg.Enabled, Environment: cfg.Environment,
@@ -101,7 +95,6 @@ func (b *Backbone) runConnectionSupervisor(
 				}
 				b.client = client
 				b.admin = admin
-				b.cutover = NewCutoverAdministrator(client, cfg)
 				b.dlqInspector = NewDLQInspector(client, cfg)
 				b.diagnostics.LastValidatedAt = time.Now().UTC()
 				b.diagnostics.ValidationResults = append(
@@ -151,12 +144,8 @@ func Start(
 	topologyObserver TopologyObserver,
 	produceObserver ProduceObserver,
 ) (*Backbone, error) {
-	plan, err := MigrationPlan(cfg)
-	if err != nil {
-		return nil, err
-	}
 	backbone := &Backbone{
-		plan: plan, environment: cfg.Environment,
+		environment: cfg.Environment,
 		diagnostics: Diagnostics{
 			Enabled: cfg.Enabled, Environment: cfg.Environment,
 			RegisteredTopics: len(Topics()),
@@ -178,7 +167,6 @@ func Start(
 	}
 	backbone.client = client
 	backbone.admin = NewAdministrator(client, cfg, topologyObserver)
-	backbone.cutover = NewCutoverAdministrator(client, cfg)
 	backbone.dlqInspector = NewDLQInspector(client, cfg)
 	backbone.publisher = NewPublisher(client, produceObserver)
 	results, err := backbone.admin.EnsureTopics(ctx)
@@ -198,40 +186,6 @@ func Start(
 	return backbone, nil
 }
 
-func (b *Backbone) ApplyConsumerCutover(
-	ctx context.Context,
-	group ConsumerGroupID,
-	boundary string,
-	mode CutoverMode,
-) (CutoverResult, error) {
-	if b == nil {
-		return "", ErrKafkaUnavailable
-	}
-	b.mu.RLock()
-	cutover := b.cutover
-	b.mu.RUnlock()
-	if cutover == nil {
-		return "", ErrKafkaUnavailable
-	}
-	return cutover.Apply(ctx, group, boundary, mode)
-}
-
-func (b *Backbone) ConsumerCutoverInitialized(
-	ctx context.Context,
-	group ConsumerGroupID,
-) (bool, error) {
-	if b == nil {
-		return false, ErrKafkaUnavailable
-	}
-	b.mu.RLock()
-	cutover := b.cutover
-	b.mu.RUnlock()
-	if cutover == nil {
-		return false, ErrKafkaUnavailable
-	}
-	return cutover.Initialized(ctx, group)
-}
-
 func (b *Backbone) Publisher() *Publisher {
 	if b == nil {
 		return nil
@@ -246,13 +200,6 @@ func (b *Backbone) DLQInspector() *DLQInspector {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.dlqInspector
-}
-
-func (b *Backbone) MigrationPlan() []StreamMigration {
-	if b == nil {
-		return nil
-	}
-	return append([]StreamMigration(nil), b.plan...)
 }
 
 func (b *Backbone) Health(ctx context.Context) error {

@@ -136,11 +136,11 @@ apps/api/internal/interfaces/http/interaction/
 
 ### 3.3 异步落库
 
-点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本。传输层按迁移模式选择 RabbitMQ 或 Kafka single 投递，或同时向两者 transition 投递；dual/mirror 模式只有两者都 acknowledgement 才成功。Kafka 使用 `frux.interaction.action-changed.v1`、规范 action-state key、幂等生产和 broker acknowledgement。Worker 只启动一个 active mutation 路径。
+点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本。事件通过 Kafka `frux.interaction.action-changed.v1`、规范 action-state key、幂等生产和 broker acknowledgement 交接，Worker 只启动注册 active mutation Group。
 
 推荐流操作可选传入 `X-Recommendation-Request-ID`（最长 64）。该归因字段是不可信输入，随 durable action event 传递后，Worker 仅在耐久推荐证据绑定当前用户、request 和视频时幂等保存 `like` 或 `favorite` outcome；缺失或伪造归因会跳过 outcome，不改变已接受互动或画像信号。
 
-每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。Single 主投递失败、dual/mirror 任一传输失败或 Kafka acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。Dual publisher 的结构化错误通过 Application 窄接口报告 RabbitMQ/Kafka 各自是否已 durable acknowledgement。若 fallback 也失败但任一传输已确认，API 确认 Redis handoff、返回可见更新失败且不回滚；后续 broker delivery 按同一事件版本落库。只有两个传输都未确认且 fallback 失败才允许条件回滚。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
+每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。Kafka publication 失败或 acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。若 fallback 也失败但 Kafka 可能已确认，API 返回可见更新失败且不回滚；后续 delivery 按同一事件版本落库。只有 Kafka 明确未确认且 fallback 失败才允许条件回滚。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
 
 发布与同步持久化都失败时，回滚只可撤销仍未确认、仍匹配 `state_version + event_id`、且没有后续依赖回执的版本；版本计数器不回退，因此可重试的撤销会分配更高版本。已确认的版本、依赖该版本的并发 no-op 或更高版本都会让回滚条件不命中，避免旧失败路径撤销已报告的成功。Redis 事务提交后若响应计数读取失败，缓存层会把版本和原事件元数据一并返回给应用层，以同一条件恢复或回滚；恢复失败时未确认事件保留在 Redis，后续重试可再次交接。
 
@@ -150,16 +150,16 @@ apps/api/internal/interfaces/http/interaction/
 - `PersistAcceptedActionEvent` 仅供 Worker 使用，表示事件已在入队前通过公开可读校验；视频之后变为私密或下架时仍写入互动事实和统计，但已删除或不存在的视频作为终止事件丢弃。
 - `interaction_action_event` 按 `event_id` 保存版本和完整已处理载荷。同一事件重复投递不再次改变 `interaction_action`、`video_stat` 或作者 `received_like_count`；相同事件 ID 携带不同载荷视为终止冲突。
 - `interaction_action` 为每个 `user_id + video_id + action_type` 保存最新 `latest_event_version + latest_event_occurred_at + latest_event_id`。Worker 首先比较版本；仅在版本相同的兼容事件中使用时间和事件 ID 确定顺序。任何较新事件（即使目标 active/canceled 状态未变）都推进这组顺序字段和推荐 request 归因，而状态相同的事件不改变统计增量；延迟旧事件与精确重复事件写入/命中回执后成功确认，但不改变物化状态或聚合。
-- Worker 将格式错误、无效字段、事件 ID 冲突、视频不存在和视频已删除分类为不可重试错误，RabbitMQ 不重新入队；数据库连接等瞬时错误保留给受监督的消费者重连，而不会确认尚未完成的 durable handoff。
+- Worker 将格式错误、无效字段、事件 ID 冲突、视频不存在和视频已删除分类为 terminal；数据库连接等瞬时错误进入 Kafka 注册恢复策略，而不会确认尚未完成的 durable handoff。
 
 有效 LIKE/FAVORITE 是推荐画像的正向耐久事实；推荐 Worker 通过稳定 action event ID 消费，
 重复事件不重复加权。互动请求不直接信任或写入客户端推荐画像，避免异步失败扩散到点赞、
 收藏的用户可见结果。
 
 每个已接受 action receipt 同事务持有可租约重试的画像投影和 outcome 归因字段。Action Worker 在该
-事务提交后确认 RabbitMQ；缺失 embedding、待到达的推荐证据和投影失败只由带指数退避的 leased outbox
-重试，不会触发 MQ 热循环。发布或通道恢复失败时，HTTP 的同步持久化路径仍会留下该 durable outbox，
-Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
+事务提交后才允许 Kafka offset 前进；缺失 embedding、待到达的推荐证据和投影失败只由带指数退避的
+leased outbox 重试。发布恢复失败时，HTTP 的同步持久化路径仍会留下该 durable outbox，Worker 最终
+按同一 event ID 投影，且与 Kafka 重投递去重。
 
 私密或下架视频的互动事实不会放宽任何读取规则：Feed、公开视频详情、公开主页和个人内容库补齐仍按当前可读性过滤内容。
 
@@ -172,22 +172,11 @@ Worker 最终按同一 event ID 投影，且与 MQ 重投递去重。
 | Feed 计数 JSON | `video:stat:v1:{video_id}` |
 | Kafka Topic | `frux.interaction.action-changed.v1` |
 | Kafka active Group | `frux.interaction.persist-action.v1` |
-| Kafka shadow Group | `frux.interaction.persist-action.v1.shadow.<deployment>` |
-| RabbitMQ Exchange | `frux.interaction` |
-| Legacy Queue | `frux.interaction.action_changed` |
-| Quorum pilot Queue | `frux.interaction.action_changed.q2` |
-| DLQ | `frux.interaction.action_changed.dlq.q2` |
-| Routing key | `interaction.action_changed` |
+| Kafka recovery policy | `block-and-retry` |
 
-RabbitMQ 内部仍可使用 `dual` Queue 试点：相同 Event ID 会同时进入旧 Queue 和 Quorum Queue，Worker 的
-`interaction_action_event.event_id` receipt 吸收重复。旧 Queue ready/unacked 连续归零并完成
-观察后，配置切到 `new` 移除旧 Binding。
-
-Kafka 迁移顺序为双 acknowledgement mirror + shadow、显式 broker append-time cutover boundary、
-active Group；action boundary 必须严格晚于 view boundary。Consumer 只有拿到非空 Partition assignment
-后才健康，Worker 在有界 `assignment_timeout` 内等待 view Group ready，之后才启动 action Group。
-回滚先停 Kafka active Group，再恢复 RabbitMQ Consumer 和 Rabbit 主投递。Kafka 与 RabbitMQ
-不会同时调用 mutating Worker。
+Consumer 只有拿到非空 Partition assignment 后才健康，Worker 在有界 `assignment_timeout` 内等待
+view Group ready，之后才启动 action Group。Source Group 在加入前通过 PostgreSQL durable marker
+验证或初始化 committed offsets。
 
 ### 3.4 两级评论模型和通用响应
 

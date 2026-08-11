@@ -12,7 +12,7 @@
 
 2. 这个项目的后端、前端、数据库、缓存和消息队列分别用了什么技术？
 
-   答：后端使用 Go、Hertz 和 GORM，前端使用 React 和 Vite，数据库使用 PostgreSQL，缓存使用 Redis，消息队列使用 RabbitMQ。鉴权使用 JWT，监控使用 Prometheus 和 Grafana，本地编排使用 Docker Compose。代码按 `Domain / Application / Infrastructure / Interfaces` 四层组织，适合讲清业务边界和技术实现边界。
+   答：后端使用 Go、Hertz 和 GORM，前端使用 React 和 Vite，数据库使用 PostgreSQL，缓存使用 Redis，事件流使用 Kafka。鉴权使用 JWT，监控使用 Prometheus 和 Grafana，本地编排使用 Docker Compose。代码按 `Domain / Application / Infrastructure / Interfaces` 四层组织，适合讲清业务边界和技术实现边界。
 
 3. 从用户发布视频到另一个用户刷到视频，完整链路有哪些步骤？
 
@@ -24,17 +24,17 @@
 
 5. 这个项目最能体现后端能力的 2-3 个设计点是什么？
 
-   答：第一是 Feed 读取链路，使用游标分页、页缓存、卡片缓存、计数缓存、批量聚合和 singleflight 合并回源。第二是异步链路，发布视频、点赞收藏和曝光事件通过 RabbitMQ 解耦 API 和 Worker。第三是推荐与热榜，热榜使用 Redis ZSET 分钟桶，推荐融合兴趣相似度、热度和新鲜度，并做曝光过滤和作者打散。
+   答：第一是 Feed 读取链路，使用游标分页、页缓存、卡片缓存、计数缓存、批量聚合和 singleflight 合并回源。第二是异步链路，发布视频、点赞收藏和曝光事件通过 Kafka 与 PostgreSQL Outbox 解耦 API 和 Worker。第三是推荐与热榜，热榜使用 Redis ZSET 分钟桶，推荐融合兴趣相似度、热度和新鲜度，并做曝光过滤和作者打散。
 
 ### 追问
 
 1. 如果让你用 2 分钟介绍这个项目，你会怎么组织答案？
 
-   答：先用一句话说明 Frux 是短视频 Feed 系统，覆盖发布、分发、消费、互动和推荐。然后讲核心链路：视频发布写 PostgreSQL 并投递事件，Worker 做缓存预热和关注流分发，Feed 请求按 scene 读取页并批量组装详情。最后讲技术亮点：稳定游标分页、ID-Detail 分离、Redis 缓存、RabbitMQ 异步落库、热榜分钟桶、推荐排序和 Prometheus 监控。
+   答：先用一句话说明 Frux 是短视频 Feed 系统，覆盖发布、分发、消费、互动和推荐。然后讲核心链路：视频发布写 PostgreSQL 并投递事件，Worker 做缓存预热和关注流分发，Feed 请求按 scene 读取页并批量组装详情。最后讲技术亮点：稳定游标分页、ID-Detail 分离、Redis 缓存、Kafka 显式 Offset 与故障恢复、热榜分钟桶、推荐排序和 Prometheus 监控。
 
-2. 当前系统的性能瓶颈可能出现在 API、PostgreSQL、Redis、RabbitMQ 哪一层？你怎么判断？
+2. 当前系统的性能瓶颈可能出现在 API、PostgreSQL、Redis、Kafka 哪一层？你怎么判断？
 
-   答：判断顺序看指标：API 看 HTTP P95 和 5xx，PostgreSQL 看慢查询和连接池，Redis 看缓存命中率和命令耗时，RabbitMQ 看队列积压和 Worker 成功率。Feed 读慢通常先看页缓存、卡片缓存和计数缓存命中率，再看批量回源 SQL。互动链路慢则看 Redis `WATCH` 更新、RabbitMQ 投递和 Worker 消费耗时。
+   答：判断顺序看指标：API 看 HTTP P95 和 5xx，PostgreSQL 看慢查询和连接池，Redis 看缓存命中率和命令耗时，Kafka 看 producer 失败、Consumer Group lag、retry/DLQ 和 Worker 成功率。Feed 读慢通常先看缓存命中率，再看批量回源 SQL；互动链路慢则看 Redis CAS、Kafka publication 和消费耗时。
 
 3. 如果访问量扩大 10 倍，你会先优化哪条链路？
 
@@ -50,7 +50,7 @@
 
 1. `Domain / Application / Infrastructure / Interfaces` 四层分别承担什么职责？
 
-   答：Domain 放实体、领域错误、业务规则和仓储接口；Application 放用例编排、分页游标、幂等、跨模块流程和小接口依赖；Infrastructure 放 GORM、Redis、RabbitMQ、JWT、配置和迁移；Interfaces 放 HTTP Handler、DTO、路由和中间件。依赖方向从外层指向内层，业务规则集中在 Domain 和 Application。
+   答：Domain 放实体、领域错误、业务规则和仓储接口；Application 放用例编排、分页游标、幂等、跨模块流程和小接口依赖；Infrastructure 放 GORM、Redis、Kafka、JWT、配置和迁移；Interfaces 放 HTTP Handler、DTO、路由和中间件。依赖方向从外层指向内层，业务规则集中在 Domain 和 Application。
 
 2. `domain/feed`、`application/feed`、`infra/cache`、`interfaces/http/feed` 在 Feed 链路中分别做什么？
 
@@ -76,7 +76,7 @@
 
 2. 这个项目里 `Service` 构造函数通过 option 注入 Redis、MQ、JWT，这种设计的好处是什么？
 
-   答：option 注入让基础能力按配置启用，例如 Redis 存在时启用 FeedCache，RabbitMQ 存在时启用发布事件和异步互动。测试时可以传 mock 实现，单体运行时也可以裁剪能力。构造函数保持稳定，新增能力时通过 `WithFeedCache`、`WithRecommender`、`WithAsyncActionPipeline` 这类 option 扩展。
+   答：option 注入让基础能力按契约启用，例如 Redis 注入 FeedCache，Kafka publisher 注入异步互动，PostgreSQL repository 注入 durable fallback。测试时可以传 mock 实现。构造函数保持稳定，新增能力时通过 `WithFeedCache`、`WithRecommender`、`WithAsyncActionPipeline` 这类 option 扩展。
 
 3. 新增审核模块时，你会按什么文件顺序落地？
 
@@ -304,9 +304,9 @@
 
 ### 追问
 
-1. 发布接口为什么通过 RabbitMQ 触发 fanout？
+1. 发布接口为什么通过 Kafka 触发 fanout？
 
-   答：视频发布接口应快速返回发布结果，fanout、预热和向量任务属于后置处理。RabbitMQ 把 API 写入链路和 Worker 分发链路解耦，削峰并支持失败重试。发布成功后投递持久化消息，Worker 独立消费。
+   答：视频发布事实和 publication outbox 同事务持久化，Worker 再发布到 30 天保留的 Kafka Topic。Feed 和 hash embedding 使用独立 Group，既解耦发布事务，也支持回放、独立 lag 和 Consumer 专属恢复。
 
 2. fanout worker 为什么按 follower ID 游标分批处理？
 
@@ -330,15 +330,15 @@
 
 1. 点赞接口的主流程是什么？
 
-   答：Handler 解析用户 ID、videoId 和幂等键，调用 `InteractionService.Like`。Service 走 `setAction`，在启用异步管线时先通过 Redis `SetActionState` 更新用户行为状态和实时计数，再投递 `ActionChangedEvent` 到 RabbitMQ。Worker 消费事件后把行为事实和统计计数落到 PostgreSQL。
+   答：Handler 解析用户 ID、videoId 和幂等键，调用 `InteractionService.Like`。Service 先通过 Redis `SetActionState` 更新行为状态和实时计数，再投递 `ActionChangedEvent` 到 Kafka；失败或确认不确定时同步写 PostgreSQL fallback。Worker 消费事件后把行为事实和统计计数落到 PostgreSQL。
 
 2. `SetActionState` 为什么先写 Redis 状态和计数？
 
    答：点赞收藏是高频写操作，Redis 能提供更低延迟和更高吞吐。接口可以快速返回最新 like_count 和 favorite_count，用户体验更好。PostgreSQL 作为最终事实由 Worker 异步修正和持久化。
 
-3. 点赞收藏事件为什么还要投递 RabbitMQ？
+3. 点赞收藏事件为什么还要投递 Kafka？
 
-   答：Redis 状态适合实时读写，PostgreSQL 需要保存长期事实。RabbitMQ 把接口链路和持久化链路解耦，Worker 可以按自身能力消费并重试。它也为消息通知、统计分析和推荐反馈扩展提供事件入口。
+   答：Redis 状态适合实时读写，PostgreSQL 需要保存长期事实。Kafka 把接口链路和持久化链路解耦，按 action-state key 保序，并为推荐反馈、回放和故障恢复提供稳定事件入口。
 
 4. 评论为什么同步写数据库？
 
@@ -366,13 +366,13 @@
 
    答：PostgreSQL 保存最终事实，Worker 会把 Redis 事件异步落库并更新统计表。Redis 计数缓存 TTL 较短，过期后可以回源 PostgreSQL 修正。评论这类同步写库路径会在成功后刷新计数缓存。
 
-5. RabbitMQ 投递失败时，接口应该怎么处理？
+5. Kafka 投递失败时，接口应该怎么处理？
 
    答：对已启用异步管线的点赞收藏，投递失败意味着后续持久化存在风险，接口应返回可识别错误或走同步落库兜底。Frux 里可以根据配置选择异步管线，工程演进时可加入本地 outbox 表保证事件最终投递。核心原则是用户看到的状态和最终事实要有补偿路径。
 
-6. Worker ACK/NACK 的策略怎么设计？
+6. Worker Offset 提交和恢复策略怎么设计？
 
-   答：消息 JSON 解析失败属于数据格式错误，直接 NACK 丢弃或进入死信队列。业务处理失败可以 NACK 并 requeue，让 RabbitMQ 重新投递。处理成功后 ACK，指标记录 job 耗时和成功率。
+   答：Consumer 禁用自动提交。处理成功或注册 terminal 结果后显式提交 Offset；瞬时依赖失败先做有界本地重试，再按 Group policy 进入固定 retry Topic 或保留 PostgreSQL job。下一跳 publication acknowledgement 前不能推进源 Offset。
 
 ## 9. 推荐流
 
@@ -452,7 +452,7 @@
 
 1. 曝光事件量很大时，写库链路怎么削峰？
 
-   答：曝光事件可以先写 RabbitMQ，由 Worker 批量落库和更新聚合表。高峰期通过队列吸收瞬时流量，数据库按稳定速度消费。还可以对日志表做分区、批量 insert 和冷热归档。
+   答：曝光事实和 view outbox 同事务写 PostgreSQL，Worker 再发布 Kafka。高峰期由 Outbox 租约与 Kafka 消费吸收波动，数据库按稳定速度投影；还可以对事实表做分区、批量 insert 和冷热归档。
 
 2. 曝光去重窗口如何选择？
 
@@ -640,7 +640,7 @@
 
 2. 高频计数直接更新 PostgreSQL 会有什么瓶颈？
 
-   答：热点视频的点赞收藏会集中更新同一行 `video_stat`，造成行锁竞争和写放大。PostgreSQL 写入延迟上升后会影响接口响应。项目用 Redis 实时计数和 RabbitMQ 异步落库来削峰。
+   答：热点视频的点赞收藏会集中更新同一行 `video_stat`，造成行锁竞争和写放大。项目用 Redis 实时计数、Kafka 异步事件和 PostgreSQL durable fallback 削峰，同时靠稳定 event ID 保证幂等。
 
 3. 幂等键应该建什么唯一索引？
 
@@ -654,25 +654,25 @@
 
    答：生产环境表规模大，自动变更字段和索引可能造成锁表、耗时过长或变更不可控。更稳妥的方式是使用显式 migration 脚本、灰度执行和回滚方案。Frux 当前自动迁移更适合本地和演示环境。
 
-## 15. RabbitMQ 与 Worker
+## 15. Kafka 与 Worker
 
 ### 基础问题
 
-1. 项目里哪些链路使用 RabbitMQ？
+1. 项目里哪些链路使用 Kafka？
 
-   答：点赞收藏变更事件使用 `frux.interaction`，视频发布事件使用 `frux.video`，曝光观看事件使用 `frux.exposure`。视频发布还分发到 fanout 和 embedding 队列。API 负责发布事件，Worker 负责消费并执行后置任务。
+   答：点赞收藏使用 `frux.interaction.action-changed.v1`，观看反馈使用 `frux.exposure.view-event-recorded.v1`，首次发布事实使用 `frux.video.published.v1`，媒体处理使用短时 wakeup Topic。API 或 Outbox dispatcher 发布，Worker 的独立 Group 消费。
 
-2. 持久化消息解决什么问题？
+2. 保留事件解决什么问题？
 
-   答：持久化消息在 RabbitMQ 重启或异常恢复时保留更高可靠性。项目发布消息时设置 `DeliveryMode: amqp.Persistent`，并配置交换机、队列和绑定。这样异步任务在基础设施波动下更容易恢复。
+   答：Kafka retention 让 action、view 和 publication 事实可按 Offset 重放，Consumer Group 可以独立推进。长期业务事实仍在 PostgreSQL，Kafka 不替代数据库。
 
-3. 显式 ACK/NACK 的作用是什么？
+3. 显式 Offset 提交的作用是什么？
 
-   答：显式 ACK 表示 Worker 处理成功，RabbitMQ 可以确认删除消息。NACK 表示处理失败，RabbitMQ 可以重新入队或丢弃。项目里 JSON 解析失败会 NACK 丢弃，业务处理失败会 NACK 并重新入队。
+   答：禁用 auto commit 后，Worker 只有在 durable success、注册 terminal 结果或下一跳恢复 publication 已确认时才提交 Offset，避免失败记录被静默跳过。
 
-4. Worker 处理失败时如何重试？
+4. Worker 处理失败时如何恢复？
 
-   答：消费 handler 返回错误后，RabbitMQ 实现会 `Nack(false, true)`，消息重新入队等待再次消费。指标会记录 Worker job 的失败和耗时。更完整的生产方案可以增加最大重试次数、死信队列和延迟重试。
+   答：action/view 使用 block-and-retry，Feed/hash embedding 使用 5s、30s、2m、10m、30m 固定 retry tiers 和 DLQ，媒体处理由 PostgreSQL job 的 lease/retry/reconciliation 恢复。
 
 5. API 服务和 Worker 服务为什么分开启动？
 
@@ -686,7 +686,7 @@
 
 2. 消息堆积时怎么定位瓶颈？
 
-   答：先看 RabbitMQ 队列长度、入队速率和消费速率，再看 Worker job P95、错误率和下游 PostgreSQL/Redis 指标。若消费慢，增加 Worker 副本或优化批处理；若失败多，分析错误类型和重试风暴。队列堆积还要检查是否存在单条毒消息反复重试。
+   答：先看 Kafka source/retry Group lag、delivery delay、retry/DLQ growth，再看 Worker P95、错误率和 PostgreSQL/Redis 指标。消费慢时增加副本或优化批处理；失败多时检查 poison record、依赖故障和 recovery progress。
 
 3. 死信队列适合处理哪些失败？
 
@@ -698,7 +698,7 @@
 
 5. Worker 横向扩容后会产生哪些并发问题？
 
-   答：多个 Worker 可能同时处理同一业务对象，造成重复写入、计数竞争或缓存覆盖。解决方式是唯一键、幂等键、Redis 原子操作和数据库事务。还要关注 RabbitMQ prefetch、下游连接池和热点数据锁竞争。
+   答：多个 Worker 可能同时处理同一业务对象，造成重复写入、计数竞争或缓存覆盖。解决方式是稳定事件 ID、唯一键、Redis 原子操作和数据库事务。还要关注 Partition key、Group rebalance、下游连接池和热点数据锁竞争。
 
 ## 16. 监控与压测
 
@@ -710,7 +710,7 @@
 
 2. Grafana 面板重点看哪些指标？
 
-   答：重点看 API QPS、5xx 错误率、API P95、Feed P95、Feed 缓存命中率、上传处理耗时和 Worker 成功率。Feed 链路关注 scene 维度，Worker 链路关注 job 维度。压测时同时看 Redis、PostgreSQL 和 RabbitMQ 状态。
+   答：重点看 API QPS、5xx 错误率、API P95、Feed P95、Feed 缓存命中率、上传处理耗时和 Worker 成功率。Feed 链路关注 scene，Worker 链路关注 job、Kafka Group lag 和 recovery 状态。
 
 3. k6 压测 Feed 时关注哪些结果？
 
@@ -722,7 +722,7 @@
 
 5. Worker 成功率和队列积压为什么重要？
 
-   答：API 返回成功后，很多后置任务依赖 Worker 完成，例如互动落库、feed fanout、曝光处理和向量生成。Worker 成功率低或队列积压会造成最终一致延迟变长。Grafana 中要同时看 job duration、job result 和 RabbitMQ 队列长度。
+   答：API 返回成功后，很多后置任务依赖 Worker 完成，例如互动落库、feed fanout、曝光处理和 hash embedding。Worker 成功率低或 Kafka lag 上升会造成最终一致延迟变长。Grafana 中要同时看 job duration、job result、source/retry lag 和 DLQ age。
 
 ### 追问
 
@@ -784,9 +784,9 @@
 
    答：用相同用户、相同业务参数和相同幂等键请求两次。断言返回同一业务结果，数据库只产生一条事实记录，计数只变化一次。再用不同幂等键请求，断言能产生新的业务动作。
 
-4. RabbitMQ 相关逻辑如何用接口 mock？
+4. Kafka 相关逻辑如何用接口 mock？
 
-   答：Application 层依赖 `ActionEventPublisher`、`PublishedEventConsumer`、`ViewEventPublisher` 这类小接口。测试时实现内存 mock，记录发布事件或手动触发消费 handler。这样测试用例无需启动真实 RabbitMQ。
+   答：Application 层依赖 `ActionEventPublisher`、`PublishedEventConsumer`、`ViewEventPublisher` 这类小接口。测试时实现内存 mock，记录发布事件或手动触发消费 handler。这样多数测试无需启动真实 Kafka。
 
 5. 压测和单元测试分别解决什么问题？
 
@@ -798,15 +798,15 @@
 
 1. Docker Compose 启动了哪些服务？
 
-   答：Compose 启动 API、Worker、Web、PostgreSQL、Redis、RabbitMQ、Prometheus 和 Grafana。Web 通过 Vite/Nginx 提供前端，API 暴露业务接口和指标，Worker 消费异步任务。PostgreSQL、Redis 和 RabbitMQ 提供核心基础设施。
+   答：Compose 启动 API、Worker、Web、PostgreSQL、Redis、Kafka、MinIO、Prometheus 和 Grafana。Web 提供前端，API 暴露业务接口和指标，Worker 消费事件并轮询 durable jobs。
 
-2. API、Worker、Web、PostgreSQL、Redis、RabbitMQ 在部署中分别承担什么？
+2. API、Worker、Web、PostgreSQL、Redis、Kafka 在部署中分别承担什么？
 
-   答：API 承接 HTTP 请求和同步业务；Worker 处理 fanout、互动落库、曝光和向量等异步任务；Web 提供用户界面；PostgreSQL 保存最终事实；Redis 提供缓存、计数、热榜和关注索引；RabbitMQ 提供事件队列和削峰。
+   答：API 承接 HTTP 请求和同步业务；Worker 处理 fanout、互动落库、曝光、hash embedding 和媒体任务；Web 提供用户界面；PostgreSQL 保存最终事实和 durable jobs；Redis 提供缓存、计数、热榜和关注索引；Kafka 提供保留事件与短时 wakeup。
 
 3. Kubernetes 清单里需要哪些 Deployment、Service 和 PVC？
 
-   答：API、Worker、Web 适合 Deployment，分别配置 Service 暴露访问或内部调用。PostgreSQL、Redis、RabbitMQ 需要持久化存储，使用 PVC 保存数据。还需要 ConfigMap、Secret、健康检查和资源限制。
+   答：API、Worker、Web 适合 Deployment。PostgreSQL、Redis、Kafka 需要持久化存储并使用 PVC；还需要 Service、Secret、健康检查和资源限制。
 
 4. 健康检查接口有什么作用？
 
@@ -826,13 +826,13 @@
 
    答：每个 API 副本的本地磁盘独立，文件可能只存在某一个 Pod 上。负载均衡到其他副本时会访问失败。生产环境适合使用对象存储或共享存储，并通过 CDN 分发媒体。
 
-3. PostgreSQL、Redis、RabbitMQ 的数据卷怎么规划？
+3. PostgreSQL、Redis、Kafka 的数据卷怎么规划？
 
-   答：PostgreSQL 需要可靠 PVC 和备份策略，Redis 根据持久化需求配置 AOF/RDB 和容量，RabbitMQ 需要保存队列元数据和持久化消息。开发环境可以使用简单 volume，生产环境要考虑备份、恢复和扩容。监控磁盘使用率和 IO 延迟很重要。
+   答：PostgreSQL 需要可靠 PVC 和备份策略，Redis 根据持久化需求配置 AOF/RDB 和容量，Kafka 要按 retention、replication factor 和峰值写入规划日志盘。生产环境要监控磁盘、ISR 和 IO 延迟。
 
 4. 配置文件和密钥如何区分管理？
 
-   答：普通配置放 ConfigMap 或配置文件，例如端口、Redis 地址、功能开关。密钥放 Secret，例如 JWT secret、数据库密码、RabbitMQ 密码、内部 token。应用启动时从环境变量或挂载文件读取。
+   答：普通配置放 ConfigMap 或配置文件，例如端口、Redis 地址、Kafka Broker 和功能开关。密钥放 Secret，例如 JWT secret、数据库密码、Kafka SASL/TLS 凭据和内部 token。
 
 5. 灰度发布时如何保证新旧版本兼容？
 
@@ -856,9 +856,9 @@
 
    答：timeline 和视频详情可以直接回源 PostgreSQL，hot、following 的实时性能力会下降。点赞收藏可以切换同步落库或返回可重试错误，推荐曝光去重降级为基础候选。恢复后通过短 TTL、Worker 补偿和回源修正逐步恢复一致性。
 
-5. 如果 RabbitMQ 堆积 100 万条消息，你怎么处理？
+5. 如果 Kafka Group lag 达到 100 万条，你怎么处理？
 
-   答：先确认堆积队列、入队速率、消费速率和错误类型。增加 Worker 副本、提高批处理效率，修复反复失败的消息并隔离毒消息。业务侧按优先级消费关键队列，例如互动落库优先于低优先级分析任务。
+   答：先定位 Group、Topic、Partition、入口速率、消费速率和错误类型。确认是否热点 key、下游变慢或 poison record；再增加分区/Worker 容量、优化批处理，并用 retry/DLQ 隔离失败记录，避免盲目重置 Offset。
 
 6. 如果 PostgreSQL 主库 CPU 打满，你怎么定位和止血？
 
@@ -878,13 +878,13 @@
 
 10. 如果要把这个项目讲成简历亮点，你会突出哪些指标和取舍？
 
-   答：突出 Feed 读取性能优化：游标分页、页缓存、ID-Detail 分离、批量聚合、singleflight 和 TTL 抖动。突出异步解耦：RabbitMQ 持久化消息、ACK/NACK、互动异步落库和发布 fanout。指标上写清压测环境、QPS、P95、错误率和缓存命中率。
+   答：突出 Feed 读取性能优化：游标分页、页缓存、ID-Detail 分离、批量聚合、singleflight 和 TTL 抖动。突出异步解耦：Kafka 保留事件、显式 Offset、retry/DLQ、PostgreSQL Outbox/job。指标上写清压测环境、QPS、P95、错误率和缓存命中率。
 
 ## 20. 建议练习顺序
 
 1. 先练项目总览、后端分层、Feed 读取链路。
 2. 再练游标分页、Feed 缓存、Hot Feed。
-3. 然后练关注流分发、互动链路、RabbitMQ Worker。
+3. 然后练关注流分发、互动链路、Kafka Worker。
 4. 最后练推荐流、监控压测、部署扩展和故障处理。
 
 每个问题都尽量按“现有实现、为什么这样设计、极端情况下怎么演进”三段回答。

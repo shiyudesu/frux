@@ -33,8 +33,7 @@ flowchart LR
   PostgreSQL[("PostgreSQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
-  RabbitMQ[("RabbitMQ<br/>异步任务与行为回滚")]
-  Kafka[("Kafka<br/>Action / View 保留事件流")]
+  Kafka[("Kafka<br/>领域事件与短时唤醒")]
   ObjectStorage[("对象存储<br/>媒体文件")]
 
   Web -->|"调用管理与浏览接口"| API
@@ -42,14 +41,13 @@ flowchart LR
   API -->|"读写业务事实、投影和聚合"| PostgreSQL
   API -->|"保存和读取本地文件"| Uploads
   API -->|"缓存 Feed、互动状态与计数；原子协调部分限流"| Redis
-  API -->|"投递视频、媒体等任务；保留行为 mirror/rollback"| RabbitMQ
-  API -->|"投递 action_changed；Worker 投递 view_event_recorded"| Kafka
+  API -->|"投递 action_changed、媒体 wakeup 等事件"| Kafka
   API -.->|"迁移媒体文件"| ObjectStorage
 
   class Web,Client client;
   class API system;
   class PostgreSQL,Uploads store;
-  class Redis,RabbitMQ,Kafka service;
+  class Redis,Kafka service;
   class ObjectStorage future;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
@@ -129,16 +127,10 @@ flowchart LR
 group 才通过 infrastructure adapter 执行单次 Redis Lua。Redis 失败按 policy 使用更严格
 local fallback 或 fail closed，Handler 不拥有私有限流器。
 
-RabbitMQ 恢复同样是基础设施与控制面的组合边界：业务 Consumer 返回 terminal/retryable 分类，
-Broker 的 versioned Quorum Source 用 Delivery Limit 将毒消息送入 per-consumer DLQ。API 通过
-Management Adapter 提供脱敏摘要/Preview；Replay Service 验证 allowlist 路由，保持原 Event ID
-和 Payload、增加 Replay ID，等待 Publisher Confirm 并提交 Audit Fact 后才 Ack DLQ。PostgreSQL
-不保存 Payload Queue。
-
-Kafka 是并行存在的事件流基础，不是 RabbitMQ 的重命名适配层。代码注册 Topic、Partition Key、
+Kafka 是唯一事件流基础。代码注册 Topic、Partition Key、
 Producer 和 Consumer Group；franz-go Producer 使用 idempotence + `acks=all`，Consumer 禁用自动
 提交并在耐久结果后提交 Offset。`action_changed` 与 `view_event_recorded` 已接入独立 Topic、
-active/shadow Group 和 per-stream migration mode。视频首次公开事实现在通过
+active Group。视频首次公开事实通过
 `video_publication_event_outbox -> frux.video.published.v1`，Feed 与 embedding 各自维护 Offset；
 媒体仍由 PostgreSQL job 决定正确性，Kafka command 只负责唤醒。
 
@@ -149,7 +141,7 @@ PostgreSQL 中按 actor/idempotency fingerprint 与坐标跨事务串行，先�
 replay result 与 `kafka_dead_letter.replay` audit。Producer 结果可能已确认或 finalize 失败时保留
 pending/unknown；同 key 重复请求只验证注册目标 retention 内的稳定 Replay ID evidence，找到后
 finalize，不存在且完整扫描可证明时记录失败，malformed 或不可用 evidence 继续 pending，禁止重复发布。
-DLQ Record 保留到 retention；RabbitMQ Queue/Ack 接口不变。
+DLQ Record 保留到 retention；旧 Queue head/Ack 接口已经退役。
 媒体和未来语义长任务仍以 PostgreSQL job 为恢复边界。
 
 ## 3. 核心请求链路
@@ -251,14 +243,14 @@ sequenceDiagram
   R->>H: Interaction.Like
   H->>S: 校验当前 published + public
   S->>Redis: 原子更新状态、计数和单调 action version
-  S->>MQ: 按迁移模式发布 ActionChangedEvent；dual 模式等待两种传输确认
-  alt 任一所需传输失败或确认不确定
+  S->>MQ: 发布 Kafka ActionChangedEvent 并等待 broker acknowledgement
+  alt Kafka 发布失败或确认不确定
     S->>Repo: 同步持久化同一版本事件
     alt 同步持久化也失败
       S->>Redis: 仅当前版本未被更新时条件回滚
     end
   end
-  MQ->>Worker: Kafka active Group 或 Rabbit rollback Consumer 投递
+  MQ->>Worker: Kafka active Group 投递
   Worker->>Repo: PersistAcceptedActionEvent
   Repo->>DB: 按 event_id 去重并优先应用最大的 version
   Repo->>DB: 同版本仅用 occurred_at + event_id 兼容定序
@@ -611,7 +603,7 @@ max staleness 后使用 failure default。请求和消费热路径不访问控�
 - Web 预加载直接消费活动 Feed 的有序 items，并按网络、save-data、内存和 `buffer_ms` 保留有界上一条/当前条/后续媒体资源；场景、请求、身份或源版本变化会取消旧代际。`/api/preload-videos` 仅保留为按发布时间补充资源的兼容接口。
 - 新视频默认进入待审核且没有 `published_at`。批准和媒体基线就绪是独立门：只有 `status=published`、`visibility=public` 且媒体为 `legacy_ready/ready` 时才公开；Feed 缓存命中后仍通过数据库批量验证，避免旧缓存泄露待审、拒绝、私密或处理中内容。
 - Web 为每次激活视频建立播放会话，按 10 秒边界和暂停、seek、切换、隐藏、退出上报曝光、播放、进度、完播和跳过。观看事实按 `(user_id, event_id)` 幂等，历史投影按有界 `(occurred_at, event_id)` 单调更新；事实、历史/曝光投影和 `view_event_outbox` 同事务提交，Worker 通过租约、重试与 publisher confirm 将反馈可靠送入推荐链路。
-- 新互动请求只接受当前已发布公开视频；Redis 在状态/计数事务内为每个行为事实分配单调版本。Single 传输等待自身确认，dual/mirror 同时等待 RabbitMQ publisher confirm 与 Kafka broker acknowledgement；任一失败或不确定时同步落库，发布与 fallback 双失败时只条件回滚仍由该版本拥有的 Redis 状态，相同幂等重试会重发原事件。Redis 提交后若计数读取失败，应用使用脱离请求取消且有超时的上下文条件回滚；回滚报错时重新确认投递原事件并以同步回执持久化兜底，并发更高版本不会被旧请求覆盖。事件回执按 `event_id` 去重，行为行优先按 `version` 拒绝延迟旧事件，同版本才用 `(occurred_at, event_id)` 兼容定序；重复和旧事件成功确认且不改变统计。缺失/删除视频和无效载荷终止消费而不无限重入队，所有内容读取仍按当前可见性过滤。
+- 新互动请求只接受当前已发布公开视频；Redis 在状态/计数事务内为每个行为事实分配单调版本。Kafka 发布等待 broker acknowledgement；失败或不确定时同步落库，发布与 fallback 双失败时只条件回滚仍由该版本拥有的 Redis 状态，相同幂等重试会重发原事件。Redis 提交后若计数读取失败，应用使用脱离请求取消且有超时的上下文条件回滚；回滚报错时重新确认投递原事件并以同步回执持久化兜底，并发更高版本不会被旧请求覆盖。事件回执按 `event_id` 去重，行为行优先按 `version` 拒绝延迟旧事件，同版本才用 `(occurred_at, event_id)` 兼容定序；重复和旧事件成功确认且不改变统计。缺失/删除视频和无效载荷终止消费并进入注册恢复策略，所有内容读取仍按当前可见性过滤。
 - 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品、公开合集和隐私允许的喜欢。“短剧”和“我的预约”没有领域模型或接口，明确不在架构范围内。
 - 播放技术遥测与观看行为事实分流：Web 将渲染首帧、播放结果、rebuffer/seek、选源、帧质量和终止错误组成有界版本化批次；API 严格校验并原子写入 `playback_telemetry_batch/event`，立即聚合低基数 Prometheus 指标。批次失败不影响播放，旧 QoS 端点在迁移窗口内继续兼容。
 - 人工审核使用数据库时间租约和 optimistic case/review version；最终决定、视频生命周期、成功审计和作者通知 Outbox 原子提交，Review Worker 再通过 message Application 幂等生成站内通知。
@@ -628,7 +620,7 @@ flowchart LR
   API -->|"返回预签名 PUT"| Web
   Web -->|"直传原始视频/封面"| S3[("S3 / MinIO")]
   Web -->|"完成会话"| API
-  API -->|"提交资产与 PostgreSQL job；尽力发布唤醒"| MQ["Kafka command / Rabbit rollback"]
+  API -->|"提交资产与 PostgreSQL job；尽力发布唤醒"| MQ["Kafka command"]
   MQ --> Worker["Media Worker"]
   Worker -->|"ffprobe + FFmpeg"| Outputs["基线 MP4 / 多码率 MP4 / DASH"]
   Worker -->|"临时键校验后发布"| S3

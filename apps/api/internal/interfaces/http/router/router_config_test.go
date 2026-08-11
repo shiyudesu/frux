@@ -14,10 +14,10 @@ func TestValidateAPIConfigProtectsEnabledInternalRoutes(t *testing.T) {
 		cfg   *infraconfig.Config
 		valid bool
 	}{
-		{name: "disabled", cfg: &infraconfig.Config{}, valid: true},
-		{name: "empty token", cfg: &infraconfig.Config{Internal: infraconfig.InternalConfig{Enabled: true}}, valid: false},
-		{name: "weak token", cfg: &infraconfig.Config{Internal: infraconfig.InternalConfig{Enabled: true, Token: "replace-with-internal-token"}}, valid: false},
-		{name: "strong token", cfg: &infraconfig.Config{Internal: infraconfig.InternalConfig{Enabled: true, Token: validToken}}, valid: true},
+		{name: "disabled", cfg: runtimeConfig(infraconfig.InternalConfig{}), valid: true},
+		{name: "empty token", cfg: runtimeConfig(infraconfig.InternalConfig{Enabled: true}), valid: false},
+		{name: "weak token", cfg: runtimeConfig(infraconfig.InternalConfig{Enabled: true, Token: "replace-with-internal-token"}), valid: false},
+		{name: "strong token", cfg: runtimeConfig(infraconfig.InternalConfig{Enabled: true, Token: validToken}), valid: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -29,5 +29,16 @@ func TestValidateAPIConfigProtectsEnabledInternalRoutes(t *testing.T) {
 				t.Fatalf("validateAPIConfig() error = %v, want ErrInvalidInternalToken", err)
 			}
 		})
+	}
+}
+
+func runtimeConfig(internal infraconfig.InternalConfig) *infraconfig.Config {
+	return &infraconfig.Config{
+		Internal: internal,
+		Redis:    infraconfig.RedisConfig{Addr: "localhost:6379"},
+		Kafka: infraconfig.KafkaConfig{
+			Enabled: true,
+			Brokers: []string{"localhost:9092"},
+		},
 	}
 }

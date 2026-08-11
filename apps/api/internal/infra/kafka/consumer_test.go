@@ -126,6 +126,13 @@ func (f handlerFunc) Handle(ctx context.Context, event applicationeventstream.Ev
 	return f(ctx, event)
 }
 
+type requestedDelayError struct {
+	delay time.Duration
+}
+
+func (e requestedDelayError) Error() string             { return "retry later" }
+func (e requestedDelayError) RetryAfter() time.Duration { return e.delay }
+
 type publishedRecovery struct {
 	destination TopicID
 	key         []byte
@@ -345,57 +352,6 @@ func TestConsumerObservesDataLossAlongsideFatalFetchError(t *testing.T) {
 	}
 }
 
-func TestShadowGroupsRequireShadowOnlyHandlers(t *testing.T) {
-	shadowGroup, err := ConsumerGroup(GroupBackboneProbeShadow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	generic := handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
-		return applicationeventstream.OutcomeDurableSuccess, nil
-	})
-	if err := validateGroupHandler(
-		shadowGroup,
-		"frux.platform.backbone_probe.shadow.v1",
-		generic,
-	); err == nil {
-		t.Fatal("shadow group accepted generic handler")
-	}
-	shadow, err := applicationeventstream.NewShadowHandler(
-		"frux.platform.backbone_probe.shadow.v1",
-		time.Hour,
-		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateGroupHandler(
-		shadowGroup,
-		"frux.platform.backbone_probe.shadow.v1",
-		shadow,
-	); err != nil {
-		t.Fatalf("shadow handler rejected: %v", err)
-	}
-	if err := validateGroupHandler(
-		shadowGroup,
-		"test.frux.platform.backbone_probe.shadow.v1",
-		shadow,
-	); err == nil {
-		t.Fatal("shadow handler accepted mismatched resolved group")
-	}
-	activeGroup, err := ConsumerGroup(GroupBackboneProbeActive)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateGroupHandler(
-		activeGroup,
-		"frux.platform.backbone_probe.active.v1",
-		shadow,
-	); err == nil {
-		t.Fatal("active group accepted shadow-only handler")
-	}
-}
-
 func TestConsumerForcesLagSampleOnHandlerFailure(t *testing.T) {
 	source := &fakeConsumerSource{
 		batches: [][]brokerRecord{{probeRecord(t, 0, 3)}},
@@ -422,7 +378,7 @@ func TestConsumerRetriesRequestedDelayWithoutRestartingSession(t *testing.T) {
 	consumer := testConsumer(nil, handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
 		if calls.Add(1) < 3 {
 			return applicationeventstream.OutcomeRetryable,
-				applicationeventstream.PendingParityError{Delay: time.Millisecond}
+				requestedDelayError{delay: time.Millisecond}
 		}
 		return applicationeventstream.OutcomeDurableSuccess, nil
 	}))
@@ -1744,24 +1700,6 @@ func TestRetryTopicRebalanceBeforeHandoffLeavesSourceUncommitted(t *testing.T) {
 	}
 }
 
-func TestShadowConsumerNeverCreatesRecoveryRecord(t *testing.T) {
-	publisher := &fakeRecoveryPublisher{}
-	consumer := testConsumer(
-		&fakeConsumerSource{},
-		handlerFunc(func(context.Context, applicationeventstream.Event) (applicationeventstream.Outcome, error) {
-			return applicationeventstream.OutcomeTerminal, nil
-		}),
-	)
-	consumer.groupID = GroupFeedVideoPublishedShadow
-	consumer.recoveryWriter = publisher
-	result := consumer.processPartition(
-		context.Background(),
-		[]brokerRecord{malformedRecord(0, 2)},
-	)
-	if result.err != nil || result.eligible == nil || len(publisher.records) != 0 {
-		t.Fatalf("result=%+v publications=%d", result, len(publisher.records))
-	}
-}
 func TestRebalanceRestartDelayIsBounded(t *testing.T) {
 	for range 100 {
 		delay := rebalanceRestartDelay()
@@ -1973,7 +1911,7 @@ func TestSupervisorReportsFailuresAndStopsOnNonRetryableInitialization(t *testin
 		MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
 		NewConsumer: func(context.Context) (*Consumer, error) {
 			attempts.Add(1)
-			return nil, fmt.Errorf("%w: shadow handler mismatch", ErrConsumerConfiguration)
+			return nil, fmt.Errorf("%w: handler mismatch", ErrConsumerConfiguration)
 		},
 	}
 	err := supervisor.Run(context.Background())
@@ -2025,13 +1963,17 @@ func TestConsumerErrorClassificationRejectsAuthorizationFailures(t *testing.T) {
 	if !RetryableConsumerError(fmt.Errorf("%w: poll: %w", ErrConsumerSession, kerr.BrokerNotAvailable)) {
 		t.Fatal("broker outage was classified as fatal")
 	}
+	if !RetryableConsumerError(fmt.Errorf(
+		"initialize consumer offsets: %w",
+		ErrRetryOffsetInitialization,
+	)) {
+		t.Fatal("temporary offset initialization failure was classified as fatal")
+	}
 }
 
-func TestSupervisorHonorsPendingParityRetryDelay(t *testing.T) {
+func TestSupervisorHonorsRequestedRetryDelay(t *testing.T) {
 	delay := consumerRetryDelay(
-		fmt.Errorf("%w: %w", ErrConsumerSession, applicationeventstream.PendingParityError{
-			Delay: time.Second,
-		}),
+		fmt.Errorf("%w: %w", ErrConsumerSession, requestedDelayError{delay: time.Second}),
 		100*time.Millisecond,
 		200*time.Millisecond,
 	)

@@ -14,13 +14,18 @@ func TestNormalizeAndValidateMediaConfigDefaultsToLocal(t *testing.T) {
 	if err := normalizeAndValidateMediaConfig(&cfg); err != nil {
 		t.Fatalf("normalize local media config: %v", err)
 	}
-	if cfg.Backend != domainmedia.StorageBackendLocal || cfg.LocalRoot != "./uploads" || cfg.PublicBaseURL != "/media" {
+	if cfg.Backend != domainmedia.StorageBackendLocal ||
+		cfg.LocalRoot != "./uploads" ||
+		cfg.PublicBaseURL != "/media" {
 		t.Fatalf("unexpected local defaults: %+v", cfg)
 	}
 }
 
 func TestNormalizeAndValidateMediaConfigRejectsIncompleteS3(t *testing.T) {
-	cfg := MediaConfig{Backend: domainmedia.StorageBackendS3, S3: S3Config{Region: "us-east-1"}}
+	cfg := MediaConfig{
+		Backend: domainmedia.StorageBackendS3,
+		S3:      S3Config{Region: "us-east-1"},
+	}
 	if err := normalizeAndValidateMediaConfig(&cfg); !errors.Is(err, ErrInvalidMediaConfig) {
 		t.Fatalf("expected invalid S3 config, got %v", err)
 	}
@@ -28,17 +33,19 @@ func TestNormalizeAndValidateMediaConfigRejectsIncompleteS3(t *testing.T) {
 
 func TestNormalizeAndValidateMediaConfigAcceptsS3CompatibleEndpoint(t *testing.T) {
 	cfg := MediaConfig{
-		Backend: domainmedia.StorageBackendS3, PublicBaseURL: "http://127.0.0.1:9000/frux-media/",
+		Backend:       domainmedia.StorageBackendS3,
+		PublicBaseURL: "http://127.0.0.1:9000/frux-media/",
 		S3: S3Config{
 			Endpoint: "http://minio:9000/", PresignEndpoint: "http://127.0.0.1:9000/",
-			Region: "us-east-1", Bucket: "frux-media", AccessKey: "minio", SecretKey: "secret", UsePathStyle: true,
+			Region: "us-east-1", Bucket: "frux-media",
+			AccessKey: "minio", SecretKey: "secret", UsePathStyle: true,
 		},
 	}
-
 	if err := normalizeAndValidateMediaConfig(&cfg); err != nil {
 		t.Fatalf("normalize S3 media config: %v", err)
 	}
-	if cfg.S3.Endpoint != "http://minio:9000" || cfg.S3.PresignEndpoint != "http://127.0.0.1:9000" {
+	if cfg.S3.Endpoint != "http://minio:9000" ||
+		cfg.S3.PresignEndpoint != "http://127.0.0.1:9000" {
 		t.Fatalf("unexpected endpoints: %+v", cfg.S3)
 	}
 }
@@ -48,14 +55,12 @@ func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
 	if err := normalizeAndValidatePlaybackConfig(&cfg); err != nil {
 		t.Fatalf("normalize playback config: %v", err)
 	}
-
 	if cfg.Telemetry.Retention != "168h" ||
 		cfg.Telemetry.CleanupInterval != "1h" ||
 		cfg.Telemetry.CleanupBatchSize != 1000 ||
 		cfg.Telemetry.MaxBatchesPerMinute != 60 {
 		t.Fatalf("unexpected playback defaults: %+v", cfg.Telemetry)
 	}
-
 	cfg.Telemetry.CleanupInterval = "200h"
 	if err := normalizeAndValidatePlaybackConfig(&cfg); !errors.Is(err, ErrInvalidPlaybackConfig) {
 		t.Fatalf("expected invalid cleanup interval, got %v", err)
@@ -67,16 +72,18 @@ func TestNormalizeAndValidateModerationConfig(t *testing.T) {
 	if err := normalizeAndValidateModerationConfig(&cfg); err != nil {
 		t.Fatalf("disabled moderation defaults: %v", err)
 	}
-	if cfg.Mode != "disabled" || cfg.ProviderConfigVersion != 1 ||
-		cfg.InputProfileVersion != "frames-v1" || cfg.WorkerConcurrency != 2 ||
+	if cfg.Mode != "disabled" ||
+		cfg.ProviderConfigVersion != 1 ||
+		cfg.InputProfileVersion != "frames-v1" ||
+		cfg.WorkerConcurrency != 2 ||
 		cfg.MaxAttempts != 5 {
 		t.Fatalf("unexpected moderation defaults: %+v", cfg)
 	}
 
 	cfg = ModerationConfig{
 		Mode: "observe", ProviderConfigVersion: 2,
-		Endpoint: "http://127.0.0.1:9001", HMACSecret: strings.Repeat("s", 32),
-		AllowInsecureLocal: true,
+		Endpoint:   "http://127.0.0.1:9001",
+		HMACSecret: strings.Repeat("s", 32), AllowInsecureLocal: true,
 	}
 	if err := normalizeAndValidateModerationConfig(&cfg); err != nil {
 		t.Fatalf("local observe moderation: %v", err)
@@ -97,7 +104,8 @@ func TestNormalizeAndValidateModerationConfig(t *testing.T) {
 
 	cfg = ModerationConfig{
 		Mode: "observe", ProviderConfigVersion: 2,
-		Endpoint: "https://provider.example.com", HMACSecret: strings.Repeat("s", 32),
+		Endpoint:              "https://provider.example.com",
+		HMACSecret:            strings.Repeat("s", 32),
 		SamplePresignEndpoint: "https://media.example.com",
 	}
 	if err := normalizeAndValidateModerationConfig(&cfg); err != nil {
@@ -150,8 +158,9 @@ func TestNormalizeAndValidateRateLimitConfig(t *testing.T) {
 	if err := normalizeAndValidateRateLimitConfig(&cfg); err != nil {
 		t.Fatalf("normalize rate limit config: %v", err)
 	}
-
-	if cfg.MaxEntries != 10_000 || cfg.IdleTTL != "10m" || cfg.RedisTimeout != "75ms" {
+	if cfg.MaxEntries != 10_000 ||
+		cfg.IdleTTL != "10m" ||
+		cfg.RedisTimeout != "75ms" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	cfg.TrustedProxies = []string{"not-a-prefix"}
@@ -164,39 +173,15 @@ func TestNormalizeAndValidateRateLimitConfig(t *testing.T) {
 	}
 }
 
-func TestNormalizeAndValidateRabbitMQDeadLetterConfig(t *testing.T) {
-	cfg := RabbitMQConfig{
-		URL:                "amqp://guest:guest@localhost:5672/",
-		ManagementURL:      "http://localhost:15672",
-		ManagementUsername: "guest", ManagementPassword: "guest",
-		DeadLetter: RabbitMQDeadLetterConfig{
-			Enabled: true, ActionChangedMode: "dual",
-		},
-	}
-	if err := normalizeAndValidateRabbitMQConfig(&cfg); err != nil {
-		t.Fatalf("normalize RabbitMQ config: %v", err)
-	}
-	if cfg.DeadLetter.DeliveryLimit != 5 ||
-		cfg.DeadLetter.VersionSuffix != ".q2" ||
-		cfg.DeadLetter.ReplayTimeout != "5s" {
-		t.Fatalf("unexpected RabbitMQ defaults: %+v", cfg.DeadLetter)
-	}
-	cfg.DeadLetter.ActionChangedMode = "replace-in-place"
-	if err := normalizeAndValidateRabbitMQConfig(&cfg); !errors.Is(err, ErrInvalidRabbitMQConfig) {
-		t.Fatalf("expected invalid migration mode, got %v", err)
-	}
-}
-
 func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
-	t.Run("disabled defaults remain RabbitMQ active", func(t *testing.T) {
+	t.Run("disabled library config still normalizes", func(t *testing.T) {
 		var cfg KafkaConfig
 		if err := normalizeAndValidateKafkaConfig(&cfg); err != nil {
 			t.Fatalf("disabled Kafka config: %v", err)
 		}
-		if cfg.Environment != "local" || cfg.ClientID != "frux" ||
-			cfg.Consumer.AssignmentTimeout != "15s" ||
-			cfg.Migration.ActionChanged.ProducerMode != "rabbit" ||
-			cfg.Migration.ActionChanged.ConsumerMode != "rabbit" {
+		if cfg.Environment != "local" ||
+			cfg.ClientID != "frux" ||
+			cfg.Consumer.AssignmentTimeout != "15s" {
 			t.Fatalf("unexpected defaults: %+v", cfg)
 		}
 	})
@@ -233,34 +218,14 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("ordered behavior cutover", func(t *testing.T) {
-		cfg := KafkaConfig{
-			Enabled: true, Brokers: []string{"localhost:9092"},
-			Migration: KafkaMigrationConfig{
-				ViewEventRecorded: KafkaStreamMigrationConfig{
-					ProducerMode: "kafka", ConsumerMode: "kafka",
-					CutoverBoundary: "2026-08-09T00:00:00Z",
-				},
-				ActionChanged: KafkaStreamMigrationConfig{
-					ProducerMode: "kafka_with_rabbit_mirror", ConsumerMode: "kafka",
-					CutoverBoundary: "2026-08-09T01:00:00Z",
-				},
-			},
-		}
-		if err := normalizeAndValidateKafkaConfig(&cfg); err != nil {
-			t.Fatalf("ordered cutover: %v", err)
-		}
-		if cfg.ShadowDeployment != "local" {
-			t.Fatalf("shadow deployment = %q", cfg.ShadowDeployment)
-		}
-	})
-
 	for _, test := range []struct {
 		name string
 		cfg  KafkaConfig
 	}{
 		{name: "missing brokers", cfg: KafkaConfig{Enabled: true}},
-		{name: "invalid broker", cfg: KafkaConfig{Enabled: true, Brokers: []string{"http://localhost:9092"}}},
+		{name: "invalid broker", cfg: KafkaConfig{
+			Enabled: true, Brokers: []string{"http://localhost:9092"},
+		}},
 		{name: "credentials without mechanism", cfg: KafkaConfig{
 			Authentication: KafkaAuthenticationConfig{Username: "frux", Password: "secret"},
 		}},
@@ -268,8 +233,8 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 			TLS: KafkaTLSConfig{Enabled: true, CertificateFile: "client.crt"},
 		}},
 		{name: "production local provisioning", cfg: KafkaConfig{
-			Enabled: true, Environment: "production", Brokers: []string{"broker:9092"},
-			AllowLocalProvisioning: true,
+			Enabled: true, Environment: "production",
+			Brokers: []string{"broker:9092"}, AllowLocalProvisioning: true,
 		}},
 		{name: "production unsafe replication", cfg: KafkaConfig{
 			Enabled: true, Environment: "production", Brokers: []string{"broker:9092"},
@@ -285,34 +250,6 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 			TLS: KafkaTLSConfig{Enabled: true},
 			ProductionValidation: KafkaProductionValidationConfig{
 				ReplicationFactor: 3, MinInSyncReplicas: 2,
-			},
-		}},
-		{name: "disabled Kafka migration", cfg: KafkaConfig{
-			Migration: KafkaMigrationConfig{
-				ActionChanged: KafkaStreamMigrationConfig{ProducerMode: "rabbit_with_kafka_mirror"},
-			},
-		}},
-		{name: "dual active consumer", cfg: KafkaConfig{
-			Enabled: true, Brokers: []string{"localhost:9092"},
-			Migration: KafkaMigrationConfig{
-				ActionChanged: KafkaStreamMigrationConfig{ConsumerMode: "rabbit_and_kafka"},
-			},
-		}},
-		{name: "active without boundary", cfg: KafkaConfig{
-			Enabled: true, Brokers: []string{"localhost:9092"},
-			Migration: KafkaMigrationConfig{
-				ViewEventRecorded: KafkaStreamMigrationConfig{
-					ProducerMode: "kafka", ConsumerMode: "kafka",
-				},
-			},
-		}},
-		{name: "action before view", cfg: KafkaConfig{
-			Enabled: true, Brokers: []string{"localhost:9092"},
-			Migration: KafkaMigrationConfig{
-				ActionChanged: KafkaStreamMigrationConfig{
-					ProducerMode: "kafka", ConsumerMode: "kafka",
-					CutoverBoundary: "2026-08-09T01:00:00Z",
-				},
 			},
 		}},
 		{name: "unbounded poll", cfg: KafkaConfig{
@@ -333,21 +270,39 @@ func TestNormalizeAndValidateKafkaConfig(t *testing.T) {
 	}
 }
 
-func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
+func TestValidateAPIConfigRequiresKafkaRedisAndStrongInternalToken(t *testing.T) {
 	validToken := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
 	tests := []struct {
 		name  string
 		cfg   Config
 		valid bool
 	}{
-		{name: "disabled routes permit no token", cfg: Config{Internal: InternalConfig{}}, valid: true},
-		{name: "empty token", cfg: Config{Internal: InternalConfig{Enabled: true}}, valid: false},
-		{name: "placeholder token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "replace-with-internal-token"}}, valid: false},
-		{name: "short token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "short-token"}}, valid: false},
-		{name: "single character class", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, valid: false},
-		{name: "embedded newline", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "rT8v0%PzL2kQ7mX4\ncN9wA6dF1hJ5sB3y"}}, valid: false},
-		{name: "non ascii", cfg: Config{Internal: InternalConfig{Enabled: true, Token: "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB中"}}, valid: false},
-		{name: "strong token", cfg: Config{Internal: InternalConfig{Enabled: true, Token: validToken}}, valid: true},
+		{name: "disabled routes permit no token", cfg: finalRuntimeConfig(InternalConfig{}), valid: true},
+		{name: "empty token", cfg: finalRuntimeConfig(InternalConfig{Enabled: true}), valid: false},
+		{name: "placeholder token", cfg: finalRuntimeConfig(InternalConfig{
+			Enabled: true, Token: "replace-with-internal-token",
+		}), valid: false},
+		{name: "short token", cfg: finalRuntimeConfig(InternalConfig{
+			Enabled: true, Token: "short-token",
+		}), valid: false},
+		{name: "single character class", cfg: finalRuntimeConfig(InternalConfig{
+			Enabled: true, Token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}), valid: false},
+		{name: "embedded newline", cfg: finalRuntimeConfig(InternalConfig{
+			Enabled: true, Token: "rT8v0%PzL2kQ7mX4\ncN9wA6dF1hJ5sB3y",
+		}), valid: false},
+		{name: "non ascii", cfg: finalRuntimeConfig(InternalConfig{
+			Enabled: true, Token: "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB中",
+		}), valid: false},
+		{name: "strong token", cfg: finalRuntimeConfig(InternalConfig{
+			Enabled: true, Token: validToken,
+		}), valid: true},
+		{name: "Kafka disabled", cfg: Config{
+			Redis: RedisConfig{Addr: "localhost:6379"},
+		}, valid: false},
+		{name: "Redis missing", cfg: Config{
+			Kafka: KafkaConfig{Enabled: true, Brokers: []string{"localhost:9092"}},
+		}, valid: false},
 	}
 
 	for _, test := range tests {
@@ -356,8 +311,8 @@ func TestValidateAPIConfigRequiresStrongInternalTokenWhenEnabled(t *testing.T) {
 			if test.valid && err != nil {
 				t.Fatalf("ValidateAPIConfig() error = %v", err)
 			}
-			if !test.valid && !errors.Is(err, ErrInvalidInternalToken) {
-				t.Fatalf("ValidateAPIConfig() error = %v, want ErrInvalidInternalToken", err)
+			if !test.valid && err == nil {
+				t.Fatal("ValidateAPIConfig() accepted invalid runtime")
 			}
 		})
 	}
@@ -383,5 +338,16 @@ func TestLoadConfigDoesNotAcceptLegacyInternalTokenEnvironment(t *testing.T) {
 	_, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.yaml"))
 	if !errors.Is(err, ErrInvalidInternalToken) {
 		t.Fatalf("LoadConfig() error = %v, want ErrInvalidInternalToken", err)
+	}
+}
+
+func finalRuntimeConfig(internal InternalConfig) Config {
+	return Config{
+		Internal: internal,
+		Redis:    RedisConfig{Addr: "localhost:6379"},
+		Kafka: KafkaConfig{
+			Enabled: true,
+			Brokers: []string{"localhost:9092"},
+		},
 	}
 }

@@ -1,6 +1,6 @@
 ## Purpose
 Define durable first-publication facts, retained Kafka delivery, independent downstream consumers,
-safe workflow cutover, and non-mutating parity checks.
+durable offset ownership, and consumer-specific recovery.
 
 ## Requirements
 
@@ -56,34 +56,22 @@ registered groups and commit offsets only after their own idempotent boundary.
 - **WHEN** a publication record is consumed under this change
 - **THEN** no semantic service call, semantic vector, semantic job, semantic retry, or semantic coverage state is created
 
-### Requirement: Publication Stream Cutover
-Each Feed or hash-embedding responsibility SHALL validate mirror production and non-mutating shadow
-parity before activating its Kafka group.
+### Requirement: Publication Consumer Offset Ownership
+Each Feed or hash-embedding responsibility SHALL own an independent active Kafka Group with durable
+offset initialization and recovery.
 
-#### Scenario: One consumer cuts over first
-- **WHEN** Feed meets its parity and drain gates before hash embedding
-- **THEN** Feed may activate Kafka while hash embedding continues on RabbitMQ
+#### Scenario: One consumer falls behind
+- **WHEN** Feed or hash embedding accumulates lag or retry records
+- **THEN** the other responsibility continues consuming and committing its own offsets
 
-#### Scenario: First cutover initializes offsets
+#### Scenario: First group start initializes offsets
 - **WHEN** the Kafka group has no committed offsets
-- **THEN** an advisory-locked initializer verifies legacy queue, quorum source queue, unacknowledged deliveries, and DLQ are drained before committing the past millisecond-aligned boundary
+- **THEN** an advisory-locked durable initializer commits retained-start offsets before consumption
 
 #### Scenario: Initialized worker restarts
 - **WHEN** committed offsets already exist
-- **THEN** restart preserves them without rewinding or requiring mirrored Rabbit queues to remain empty
+- **THEN** restart preserves them without rewinding
 
-#### Scenario: Consumer rolls back
-- **WHEN** a Kafka group exceeds correctness or latency thresholds
-- **THEN** only that responsibility restores its RabbitMQ consumer and stable IDs absorb boundary duplicates
-
-### Requirement: Non-Mutating Workflow Parity
-Feed and hash-embedding shadow groups SHALL use non-mutating parity readers and SHALL distinguish
-propagation-pending state from conflicting durable state.
-
-#### Scenario: Durable effect has not propagated
-- **WHEN** a Kafka mirror record arrives before the RabbitMQ active path creates its effect
-- **THEN** parity retries inline with a bounded delay rather than committing a mismatch
-
-#### Scenario: Durable effect conflicts
-- **WHEN** an existing Feed index or hash embedding does not match the publication record
-- **THEN** Frux records a bounded mismatch without mutating business state
+#### Scenario: Established offset is lost
+- **WHEN** a completed durable marker exists but the committed offset is missing or out of range
+- **THEN** Frux reports explicit data loss and does not silently reset the group

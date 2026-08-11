@@ -6,7 +6,6 @@ import (
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
 	applicationadminauth "github.com/shiyudesu/frux/internal/application/adminauth"
-	applicationdeadletter "github.com/shiyudesu/frux/internal/application/deadletter"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
@@ -36,7 +35,6 @@ import (
 	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
-	inframq "github.com/shiyudesu/frux/internal/infra/mq"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
@@ -57,7 +55,6 @@ import (
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
 	interfaceshttpadminauth "github.com/shiyudesu/frux/internal/interfaces/http/adminauth"
-	interfaceshttpdeadletter "github.com/shiyudesu/frux/internal/interfaces/http/deadletter"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpgovernance "github.com/shiyudesu/frux/internal/interfaces/http/governance"
@@ -231,7 +228,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	interactionOptions := []applicationinteraction.Option{}
 	var feedCache *infracache.FeedCache
 	var distributedRateLimiter applicationratelimit.DistributedLimiter
-	var rabbitMQ *inframq.SupervisedRabbitMQ
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
 		feedCache = infracache.NewFeedCache(redisClient)
@@ -322,81 +318,34 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	mediaCleanupService := applicationmedia.NewCleanupService(
 		mediaRepo, mediaStore, cfg.Media.Backend, cleanupDelay, cfg.Media.Processing.MaxAttempts,
 	)
-	if cfg.RabbitMQ.URL != "" {
-		rabbitMQ, err = inframq.NewSupervisedRabbitMQ(cfg.RabbitMQ)
-		if err != nil {
-			log.Printf("rabbitmq disabled: %v", err)
-		}
-	}
-	actionMigration, err := infrakafka.MigrationFor(
-		kafkaBackbone.MigrationPlan(),
-		infrakafka.ResponsibilityActionChanged,
-	)
-	if err != nil {
-		return err
-	}
-	if feedCache != nil {
-		feedCache.RequireExplicitActionHandoff(
-			actionMigration.Producer == infrakafka.ProducerModeRabbitWithKafkaMirror ||
-				actionMigration.Producer == infrakafka.ProducerModeKafkaWithRabbitMirror,
-		)
-	}
 	interactionOptions = append(
 		interactionOptions,
 		applicationinteraction.WithActionDeliveryObserver(inframetrics.BehaviorObserver{}),
 	)
 	if feedCache != nil {
-		var rabbitActionPublisher infrabehaviorstream.RabbitActionPublisher
-		if rabbitMQ != nil {
-			rabbitActionPublisher = rabbitMQ
-		}
 		actionPublisher, publisherErr := infrabehaviorstream.NewActionPublisher(
-			actionMigration.Producer,
-			rabbitActionPublisher,
 			kafkaBackbone.Publisher(),
 			inframetrics.BehaviorObserver{},
-		)
-		if publisherErr == nil {
-			interactionOptions = append(
-				interactionOptions,
-				applicationinteraction.WithAsyncActionPipeline(feedCache, actionPublisher),
-			)
-		} else if actionMigration.Producer != infrakafka.ProducerModeRabbit {
-			return publisherErr
-		}
-	}
-	var deadLetterService *applicationdeadletter.Service
-	if rabbitMQ != nil {
-		deadLetterService = applicationdeadletter.New(
-			rabbitMQ,
-			rabbitMQ,
-			adminAuditRepo,
-			applicationdeadletter.WithObserver(inframetrics.DeadLetterObserver{}),
-		)
-	}
-	deadLetterHandler := interfaceshttpdeadletter.New(deadLetterService)
-	mediaOptions := []applicationmedia.Option{}
-	mediaOptions = append(mediaOptions, applicationmedia.WithURLResolver(mediaURLResolver, signedURLTTL))
-	mediaOptions = append(mediaOptions, applicationmedia.WithMediaAssetAuthorizer(videoRepo))
-	mediaMigration, err := infrakafka.MigrationFor(
-		kafkaBackbone.MigrationPlan(),
-		infrakafka.ResponsibilityMediaProcessing,
-	)
-	if err != nil {
-		return err
-	}
-	if rabbitMQ != nil || mediaMigration.Producer != infrakafka.ProducerModeRabbit {
-		mediaPublisher, publisherErr := infravideostream.NewMediaPublisher(
-			mediaMigration.Producer,
-			rabbitMQ,
-			kafkaBackbone.Publisher(),
-			inframetrics.VideoWorkflowObserver{},
 		)
 		if publisherErr != nil {
 			return publisherErr
 		}
-		mediaOptions = append(mediaOptions, applicationmedia.WithProcessingPublisher(mediaPublisher))
+		interactionOptions = append(
+			interactionOptions,
+			applicationinteraction.WithAsyncActionPipeline(feedCache, actionPublisher),
+		)
 	}
+	mediaOptions := []applicationmedia.Option{}
+	mediaOptions = append(mediaOptions, applicationmedia.WithURLResolver(mediaURLResolver, signedURLTTL))
+	mediaOptions = append(mediaOptions, applicationmedia.WithMediaAssetAuthorizer(videoRepo))
+	mediaPublisher, publisherErr := infravideostream.NewMediaPublisher(
+		kafkaBackbone.Publisher(),
+		inframetrics.VideoWorkflowObserver{},
+	)
+	if publisherErr != nil {
+		return publisherErr
+	}
+	mediaOptions = append(mediaOptions, applicationmedia.WithProcessingPublisher(mediaPublisher))
 	mediaService := applicationmedia.New(
 		mediaRepo, mediaStore, cfg.Media.Backend, uploadSessionTTL,
 		cfg.Media.Processing.ProfileVersion, cfg.Media.Processing.MaxAttempts, mediaOptions...,
@@ -727,34 +676,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		governancePermission("control"),
 		governanceHandler.Rollback,
 	)
-	admin.GET(
-		"/dead-letter-queues",
-		interfaceshttpmiddleware.NewRequireAdminPermission(
-			accountRepo, domainaccount.PermissionGovernanceExecute,
-		),
-		deadLetterHandler.List,
-	)
-	admin.GET(
-		"/dead-letter-queues/:queue/messages",
-		interfaceshttpmiddleware.NewRequireAdminPermission(
-			accountRepo, domainaccount.PermissionGovernanceExecute,
-		),
-		deadLetterHandler.Preview,
-	)
-	admin.POST(
-		"/dead-letter-messages/:messageId/replay",
-		interfaceshttpmiddleware.NewRequireAdminPermission(
-			accountRepo,
-			domainaccount.PermissionGovernanceExecute,
-			interfaceshttpmiddleware.WithDeniedAttemptAudit(
-				adminAuditService,
-				domainadminaudit.ActionDeadLetterReplay,
-				domainadminaudit.TargetDeadLetterMessage,
-				"message",
-			),
-		),
-		deadLetterHandler.Replay,
-	)
 	kafkaFailurePermission := func(targetID string) app.HandlerFunc {
 		return interfaceshttpmiddleware.NewRequireAdminPermission(
 			accountRepo,
@@ -844,7 +765,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 
 	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
 	governanceContext, stopGovernance := context.WithCancel(context.Background())
-	deadLetterContext, stopDeadLetter := context.WithCancel(context.Background())
 	kafkaFailureContext, stopKafkaFailure := context.WithCancel(context.Background())
 	notificationContext, stopNotifications := context.WithCancel(context.Background())
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
@@ -870,13 +790,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			log.Printf("playback telemetry cleanup failed: %v", err)
 		},
 	)
-	if rabbitMQ != nil {
-		go func() {
-			if err := rabbitMQ.RunDepthObserver(deadLetterContext, 15*time.Second); err != nil {
-				log.Printf("dead-letter depth observer stopped: %v", err)
-			}
-		}()
-	}
 	if cfg.Kafka.Enabled {
 		kafkaFailureCollector := applicationkafkafailure.NewCollector(
 			kafkaFailureAdapter,
@@ -904,12 +817,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	h.Engine.OnShutdown = append(h.Engine.OnShutdown, func(context.Context) {
 		stopTelemetryCleaner()
 		stopGovernance()
-		stopDeadLetter()
 		stopKafkaFailure()
 		stopNotifications()
-		if rabbitMQ != nil {
-			_ = rabbitMQ.Close()
-		}
 		_ = kafkaBackbone.Close(context.Background())
 	})
 

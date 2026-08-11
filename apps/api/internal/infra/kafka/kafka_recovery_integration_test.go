@@ -616,9 +616,8 @@ func runIntegrationRetryFlow(
 	admin *kadm.Client,
 ) domainkafkafailure.RetainedRecord {
 	t.Helper()
-	initializeIntegrationCutover(
-		t, ctx, backbone, GroupFeedVideoPublishedActive,
-		time.Now().UTC().Add(-time.Second),
+	initializeIntegrationConsumerOffsets(
+		t, ctx, cfg, backbone, GroupFeedVideoPublishedActive,
 	)
 	sourceTopic, err := TopicName(cfg.TopicPrefix, TopicVideoPublished)
 	if err != nil {
@@ -896,8 +895,8 @@ func runIntegrationPoisonFlow(
 	admin *kadm.Client,
 ) {
 	t.Helper()
-	initializeIntegrationCutover(
-		t, ctx, backbone, GroupEmbeddingVideoPublishedActive, time.Now().UTC(),
+	initializeIntegrationConsumerOffsets(
+		t, ctx, cfg, backbone, GroupEmbeddingVideoPublishedActive,
 	)
 	sourceTopic, err := TopicName(cfg.TopicPrefix, TopicVideoPublished)
 	if err != nil {
@@ -1455,34 +1454,43 @@ func assertNoIntegrationRetryErrors(
 	}
 }
 
-func initializeIntegrationCutover(
+func initializeIntegrationConsumerOffsets(
 	t *testing.T,
 	ctx context.Context,
+	cfg infraconfig.KafkaConfig,
 	backbone *Backbone,
 	group ConsumerGroupID,
-	boundary time.Time,
 ) {
 	t.Helper()
-	var lastErr error
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		result, err := backbone.ApplyConsumerCutover(
-			ctx,
-			group,
-			boundary.UTC().Format(time.RFC3339Nano),
-			CutoverInitializeOnly,
-		)
-		if err == nil &&
-			(result == CutoverInitialized || result == CutoverPreserved) {
-			return
-		}
-		lastErr = err
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			t.Fatalf("initialize %s cutover: %v", group, errors.Join(lastErr, ctx.Err()))
-		}
+	groupSpec, err := ConsumerGroup(group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupName, err := GroupName(cfg.TopicPrefix, group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topicName, err := TopicName(cfg.TopicPrefix, groupSpec.Topic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := NewRetryOffsetInitializationIdentity(
+		cfg.Environment,
+		cfg.TopicPrefix,
+		groupName,
+		topicName,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initializer := &retryOffsetAdministrator{
+		backend:  &franzRetryOffsetBackend{client: kadm.NewClient(backbone.client.kgoClient)},
+		store:    newMemoryRetryOffsetStore(),
+		identity: identity,
+		timeout:  backbone.client.adminTimeout,
+	}
+	if err := initializer.Initialize(ctx, groupName, topicName); err != nil {
+		t.Fatalf("initialize %s offsets: %v", group, err)
 	}
 }
 
@@ -1786,9 +1794,6 @@ func cleanupIntegrationKafka(
 func integrationGroupNames(prefix string) []string {
 	names := make(map[string]struct{})
 	for _, group := range ConsumerGroups() {
-		if group.Shadow {
-			continue
-		}
 		if name, err := GroupName(prefix, group.ID); err == nil {
 			names[name] = struct{}{}
 		}

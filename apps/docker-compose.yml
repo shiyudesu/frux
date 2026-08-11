@@ -28,24 +28,6 @@ services:
       timeout: 3s
       retries: 20
 
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: frux-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit loopback_users []"
-    ports:
-      - "127.0.0.1:5672:5672"
-      - "127.0.0.1:15672:15672"
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
-      interval: 5s
-      timeout: 30s
-      retries: 20
-
   kafka:
     image: apache/kafka:4.0.0
     container_name: frux-kafka
@@ -129,8 +111,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
-        condition: service_started
       kafka:
         condition: service_started
       minio-init:
@@ -166,8 +146,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
-        condition: service_started
       kafka:
         condition: service_started
       minio-init:
@@ -227,7 +205,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  rabbitmq_data:
   kafka_data:
   api_uploads:
   minio_data:

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -140,12 +141,13 @@ func (s *workerPublishedEventPublisherStub) PublishVideoPublished(
 	return nil
 }
 
-type workerParityStub struct{}
+type workerHandlerStub struct{}
 
-func (workerParityStub) Compare(
-	context.Context, applicationeventstream.Event,
-) (applicationeventstream.ParityResult, error) {
-	return applicationeventstream.ParityMatch, nil
+func (workerHandlerStub) Handle(
+	context.Context,
+	applicationeventstream.Event,
+) (applicationeventstream.Outcome, error) {
+	return applicationeventstream.OutcomeDurableSuccess, nil
 }
 
 func TestAdminTransitionLegacyRestoreAlwaysRepairsDurableHandoff(t *testing.T) {
@@ -203,64 +205,46 @@ func TestModerationWorkerOwnerIsUniquePerProcessStart(t *testing.T) {
 }
 
 func TestBehaviorKafkaConsumersStartViewBeforeAction(t *testing.T) {
-	for _, mode := range []infrakafka.ConsumerMode{
-		infrakafka.ConsumerModeKafka,
-		infrakafka.ConsumerModeKafkaShadow,
-	} {
-		t.Run(string(mode), func(t *testing.T) {
-			started := make([]infrakafka.ConsumerGroupID, 0, 2)
-			starter := func(
-				_ context.Context,
-				_ *infrakafka.Backbone,
-				_ infraconfig.KafkaConfig,
-				group infrakafka.ConsumerGroupID,
-				_ string,
-				_ applicationeventstream.Handler,
-				_ chan<- error,
-			) error {
-				started = append(started, group)
-				return nil
-			}
-			err := startBehaviorKafkaConsumers(
-				context.Background(),
-				nil,
-				infraconfig.KafkaConfig{ShadowDeployment: "test"},
-				orderedBehaviorKafkaConsumers(
-					behaviorKafkaConsumer{
-						migration:   infrakafka.StreamMigration{Consumer: mode},
-						activeGroup: infrakafka.GroupConsumeViewActive,
-						shadowGroup: infrakafka.GroupConsumeViewShadow,
-						parity:      workerParityStub{},
-					},
-					behaviorKafkaConsumer{
-						migration:   infrakafka.StreamMigration{Consumer: mode},
-						activeGroup: infrakafka.GroupPersistActionActive,
-						shadowGroup: infrakafka.GroupPersistActionShadow,
-						parity:      workerParityStub{},
-					},
-				),
-				nil,
-				starter,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := []infrakafka.ConsumerGroupID{
-				infrakafka.GroupConsumeViewActive,
-				infrakafka.GroupPersistActionActive,
-			}
-			if mode == infrakafka.ConsumerModeKafkaShadow {
-				want = []infrakafka.ConsumerGroupID{
-					infrakafka.GroupConsumeViewShadow,
-					infrakafka.GroupPersistActionShadow,
-				}
-			}
-			if len(started) != len(want) ||
-				started[0] != want[0] ||
-				started[1] != want[1] {
-				t.Fatalf("startup order=%v want=%v", started, want)
-			}
-		})
+	started := make([]infrakafka.ConsumerGroupID, 0, 2)
+	starter := func(
+		_ context.Context,
+		_ *infrakafka.Backbone,
+		_ infraconfig.KafkaConfig,
+		group infrakafka.ConsumerGroupID,
+		_ applicationeventstream.Handler,
+		_ chan<- error,
+	) error {
+		started = append(started, group)
+		return nil
+	}
+	err := startBehaviorKafkaConsumers(
+		context.Background(),
+		nil,
+		infraconfig.KafkaConfig{},
+		orderedBehaviorKafkaConsumers(
+			behaviorKafkaConsumer{
+				activeGroup:   infrakafka.GroupConsumeViewActive,
+				activeHandler: workerHandlerStub{},
+			},
+			behaviorKafkaConsumer{
+				activeGroup:   infrakafka.GroupPersistActionActive,
+				activeHandler: workerHandlerStub{},
+			},
+		),
+		nil,
+		starter,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []infrakafka.ConsumerGroupID{
+		infrakafka.GroupConsumeViewActive,
+		infrakafka.GroupPersistActionActive,
+	}
+	if len(started) != len(want) ||
+		started[0] != want[0] ||
+		started[1] != want[1] {
+		t.Fatalf("startup order=%v want=%v", started, want)
 	}
 }
 
@@ -273,7 +257,6 @@ func TestBehaviorKafkaConsumersWaitForViewReadinessBeforeAction(t *testing.T) {
 		_ *infrakafka.Backbone,
 		_ infraconfig.KafkaConfig,
 		group infrakafka.ConsumerGroupID,
-		_ string,
 		_ applicationeventstream.Handler,
 		_ chan<- error,
 	) error {
@@ -294,14 +277,12 @@ func TestBehaviorKafkaConsumersWaitForViewReadinessBeforeAction(t *testing.T) {
 			infraconfig.KafkaConfig{},
 			orderedBehaviorKafkaConsumers(
 				behaviorKafkaConsumer{
-					migration:   infrakafka.StreamMigration{Consumer: infrakafka.ConsumerModeKafka},
-					activeGroup: infrakafka.GroupConsumeViewActive,
-					parity:      workerParityStub{},
+					activeGroup:   infrakafka.GroupConsumeViewActive,
+					activeHandler: workerHandlerStub{},
 				},
 				behaviorKafkaConsumer{
-					migration:   infrakafka.StreamMigration{Consumer: infrakafka.ConsumerModeKafka},
-					activeGroup: infrakafka.GroupPersistActionActive,
-					parity:      workerParityStub{},
+					activeGroup:   infrakafka.GroupPersistActionActive,
+					activeHandler: workerHandlerStub{},
 				},
 			),
 			nil,
@@ -333,7 +314,6 @@ func TestKafkaConsumerSupervisorDoesNotBlockUnrelatedWorkerStartup(t *testing.T)
 		_ *infrakafka.Backbone,
 		_ infraconfig.KafkaConfig,
 		_ infrakafka.ConsumerGroupID,
-		_ string,
 		_ applicationeventstream.Handler,
 		_ chan<- error,
 	) error {
@@ -347,15 +327,10 @@ func TestKafkaConsumerSupervisorDoesNotBlockUnrelatedWorkerStartup(t *testing.T)
 	if err := superviseBehaviorKafkaConsumers(
 		ctx,
 		nil,
-		nil,
-		nil,
 		infraconfig.KafkaConfig{},
 		[]behaviorKafkaConsumer{{
-			migration: infrakafka.StreamMigration{
-				Consumer: infrakafka.ConsumerModeKafka,
-			},
-			activeGroup: infrakafka.GroupConsumeViewActive,
-			parity:      workerParityStub{},
+			activeGroup:   infrakafka.GroupConsumeViewActive,
+			activeHandler: workerHandlerStub{},
 		}},
 		nil,
 		starter,
@@ -371,6 +346,43 @@ func TestKafkaConsumerSupervisorDoesNotBlockUnrelatedWorkerStartup(t *testing.T)
 		t.Fatal("transport supervisor did not attempt consumer startup")
 	}
 	close(release)
+}
+
+func TestKafkaConsumerSupervisorReportsFatalStartupFailure(t *testing.T) {
+	fatal := make(chan error, 1)
+	starter := func(
+		context.Context,
+		*infrakafka.Backbone,
+		infraconfig.KafkaConfig,
+		infrakafka.ConsumerGroupID,
+		applicationeventstream.Handler,
+		chan<- error,
+	) error {
+		return fmt.Errorf("%w: retained source offset missing", infrakafka.ErrConsumerDataLoss)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := superviseBehaviorKafkaConsumers(
+		ctx,
+		nil,
+		infraconfig.KafkaConfig{},
+		[]behaviorKafkaConsumer{{
+			activeGroup:   infrakafka.GroupConsumeViewActive,
+			activeHandler: workerHandlerStub{},
+		}},
+		fatal,
+		starter,
+	); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-fatal:
+		if !errors.Is(err, infrakafka.ErrConsumerDataLoss) {
+			t.Fatalf("fatal error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fatal startup failure was not reported")
+	}
 }
 
 func TestWaitForKafkaConsumerStartup(t *testing.T) {

@@ -10,106 +10,8 @@ import (
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
-	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 )
-
-type rabbitVideoPublisherStub struct {
-	calls int
-	err   error
-}
-
-type fanoutParityStub struct {
-	present bool
-}
-
-func (fanoutParityStub) CountFollowers(context.Context, int64) (int, error) {
-	return 1, nil
-}
-func (fanoutParityStub) ListFollowerIDs(
-	context.Context, int64, int64, int,
-) ([]int64, error) {
-	return []int64{9}, nil
-}
-func (s fanoutParityStub) HasFollowingFanout(
-	context.Context, int64, []int64, *domainfeed.FeedPageItem, bool,
-) (bool, error) {
-	return s.present, nil
-}
-
-type embeddingParityStub struct {
-	present bool
-	matches bool
-}
-
-func (s embeddingParityStub) PublicationIntakeParity(
-	context.Context, int64, string, string,
-) (bool, bool, error) {
-	return s.present, s.matches, nil
-}
-
-type mediaParityStub struct {
-	job *domainmedia.MediaProcessingJob
-}
-
-func (s mediaParityStub) FindProcessingJobByAsset(
-	context.Context, int64,
-) (*domainmedia.MediaProcessingJob, error) {
-	return s.job, nil
-}
-
-func TestVideoWorkflowParityDistinguishesPendingMismatchAndMatch(t *testing.T) {
-	now := time.Now().UTC()
-	publication := applicationeventstream.Event{Payload: &infrakafka.VideoPublishedPayload{
-		VideoID: 1, AuthorID: 2, Title: "title", PublishedAt: now,
-	}}
-	fanoutPending, _ := (FanoutParityChecker{
-		Reader: fanoutParityStub{}, Index: fanoutParityStub{},
-	}).Compare(context.Background(), publication)
-	fanoutMatch, _ := (FanoutParityChecker{
-		Reader: fanoutParityStub{present: true}, Index: fanoutParityStub{present: true},
-	}).Compare(context.Background(), publication)
-	embeddingMismatch, _ := (EmbeddingParityChecker{
-		Reader: embeddingParityStub{present: true},
-	}).Compare(context.Background(), publication)
-	embeddingMatch, _ := (EmbeddingParityChecker{
-		Reader: embeddingParityStub{present: true, matches: true},
-	}).Compare(context.Background(), publication)
-	mediaPending, _ := (MediaWakeupParityChecker{
-		Reader: mediaParityStub{},
-	}).Compare(context.Background(), applicationeventstream.Event{
-		Payload: &infrakafka.MediaProcessingRequestedPayload{
-			AssetID: 3, ProfileVersion: "v1",
-		},
-	})
-	mediaMismatch, _ := (MediaWakeupParityChecker{
-		Reader: mediaParityStub{job: &domainmedia.MediaProcessingJob{ProfileVersion: "v2"}},
-	}).Compare(context.Background(), applicationeventstream.Event{
-		Payload: &infrakafka.MediaProcessingRequestedPayload{
-			AssetID: 3, ProfileVersion: "v1",
-		},
-	})
-	if fanoutPending != applicationeventstream.ParityPending ||
-		fanoutMatch != applicationeventstream.ParityMatch ||
-		embeddingMismatch != applicationeventstream.ParityMismatch ||
-		embeddingMatch != applicationeventstream.ParityMatch ||
-		mediaPending != applicationeventstream.ParityPending ||
-		mediaMismatch != applicationeventstream.ParityMismatch {
-		t.Fatalf(
-			"fanout=%s/%s embedding=%s/%s media=%s/%s",
-			fanoutPending, fanoutMatch, embeddingMismatch, embeddingMatch,
-			mediaPending, mediaMismatch,
-		)
-	}
-}
-
-func (p *rabbitVideoPublisherStub) PublishVideoPublished(
-	context.Context, *applicationvideo.PublishedEvent,
-) error {
-	p.calls++
-	return p.err
-}
 
 type kafkaPublisherStub struct {
 	calls   int
@@ -131,12 +33,9 @@ func (p *kafkaPublisherStub) Publish(
 	return infrakafka.ProduceMetadata{}, p.err
 }
 
-func TestVideoPublisherRequiresBothDualAcknowledgements(t *testing.T) {
-	rabbit := &rabbitVideoPublisherStub{}
+func TestVideoPublisherUsesKafkaOnly(t *testing.T) {
 	kafka := &kafkaPublisherStub{err: errors.New("kafka down")}
 	publisher, err := NewVideoPublisher(
-		infrakafka.ProducerModeRabbitWithKafkaMirror,
-		rabbit,
 		kafka,
 		nil,
 	)
@@ -148,14 +47,18 @@ func TestVideoPublisherRequiresBothDualAcknowledgements(t *testing.T) {
 		EventID: "video-published:1:1", VideoID: 1, AuthorID: 2,
 		PublishedAt: now.Add(-time.Minute), OccurredAt: now,
 	})
-	if err == nil || rabbit.calls != 1 || kafka.calls != 1 {
-		t.Fatalf("err=%v rabbit=%d kafka=%d", err, rabbit.calls, kafka.calls)
+	if !errors.Is(err, kafka.err) || kafka.calls != 1 ||
+		kafka.topic != infrakafka.TopicVideoPublished {
+		t.Fatalf("err=%v kafka=%d topic=%s", err, kafka.calls, kafka.topic)
 	}
-	var publicationErr *PublicationError
-	if !errors.As(err, &publicationErr) ||
-		!publicationErr.TransportAcknowledged("rabbit") ||
-		publicationErr.TransportAcknowledged("kafka") {
-		t.Fatalf("acknowledgements = %#v", err)
+}
+
+func TestVideoPublishersRequireKafka(t *testing.T) {
+	if _, err := NewVideoPublisher(nil, nil); !errors.Is(err, infrakafka.ErrKafkaUnavailable) {
+		t.Fatalf("video error = %v", err)
+	}
+	if _, err := NewMediaPublisher(nil, nil); !errors.Is(err, infrakafka.ErrKafkaUnavailable) {
+		t.Fatalf("media error = %v", err)
 	}
 }
 

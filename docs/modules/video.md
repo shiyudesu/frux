@@ -126,9 +126,9 @@
 `video_publication_event_fact` 永久保存不可变稳定事件事实，`video_publication_event_outbox`
 只保存租约、尝试、可用时间和 dispatch 等运营状态。审核、媒体 ready、恢复、运营和
 reconciliation 都调用同一幂等边界；Kafka 不可用不会回滚真实公开状态。Worker 将事实发布到
-30 天保留的 `frux.video.published.v1`，RabbitMQ 仅在迁移模式中保留 mirror/rollback。
+30 天保留的 `frux.video.published.v1`。
 
-Dispatcher 启动只校验本地依赖，初次 dispatch 与周期任务异步执行，因此 Kafka/RabbitMQ outage
+Dispatcher 启动只校验本地依赖，初次 dispatch 与周期任务异步执行，因此 Kafka outage
 不阻塞 Worker 或其他 consumer 启动。单次运行最多 5 个 100-row batch 且总计 10 秒；超过 replay
 window 的 dispatched 运营行每次最多清理 100 行。清理要求 immutable fact 已存在，reconciliation
 也按 fact 缺失判断，所以删除 outbox 不会重新发布。

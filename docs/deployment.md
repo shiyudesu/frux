@@ -2,7 +2,7 @@
 
 ## Compose
 
-`apps/docker-compose.yml` 提供 PostgreSQL、Redis、RabbitMQ、单节点 KRaft Kafka、MinIO、API、
+`apps/docker-compose.yml` 提供 PostgreSQL、Redis、单节点 KRaft Kafka、MinIO、API、
 Worker、Web、Prometheus 和 Grafana。Kafka 容器内 Listener 为 `kafka:9092`，宿主机测试 Listener
 为 `127.0.0.1:29092`；`kafka_data` 卷保存日志。单节点、副本 1 和明文 Listener 仅用于本地开发。
 MinIO 地址：
@@ -36,11 +36,6 @@ API 凭据需要 Put/Head/Get，Worker 另需 List/Delete；浏览器只获得�
 `governance.poll_timeout` 轮询 PostgreSQL；默认分别为 5 秒和 2 秒。timeout 必须不大于
 interval。发布时应同时确认两个进程的 `/metrics` 中 active revision 和 snapshot age 正常。
 
-RabbitMQ 死信恢复要求 RabbitMQ 3.13+ Management 镜像，并配置 `rabbitmq.management_url`、
-服务端 Management 凭据、timeout 和 `rabbitmq.dead_letter`。生产凭据必须由 Secret 注入，
-不得使用 Compose 的本地 guest 配置。Quorum Source/DLQ 需要足够磁盘和节点副本；容量上限、
-Delivery Limit 和 Replay timeout 必须在发布前压测。
-
 ## Kafka 生产要求
 
 生产环境必须关闭 Broker auto topic creation，并由平台按代码注册表预建 Topic。Frux 在
@@ -54,13 +49,12 @@ Delivery Limit 和 Replay timeout 必须在发布前压测。
 - Topic 的 partition 下限、`cleanup.policy`、`retention.ms`、`message.timestamp.type=LogAppendTime`、
   `max.message.bytes` 和 `min.insync.replicas` 与代码注册表一致。Retention 或 timestamp policy
   变更需要兼容性评审，不能依赖 Broker 默认值。
-- 行为迁移的 dual producer 模式必须同时取得 RabbitMQ 与 Kafka acknowledgement；任一失败都应触发
-  action fallback/conditional rollback 或保留 view outbox。Action cutover boundary 必须严格晚于
-  view boundary，Worker 必须先启动 view Kafka group。
+- Action publication 失败或不确定时进入 PostgreSQL fallback/conditional rollback；view publication
+  失败时保留 outbox。Worker 先启动 view Group，再启动 action Group。
 - 网络策略只开放 Broker Listener；Controller Listener 不暴露给 API/Worker。滚动升级前验证 ISR
   和 under-replicated partition 为零。
 
-完整配置字段、迁移模式和验证命令见 [Kafka event backbone](kafka.md)。
+完整配置字段和验证命令见 [Kafka event backbone](kafka.md)。
 
 Kafka failure recovery 额外要求平台预建每个 retry-topic Group 的固定 5s/30s/2m/10m/30m
 Topic 和 30 天 DLQ。当前 Feed、embedding 共 12 个 recovery Topic。按峰值失败率、平均 Record
@@ -73,18 +67,15 @@ Broker outage 不阻止启动，`frux_kafka_recovery_metrics_stale` 用于识别
 No-progress 告警使用 15 分钟 absolute end-offset、retained backlog、oldest timestamp 与
 `frux_kafka_recovery_progress_total`；成功的非破坏 replay 或 durable retry 处理会抑制该窗口告警。
 
-视频工作流按 publication producer、Feed consumer、embedding consumer、media wakeup 四个责任独立
-切换。`frux.video.published.v1` 必须保持 30 天 delete retention 和 `LogAppendTime`；
-`frux.media.processing-requested.v1` 为 6 小时 command。首次 active cutover 前必须在 advisory lock
-内确认对应 Rabbit source/quorum/DLQ 全部 drain；已有 Kafka Group Offset 在重启时保留，future
-boundary 或 Offset/data-loss 检测必须使 Worker 显式失败。
+`frux.video.published.v1` 必须保持 30 天 delete retention 和 `LogAppendTime`；
+`frux.media.processing-requested.v1` 为 6 小时 command。所有 source/retry Group 在加入前通过
+PostgreSQL durable marker 初始化或验证 committed offsets；offset retention loss 必须使 Worker
+显式报告 data loss。
 
-API/Worker 对 RabbitMQ 与 Kafka 的 Compose 依赖使用 `service_started`，不使用 broker health gate。
-Kafka topology/publisher、active/shadow consumer 和 Rabbit consumer 在有界退避 supervisor 中重连；
-对应 `frux_kafka_broker_healthy`、按 `stage` 区分的
-`frux_kafka_consumer_session_healthy`、`frux_kafka_consumer_workflow_healthy` 与
-`frux_rabbitmq_transport_healthy` 会显示故障，但 PostgreSQL outbox/job、媒体轮询和审核 worker
-继续启动。Active Kafka group 仍须在 Rabbit drain 与 cutover offset 初始化成功后才启动。
+API/Worker 对 Kafka 的 Compose 依赖使用 `service_started`，不使用 broker health gate。Kafka
+topology、publisher 和 active consumers 在有界退避 supervisor 中重连；对应
+`frux_kafka_broker_healthy`、按 `stage` 区分的 `frux_kafka_consumer_session_healthy` 和
+`frux_kafka_consumer_workflow_healthy` 会显示故障，PostgreSQL outbox/job、媒体轮询和审核任务仍保留。
 
 ## 生产审核推理网关
 
@@ -123,19 +114,9 @@ Provider-enabled mode 启动时强制要求 endpoint 和 32–512 字符 HMAC Se
 真实 promotion 证据至少包含样本窗口、人工一致率、假阴性/假阳性分析、未知 label 比例、P95 延迟、
 fallback 率、人工队列 oldest age 和回滚演练结果。
 
-当前 `action_changed_mode=dual` 是首个幂等试点。上线步骤：
-
-1. 先以 `legacy` 部署 `.q2`、DLX 和 DLQ，确认声明幂等且没有修改旧 Classic Queue 类型。
-2. 改为 `dual`，同时观察旧/新 Queue、重复 Event ID、retry exhaustion 和 DLQ backlog。
-3. 旧 Queue 的 ready/unacked 连续 15 分钟为零后改为 `new`；旧 Queue 至少保留一个观察窗口。
-4. 依次观察 publication mirror、Feed shadow、embedding shadow 和 media-wakeup shadow；每个责任单独
-   cut over/rollback，不同时切换多个 Consumer。
-5. 回滚先改回 `dual`，再在旧 Consumer 健康后改为 `legacy`；保留新 DLQ 供调查。
-
-Prometheus 加载 `apps/monitoring/alerts/rabbitmq_dead_letter.yml`，Grafana 自动加载
-`frux-rabbitmq-dead-letter.json`。API 每 15 秒通过 Management API 更新 DLQ depth。
-RabbitMQ 路由在迁移窗口内继续可用；Kafka 原生接口位于
-`/api/admin/kafka-dead-letters*`，不得用 Kafka replay 替代 RabbitMQ Queue Ack。
+Broker 退役观察窗口、旧队列 drain、Kafka 指标阈值和七天有界回滚流程见
+[Kafka-only retirement runbook](operations/kafka-only-retirement.md)。支持的恢复接口只有
+`/api/admin/kafka-dead-letters*`。
 
 ## 灰度与回滚
 
@@ -148,7 +129,7 @@ RabbitMQ 路由在迁移窗口内继续可用；Kafka 原生接口位于
 
 ## 视频工作流故障隔离
 
-Kafka/RabbitMQ publication transport outage 不会阻塞 Worker 启动；publication dispatcher
+Kafka publication transport outage 不会丢失 durable outbox；publication dispatcher
 异步重试并按 5×100/10 秒运行，30 天后的 dispatched outbox 仅在 immutable fact 存在时分批清理。
 发布 timeout 后使用脱离 aggregate cancellation 的短 deadline 标记 retry，stats 也使用独立短
 deadline；stats 失败保留上一组 gauges，并增加

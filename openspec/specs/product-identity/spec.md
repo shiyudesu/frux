@@ -29,15 +29,15 @@ Active source files and build artifacts SHALL use Frux-aligned names, including 
 - **THEN** package metadata, brand components, page metadata, styles, tests, and generated assets use the Frux identity without legacy brand tokens
 
 ### Requirement: Frux runtime namespace
-Fresh development and deployment configuration SHALL use the Frux runtime namespace across browser storage, cookies, environment variables, PostgreSQL defaults, RabbitMQ topology and headers, object storage, Prometheus metrics, Grafana resources, Docker resources, and Kubernetes resources.
+Fresh development and deployment configuration SHALL use the Frux runtime namespace across browser storage, cookies, environment variables, PostgreSQL defaults, Kafka topics and groups, object storage, Prometheus metrics, Grafana resources, Docker resources, and Kubernetes resources.
 
 #### Scenario: Browser state uses Frux keys
 - **WHEN** the Web client stores authentication, public profiles, player preferences, upload state, or pending view events
 - **THEN** localStorage and Cookie names use `frux` prefixes and no legacy key is read or written
 
 #### Scenario: Backend dependencies use Frux names
-- **WHEN** a freshly configured API or worker connects to PostgreSQL, RabbitMQ, and object storage
-- **THEN** it uses the `frux` database and user defaults, `frux.*` messaging resources, `x-frux-*` message headers, and the `frux-media` bucket
+- **WHEN** a freshly configured API or worker connects to PostgreSQL, Kafka, and object storage
+- **THEN** it uses the `frux` database and user defaults, `frux.*` Kafka resources, and the `frux-media` bucket
 
 #### Scenario: Observability uses Frux names
 - **WHEN** the API, worker, Prometheus, and Grafana start

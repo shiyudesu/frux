@@ -472,14 +472,11 @@ func newConsumer(
 	if !groupAllowed(topicSpec, groupID) {
 		return nil, fmt.Errorf("%w: group is not registered for topic", ErrConsumerConfiguration)
 	}
-	var recoverySpec *RecoverySpec
-	if !groupSpec.Shadow {
-		registered, recoveryErr := Recovery(groupID)
-		if recoveryErr != nil || registered.SourceTopic != groupSpec.Topic {
-			return nil, fmt.Errorf("%w: recovery policy is not registered", ErrConsumerConfiguration)
-		}
-		recoverySpec = &registered
+	registered, recoveryErr := Recovery(groupID)
+	if recoveryErr != nil || registered.SourceTopic != groupSpec.Topic {
+		return nil, fmt.Errorf("%w: recovery policy is not registered", ErrConsumerConfiguration)
 	}
+	recoverySpec := &registered
 	consumeTopicID := groupSpec.Topic
 	if recoveryTier > 0 {
 		if recoverySpec == nil || recoverySpec.Policy != RecoveryRetryTopics {
@@ -507,7 +504,7 @@ func newConsumer(
 	if recoveryTier > 0 {
 		groupName, err = RecoveryConsumerGroupName(cfg.TopicPrefix, groupID, recoveryTier)
 	} else {
-		groupName, err = ResolvedGroupName(cfg.TopicPrefix, cfg.ShadowDeployment, groupID)
+		groupName, err = ResolvedGroupName(cfg.TopicPrefix, groupID)
 	}
 	if err != nil {
 		return nil, err
@@ -557,13 +554,7 @@ func newConsumer(
 	assignment := newAssignmentReadiness()
 	partitionLifecycle := &consumerPartitionLifecycle{}
 	resetOffset := kgo.NoResetOffset()
-	if recoveryTier > 0 {
-		if consumerConfig.retryOffsetStore == nil {
-			return nil, fmt.Errorf(
-				"%w: durable retry offset initialization store is required",
-				ErrConsumerConfiguration,
-			)
-		}
+	if consumerConfig.retryOffsetStore != nil {
 		resetOffset = resetOffset.AtCommitted()
 		adminClient, clientErr := kgo.NewClient(options...)
 		if clientErr != nil {
@@ -583,9 +574,11 @@ func newConsumer(
 				clientErr = identityErr
 			}
 			initializer := &retryOffsetAdministrator{
-				backend: &franzRetryOffsetBackend{client: kadm.NewClient(adminClient)},
-				store:   consumerConfig.retryOffsetStore, identity: identity,
-				timeout: adminTimeout,
+				backend:            &franzRetryOffsetBackend{client: kadm.NewClient(adminClient)},
+				store:              consumerConfig.retryOffsetStore,
+				identity:           identity,
+				timeout:            adminTimeout,
+				adoptSparseOffsets: recoveryTier == 0,
 			}
 			if clientErr == nil {
 				clientErr = initializer.Initialize(ctx, groupName, topicName)
@@ -593,8 +586,13 @@ func newConsumer(
 		}
 		adminClient.Close()
 		if clientErr != nil {
-			return nil, clientErr
+			return nil, fmt.Errorf("initialize consumer offsets: %w", clientErr)
 		}
+	} else if recoveryTier > 0 {
+		return nil, fmt.Errorf(
+			"%w: durable retry offset initialization store is required",
+			ErrConsumerConfiguration,
+		)
 	}
 	options = append(options,
 		kgo.ConsumerGroup(groupName),
@@ -774,17 +772,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 }
 
 func validateGroupHandler(
-	group ConsumerGroupSpec,
-	resolvedGroup string,
-	handler applicationeventstream.Handler,
+	_ ConsumerGroupSpec,
+	_ string,
+	_ applicationeventstream.Handler,
 ) error {
-	shadowHandler, shadow := handler.(applicationeventstream.ShadowOnlyHandler)
-	if shadow != group.Shadow {
-		return fmt.Errorf("%w: shadow handler mismatch", ErrConsumerSession)
-	}
-	if shadow && shadowHandler.ExpectedGroup() != resolvedGroup {
-		return fmt.Errorf("%w: shadow group identity mismatch", ErrConsumerSession)
-	}
 	return nil
 }
 

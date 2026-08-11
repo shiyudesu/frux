@@ -52,11 +52,6 @@ const (
 	CodeGovernanceRevisionNotFound = "GOVERNANCE_REVISION_NOT_FOUND"
 	CodeGovernanceUnavailable      = "GOVERNANCE_UNAVAILABLE"
 
-	CodeDeadLetterValidationFailed = "DEAD_LETTER_VALIDATION_FAILED"
-	CodeDeadLetterMessageNotFound  = "DEAD_LETTER_MESSAGE_NOT_FOUND"
-	CodeDeadLetterMessageConflict  = "DEAD_LETTER_MESSAGE_CONFLICT"
-	CodeDeadLetterUnavailable      = "DEAD_LETTER_UNAVAILABLE"
-
 	CodeKafkaDeadLetterValidationFailed  = "KAFKA_DEAD_LETTER_VALIDATION_FAILED"
 	CodeKafkaDeadLetterRecordNotFound    = "KAFKA_DEAD_LETTER_RECORD_NOT_FOUND"
 	CodeKafkaDeadLetterRecordExpired     = "KAFKA_DEAD_LETTER_RECORD_EXPIRED"

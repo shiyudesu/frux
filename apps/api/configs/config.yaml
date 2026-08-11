@@ -22,49 +22,13 @@ redis:
   password: ""
   db: 0
 
-rabbitmq:
-  url: "amqp://guest:guest@localhost:5672/"
-  management_url: "http://localhost:15672"
-  management_username: "guest"
-  management_password: "guest"
-  management_timeout: "2s"
-  interaction_exchange: "frux.interaction"
-  action_changed_queue: "frux.interaction.action_changed"
-  action_changed_routing: "interaction.action_changed"
-  video_exchange: "frux.video"
-  video_published_queue: "frux.video.published"
-  video_embedding_queue: "frux.video.embedding"
-  video_published_routing: "video.published"
-  exposure_exchange: "frux.exposure"
-  view_event_recorded_queue: "frux.exposure.view_event_recorded"
-  view_event_recorded_routing: "exposure.view_event_recorded"
-  media_exchange: "frux.media"
-  media_processing_queue: "frux.media.processing"
-  media_processing_routing: "media.processing.requested"
-  dead_letter:
-    enabled: true
-    version_suffix: ".q2"
-    exchange_suffix: ".dlx.q2"
-    queue_suffix: ".dlq.q2"
-    delivery_limit: 5
-    source_max_length: 100000
-    dead_letter_max_length: 10000
-    preview_limit: 20
-    replay_timeout: "5s"
-    action_changed_mode: "dual"
-    video_published_mode: "legacy"
-    video_embedding_mode: "legacy"
-    view_event_recorded_mode: "legacy"
-    media_processing_mode: "legacy"
-
 kafka:
-  enabled: false
+  enabled: true
   environment: "local"
   brokers:
     - "localhost:29092"
   client_id: "frux-local"
   topic_prefix: ""
-  shadow_deployment: "local"
   allow_local_provisioning: true
   authentication:
     mechanism: "none"
@@ -94,13 +58,6 @@ kafka:
     min_in_sync_replicas: 1
     require_authentication: false
     require_tls: false
-  migration:
-    action_changed: {producer_mode: "rabbit", consumer_mode: "rabbit"}
-    video_published: {producer_mode: "rabbit", consumer_mode: "rabbit"}
-    video_feed: {producer_mode: "rabbit", consumer_mode: "rabbit"}
-    video_embedding: {producer_mode: "rabbit", consumer_mode: "rabbit"}
-    view_event_recorded: {producer_mode: "rabbit", consumer_mode: "rabbit"}
-    media_processing: {producer_mode: "rabbit", consumer_mode: "rabbit"}
 
 media:
   backend: "local"

@@ -9,7 +9,7 @@
 | API | Go、Hertz、GORM |
 | 数据库 | PostgreSQL |
 | 缓存 | Redis |
-| 消息队列 / 事件流 | RabbitMQ、Apache Kafka（KRaft） |
+| 事件流 | Apache Kafka（KRaft） |
 | 鉴权 | JWT |
 | Web | React、Vite |
 | 规格驱动 | OpenSpec |
@@ -38,7 +38,7 @@ apps/api/
 | --- | --- | --- |
 | Domain | 实体、领域错误、业务不变量、仓储接口 | 只依赖标准库 |
 | Application | 用例编排、分页游标、幂等、跨实体流程 | 依赖 Domain 接口 |
-| Infrastructure | GORM、Redis、RabbitMQ、JWT、配置 | 实现 Domain/Application 所需接口 |
+| Infrastructure | GORM、Redis、Kafka、JWT、配置 | 实现 Domain/Application 所需接口 |
 | Interfaces | HTTP Handler、DTO、路由、中间件 | 调用 Application Service |
 
 模块接入顺序：
@@ -147,7 +147,7 @@ Application 层负责用例编排。
 - 默认分页大小和最大分页裁剪。
 - 基础设施能力的最小接口，例如 `TokenSigner`。
 
-Service 依赖 Domain 的 `Repository` 接口，构造函数注入依赖。Redis、RabbitMQ、Kafka、JWT 这类能力通过小接口注入，便于测试。
+Service 依赖 Domain 的 `Repository` 接口，构造函数注入依赖。Redis、Kafka、JWT 这类能力通过小接口注入，便于测试。
 
 可选基础设施继续使用 functional option，例如账户资料设置仓储和视频缓存失效器。必需的聚合依赖应在构造函数中显式传入，避免运行时缺少核心数据源。
 
@@ -162,7 +162,6 @@ internal/infra/config/
 internal/infra/database/
 internal/infra/httphertz/
 internal/infra/cache/
-internal/infra/mq/
 internal/infra/kafka/
 internal/infra/jwt/
 internal/infra/persistence/{module}/
@@ -185,9 +184,8 @@ GORM Repository 规则：
 - `AutoMigrate` 后的模块回填保持显式且有顺序：补齐视频统计和可见性默认值、补齐资料隐私设置、用版本 `0` 与现有行为 `updated_at` 回填异步互动最新事件顺序、重建内容聚合、仅在 `app_migration` 无持久标记时从原始事件回填观看历史，再创建 Feed 专用索引。可删除投影的原始事实回填不得在每次启动重复执行。
 - 跨表聚合计数写入和事实变化放在同一事务；提供基于事实表的 reconciliation 函数作为迁移和修复入口。
 - 在线实例可能并发写聚合时，reconciliation 不得绝对覆盖统计行；应基于同一语句快照计算“事实值 - 快照聚合值”差量，再叠加到获得行锁后的当前值。
-- 由业务模块拥有的 Transactional Outbox 与业务事实同事务提交。通用 Worker 模式为：有界批次、`FOR UPDATE SKIP LOCKED`、稳定 lease owner、租约超时、指数退避、terminal 分类、稳定 event ID 下游去重和受监督 shutdown；不得让 message 或 RabbitMQ 成为互动 HTTP 事务的提交前依赖。
-- RabbitMQ Consumer 必须在 Ack/Nack 前分类：格式错误、无效必填字段和 terminal domain error 使用 reject/no-requeue；基础设施错误才 requeue。受保护 Consumer 使用新名称 Quorum Queue、`x-delivery-limit`、`overflow=reject-publish` 和有界 DLQ；Queue Type 不得原地修改。所有新 Quorum Consumer（包括 `dual` 次 Consumer）必须使用独立受监督 Channel 和最大 30 秒的有界退避。关键流程使用 at-least-once dead-lettering，允许由数据库任务恢复的唤醒队列可使用 at-most-once DLX。
-- Kafka Topic、Producer、Consumer Group、Key Kind、Retention、Cleanup Policy 和迁移模式必须来自
+- 由业务模块拥有的 Transactional Outbox 与业务事实同事务提交。通用 Worker 模式为：有界批次、`FOR UPDATE SKIP LOCKED`、稳定 lease owner、租约超时、指数退避、terminal 分类、稳定 event ID 下游去重和受监督 shutdown；不得让 message broker 成为互动 HTTP 事务的提交前依赖。
+- Kafka Topic、Producer、Consumer Group、Key Kind、Retention、Cleanup Policy 和恢复策略必须来自
   `internal/infra/kafka` 封闭注册表。业务代码不得接受任意 Topic/Group 字符串；Domain 不导入
   franz-go 类型。JSON Envelope 和 Payload 使用显式版本、严格未知字段/尾随数据校验及有界大小。
 - Kafka Producer 固定使用 idempotence、`acks=all`、有界 delivery deadline 和逐 Record 结果；
@@ -200,20 +198,13 @@ GORM Repository 规则：
   Application 不在不确定结果后自行无界重发。Consumer 禁用 auto commit，按 Partition 顺序和有界
   并发处理，只在 durable-success 或注册 terminal 结果后显式提交 Offset；Commit 不确定必须结束
   当前 Session，由稳定 Event ID 和耐久幂等边界承受重投。
-- Kafka 迁移只允许 registered primary/mirror Producer 与 active/shadow Consumer。Shadow Group
-  必须使用独立 Group ID，只做 Envelope、Key、Age 和可选 Parity 校验，不调用变更业务状态的
-  Handler。Single 模式要求对应传输 acknowledgement；任一 dual/mirror 模式必须同时取得 RabbitMQ
-  与 Kafka acknowledgement，部分成功必须通过 Application 可见的窄错误契约暴露每个传输的
-  durable acknowledgement，仍返回失败并进入业务 fallback/outbox retry。Primary
-  acknowledgement 仍必须属于 active mutating Consumer 使用的传输；Rabbit active 或 Kafka shadow
-  阶段不得使用 Kafka primary/Rabbit mirror。Retained event Topic 必须注册并验证
-  `message.timestamp.type=LogAppendTime`；Active Group 启动前按 broker append-time cutover timestamp
-  用 kadm 一次性初始化各 Partition Offset，不能使用 producer clock；已有 Commit 必须保留，不得在
-  重启时回绕。Consumer 只有在 `OnPartitionsAssigned` 收到非空 Partition 后才可标记 Session
-  started/healthy；broker outage 时 supervisor 保持未就绪并重连，不阻止数据库型 Worker 启动。
-  Action boundary 必须严格晚于 view boundary；active Group 仍须先完成 Rabbit drain 与 cutover
-  offset 初始化，view/action 的有序启动不得因异步 supervisor 被绕过。
-  Shadow 未查到事实记为 pending 并有界延迟重试，只有已存在但冲突的事实记为 mismatch。
+- Kafka 运行时只允许注册 Producer 与 active Consumer Group。Retained event Topic 必须注册并验证
+  `message.timestamp.type=LogAppendTime`。Source 和 retry Group 加入前必须通过 PostgreSQL durable
+  marker 验证或初始化 committed offsets：新 Group 从 retained start 开始，已有 Commit 保留，
+  已完成 marker 后的 missing/expired/out-of-range offset 显式报 data loss。Consumer 只有在
+  `OnPartitionsAssigned` 收到非空 Partition 后才可标记 Session started/healthy；broker outage 时
+  supervisor 保持未就绪并重连，不丢失数据库型 Worker 状态。View Group 必须先 ready，再启动 Action
+  Group。
 - 视频首次公开事实在视频拥有的 `video_publication_event_outbox` 中耐久保存，再由 Worker 发布到
   30 天保留的 `frux.video.published.v1`。Feed 与 embedding 使用独立 Group；前者在幂等 Redis
   fanout/preheat 后提交，后者在 `hash-ngram-v1` 条件持久化成功后提交。
@@ -263,8 +254,7 @@ GORM Repository 规则：
   媒体 asset、variants、cleanup/job 最终状态必须在同一事务、验证 fence 后提交，public/notification
   副作用只能在提交后发生。Media heartbeat 使用处理 context 派生的短 deadline，
   DB stall/shutdown 必须取消处理，禁止 stale/reclaimed attempt 更新状态。
-- Queue 迁移只允许 `legacy -> dual -> new`。`dual` 期间新旧 Consumer 同时运行，业务层必须按原 Event ID 幂等；旧 Queue ready/unacked 持续归零后才能移除旧 Binding。回滚先恢复 `dual`，不得先删除新 DLQ。
-- DLQ Preview 只通过服务端 RabbitMQ Management Adapter 返回 Payload 大小、SHA-256、JSON 顶层字段等脱敏诊断，不复制 Payload 到 PostgreSQL。Operator Replay 仅允许 allowlist Queue 的队头单消息，必须从 `x-death` 验证原 Source Queue、Exchange 和 Routing Key，拒绝直接 DLQ 投递；保持原 Payload/Event ID，增加 Replay ID。成功 Audit Fact 必须在发布前可构造，不能直接进入有界审计字段的合法 Event ID 使用稳定 SHA-256 引用；Publisher Confirm 后写成功审计，完成后才 Ack DLQ。
+- Kafka DLQ 检查只允许代码注册 Topic 的精确 Partition/Offset 读取，返回 Payload 大小、SHA-256 和有界 JSON 诊断，不复制 Payload 到 PostgreSQL。Operator Replay 保持原 key/value/Event ID，增加稳定 Replay ID，先持久化 pending claim，再发布到 owning Group 的第一 retry tier；acknowledgement 不确定时通过 Kafka evidence reconciliation 收敛，不能重复发布。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。
 - 运行时降级控制使用 `domain/governance` 封闭注册表；定义必须包含 typed normal/failure
   default、process scope 和 max staleness。持久化使用 immutable revision +
@@ -302,9 +292,9 @@ Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
 
 所有 `/api/admin` 路由必须先使用强制 JWT 鉴权建立用户 ID，再通过参数化 Admin Permission Middleware 读取当前 `account.status/role` 并检查路由声明的单项权限。JWT role claim 不能作为后台授权事实；停用、降权、普通和未知角色默认拒绝。权限中间件把 `AdminPrincipal` 写入 `RequestContext.Keys`，后台 Handler 只能通过共享 helper 读取主体用于归因，不得自行比较角色字符串。当前封闭权限集合和角色映射位于 `domain/account`，后续审核、审计、视频运营和治理模块复用该边界，但继续拥有各自数据与事务。
 
-死信摘要、Preview 和单消息 Replay 均要求 `governance.execute`。Replay 的成功/失败 Audit Fact
-必须包含 Queue、原 Event ID、Replay ID、reason code 和封闭 failure code；不得保存原 Payload、
-任意 Header 或 RabbitMQ 凭据。
+Kafka 死信摘要、精确检查和单消息 Replay 均要求 `governance.execute`。Replay 的成功/失败 Audit
+Fact 必须包含 Topic/Partition/Offset、原 Event ID、Replay ID、reason code 和封闭 failure code；
+不得保存原 Payload、任意 Header 或 broker 凭据。退役前生成的旧恢复审计事实保持只读可查询。
 
 后台审计查询必须要求 `audit.read`，强制提交不超过 31 天的时间范围，并使用绑定全部过滤条件的 `(created_at, id)` 编码游标。HTTP 响应只返回 Domain 已验证的 action-specific detail；Handler 不接受任意详情结构，也不提供审计更新或删除入口。
 
@@ -400,7 +390,7 @@ DELETE /api/videos/{videoId}/like
 
 高频计数独立成统计表，例如 `video_stat`、`user_relation_stat`。计数更新与事实写入放在同一事务中完成。缓存计数允许短暂偏差，持久化表保存最终事实。
 
-生产媒体公开读条件额外要求 `media_status IN ('legacy_ready', 'ready')`。新对象存储视频在处理期间不计入公开作品数；基线就绪转换与统计增量在同一视频投影事务中更新。媒体任务按 `(asset_id, profile_version)` 唯一并使用数据库租约和指数退避，RabbitMQ 只负责唤醒，数据库任务是可恢复事实来源。对象删除不得放进用户请求事务；视频删除创建延迟 `media_cleanup_task`，Worker 幂等删除，Reconciler 修复过期租约、缺失对象和孤儿对象。
+生产媒体公开读条件额外要求 `media_status IN ('legacy_ready', 'ready')`。新对象存储视频在处理期间不计入公开作品数；基线就绪转换与统计增量在同一视频投影事务中更新。媒体任务按 `(asset_id, profile_version)` 唯一并使用数据库租约和指数退避，Kafka 只负责短时唤醒，数据库任务是可恢复事实来源。对象删除不得放进用户请求事务；视频删除创建延迟 `media_cleanup_task`，Worker 幂等删除，Reconciler 修复过期租约、缺失对象和孤儿对象。
 
 创作者和审核员预览属于受保护读取，不属于公共媒体投影。Owner asset access 在 ready 时优先选择
 protected baseline/cover variant，无匹配 variant 时才回退 original；授权仍绑定不可变 owner 和当前
@@ -415,16 +405,15 @@ protected baseline/cover variant，无匹配 variant 时才回退 original；授
 
 播放技术遥测使用独立版本化批次，不进入观看历史或推荐行为投影。批次和事件载荷先规范化再计算哈希；同一 reporter 的写入用事务 advisory lock 串行，安全重放只计 duplicate，同 ID 异载荷回滚整批。原始遥测按 `created_at` 有界清理。
 
-需要可靠投递到外部传输、但不能让 broker 决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和注册传输 acknowledgement 分发，下游继续按业务事件 ID 去重。`view_event_recorded` 的 single 模式等待单一传输；dual/mirror 模式必须同时等待 Kafka 与 RabbitMQ，任一失败都保留 Outbox pending。
+需要可靠投递到 Kafka、但不能让 broker 决定 HTTP 事实是否提交的写路径使用 PostgreSQL Transactional Outbox。业务事实、投影与 Outbox 同事务提交；Worker 通过租约、重试和 Kafka acknowledgement 分发，下游继续按业务事件 ID 去重。`view_event_recorded` 只有在 Kafka acknowledgement 后才标记 Outbox dispatched。
 
-`action_changed` 保留 Redis 单调版本快速路径。Single Kafka 或 dual/mirror 中任一所需传输失败、
-acknowledgement 不确定时同步执行 `PersistAcceptedActionEvent`；发布与 fallback 双失败时，只有
-没有任一 broker durable acknowledgement 才可条件回滚仍由该版本拥有的 Redis 状态。若任一传输已
-确认，则确认 Redis handoff、返回可见失败且禁止回滚，避免后续 broker delivery 与 Redis 分叉。Kafka
-active action/view Handler 只有在 PostgreSQL receipt/fact 与 downstream outbox 边界提交后才返回
-durable success；注册 terminal 结果可推进 offset，基础设施错误结束 Consumer Session 并重投。
+`action_changed` 保留 Redis 单调版本快速路径。Kafka publication 失败或 acknowledgement 不确定时
+同步执行 `PersistAcceptedActionEvent`；发布与 fallback 双失败时，只有 Kafka 明确未确认才可条件
+回滚仍由该版本拥有的 Redis 状态。Kafka action/view Handler 只有在 PostgreSQL receipt/fact 与
+downstream outbox 边界提交后才返回 durable success；注册 terminal 结果可推进 offset，基础设施错误
+进入 Consumer recovery policy。
 
-Outbox 不要求最终目标一定是 RabbitMQ。评论通知 Outbox 由 Worker 直接调用 message Application 窄接口：互动事务只提交 durable event，消息写入失败后按租约重试，`recipient + event_id` 去重；历史迁移不得合成旧通知。
+评论通知 Outbox 由 Worker 直接调用 message Application 窄接口：互动事务只提交 durable event，消息写入失败后按租约重试，`recipient + event_id` 去重；历史迁移不得合成旧通知。
 
 账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。
 

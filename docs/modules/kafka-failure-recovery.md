@@ -4,8 +4,8 @@
 
 本模块只处理 Kafka **事件投递失败**：Consumer 先做有界本地重试，需要解除源 Partition
 阻塞时才进入代码注册的固定延迟 Topic，最终进入 Consumer Group 专属、不可变的 DLQ。
-RabbitMQ `/api/admin/dead-letter-*` 接口在迁移期继续保留；Kafka 使用独立 Topic/Partition/Offset
-接口和 DTO，不模拟 Queue head、Ack 或 destructive replay。
+Kafka 使用独立 Topic/Partition/Offset 接口和 DTO，不模拟 Queue head、Ack 或 destructive replay。
+旧队列摘要、预览和破坏性重放接口已经退役。
 
 媒体处理和未来语义计算等长任务仍由 PostgreSQL job、lease、heartbeat、retry 和
 reconciliation 恢复。Kafka retry Topic 不承载已经完成数据库 durable handoff 后的任务执行失败。

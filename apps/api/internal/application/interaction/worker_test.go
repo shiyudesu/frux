@@ -1,10 +1,10 @@
 package applicationinteraction
 
 import (
-	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
-	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"context"
 	"errors"
+	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"strings"
 	"testing"
 	"time"
@@ -188,7 +188,7 @@ func TestActionWorkerAcknowledgesDurableActionBeforePendingAttribution(t *testin
 	event.OccurredAt = now
 
 	if err := worker.HandleActionChanged(context.Background(), event); err != nil {
-		t.Fatalf("durably handed-off action should acknowledge RabbitMQ: %v", err)
+		t.Fatalf("durably handed-off action should acknowledge delivery: %v", err)
 	}
 	if len(repo.events) != 1 || len(outcomes.outcomes) != 0 || len(repo.failed) != 0 {
 		t.Fatalf("MQ path performed attribution instead of handing it off: events=%#v outcomes=%#v failed=%#v", repo.events, outcomes.outcomes, repo.failed)

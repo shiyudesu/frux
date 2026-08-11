@@ -7,8 +7,8 @@ Frux is a short-video feed system with a Go API/worker backend and a React/Vite 
 Run commands from the repository root unless a command changes directory explicitly.
 
 ```bash
-# Build and start the complete stack (API, worker, web, MySQL, Redis,
-# RabbitMQ, Prometheus, and Grafana).
+# Build and start the complete stack (API, worker, web, PostgreSQL, Redis,
+# Kafka, MinIO, Prometheus, and Grafana).
 cd apps && docker compose up --build
 
 # Validate Compose without starting services.
@@ -40,7 +40,7 @@ openspec list
 openspec validate --all --strict
 ```
 
-Both Go binaries load `./configs/config.yaml` using a relative path, so direct `go run` commands must be executed from `apps/api`. The local startup script starts processes only; it does not provision MySQL, Redis, or RabbitMQ.
+Both Go binaries load `./configs/config.yaml` using a relative path, so direct `go run` commands must be executed from `apps/api`. The local startup script starts processes only; it does not provision PostgreSQL, Redis, Kafka, or MinIO.
 
 ## OpenSpec Skills in Copilot CLI
 
@@ -52,15 +52,15 @@ Both Go binaries load `./configs/config.yaml` using a relative path, so direct `
 ## Architecture
 
 - `apps/api/cmd/feed` is the HTTP process. `internal/interfaces/http/router/router.go` is the main composition root: it opens GORM over the shared `database/sql` pool, runs migrations, builds repositories/services/handlers, registers middleware, and exposes `/api`, `/internal`, `/uploads`, `/health`, and `/metrics`.
-- `apps/api/cmd/worker` is the asynchronous process. It consumes RabbitMQ events for interaction write-behind, following-feed fanout, feed preheating, and video embedding generation; it exposes worker metrics on `:9091`.
+- `apps/api/cmd/worker` is the asynchronous process. It consumes Kafka events for interaction write-behind, viewing feedback, following-feed fanout, feed preheating, hash embedding intake, and media wakeups; it also polls PostgreSQL durable jobs and exposes worker metrics on `:9091`.
 - Backend modules are mirrored across four layers:
   - `internal/domain/{module}`: entities, invariants, domain errors, repository interfaces.
   - `internal/application/{module}`: use cases, cursor/idempotency logic, small interfaces for optional infrastructure, and workers.
-  - `internal/infra`: GORM persistence, Redis cache/indexes, RabbitMQ, JWT, configuration, metrics, and migrations.
+  - `internal/infra`: GORM persistence, Redis cache/indexes, Kafka, JWT, configuration, metrics, and migrations.
   - `internal/interfaces/http/{module}`: DTOs, request parsing, error-to-status mapping, and handlers.
-- The dependency direction is `Config/external clients -> Repository -> Application Service -> Handler -> Router`. Domain packages must not depend on Hertz, GORM, Redis, or RabbitMQ types.
-- MySQL is the durable source of truth. Redis holds feed pages/cards/stats, hot-ranking buckets, following indexes, and fast interaction state. RabbitMQ carries action changes, video-published events, and exposure events to workers.
-- Redis and RabbitMQ are optional enhancements in the HTTP process: the router enables capabilities through application options when clients are available. The worker requires both Redis and RabbitMQ.
+- The dependency direction is `Config/external clients -> Repository -> Application Service -> Handler -> Router`. Domain packages must not depend on Hertz, GORM, Redis, or Kafka client types.
+- PostgreSQL is the durable source of truth. Redis holds feed pages/cards/stats, hot-ranking buckets, following indexes, and fast interaction state. Kafka carries retained behavior/domain events and short-lived media wakeups.
+- The API and Worker require valid Kafka and Redis configuration. Long-running work, leases, delayed retries, and reconciliation remain PostgreSQL-owned.
 - `migration.AutoMigrate` is called by both processes and includes retry handling for concurrent migration races. Add new GORM models there and keep module-specific post-migration/index setup explicit.
 - `apps/web` is a strict TypeScript SPA. `App.tsx` only composes providers and dispatches routes. It uses a typed, hand-written History API router (`router.tsx`), session/unread contexts (`session.tsx`), typed domain API modules over `apiRequest<T>`, page components, shared components, and behavior hooks.
 - Vite proxies `/api` and `/uploads` to the local API. The production nginx image serves the SPA with history fallback and proxies the same paths to the Compose `api` service.
