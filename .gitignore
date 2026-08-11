@@ -3,3 +3,5 @@ apps/api/uploads/*
 apps/api/feed
 apps/api/worker
 .clone-ui/
+docs/interview-questions.md
+docs/resume-highlights.md
