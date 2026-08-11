@@ -1,3 +1,5 @@
 .DS_Store
 apps/api/uploads/*
+apps/api/feed
+apps/api/worker
 .clone-ui/
