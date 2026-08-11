@@ -1,109 +1,90 @@
+<div align="center">
+
 # Frux
 
-Frux 是一个面向短视频场景的 Feed 系统工程。项目用 Go API 单体、React Web 客户端、PostgreSQL、Redis 和 Kafka 承载内容供给、分发、消费、互动和治理链路。
+**面向短视频场景的完整 Feed 系统工程**
 
-## 当前状态
+![Go](https://img.shields.io/badge/Go-1.26.1-00ADD8?style=flat-square&logo=go&logoColor=white)
+![React](https://img.shields.io/badge/React-18.3-61DAFB?style=flat-square&logo=react&logoColor=111827)
+![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-7.4-DC382D?style=flat-square&logo=redis&logoColor=white)
+![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-4.0-231F20?style=flat-square&logo=apachekafka&logoColor=white)
+![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 
-已实现能力：
+Frux 使用 Go、React、PostgreSQL、Redis、Kafka 和 S3 兼容对象存储，
+实现短视频从上传、审核、分发到播放互动的完整链路。
 
-- 后端分层结构：Domain、Application、Infrastructure、Interfaces。
-- Hertz HTTP 服务入口和 REST API 路由。
-- PostgreSQL + GORM 持久化。
-- JWT 登录态。
-- Redis Feed 缓存、热榜和互动计数。
-- Kafka KRaft 本地运行、版本化事件契约、Topic/Group 注册表、显式 Offset 提交，以及互动、观看、视频发布、Feed 和媒体唤醒链路。
-- React + Vite Web 客户端。
-- 结构化视频生命周期消息中心、评论通知和播放优化接入。
-- 当前账号驱动的 Reviewer、Operator 和 Admin 后台权限。
-- 不可变后台操作审计和审计查询。
-- 待审、批准、拒绝、下架和恢复的视频审核生命周期。
-- 机器证据、版本化审核策略和自动通过/拒绝/转人审。
-- 可替换的生产审核推理网关、受保护抽帧、耐久任务，以及 disabled/observe/approve-only/enforce 灰度。
-- 人工审核任务、本人进行中/最近完成视图、受保护视频预览、并发占用、决定、通知 Outbox 和运营控制台。
-- 视频运营搜索、版本检查、下架和合规恢复。
-- 版本化运行时降级控制、本地快照和回滚。
-- 本地优先、Redis 协调的分层请求限流。
-- Kafka 固定重试层、Consumer Group 专属 DLQ、精确坐标检查和非破坏审计重放。
-- API 流程测试和 Web 生产构建。
-- Prometheus 指标和 Grafana 监控面板。
-- S3 兼容对象存储、预签名直传、异步多码率 MP4/DASH 处理和审核感知的版本化媒体交付。
+[功能概览](#功能概览) · [快速启动](#快速启动) · [开发与验证](#开发与验证) · [文档](#文档)
+
+</div>
+
+## 功能概览
+
+| 能力 | 说明 |
+| --- | --- |
+| 视频供给 | 预签名直传、异步转码、MP4/DASH 多码率、封面处理和保护媒体访问 |
+| 内容治理 | 自动审核、人工复审、版本化策略、下架/恢复、后台权限与不可变审计 |
+| Feed 分发 | 最新、热门、关注和推荐流，稳定游标、缓存校验、预加载与播放反馈 |
+| 用户互动 | 点赞、收藏、关注、两级评论、消息通知、观看历史和稍后再看 |
+| 播放体验 | 全屏连续播放、清晰度/倍速偏好、QoS 指标和版本化播放遥测 |
+| 稳定性 | PostgreSQL 耐久任务、Kafka 重试/DLQ、Redis 协调限流、Prometheus 与 Grafana |
+
+## 技术栈
+
+| 层次 | 技术 |
+| --- | --- |
+| API / Worker | Go、CloudWeGo Hertz、GORM |
+| Web | React、TypeScript、Vite、dash.js |
+| 数据 | PostgreSQL、Redis |
+| 事件 | Apache Kafka（KRaft） |
+| 媒体 | MinIO / S3、FFmpeg、MP4、MPEG-DASH |
+| 可观测性 | Prometheus、Grafana |
+| 本地编排 | Docker Compose |
 
 ## 快速启动
 
-### Docker Compose
-
-前置依赖：
+### 前置依赖
 
 - Docker
 - Docker Compose
+- OpenSSL
 
-内部服务接口需要一个至少 32 字符、包含至少三类字符的随机 token。它不会作为
-可用默认值提交到仓库；启动或校验 Compose 前生成并导出它：
+### 启动完整环境
+
+内部接口要求一个至少 32 字符、包含至少三类字符的随机 Token：
 
 ```bash
 export FRUX_INTERNAL_TOKEN="$(openssl rand -base64 48 | tr -d '\n')"
-```
-
-启动：
-
-```bash
 cd apps
 docker compose up --build
 ```
 
-首次切换到 PostgreSQL 时，旧开发数据不迁移，先执行一次：
-
-```bash
-cd apps
-docker compose down -v
-```
-
-后台启动：
-
-```bash
-cd apps
-docker compose up -d --build
-```
-
-查看日志：
-
-```bash
-cd apps
-docker compose logs -f api web
-```
-
-停止：
-
-```bash
-cd apps
-docker compose down
-```
-
-清理 Compose 创建的全部数据卷：
-
-```bash
-cd apps
-docker compose down -v
-```
-
-服务地址：
+主要入口：
 
 | 服务 | 地址 |
 | --- | --- |
 | Web | `http://127.0.0.1:5173` |
 | API 健康检查 | `http://127.0.0.1:8080/health` |
-| API 指标 | `http://127.0.0.1:8080/metrics` |
-| PostgreSQL | `127.0.0.1:5432` |
-| Redis | `127.0.0.1:6379` |
-| Kafka（宿主机 Listener） | `127.0.0.1:29092` |
-| MinIO S3 API | `http://127.0.0.1:9000` |
+| 后台登录 | `http://127.0.0.1:5173/admin/login` |
 | MinIO Console | `http://127.0.0.1:9001` |
-| Prometheus | `http://127.0.0.1:9090` |
-| Grafana 面板 | `http://127.0.0.1:3000/d/frux-overview/frux-overview` |
+| Grafana | `http://127.0.0.1:3000/d/frux-overview/frux-overview` |
 
-### 内部控制面验收
+常用命令：
 
-在 Web 注册账号后，可将本地账号设为兼容管理员：
+| 操作 | 命令 |
+| --- | --- |
+| 后台启动 | `cd apps && docker compose up -d --build` |
+| 查看日志 | `cd apps && docker compose logs -f api worker web` |
+| 停止服务 | `cd apps && docker compose down` |
+| 校验配置 | `cd apps && docker compose config` |
+| 清空本地数据 | `cd apps && docker compose down -v` |
+
+> `docker compose down -v` 会删除 PostgreSQL、Redis、Kafka 和 MinIO 的本地数据卷。
+
+### 启用本地后台账号
+
+先在 Web 注册账号，再将该账号设置为兼容管理员：
 
 ```bash
 docker exec frux-postgres \
@@ -111,147 +92,69 @@ docker exec frux-postgres \
   -c "UPDATE account SET role='admin' WHERE account='ops';"
 ```
 
-角色更新后不要复用普通用户登录态，直接访问独立后台登录页：
+后台使用独立的 `admin_access` Token，不会覆盖普通用户登录态。新视频默认进入待审核状态，
+只有审核批准且媒体处理完成后才会进入 Feed、搜索和公共媒体交付。
 
-```text
-http://127.0.0.1:5173/admin/login
-```
+## 本地开发
 
-后台使用独立 `admin_access` Token 和当前标签页的 `sessionStorage`，不会覆盖普通用户登录。登录成功后访问：
-
-| 页面 | 地址 |
-| --- | --- |
-| 后台登录 | `http://127.0.0.1:5173/admin/login` |
-| 审核任务 | `http://127.0.0.1:5173/admin/reviews` |
-| 视频运营 | `http://127.0.0.1:5173/admin/videos` |
-| Kafka 故障恢复 | `/api/admin/kafka-dead-letters*` |
-| 限流、治理和 Kafka 恢复监控 | `http://127.0.0.1:3000` |
-
-新视频默认进入待审核状态。媒体处理完成不能绕过审核；批准后才进入 Feed、搜索、
-公开主页和公共媒体交付。后台操作会写入不可变审计事实。
-
-### 本地开发
+依赖服务可用后，在仓库根目录启动 API、Worker 和 Vite：
 
 ```bash
 ./scripts/start.sh
 ```
 
-默认地址：
+两个 Go 进程使用相对路径读取 `apps/api/configs/config.yaml`；直接运行 Go 命令时应进入
+`apps/api` 目录。脚本不会自动创建 PostgreSQL、Redis、Kafka 或 MinIO。
 
-| 服务 | 地址 |
-| --- | --- |
-| Web | `http://127.0.0.1:5173` |
-| API | `http://127.0.0.1:8080` |
-
-## 验证与指标
-
-### 自动化测试
-
-后端测试：
+## 开发与验证
 
 ```bash
+# 后端
 cd apps/api
 go test ./...
-```
+go build ./cmd/feed ./cmd/worker
 
-真实 PostgreSQL 集成测试会为每个测试创建并清理独立 schema；未设置连接时会明确跳过：
-
-```bash
-cd apps
-docker compose up -d postgres
-cd api
-FRUX_POSTGRES_TEST_DSN='postgres://frux:sealos123@127.0.0.1:5432/frux?sslmode=disable' \
-  go test ./internal/infra/persistence/migration -run '^TestPostgreSQL'
-```
-
-前端生产构建：
-
-```bash
+# 前端
+pnpm -C apps/web install --frozen-lockfile
+pnpm -C apps/web run test
 pnpm -C apps/web run build
-```
 
-Compose 配置校验：
-
-```bash
-cd apps
-docker compose config
-```
-
-Kubernetes 清单校验：
-
-```bash
-kubectl apply --dry-run=client -f apps/deploy.yaml
-```
-
-### Feed 压测
-
-详细步骤见 [docs/performance-testing.md](docs/performance-testing.md)，包括最新流、热门榜单、推荐流、极限 QPS 和 Grafana 指标解读。
-
-重点查看 `http_reqs` 后面的 `/s`、`http_req_duration p(95)`、`http_req_failed` 和 `feed_success_rate`。
-
-### 监控面板
-
-Docker Compose 会启动 Prometheus 和 Grafana：
-
-```bash
-cd apps
-docker compose up -d --build
-```
-
-Grafana 默认账号密码：
-
-```text
-admin / admin
-```
-
-内置面板：`Frux / Frux Overview`
-
-```text
-http://127.0.0.1:3000/d/frux-overview/frux-overview
-```
-
-面板覆盖 API QPS、5xx 错误率、API P95、Feed P95、Feed 缓存命中率、上传处理耗时和 Worker 成功率。
-
-Prometheus 抓取目标：
-
-- `frux-api`：`api:8080/metrics`
-- `frux-worker`：`worker:9091/metrics`
-
-## 文档地图
-
-| 文档 | 用途 |
-| --- | --- |
-| [docs/product.md](docs/product.md) | 产品范围、模块地图、P0/P1 功能清单 |
-| [docs/quickread.md](docs/quickread.md) | 新读者代码阅读路线 |
-| [docs/architecture.md](docs/architecture.md) | 系统架构、分层、核心链路、数据模型 |
-| [docs/engineering.md](docs/engineering.md) | 工程规范、目录规则、API 风格、测试约定 |
-| [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
-| [docs/recommendation-roadmap.md](docs/recommendation-roadmap.md) | 推荐训练数据、语义向量、pgvector 与 ANN 的实施顺序 |
-| [docs/internal-control-plane-roadmap.md](docs/internal-control-plane-roadmap.md) | 后台权限、审核运营、降级限流和死信恢复的实施路线 |
-| [docs/modules/admin.md](docs/modules/admin.md) | 后台权限、运营入口和 Admin 路由 |
-| [docs/modules/admin-audit.md](docs/modules/admin-audit.md) | 不可变后台操作审计 |
-| [docs/modules/review.md](docs/modules/review.md) | 自动审核与人工审核工作流 |
-| [docs/modules/rate-limiting.md](docs/modules/rate-limiting.md) | 分层请求限流 |
-| [docs/modules/kafka-failure-recovery.md](docs/modules/kafka-failure-recovery.md) | Kafka 重试、DLQ 检查和非破坏重放 |
-| [docs/operations/kafka-only-retirement.md](docs/operations/kafka-only-retirement.md) | Kafka-only 观察门槛、退役检查和有界回滚 |
-| [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
-| [docs/security.md](docs/security.md) | 媒体所有权、签名访问和缓存安全 |
-| [docs/deployment.md](docs/deployment.md) | MinIO/S3 配置、灰度和回滚 |
-| [docs/kafka.md](docs/kafka.md) | Kafka 配置、契约、Topic 治理、恢复与生产要求 |
-| [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
-| [docs/modules/](docs/modules/README.md) | 各业务模块设计 |
-| [openspec/](openspec/) | OpenSpec 项目基线和变更规格 |
-
-## 开发方式
-
-新增功能优先按 OpenSpec 建 change，再按工程规范实现：
-
-```bash
-openspec list
+# OpenSpec
 openspec validate --all --strict
 ```
 
-新增后端模块时参考 [docs/engineering.md](docs/engineering.md) 的分层模板和 [docs/modules/README.md](docs/modules/README.md) 的模块规格入口。
+更多验证入口：
 
-Kafka 使用重连 supervisor；broker outage 不丢失 PostgreSQL outbox、媒体轮询和审核任务。
-可回放领域事件进入 Kafka，长耗时处理、租约和延迟重试由 PostgreSQL durable job 持有。
+- [性能测试与 Grafana 指标](docs/performance-testing.md)
+- [部署、MinIO/S3 与回滚](docs/deployment.md)
+- [安全与媒体访问边界](docs/security.md)
+
+## 架构摘要
+
+- `cmd/feed` 提供 HTTP API，组合仓储、应用服务、Handler、中间件和监控。
+- `cmd/worker` 消费 Kafka 事件并执行媒体、审核、Feed、嵌入和恢复任务。
+- PostgreSQL 是业务事实和长任务状态的最终来源。
+- Redis 保存 Feed 页、热榜、互动状态和短期索引。
+- Kafka 负责可回放事件与短时唤醒，不承担长期租约和延迟重试。
+- MinIO/S3 保存原始媒体、处理结果和受保护审核样本。
+
+后端依赖方向保持为：
+
+```text
+Domain <- Application <- Infrastructure / Interfaces
+```
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [产品说明](docs/product.md) | 产品范围、模块地图和功能状态 |
+| [快速阅读](docs/quickread.md) | 新读者代码阅读路线 |
+| [系统架构](docs/architecture.md) | 分层、核心链路和数据模型 |
+| [工程规范](docs/engineering.md) | 目录规则、API 风格和测试约定 |
+| [UI/UX](docs/uiux.md) | Web 页面、交互和响应式规格 |
+| [优化说明](docs/optimization.md) | Feed、缓存、媒体和播放优化 |
+| [模块设计](docs/modules/README.md) | 各业务模块的详细设计 |
+| [OpenSpec](openspec/) | 项目基线和变更规格 |
+
+新增能力优先创建 OpenSpec change，并保持代码、测试和相关文档同步。
