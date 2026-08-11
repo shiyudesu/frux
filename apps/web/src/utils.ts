@@ -207,7 +207,6 @@ export interface PublicProfileInput {
   gender?: 0 | 1 | 2 | 3;
   public_work_count?: number;
   received_like_count?: number;
-  collection_count?: number;
   liked_videos_public?: boolean;
 }
 
@@ -236,7 +235,6 @@ export function normalizePublicProfile(profile: PublicProfileInput | null | unde
     gender: profile.gender,
     public_work_count: valueOrUndefined(profile.public_work_count),
     received_like_count: valueOrUndefined(profile.received_like_count),
-    collection_count: valueOrUndefined(profile.collection_count),
     liked_videos_public: profile.liked_videos_public,
     ...(followingCount === undefined ? {} : { following_count: followingCount }),
     ...(followerCount === undefined ? {} : { follower_count: followerCount })

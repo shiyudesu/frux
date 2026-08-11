@@ -40,7 +40,6 @@ type User struct {
 	PublicWorkCount   int
 	PrivateWorkCount  int
 	ReceivedLikeCount int
-	CollectionCount   int
 }
 
 type ProfileSetting struct {
@@ -98,10 +97,10 @@ func RestoreUser(id int64, account, password, nickname, avatarURL, bio string, s
 
 // RestoreUserWithStats 从数据库记录恢复领域对象，并带上关系统计。
 func RestoreUserWithStats(id int64, account, password, nickname, avatarURL, bio string, status int, role string, followingCount int, followerCount int, workCount int) *User {
-	return RestoreUserWithDashboard(id, account, password, nickname, avatarURL, bio, GenderUnspecified, status, role, followingCount, followerCount, workCount, 0, 0, 0)
+	return RestoreUserWithDashboard(id, account, password, nickname, avatarURL, bio, GenderUnspecified, status, role, followingCount, followerCount, workCount, 0, 0)
 }
 
-func RestoreUserWithDashboard(id int64, account, password, nickname, avatarURL, bio string, gender int, status int, role string, followingCount int, followerCount int, publicWorkCount int, privateWorkCount int, receivedLikeCount int, collectionCount int) *User {
+func RestoreUserWithDashboard(id int64, account, password, nickname, avatarURL, bio string, gender int, status int, role string, followingCount int, followerCount int, publicWorkCount int, privateWorkCount int, receivedLikeCount int) *User {
 	account = NormalizeAccount(account)
 	password = strings.TrimSpace(password)
 	nickname = strings.TrimSpace(nickname)
@@ -135,7 +134,6 @@ func RestoreUserWithDashboard(id int64, account, password, nickname, avatarURL, 
 		PublicWorkCount:   clampCount(publicWorkCount),
 		PrivateWorkCount:  clampCount(privateWorkCount),
 		ReceivedLikeCount: clampCount(receivedLikeCount),
-		CollectionCount:   clampCount(collectionCount),
 	}
 }
 

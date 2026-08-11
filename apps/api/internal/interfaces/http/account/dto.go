@@ -55,7 +55,6 @@ type userProfileResponse struct {
 	PublicWorkCount   int                     `json:"public_work_count"`
 	PrivateWorkCount  int                     `json:"private_work_count"`
 	ReceivedLikeCount int                     `json:"received_like_count"`
-	CollectionCount   int                     `json:"collection_count"`
 	ProfileSettings   *profileSettingResponse `json:"profile_settings,omitempty"`
 }
 
@@ -72,6 +71,5 @@ type publicUserProfileResponse struct {
 	Gender            int    `json:"gender"`
 	PublicWorkCount   int    `json:"public_work_count"`
 	ReceivedLikeCount int    `json:"received_like_count"`
-	CollectionCount   int    `json:"collection_count"`
 	LikedVideosPublic bool   `json:"liked_videos_public"`
 }

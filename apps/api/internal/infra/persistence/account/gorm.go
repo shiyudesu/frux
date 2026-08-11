@@ -1,10 +1,10 @@
 package infraaccount
 
 import (
-	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
-	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"context"
 	"errors"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -29,7 +29,6 @@ type userWithStatModel struct {
 	WorkCount         int
 	PrivateWorkCount  int
 	ReceivedLikeCount int
-	CollectionCount   int
 }
 
 type authorDisplayModel struct {
@@ -307,10 +306,9 @@ func restoreUser(user userWithStatModel) *domainaccount.User {
 		user.WorkCount,
 		user.PrivateWorkCount,
 		user.ReceivedLikeCount,
-		user.CollectionCount,
 	)
 }
 
 func userWithStatSelect() string {
-	return "a.id, a.account, a.password, a.nickname, a.avatar_url, a.bio, a.gender, a.status, a.role, COALESCE(active_following.following_count, rs.following_count, 0) AS following_count, COALESCE(active_followers.follower_count, rs.follower_count, 0) AS follower_count, COALESCE(cs.public_work_count, published_works.work_count, 0) AS work_count, COALESCE(cs.private_work_count, 0) AS private_work_count, COALESCE(cs.received_like_count, 0) AS received_like_count, COALESCE(cs.collection_count, 0) AS collection_count"
+	return "a.id, a.account, a.password, a.nickname, a.avatar_url, a.bio, a.gender, a.status, a.role, COALESCE(active_following.following_count, rs.following_count, 0) AS following_count, COALESCE(active_followers.follower_count, rs.follower_count, 0) AS follower_count, COALESCE(cs.public_work_count, published_works.work_count, 0) AS work_count, COALESCE(cs.private_work_count, 0) AS private_work_count, COALESCE(cs.received_like_count, 0) AS received_like_count"
 }

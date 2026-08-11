@@ -9,7 +9,7 @@ Frux 是一个短视频 Feed 系统。你可以把它理解成五条主线：
 | 主线 | 负责什么 | 当前代码里的模块 |
 | --- | --- | --- |
 | 用户 | 注册、登录、资料、隐私、关注关系 | `account`、`relation` |
-| 内容 | 发布、可见性、批量管理、合集、上传 | `video`、`upload` |
+| 内容 | 发布、可见性、批量管理、上传 | `video`、`upload` |
 | 分发 | Timeline、Hot、推荐、分页、缓存 | `feed`、`recommendation`、Redis |
 | 互动与观看 | 点赞、收藏、评论、曝光、观看历史 | `interaction`、`exposure`、Redis、Kafka |
 | 个人内容中心 | 喜欢、收藏、历史、稍后再看聚合 | `library` + account/video/interaction/exposure 适配器 |
@@ -229,7 +229,6 @@ key: action:{user_id}:{video_id}:{action}
 GET/PATCH /api/users/me/profile-settings
 POST      /api/users/me/video-queries
 POST      /api/users/me/video-batch-actions
-GET/POST  /api/users/me/video-collections
 GET       /api/users/me/liked-videos
 GET       /api/users/me/favorite-videos
 GET       /api/users/me/watch-history
@@ -241,19 +240,19 @@ GET       /api/users/me/watch-later
 1. `interfaces/http/router/router.go` 看新增路由和依赖装配。
 2. `interfaces/http/router/library_adapters.go` 看跨模块接口转换。
 3. `application/library/service.go` 看行为候选、隐私检查、可读视频补齐和稳定游标。
-4. `application/video/management_service.go` 看创作者查询、批量幂等和合集用例。
-5. `infra/persistence/video/management_gorm.go` 看事务锁、查询过滤、合集顺序。
+4. `application/video/management_service.go` 看创作者查询和批量幂等用例。
+5. `infra/persistence/video/management_gorm.go` 看事务锁和查询过滤。
 6. `infra/persistence/exposure/gorm.go` 看观看历史投影 upsert 与删除。
 7. Web 侧读 `hooks/useCreatorContent.ts`、`hooks/useProfileLibrary.ts` 和两个 Profile 页面。
 
 关键点：
 
 - 视频生命周期 `status` 与 `visibility` 独立。
-- 创作者作品按 `created_at DESC, id DESC`；合集按 `updated_at DESC, id DESC`。
+- 创作者作品按 `created_at DESC, id DESC`。
 - 喜欢、收藏、稍后再看按 `updated_at DESC, video_id DESC`；历史按 `last_watched_at DESC, video_id DESC`。
 - library 先取有序事实 ID，再由 video catalog 过滤删除、下架和不可读私密视频。
 - `play/progress/complete/skip` 更新 `video_view_history`，`exposed` 只更新曝光聚合；观看事实按事件 ID 幂等并通过 Outbox 可靠进入推荐反馈链路。
-- 公开主页只有作品、公开合集和隐私允许的喜欢；没有短剧和预约能力。
+- 公开主页只有作品和隐私允许的喜欢；没有短剧、合集和预约能力。
 
 ## 5. 用测试理解代码
 
@@ -268,7 +267,7 @@ GET       /api/users/me/watch-later
 | `feed_api_test.go` | Timeline、Hot Feed、缓存、分页 |
 | `interaction_api_test.go` | 点赞、收藏、评论、异步落库 |
 | `relation_api_test.go` | 关注关系 |
-| `profile_backend_api_test.go` | 资料隐私、创作者查询/批量、合集、喜欢/收藏、历史、稍后再看 |
+| `profile_backend_api_test.go` | 资料隐私、创作者查询/批量、喜欢/收藏、历史、稍后再看 |
 
 运行测试：
 
@@ -316,7 +315,7 @@ go test ./...
 | 幂等 | Service + Repository | `Idempotency-Key` 如何保证重试稳定 |
 | 游标分页 | Feed、Comment | cursor 如何保存排序字段 |
 | 计数表 | `video_stat` | 高频计数如何集中更新 |
-| 内容聚合 | `user_content_stat` | 作品、获赞、合集计数如何事务更新和重建 |
+| 内容聚合 | `user_content_stat` | 作品、获赞计数如何事务更新和重建 |
 | 最新投影 | `video_view_history` | 原始流水与可删除历史如何分离 |
 | 可见性 | `video.visibility` | 公开读取为何同时检查生命周期和可见性 |
 | 跨模块适配 | `router/library_adapters.go` | library 如何不依赖其他模块 Infrastructure |
@@ -366,9 +365,9 @@ curl http://127.0.0.1:8080/health
 | `docs/modules/interaction.md` | 深入点赞、收藏、评论、异步落库 |
 | `docs/modules/exposure.md` | 深入观看事件、曝光聚合和历史投影 |
 | `docs/modules/library.md` | 深入个人内容库聚合、隐私和游标 |
-| `docs/modules/video.md` | 深入可见性、批量管理、内容统计和合集 |
+| `docs/modules/video.md` | 深入可见性、批量管理和内容统计 |
 | `docs/optimization.md` | 理解高并发优化路线 |
 
 ## 11. 当前最值得关注的下一步
 
-当前最值得关注的是公开可读性的一致性：沿视频可见性变化，检查详情、Feed、推荐、预加载、公开主页、公开喜欢和公开合集是否都要求 `status=published AND visibility=public`，并确认缓存命中后仍会重新验证数据库状态。
+当前最值得关注的是公开可读性的一致性：沿视频可见性变化，检查详情、Feed、推荐、预加载、公开主页和公开喜欢是否都要求 `status=published AND visibility=public`，并确认缓存命中后仍会重新验证数据库状态。

@@ -4,11 +4,9 @@ import { resolveCreatorVideoTarget } from "../api/creator";
 import { apiErrorMessage, isUnauthorized, uploadFile } from "../api/client";
 import { fetchRelationList, followUser, loadFollowingMap } from "../api/social";
 import type { RelationTab } from "../api/social";
-import { ProfileCollectionEditor } from "../components/ProfileCollectionEditor";
 import {
   CreatorWorkTabs,
   CreatorWorkToolbar,
-  ProfileCollectionGrid,
   ProfileHero,
   ProfilePrimaryTabs,
   ProfileVideoGrid
@@ -31,8 +29,7 @@ import type {
   CreatorWorkTab,
   ProfilePrimaryTab,
   RelationUser,
-  Video,
-  VideoCollection
+  Video
 } from "../types";
 
 type RelationState = "idle" | "loading" | "loadingMore" | "ready" | "error";
@@ -93,9 +90,6 @@ export function ProfilePage() {
   const [targetRevision, setTargetRevision] = useState(0);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorMessage, setEditorMessage] = useState("");
-  const [editingCollectionID, setEditingCollectionID] = useState<number | null | "new">(null);
-  const [collectionBusy, setCollectionBusy] = useState(false);
-  const [collectionMessage, setCollectionMessage] = useState("");
   const [relationTab, setRelationTab] = useState<RelationTab>("following");
   const [relationModalOpen, setRelationModalOpen] = useState(false);
   const [relationItems, setRelationItems] = useState<RelationUser[]>([]);
@@ -333,12 +327,10 @@ export function ProfilePage() {
   }
 
   function updateFilter(field: keyof CreatorFilters, value: string) {
-    if (workTab === "collections") return;
     setFilters((state) => ({ ...state, [workTab]: { ...state[workTab], [field]: value } }));
   }
 
   function applyFilters() {
-    if (workTab === "collections") return;
     void creator.loadVideos(workTab, { reset: true, filters: filters[workTab] });
   }
 
@@ -352,7 +344,7 @@ export function ProfilePage() {
   }
 
   async function runBatch(action: BatchVideoAction) {
-    if (workTab === "collections" || selectedIDs.size === 0) return;
+    if (selectedIDs.size === 0) return;
     if (action === "delete" && !window.confirm("确定删除所选作品吗？")) return;
     const affectedTarget = targetVideoID > 0 && selectedIDs.has(targetVideoID);
     await creator.runBatchAction(workTab, [...selectedIDs], action);
@@ -364,72 +356,7 @@ export function ProfilePage() {
     setSelectionMode(false);
   }
 
-  const collectionEditor = useMemo<VideoCollection | null>(() => {
-    if (editingCollectionID === null || editingCollectionID === "new") return null;
-    return creator.collections.items.find((collection) => collection.id === editingCollectionID) || null;
-  }, [creator.collections.items, editingCollectionID]);
-
-  async function saveCollection(body: {
-    title?: string;
-    description?: string;
-    visibility?: "public" | "private";
-  }) {
-    setCollectionBusy(true);
-    setCollectionMessage("");
-    try {
-      if (editingCollectionID === "new") {
-        await creator.createCollection({
-          title: body.title || "",
-          description: body.description || "",
-          visibility: body.visibility || "public"
-        });
-      } else if (collectionEditor) {
-        await creator.editCollection(collectionEditor.id, body);
-      }
-      setEditingCollectionID(null);
-    } catch (error) {
-      setCollectionMessage(apiErrorMessage(error, "合集保存失败"));
-    } finally {
-      setCollectionBusy(false);
-    }
-  }
-
-  async function deleteCollection() {
-    if (!collectionEditor || !window.confirm("确定删除这个合集吗？")) return;
-    setCollectionBusy(true);
-    try {
-      await creator.removeCollection(collectionEditor.id);
-      setEditingCollectionID(null);
-    } catch (error) {
-      setCollectionMessage(apiErrorMessage(error, "合集删除失败"));
-    } finally {
-      setCollectionBusy(false);
-    }
-  }
-
-  function openCollectionEditor(collection: VideoCollection | null) {
-    setCollectionMessage("");
-    setEditingCollectionID(collection ? collection.id : "new");
-    if (collection) void creator.loadCollectionVideos("", true);
-  }
-
   function renderWorks() {
-    if (workTab === "collections") {
-      return (
-        <ProfileCollectionGrid
-          collections={creator.collections.items}
-          error={creator.collections.error}
-          hasMore={creator.collections.hasMore}
-          owner
-          state={creator.collections.state}
-          onCreate={() => openCollectionEditor(null)}
-          onLoadMore={() => void creator.loadCollections(false)}
-          onManage={openCollectionEditor}
-          onOpenVideo={setSelectedWork}
-          onRetry={() => void creator.loadCollections(true)}
-        />
-      );
-    }
     const current = creator.videos[workTab];
     const currentItems = current.items.some((video) => video.id === targetWork?.video.id)
       ? current.items
@@ -599,46 +526,6 @@ export function ProfilePage() {
           value={editorValue}
           onClose={() => setEditing(false)}
           onSave={saveProfile}
-        />
-      )}
-      {editingCollectionID !== null && (
-        <ProfileCollectionEditor
-          availableVideos={creator.collectionVideos.items}
-          availableVideosError={creator.collectionVideos.error}
-          availableVideosHasMore={
-            creator.collectionVideos.pages.public.hasMore
-            || creator.collectionVideos.pages.private.hasMore
-          }
-          availableVideosLoading={
-            creator.collectionVideos.state === "loading"
-            || creator.collectionVideos.state === "loadingMore"
-          }
-          busy={collectionBusy}
-          collection={collectionEditor}
-          message={collectionMessage}
-          onClose={() => setEditingCollectionID(null)}
-          onDelete={collectionEditor ? deleteCollection : undefined}
-          onLoadMoreAvailableVideos={async () => {
-            await creator.loadCollectionVideos();
-          }}
-          onSave={saveCollection}
-          onSearchAvailableVideos={async (query) => {
-            await creator.loadCollectionVideos(query, true);
-          }}
-          onSetMembership={
-            collectionEditor
-              ? async (videoID, active) => {
-                  setCollectionBusy(true);
-                  try {
-                    await creator.setMembership(collectionEditor.id, videoID, active);
-                  } catch (error) {
-                    setCollectionMessage(apiErrorMessage(error, "合集作品更新失败"));
-                  } finally {
-                    setCollectionBusy(false);
-                  }
-                }
-              : undefined
-          }
         />
       )}
     </main>

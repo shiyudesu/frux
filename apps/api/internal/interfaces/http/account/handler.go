@@ -206,7 +206,6 @@ func publicProfileResponse(profile *applicationaccount.Profile) publicUserProfil
 		Gender:            profile.Gender,
 		PublicWorkCount:   profile.PublicWorkCount,
 		ReceivedLikeCount: profile.ReceivedLikeCount,
-		CollectionCount:   profile.CollectionCount,
 		LikedVideosPublic: profile.ProfileSettings != nil && profile.ProfileSettings.LikedVisibility == domainaccount.ProfileVisibilityPublic,
 	}
 }
@@ -228,7 +227,6 @@ func profileResponse(profile *applicationaccount.Profile) userProfileResponse {
 		PublicWorkCount:   profile.PublicWorkCount,
 		PrivateWorkCount:  profile.PrivateWorkCount,
 		ReceivedLikeCount: profile.ReceivedLikeCount,
-		CollectionCount:   profile.CollectionCount,
 		ProfileSettings:   profileSettingResponseFromApplication(profile.ProfileSettings),
 	}
 }

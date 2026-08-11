@@ -656,7 +656,7 @@ func persistActionState(tx *gorm.DB, authorID int64, userID int64, videoID int64
 
 	count, err := updateActionStat(tx, videoID, actionType, delta)
 	if err == nil && actionType == domaininteraction.ActionTypeLike {
-		err = infravideo.AdjustContentStat(tx, authorID, 0, 0, delta, 0)
+		err = infravideo.AdjustContentStat(tx, authorID, 0, 0, delta)
 	}
 	if err != nil {
 		return ActionModel{}, 0, 0, err

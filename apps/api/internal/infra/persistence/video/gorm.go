@@ -146,7 +146,7 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 			return err
 		}
 		publicDelta, privateDelta := contentWorkCounts(video.Status, video.Visibility, video.MediaStatus)
-		if err := AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+		if err := AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0); err != nil {
 			return err
 		}
 		if err := AppendLifecycleNotification(tx, domainmessage.LifecycleNotification{
@@ -366,7 +366,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video)
 		}).Error; err != nil {
 			return err
 		}
-		publicDelta, privateDelta := contentWorkDeltas(previousStatus, current.Visibility, current.MediaStatus, video.Status, current.Visibility, current.MediaStatus)
+		publicDelta, privateDelta := ContentWorkDeltas(previousStatus, current.Visibility, current.MediaStatus, video.Status, current.Visibility, current.MediaStatus)
 		receivedLikeDelta := 0
 		if previousStatus != domainvideo.StatusDeleted && video.Status == domainvideo.StatusDeleted {
 			var stat VideoStatModel
@@ -375,7 +375,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, video *domainvideo.Video)
 			}
 			receivedLikeDelta = -stat.LikeCount
 		}
-		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, receivedLikeDelta, 0); err != nil {
+		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, receivedLikeDelta); err != nil {
 			return err
 		}
 		if err := AppendMediaLifecycleTask(
@@ -424,7 +424,7 @@ func (r *Repository) ApplyLifecycleTransition(
 		}).Error; err != nil {
 			return err
 		}
-		publicDelta, privateDelta := contentWorkDeltas(
+		publicDelta, privateDelta := ContentWorkDeltas(
 			current.Status,
 			current.Visibility,
 			current.MediaStatus,
@@ -432,7 +432,7 @@ func (r *Repository) ApplyLifecycleTransition(
 			current.Visibility,
 			current.MediaStatus,
 		)
-		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0); err != nil {
 			return err
 		}
 		current.Status = video.Status
@@ -503,7 +503,7 @@ func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvid
 			video.CoverURL = ""
 			video.PlaybackSources = nil
 		}
-		publicDelta, privateDelta := contentWorkDeltas(
+		publicDelta, privateDelta := ContentWorkDeltas(
 			current.Status, current.Visibility, current.MediaStatus,
 			current.Status, current.Visibility, video.MediaStatus,
 		)
@@ -515,7 +515,7 @@ func (r *Repository) UpdateMediaProjection(ctx context.Context, video *domainvid
 		}).Error; err != nil {
 			return err
 		}
-		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0); err != nil {
 			return err
 		}
 		if previousMediaStatus != domainmedia.MediaStatusFailed &&

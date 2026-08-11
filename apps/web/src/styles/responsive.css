@@ -320,10 +320,6 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .profile-collection-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .upload-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -911,9 +907,6 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .profile-collection-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 1px) {
@@ -1049,21 +1042,6 @@
     opacity: 1;
   }
 
-  .profile-collection-heading {
-    margin: 0 0 10px;
-  }
-
-  .profile-collection-heading button {
-    min-height: 44px;
-  }
-
-  .profile-collection-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .profile-collection-covers {
-    height: 180px;
-  }
 }
 
 @media (max-width: 1px) {
@@ -1114,23 +1092,13 @@
     min-height: 280px;
   }
 
-  .profile-modal.profile-editor,
-  .profile-modal.collection-editor {
+  .profile-modal.profile-editor {
     max-height: 90dvh;
     padding: 20px 16px 24px;
     border-radius: 18px;
   }
 
-  .profile-editor-actions,
-  .collection-editor .profile-editor-actions {
+  .profile-editor-actions {
     grid-template-columns: 1fr 1fr;
-  }
-
-  .collection-editor .profile-editor-actions > span {
-    display: none;
-  }
-
-  .collection-editor .danger-button {
-    grid-column: 1 / -1;
   }
 }

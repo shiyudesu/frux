@@ -72,6 +72,5 @@ export const emptyProfile: SessionUser = {
   gender: 0,
   public_work_count: 0,
   private_work_count: 0,
-  received_like_count: 0,
-  collection_count: 0
+  received_like_count: 0
 };

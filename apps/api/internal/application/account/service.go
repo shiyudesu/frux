@@ -1,9 +1,9 @@
 package applicationaccount
 
 import (
-	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	"context"
 	"errors"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	"time"
 )
 
@@ -48,7 +48,6 @@ type Profile struct {
 	PublicWorkCount   int
 	PrivateWorkCount  int
 	ReceivedLikeCount int
-	CollectionCount   int
 	ProfileSettings   *ProfileSetting
 }
 
@@ -367,7 +366,6 @@ func profileFromUser(user *domainaccount.User) *Profile {
 		PublicWorkCount:   user.PublicWorkCount,
 		PrivateWorkCount:  user.PrivateWorkCount,
 		ReceivedLikeCount: user.ReceivedLikeCount,
-		CollectionCount:   user.CollectionCount,
 	}
 }
 

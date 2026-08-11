@@ -95,7 +95,6 @@ describe("video discussion deep links", () => {
       gender: 0,
       public_work_count: 1,
       received_like_count: 0,
-      collection_count: 0,
       liked_videos_public: false
     });
     vi.mocked(fetchCommentReplies).mockResolvedValue({

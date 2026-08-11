@@ -74,6 +74,14 @@ describe("collection queue viewer", () => {
       ...items[0],
       video: { ...items[0].video, liked: false }
     }, "likes").liked).toBe(false);
+    expect(mapLibraryQueueItem({
+      ...items[0],
+      video: { ...items[0].video, liked: undefined }
+    }, "publicWorks")).toMatchObject({
+      video_id: 1,
+      liked: false,
+      feed_scene: "profile_works"
+    });
     expect(PROFILE_PRIMARY_TABS.map((tab) => tab.id)).toEqual([
       "works",
       "likes",
@@ -123,7 +131,8 @@ describe("collection queue viewer", () => {
     click(required<HTMLButtonElement>('[data-testid="open-queue"]'));
     click(required<HTMLButtonElement>('button[aria-label="更多操作"]'));
     await act(async () => {
-      buttonByText("从稍后再看移除").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      required<HTMLButtonElement>('button[aria-label="从稍后再看移除"]')
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
       await Promise.resolve();
     });

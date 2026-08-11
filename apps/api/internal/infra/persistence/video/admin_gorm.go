@@ -113,11 +113,11 @@ func (r *Repository) CommitAdminTransition(
 		}).Error; err != nil {
 			return err
 		}
-		publicDelta, privateDelta := contentWorkDeltas(
+		publicDelta, privateDelta := ContentWorkDeltas(
 			previousStatus, current.Visibility, current.MediaStatus,
 			current.Status, current.Visibility, current.MediaStatus,
 		)
-		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+		if err := AdjustContentStat(tx, current.AuthorID, publicDelta, privateDelta, 0); err != nil {
 			return err
 		}
 		action := &EnforcementActionModel{

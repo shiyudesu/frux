@@ -1716,8 +1716,7 @@
 }
 
 .profile-video-skeleton span,
-.profile-video-skeleton i,
-.profile-collection-skeleton {
+.profile-video-skeleton i {
   display: block;
   border-radius: 10px;
   background:
@@ -1945,139 +1944,19 @@
   background: var(--frux-control);
 }
 
-.profile-collection-heading {
-  display: flex;
-  justify-content: flex-end;
-  margin: -44px 0 12px;
-}
-
-.profile-collection-heading button {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  color: #fff;
-  border-radius: 8px;
-  background: #2c2c2c;
-}
-
-.profile-collection-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  padding-top: 8px;
-}
-
-.profile-collection-card {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.045);
-}
-
-.profile-collection-covers {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr;
-  height: 190px;
-  gap: 2px;
-  background: #0b0c11;
-}
-
-.profile-collection-covers button,
-.profile-collection-covers > span {
-  min-width: 0;
-  overflow: hidden;
-  padding: 0;
-  color: var(--frux-muted);
-  background: var(--frux-surface);
-}
-
-.profile-collection-covers > span {
-  display: grid;
-  grid-column: 1 / -1;
-  place-items: center;
-}
-
-.profile-collection-covers img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.profile-collection-copy {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 13px 13px 5px;
-}
-
-.profile-collection-copy div {
-  min-width: 0;
-}
-
-.profile-collection-copy h3,
-.profile-collection-copy p {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.profile-collection-copy h3 {
-  margin: 0;
-  color: #fff;
-  font-size: 15px;
-}
-
-.profile-collection-copy p {
-  margin: 5px 0 0;
-  color: var(--frux-muted);
-  font-size: 12px;
-}
-
-.profile-collection-copy button {
-  display: inline-flex;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  color: var(--frux-muted-strong);
-  border-radius: 8px;
-  background: transparent;
-}
-
-.profile-collection-visibility {
-  display: flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 4px;
-  padding: 0 13px;
-  color: var(--frux-muted);
-  font-size: 11px;
-}
-
-.profile-collection-skeleton {
-  height: 274px;
-}
-
 .profile-inline-error {
   margin: 12px 0 0;
   color: var(--frux-danger);
   font-size: 13px;
 }
 
-.profile-editor-backdrop,
-.collection-editor-backdrop {
+.profile-editor-backdrop {
   z-index: 102;
   background: rgba(0, 0, 0, 0.76);
   backdrop-filter: blur(4px);
 }
 
-.profile-modal.profile-editor,
-.profile-modal.collection-editor {
+.profile-modal.profile-editor {
   width: min(480px, calc(100vw - 32px));
   max-height: min(86dvh, 720px);
   gap: 14px;
@@ -2234,85 +2113,4 @@
 
 .profile-editor-actions .primary-button {
   background: var(--frux-rose);
-}
-
-.collection-editor .profile-editor-actions {
-  grid-template-columns: auto 1fr auto auto;
-}
-
-.danger-button {
-  color: var(--frux-danger) !important;
-  background: rgba(255, 69, 58, 0.1) !important;
-}
-
-.collection-members {
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.collection-members legend {
-  margin-bottom: 8px;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.collection-member-list {
-  display: grid;
-  max-height: 230px;
-  gap: 6px;
-  overflow-y: auto;
-}
-
-.collection-member-list label {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
-  min-height: 48px;
-  align-items: center;
-  gap: 9px;
-  padding: 4px 7px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.collection-member-list img {
-  width: 42px;
-  height: 42px;
-  object-fit: cover;
-  border-radius: 6px;
-}
-
-.collection-member-list label span {
-  overflow: hidden;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.collection-members > p {
-  margin: 0;
-  color: var(--frux-muted);
-  font-size: 12px;
-}
-
-.profile-inline-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-}
-
-.profile-inline-fields button,
-.collection-members > .profile-manage-button {
-  min-height: 36px;
-  padding: 0 12px;
-  color: #fff;
-  border-radius: 8px;
-  background: #303030;
-}
-
-.collection-members > .profile-manage-button {
-  width: 100%;
-  margin-top: 8px;
 }

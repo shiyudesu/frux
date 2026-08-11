@@ -89,142 +89,6 @@ func (h *Handler) BatchAction(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, batchVideoActionResponse{Action: result.Action, VideoIDs: result.VideoIDs, Replayed: result.Replayed})
 }
 
-func (h *Handler) CreateCollection(ctx context.Context, c *app.RequestContext) {
-	userID, ok := userIDFromContext(c)
-	if !ok {
-		interfaceshttpapierror.WriteInvalidAccessToken(c)
-		return
-	}
-	var req CreateCollectionRequest
-	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		interfaceshttpapierror.WriteInvalidRequest(c)
-		return
-	}
-	collection, created, err := h.management.CreateCollection(ctx, userID, req.Title, req.Description, req.Visibility, string(c.GetHeader("Idempotency-Key")))
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
-	}
-	c.JSON(status, collectionResponseFromDomain(collection))
-}
-
-func (h *Handler) ListMineCollections(ctx context.Context, c *app.RequestContext) {
-	userID, ok := userIDFromContext(c)
-	if !ok {
-		interfaceshttpapierror.WriteInvalidAccessToken(c)
-		return
-	}
-	h.listCollections(ctx, c, userID, false)
-}
-
-func (h *Handler) ListPublicCollections(ctx context.Context, c *app.RequestContext) {
-	userID, err := parsePositiveInt64(c.Param("userId"))
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	h.listCollections(ctx, c, userID, true)
-}
-
-func (h *Handler) listCollections(ctx context.Context, c *app.RequestContext, ownerID int64, publicOnly bool) {
-	limit := 0
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		value, err := strconv.Atoi(raw)
-		if err != nil {
-			writeVideoError(c, domainvideo.ErrInvalidLimit)
-			return
-		}
-		limit = value
-	}
-	result, err := h.management.ListCollections(ctx, ownerID, publicOnly, c.Query("cursor"), limit)
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	items := make([]collectionResponse, 0, len(result.Items))
-	for _, collection := range result.Items {
-		items = append(items, collectionResponseFromDomain(collection))
-	}
-	c.JSON(http.StatusOK, collectionListResponse{Items: items, NextCursor: result.NextCursor, HasMore: result.HasMore})
-}
-
-func (h *Handler) UpdateCollection(ctx context.Context, c *app.RequestContext) {
-	userID, ok := userIDFromContext(c)
-	if !ok {
-		interfaceshttpapierror.WriteInvalidAccessToken(c)
-		return
-	}
-	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	var req UpdateCollectionRequest
-	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
-		interfaceshttpapierror.WriteInvalidRequest(c)
-		return
-	}
-	collection, err := h.management.UpdateCollection(ctx, userID, collectionID, req.Title, req.Description, req.Visibility)
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, collectionResponseFromDomain(collection))
-}
-
-func (h *Handler) DeleteCollection(ctx context.Context, c *app.RequestContext) {
-	userID, ok := userIDFromContext(c)
-	if !ok {
-		interfaceshttpapierror.WriteInvalidAccessToken(c)
-		return
-	}
-	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	if err := h.management.DeleteCollection(ctx, userID, collectionID); err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-func (h *Handler) AddCollectionVideo(ctx context.Context, c *app.RequestContext) {
-	h.setCollectionVideo(ctx, c, true)
-}
-
-func (h *Handler) RemoveCollectionVideo(ctx context.Context, c *app.RequestContext) {
-	h.setCollectionVideo(ctx, c, false)
-}
-
-func (h *Handler) setCollectionVideo(ctx context.Context, c *app.RequestContext, active bool) {
-	userID, ok := userIDFromContext(c)
-	if !ok {
-		interfaceshttpapierror.WriteInvalidAccessToken(c)
-		return
-	}
-	collectionID, err := parsePositiveInt64(c.Param("collectionId"))
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	videoID, err := parsePositiveInt64(c.Param("videoId"))
-	if err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	if err := h.management.SetCollectionItem(ctx, userID, collectionID, videoID, active); err != nil {
-		writeVideoError(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
 // Create 处理发布视频请求，用户身份来自 JWT，上行数据来自 JSON 请求体。
 func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
@@ -424,21 +288,6 @@ func videoResponseFromDomain(video *domainvideo.Video) videoResponse {
 	}
 }
 
-func collectionResponseFromDomain(collection *domainvideo.Collection) collectionResponse {
-	items := make([]collectionItemResponse, 0, len(collection.Items))
-	for _, item := range collection.Items {
-		if item == nil || item.Video == nil {
-			continue
-		}
-		items = append(items, collectionItemResponse{VideoID: item.VideoID, Position: item.Position, Video: videoResponseFromDomain(item.Video)})
-	}
-	return collectionResponse{
-		ID: collection.ID, OwnerID: collection.OwnerID, Title: collection.Title,
-		Description: collection.Description, Visibility: collection.Visibility, Status: collection.Status,
-		Items: items, MemberCount: collection.MemberCount, CreatedAt: collection.CreatedAt, UpdatedAt: collection.UpdatedAt,
-	}
-}
-
 func parseOptionalDateTime(raw string, endOfDay bool) (*time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -492,14 +341,6 @@ func writeVideoError(c *app.RequestContext, err error) {
 		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeLocalAssetPermissionDenied, "local asset permission denied")
 		return
 	}
-	if errors.Is(err, domainvideo.ErrCollectionNotFound) {
-		interfaceshttpapierror.Write(c, http.StatusNotFound, interfaceshttpapierror.CodeVideoCollectionNotFound, "video collection not found")
-		return
-	}
-	if errors.Is(err, domainvideo.ErrCollectionPermissionDenied) {
-		interfaceshttpapierror.Write(c, http.StatusForbidden, interfaceshttpapierror.CodeVideoCollectionPermissionDenied, "video collection permission denied")
-		return
-	}
 	if errors.Is(err, domainvideo.ErrBatchIdempotencyConflict) {
 		interfaceshttpapierror.Write(c, http.StatusConflict, interfaceshttpapierror.CodeVideoIdempotencyConflict, "idempotency key conflict")
 		return
@@ -527,9 +368,6 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainvideo.ErrInvalidBatchAction) ||
 		errors.Is(err, domainvideo.ErrTooManyVideoIDs) ||
 		errors.Is(err, domainvideo.ErrEmptyVideoIDs) ||
-		errors.Is(err, domainvideo.ErrEmptyCollectionTitle) ||
-		errors.Is(err, domainvideo.ErrCollectionTitleTooLong) ||
-		errors.Is(err, domainvideo.ErrCollectionDescriptionTooLong) ||
 		errors.Is(err, domainvideo.ErrIdempotencyKeyRequired) ||
 		errors.Is(err, domainvideo.ErrInvalidLocalAsset) ||
 		errors.Is(err, domainmedia.ErrInvalidAssetID)

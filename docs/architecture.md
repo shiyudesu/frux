@@ -340,10 +340,7 @@ erDiagram
   ACCOUNT ||--o{ INTERACTION_ACTION_EVENT : "产生异步互动事件"
   ACCOUNT ||--o{ VIDEO_VIEW_HISTORY : "拥有观看历史"
   ACCOUNT ||--o{ USER_WATCH_LATER : "拥有稍后再看"
-  ACCOUNT ||--o{ VIDEO_COLLECTION : "创建合集"
   VIDEO ||--|| VIDEO_STAT : "拥有互动计数"
-  VIDEO_COLLECTION ||--o{ VIDEO_COLLECTION_ITEM : "包含"
-  VIDEO ||--o{ VIDEO_COLLECTION_ITEM : "加入"
   VIDEO ||--o{ INTERACTION_ACTION : "被互动"
   VIDEO ||--o{ INTERACTION_ACTION_EVENT : "被异步互动"
   VIDEO ||--o{ VIDEO_VIEW_HISTORY : "被观看"
@@ -390,7 +387,6 @@ erDiagram
     int public_work_count
     int private_work_count
     int received_like_count
-    int collection_count
   }
 
   INTERACTION_ACTION {
@@ -430,19 +426,6 @@ erDiagram
     datetime updated_at
   }
 
-  VIDEO_COLLECTION {
-    bigint id PK
-    bigint owner_id
-    string visibility
-    int status
-    datetime updated_at
-  }
-
-  VIDEO_COLLECTION_ITEM {
-    bigint collection_id PK
-    bigint video_id PK
-    int position
-  }
 ```
 
 迁移在 PostgreSQL advisory transaction lock 内执行 `AutoMigrate`，包括异步互动回执 `version` 和行为行 `latest_event_version`/兼容顺序列，随后补齐 `video_stat`、将历史视频可见性置为 `public`、补齐隐私默认行、以版本 `0` 和现有行为 `updated_at` 安全回填旧行为顺序、重建 `user_content_stat`、仅在 `app_migration` 缺少持久标记时从原始观看事件一次性回填 `video_view_history`，最后确保 Feed Timeline 索引。标记与回填处于同一事务，用户之后删除或清空的历史不会被后续 API/Worker 启动恢复。
@@ -604,7 +587,7 @@ max staleness 后使用 failure default。请求和消费热路径不访问控�
 - 新视频默认进入待审核且没有 `published_at`。批准和媒体基线就绪是独立门：只有 `status=published`、`visibility=public` 且媒体为 `legacy_ready/ready` 时才公开；Feed 缓存命中后仍通过数据库批量验证，避免旧缓存泄露待审、拒绝、私密或处理中内容。
 - Web 为每次激活视频建立播放会话，按 10 秒边界和暂停、seek、切换、隐藏、退出上报曝光、播放、进度、完播和跳过。观看事实按 `(user_id, event_id)` 幂等，历史投影按有界 `(occurred_at, event_id)` 单调更新；事实、历史/曝光投影和 `view_event_outbox` 同事务提交，Worker 通过租约、重试与 publisher confirm 将反馈可靠送入推荐链路。
 - 新互动请求只接受当前已发布公开视频；Redis 在状态/计数事务内为每个行为事实分配单调版本。Kafka 发布等待 broker acknowledgement；失败或不确定时同步落库，发布与 fallback 双失败时只条件回滚仍由该版本拥有的 Redis 状态，相同幂等重试会重发原事件。Redis 提交后若计数读取失败，应用使用脱离请求取消且有超时的上下文条件回滚；回滚报错时重新确认投递原事件并以同步回执持久化兜底，并发更高版本不会被旧请求覆盖。事件回执按 `event_id` 去重，行为行优先按 `version` 拒绝延迟旧事件，同版本才用 `(occurred_at, event_id)` 兼容定序；重复和旧事件成功确认且不改变统计。缺失/删除视频和无效载荷终止消费并进入注册恢复策略，所有内容读取仍按当前可见性过滤。
-- 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品、公开合集和隐私允许的喜欢。“短剧”和“我的预约”没有领域模型或接口，明确不在架构范围内。
+- 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品和隐私允许的喜欢。“短剧”、合集和“我的预约”没有当前产品入口。
 - 播放技术遥测与观看行为事实分流：Web 将渲染首帧、播放结果、rebuffer/seek、选源、帧质量和终止错误组成有界版本化批次；API 严格校验并原子写入 `playback_telemetry_batch/event`，立即聚合低基数 Prometheus 指标。批次失败不影响播放，旧 QoS 端点在迁移窗口内继续兼容。
 - 人工审核使用数据库时间租约和 optimistic case/review version；最终决定、视频生命周期、成功审计和作者通知 Outbox 原子提交，Review Worker 再通过 message Application 幂等生成站内通知。
 - Web Admin Shell 复用 typed History router 和 SessionProvider，`AdminApp` 通过动态 import 形成独立 JS/CSS chunk；客户端权限只过滤导航，直接 URL 和所有动作仍由后台中间件授权。

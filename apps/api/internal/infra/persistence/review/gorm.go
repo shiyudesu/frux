@@ -284,12 +284,14 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 		}
 
 		if outcome == domainreview.OutcomeApprove || outcome == domainreview.OutcomeReject {
-			current := &domainvideo.Video{Status: video.Status, PublishedAt: video.PublishedAt}
 			transition := domainvideo.LifecycleApprove
 			if outcome == domainreview.OutcomeReject {
 				transition = domainvideo.LifecycleReject
 			}
-			if err := current.ApplyLifecycleTransition(transition, result.ReceivedAt); err != nil {
+			current, publicDelta, privateDelta, err := prepareReviewLifecycleTransition(
+				video, transition, result.ReceivedAt,
+			)
+			if err != nil {
 				return domainreview.ErrReviewSubjectState
 			}
 			if err := tx.Model(&video).Updates(map[string]any{
@@ -312,8 +314,7 @@ func (r *Repository) ProcessMachineResult(ctx context.Context, result *domainrev
 					return err
 				}
 			}
-			publicDelta, privateDelta := reviewContentWorkDeltas(video, current.Status)
-			if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+			if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0); err != nil {
 				return err
 			}
 			reasonCode := ""
@@ -444,23 +445,20 @@ func restoreCase(model CaseModel) *domainreview.ReviewCase {
 	)
 }
 
-func reviewContentWorkDeltas(video infravideo.VideoModel, nextStatus int) (int, int) {
-	oldPublic, oldPrivate := reviewContentWorkCounts(video.Status, video.Visibility, video.MediaStatus)
-	newPublic, newPrivate := reviewContentWorkCounts(nextStatus, video.Visibility, video.MediaStatus)
-	return newPublic - oldPublic, newPrivate - oldPrivate
-}
-
-func reviewContentWorkCounts(status int, visibility, mediaStatus string) (int, int) {
-	if status == domainvideo.StatusDeleted {
-		return 0, 0
+func prepareReviewLifecycleTransition(
+	video infravideo.VideoModel,
+	transition domainvideo.LifecycleTransition,
+	at time.Time,
+) (*domainvideo.Video, int, int, error) {
+	next := &domainvideo.Video{Status: video.Status, PublishedAt: video.PublishedAt}
+	if err := next.ApplyLifecycleTransition(transition, at); err != nil {
+		return nil, 0, 0, err
 	}
-	if visibility == domainvideo.VisibilityPrivate {
-		return 0, 1
-	}
-	if status == domainvideo.StatusPublished && domainmedia.IsPublicReadyStatus(mediaStatus) {
-		return 1, 0
-	}
-	return 0, 0
+	publicDelta, privateDelta := infravideo.ContentWorkDeltas(
+		video.Status, video.Visibility, video.MediaStatus,
+		next.Status, video.Visibility, video.MediaStatus,
+	)
+	return next, publicDelta, privateDelta, nil
 }
 
 func positiveValue(value *int64) int64 {

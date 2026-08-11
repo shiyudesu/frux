@@ -102,26 +102,7 @@ PostgreSQL 保存最终事实、Outbox 和长耗时 durable jobs。
 - 游标解析失败返回 400。
 - 多页查询结果无重复。
 
-## 7. 公开合集预览组装
-
-问题：公开主页允许匿名请求最多 100 个合集；逐合集查询成员和视频会形成 N+1，而一次补齐每个合集的全部成员会让响应成本随成员总量失控。
-
-优化：
-
-1. 先按 `updated_at DESC, id DESC` 查询合集页。
-2. 使用窗口函数一次读取这些合集的公开可读成员，并按 `position ASC, video_id ASC` 为每个合集截取最多 3 个预览成员。
-3. 一次批量查询预览成员的视频卡和统计，再按原始合集与成员顺序组装。
-4. 响应用 `member_count` 表达公开可读成员总数，不把预览数组长度误当总数。
-5. 本人合集列表继续批量补齐全部未删除成员，满足现有编辑器的完整成员识别。
-
-验收：
-
-- 100 个公开合集仍只使用 3 次仓储查询。
-- 匿名 `limit=100` 最多补齐 300 张成员卡。
-- 私密、下架和删除成员不进入公开计数或预览。
-- 合集顺序和成员 `position/video_id` 顺序保持稳定。
-
-## 8. 缓存一致性
+## 7. 缓存一致性
 
 原则：
 
@@ -151,7 +132,7 @@ HTTP Handler
 | Worker 重复消费 | 使用唯一键和幂等键保证安全 |
 | 缓存计数偏差 | TTL 过期后回源修正 |
 
-## 9. 发布放大
+## 8. 发布放大
 
 问题：作者发布视频后，如果同步写入所有粉丝 inbox，发布耗时会随粉丝数线性增长。
 
@@ -171,7 +152,7 @@ HTTP Handler
   ffmpeg 时长影响 Group liveness。
 - inbox 长度受控。
 
-## 10. Hot Feed
+## 9. Hot Feed
 
 Hot Feed 使用 Redis ZSET 维护一小时滑动窗口。
 
@@ -193,7 +174,7 @@ feed:hot:window:v1:{windowEndUnix}
 
 读取时合并最近 60 个分钟桶，移除分数小于等于 0 的条目，再按分数倒序分页。
 
-## 11. 监控指标
+## 10. 监控指标
 
 建议指标：
 
@@ -208,7 +189,7 @@ feed:hot:window:v1:{windowEndUnix}
 | `redis_error_count` | Redis 错误数 |
 | `frux_kafka_produce_total{result}` | Kafka 投递结果 |
 
-## 12. 落地顺序
+## 11. 落地顺序
 
 1. 先确保游标分页和批量组装稳定。
 2. 再接入 Feed 页缓存、卡片缓存和计数缓存。
@@ -216,7 +197,7 @@ feed:hot:window:v1:{windowEndUnix}
 4. 再补发布 fanout 和 Hot 窗口缓存。
 5. 最后补监控指标和降级开关。
 
-## 13. 生产媒体交付
+## 12. 生产媒体交付
 
 - Web 直接上传对象存储，避免大文件经过 API 进程；完成接口只执行有界元数据校验和任务持久化。
 - Worker 生成不超过源分辨率的 480p、720p、1080p MP4，以及同一目录下的 DASH manifest/segment；720p 或源分辨率基线优先保证兼容。
@@ -224,7 +205,7 @@ feed:hot:window:v1:{windowEndUnix}
 - `media_url` 保留基线兼容，`playback_sources` 增量返回多源，避免旧客户端同步升级。
 - 重点指标为对象操作耗时、处理成功/失败、输出数量、过期租约、孤儿对象和清理积压；标签不得包含用户、视频、资产或对象键。
 
-## 14. Feed 顺序预加载
+## 13. Feed 顺序预加载
 
 - 候选直接来自活动 Feed 的有序 items，避免推荐、热门和关注场景被全局发布时间顺序污染。
 - 默认网络最多准备立即后续 2 条，WiFi/5G 最多 4 条，慢网只准备下一条元数据，离线或 save-data 不主动加载视频字节。
@@ -232,7 +213,7 @@ feed:hot:window:v1:{windowEndUnix}
 - Feed 接近页尾时提前走原分页，不调用兼容 `/api/preload-videos` 创建第二排序模型。
 - 页面提供无用户、视频或请求标签的 attempts、ready、reuse、cancellation、failure 和活动资源调试状态。
 
-## 15. 播放遥测成本控制
+## 14. 播放遥测成本控制
 
 - Web 只保留当前页面会话的内存队列，每批最多 50 个事件和 64 KiB，最多排队 4 个批次。
 - flush 发生在大小阈值、10 秒间隔、终止状态、页面隐藏和退出；失败仅做有界重试并复用原 batch/event ID。
@@ -240,14 +221,14 @@ feed:hot:window:v1:{windowEndUnix}
 - 原始事件默认保留 168 小时，清理每小时最多删除 1000 条事件和无事件批次，配置上限为 10000。
 - Prometheus 只聚合 scene/network/player/method/error/outcome/quality/source 等固定维度，禁止用户、视频、请求、会话和 URL 标签。
 
-## 16. 自适应播放器成本控制
+## 15. 自适应播放器成本控制
 
 - 主 MP4 路径只加载约 330 KiB 的主 JS（gzip 约 100 KiB）；dash.js 保持约 854 KiB 的独立懒加载 chunk，不进入基线启动路径。
 - Feed 只保留 previous/current/next 三个 player slot；高频时间和缓冲变化局限在 adapter 订阅，不重建整页。
 - constrained network/save-data 优先低码率或兼容 MP4，MediaCapabilities 不可用时回退到 `canPlayType`。
 - `buffer_ms` 同时作为 next-slot ready 门槛和切入后 buffering 依据，避免“已预加载”但实际不可播的虚假状态。
 
-## 17. 上下文推荐容量与降级
+## 16. 上下文推荐容量与降级
 
 - 每个 Provider 有独立 deadline 和最多 100 条 bootstrap budget；合并池、snapshot 候选和日志
   候选均不超过 500。Provider 超时只降低该请求，不能等待全局最长任务。

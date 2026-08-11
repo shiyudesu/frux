@@ -76,6 +76,7 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if err != nil || processed.Duplicate || processed.Decision.Outcome != domainreview.OutcomeApprove {
 			t.Fatalf("first result = %#v err=%v", processed, err)
 		}
+		assertReviewPublicWorkCount(t, db, 7, 1)
 		replayed, err := repo.ProcessMachineResult(context.Background(), result)
 		if err != nil || !replayed.Duplicate || replayed.Decision.ID != processed.Decision.ID {
 			t.Fatalf("duplicate result = %#v err=%v", replayed, err)
@@ -87,6 +88,7 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if err != nil || !staleReplay.Duplicate || staleReplay.ApplySideEffects {
 			t.Fatalf("stale duplicate side effects = %#v err=%v", staleReplay, err)
 		}
+		assertReviewPublicWorkCount(t, db, 7, 1)
 		assertReviewCounts(t, db, 1, 1, 1)
 		var video infravideo.VideoModel
 		if err := db.Where("id = ?", 101).Take(&video).Error; err != nil {
@@ -193,6 +195,7 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if err != nil || processed.Decision.Outcome != domainreview.OutcomeApprove {
 			t.Fatalf("approval=%#v err=%v", processed, err)
 		}
+		assertReviewPublicWorkCount(t, db, 7, 0)
 		assertReviewNotification(
 			t, db, domainmessage.ReviewEventID(
 				106, 1, domainmessage.LifecycleResultApproved,
@@ -727,6 +730,7 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 		if err != nil || committed.Duplicate || committed.Case.Status != domainreview.CaseStatusApproved {
 			t.Fatalf("committed decision = %#v err=%v", committed, err)
 		}
+		assertReviewPublicWorkCount(t, db, 7, 1)
 		assertReviewNotification(
 			t, db, domainmessage.PublicationEventID(301, 1),
 			domainmessage.LifecycleStagePublished, domainmessage.LifecycleResultPublic,
@@ -787,6 +791,7 @@ func TestReviewRepositoryPostgreSQL(t *testing.T) {
 			!replayed.ApplySideEffects {
 			t.Fatalf("replayed decision = %#v err=%v", replayed, err)
 		}
+		assertReviewPublicWorkCount(t, db, 7, 1)
 		if err := db.Model(&infravideo.VideoModel{}).Where("id = ?", 301).
 			Update("review_version", 2).Error; err != nil {
 			t.Fatal(err)
@@ -1245,6 +1250,17 @@ func assertReviewCounts(t *testing.T, db *gorm.DB, results, signals, decisions i
 		if got != item.want {
 			t.Fatalf("count for %T = %d, want %d", item.model, got, item.want)
 		}
+	}
+}
+
+func assertReviewPublicWorkCount(t *testing.T, db *gorm.DB, userID int64, want int) {
+	t.Helper()
+	var stat infravideo.UserContentStatModel
+	if err := db.Where("user_id = ?", userID).Take(&stat).Error; err != nil {
+		t.Fatalf("load content stat for user %d: %v", userID, err)
+	}
+	if stat.PublicWorkCount != want {
+		t.Fatalf("public work count for user %d = %d, want %d", userID, stat.PublicWorkCount, want)
 	}
 }
 

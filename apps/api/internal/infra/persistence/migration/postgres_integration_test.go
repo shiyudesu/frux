@@ -226,8 +226,6 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"local_upload_asset",
 		"video_stat",
 		"user_content_stat",
-		"video_collection",
-		"video_collection_item",
 		"video_batch_operation",
 		"video_publication_event_fact",
 		"video_publication_event_outbox",
@@ -424,12 +422,6 @@ func TestPostgreSQLMigration(t *testing.T) {
 	if err := db.Create(&offlineVideo).Error; err != nil {
 		t.Fatalf("create offline video: %v", err)
 	}
-	if err := db.Create(&infravideo.CollectionModel{
-		OwnerID: 1, Title: "migration collection", Visibility: domainvideo.VisibilityPublic,
-		Status: domainvideo.CollectionStatusActive,
-	}).Error; err != nil {
-		t.Fatalf("create migration collection: %v", err)
-	}
 	if err := AutoMigrate(db); err != nil {
 		t.Fatalf("migration with aggregate backfill: %v", err)
 	}
@@ -445,7 +437,7 @@ func TestPostgreSQLMigration(t *testing.T) {
 	if err := db.Where("user_id = ?", 1).Take(&contentStat).Error; err != nil {
 		t.Fatalf("load content stat: %v", err)
 	}
-	if contentStat.PublicWorkCount != 1 || contentStat.PrivateWorkCount != 1 || contentStat.ReceivedLikeCount != 5 || contentStat.CollectionCount != 1 {
+	if contentStat.PublicWorkCount != 1 || contentStat.PrivateWorkCount != 1 || contentStat.ReceivedLikeCount != 5 {
 		t.Fatalf("unexpected content stat backfill: %+v", contentStat)
 	}
 	var missingStats int64
@@ -1014,7 +1006,7 @@ func TestPostgreSQLContentStatReconciliationPreservesConcurrentDelta(t *testing.
 		_ = tx.Rollback()
 		t.Fatalf("create concurrent video stat: %v", err)
 	}
-	if err := infravideo.AdjustContentStat(tx, 1, 1, 0, 0, 0); err != nil {
+	if err := infravideo.AdjustContentStat(tx, 1, 1, 0, 0); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("apply concurrent aggregate delta: %v", err)
 	}
@@ -1167,110 +1159,6 @@ func TestPostgreSQLProfileBackendTransactions(t *testing.T) {
 		t.Fatalf("restored published public video not counted: %+v", creatorStat)
 	}
 
-	collection, created, err := videoRepo.CreateCollection(context.Background(), mustCollection(t, 1, "series", domainvideo.VisibilityPublic, "collection-key"))
-	if err != nil || !created {
-		t.Fatalf("create collection: created=%v err=%v", created, err)
-	}
-	replayedCollection, created, err := videoRepo.CreateCollection(context.Background(), mustCollection(t, 1, "changed", domainvideo.VisibilityPrivate, "collection-key"))
-	if err != nil || created || replayedCollection.ID != collection.ID {
-		t.Fatalf("collection replay failed: collection=%+v created=%v err=%v", replayedCollection, created, err)
-	}
-	staleTitle, err := videoRepo.GetCollection(context.Background(), collection.ID)
-	if err != nil {
-		t.Fatalf("load collection for title update: %v", err)
-	}
-	staleDescription, err := videoRepo.GetCollection(context.Background(), collection.ID)
-	if err != nil {
-		t.Fatalf("load collection for description update: %v", err)
-	}
-	title := "concurrent title"
-	titleUpdate := domainvideo.CollectionUpdate{Title: &title}
-	if err := staleTitle.UpdateBy(1, titleUpdate); err != nil {
-		t.Fatalf("validate collection title update: %v", err)
-	}
-	description := "concurrent description"
-	descriptionUpdate := domainvideo.CollectionUpdate{Description: &description}
-	if err := staleDescription.UpdateBy(1, descriptionUpdate); err != nil {
-		t.Fatalf("validate collection description update: %v", err)
-	}
-	startCollectionUpdates := make(chan struct{})
-	collectionUpdateErrors := make(chan error, 2)
-	go func() {
-		<-startCollectionUpdates
-		collectionUpdateErrors <- videoRepo.UpdateCollection(context.Background(), staleTitle, titleUpdate)
-	}()
-	go func() {
-		<-startCollectionUpdates
-		collectionUpdateErrors <- videoRepo.UpdateCollection(context.Background(), staleDescription, descriptionUpdate)
-	}()
-	close(startCollectionUpdates)
-	for range 2 {
-		if err := <-collectionUpdateErrors; err != nil {
-			t.Fatalf("concurrent collection update: %v", err)
-		}
-	}
-	updatedCollection, err := videoRepo.GetCollection(context.Background(), collection.ID)
-	if err != nil {
-		t.Fatalf("reload concurrently updated collection: %v", err)
-	}
-	if updatedCollection.Title != title || updatedCollection.Description != description || updatedCollection.Visibility != domainvideo.VisibilityPublic {
-		t.Fatalf("concurrent partial collection update lost a field: %+v", updatedCollection)
-	}
-	var collectionModel infravideo.CollectionModel
-	if err := db.Where("id = ?", collection.ID).Take(&collectionModel).Error; err != nil {
-		t.Fatalf("load collection before membership: %v", err)
-	}
-	beforeMembership := collectionModel.UpdatedAt
-	if err := videoRepo.SetCollectionItem(context.Background(), 1, collection.ID, first.ID, true); err != nil {
-		t.Fatalf("add collection item: %v", err)
-	}
-	if err := db.Where("id = ?", collection.ID).Take(&collectionModel).Error; err != nil {
-		t.Fatalf("load collection after membership: %v", err)
-	}
-	afterAdd := collectionModel.UpdatedAt
-	if !afterAdd.After(beforeMembership) {
-		t.Fatalf("membership add did not touch collection: before=%s after=%s", beforeMembership, afterAdd)
-	}
-	if err := videoRepo.SetCollectionItem(context.Background(), 1, collection.ID, first.ID, true); err != nil {
-		t.Fatalf("replay collection item: %v", err)
-	}
-	if err := db.Where("id = ?", collection.ID).Take(&collectionModel).Error; err != nil {
-		t.Fatalf("load collection after add replay: %v", err)
-	}
-	if !collectionModel.UpdatedAt.Equal(afterAdd) {
-		t.Fatalf("no-op add changed collection updated_at: first=%s replay=%s", afterAdd, collectionModel.UpdatedAt)
-	}
-	if err := videoRepo.SetCollectionItem(context.Background(), 1, collection.ID, second.ID, false); err != nil {
-		t.Fatalf("remove absent collection item: %v", err)
-	}
-	if err := db.Where("id = ?", collection.ID).Take(&collectionModel).Error; err != nil {
-		t.Fatalf("load collection after remove replay: %v", err)
-	}
-	if !collectionModel.UpdatedAt.Equal(afterAdd) {
-		t.Fatalf("no-op remove changed collection updated_at: first=%s replay=%s", afterAdd, collectionModel.UpdatedAt)
-	}
-	if err := videoRepo.SetCollectionItem(context.Background(), 1, collection.ID, first.ID, false); err != nil {
-		t.Fatalf("remove collection item: %v", err)
-	}
-	if err := db.Where("id = ?", collection.ID).Take(&collectionModel).Error; err != nil {
-		t.Fatalf("load collection after remove: %v", err)
-	}
-	afterRemove := collectionModel.UpdatedAt
-	if !afterRemove.After(afterAdd) {
-		t.Fatalf("membership remove did not touch collection: add=%s remove=%s", afterAdd, afterRemove)
-	}
-	if err := videoRepo.SetCollectionItem(context.Background(), 1, collection.ID, first.ID, true); err != nil {
-		t.Fatalf("restore collection item: %v", err)
-	}
-	ownerItems, err := videoRepo.ListCollectionItems(context.Background(), collection.ID, false)
-	if err != nil || len(ownerItems) != 1 {
-		t.Fatalf("unexpected owner items: items=%+v err=%v", ownerItems, err)
-	}
-	publicItems, err := videoRepo.ListCollectionItems(context.Background(), collection.ID, true)
-	if err != nil || len(publicItems) != 0 {
-		t.Fatalf("private member leaked publicly: items=%+v err=%v", publicItems, err)
-	}
-
 	if _, _, err := videoRepo.ApplyBatch(context.Background(), 1, domainvideo.BatchActionMakePublic, []int64{first.ID}, "public-first", "fingerprint-public"); err != nil {
 		t.Fatalf("make first public: %v", err)
 	}
@@ -1299,13 +1187,13 @@ func TestPostgreSQLProfileBackendTransactions(t *testing.T) {
 		t.Fatalf("expected exactly one received like, got %+v", creatorStat)
 	}
 
-	if err := infravideo.AdjustContentStat(db, 1, -100, -100, -100, -100); err != nil {
+	if err := infravideo.AdjustContentStat(db, 1, -100, -100, -100); err != nil {
 		t.Fatalf("clamp aggregate: %v", err)
 	}
 	if err := db.Where("user_id = ?", 1).Take(&creatorStat).Error; err != nil {
 		t.Fatalf("reload clamped stat: %v", err)
 	}
-	if creatorStat.PublicWorkCount < 0 || creatorStat.PrivateWorkCount < 0 || creatorStat.ReceivedLikeCount < 0 || creatorStat.CollectionCount < 0 {
+	if creatorStat.PublicWorkCount < 0 || creatorStat.PrivateWorkCount < 0 || creatorStat.ReceivedLikeCount < 0 {
 		t.Fatalf("aggregate became negative: %+v", creatorStat)
 	}
 
@@ -1347,122 +1235,6 @@ func TestPostgreSQLProfileBackendTransactions(t *testing.T) {
 	replayedFact, err := libraryRepo.SetWatchLater(context.Background(), fact)
 	if err != nil || !firstFact.UpdatedAt.Equal(replayedFact.UpdatedAt) {
 		t.Fatalf("watch later replay changed state: first=%+v replay=%+v err=%v", firstFact, replayedFact, err)
-	}
-}
-
-func mustCollection(t *testing.T, ownerID int64, title, visibility, key string) *domainvideo.Collection {
-	t.Helper()
-	collection, err := domainvideo.NewCollection(ownerID, title, "", visibility, key)
-	if err != nil {
-		t.Fatalf("new collection: %v", err)
-	}
-	return collection
-}
-
-func TestPostgreSQLPublicCollectionListUsesBoundedBatchHydration(t *testing.T) {
-	fixture := newPostgresFixture(t)
-	db := fixture.openGORM(t)
-	if err := AutoMigrate(db); err != nil {
-		t.Fatalf("migrate collection list fixture: %v", err)
-	}
-
-	const ownerID int64 = 9001
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	collections := make([]infravideo.CollectionModel, 0, 100)
-	videos := make([]infravideo.VideoModel, 0, 600)
-	memberships := make([]infravideo.CollectionItemModel, 0, 600)
-	for collectionID := int64(1); collectionID <= 100; collectionID++ {
-		collections = append(collections, infravideo.CollectionModel{
-			ID: collectionID, OwnerID: ownerID, Title: fmt.Sprintf("collection-%03d", collectionID),
-			Visibility: domainvideo.VisibilityPublic, Status: domainvideo.CollectionStatusActive,
-			CreatedAt: now, UpdatedAt: now,
-		})
-		baseVideoID := collectionID * 10
-		videoDefinitions := []struct {
-			offset     int64
-			position   int
-			status     int
-			visibility string
-		}{
-			{offset: 1, position: 1, status: domainvideo.StatusPublished, visibility: domainvideo.VisibilityPrivate},
-			{offset: 3, position: 2, status: domainvideo.StatusPublished, visibility: domainvideo.VisibilityPublic},
-			{offset: 2, position: 2, status: domainvideo.StatusPublished, visibility: domainvideo.VisibilityPublic},
-			{offset: 4, position: 3, status: domainvideo.StatusOffline, visibility: domainvideo.VisibilityPublic},
-			{offset: 5, position: 4, status: domainvideo.StatusPublished, visibility: domainvideo.VisibilityPublic},
-			{offset: 6, position: 5, status: domainvideo.StatusPublished, visibility: domainvideo.VisibilityPublic},
-		}
-		for _, definition := range videoDefinitions {
-			videoID := baseVideoID + definition.offset
-			publishedAt := now
-			videos = append(videos, infravideo.VideoModel{
-				ID: videoID, AuthorID: ownerID, Title: fmt.Sprintf("video-%d", videoID),
-				MediaURL: fmt.Sprintf("https://media.example/%d.mp4", videoID),
-				CoverURL: fmt.Sprintf("https://media.example/%d.jpg", videoID),
-				Status:   definition.status, Visibility: definition.visibility,
-				PublishedAt: &publishedAt, CreatedAt: now, UpdatedAt: now,
-			})
-			memberships = append(memberships, infravideo.CollectionItemModel{
-				CollectionID: collectionID, VideoID: videoID, Position: definition.position, CreatedAt: now,
-			})
-		}
-	}
-	if err := db.CreateInBatches(&collections, 100).Error; err != nil {
-		t.Fatalf("seed public collections: %v", err)
-	}
-	if err := db.CreateInBatches(&videos, 100).Error; err != nil {
-		t.Fatalf("seed collection videos: %v", err)
-	}
-	if err := db.CreateInBatches(&memberships, 100).Error; err != nil {
-		t.Fatalf("seed collection memberships: %v", err)
-	}
-
-	counter := &queryCounterLogger{Interface: logger.Default.LogMode(logger.Silent)}
-	repo := infravideo.New(db.Session(&gorm.Session{Logger: counter}))
-	listed, err := repo.ListCollections(context.Background(), ownerID, true, nil, 100)
-	if err != nil {
-		t.Fatalf("list public collections: %v", err)
-	}
-	if queryCount := counter.count.Load(); queryCount != 3 {
-		t.Fatalf("public collection list used %d queries, want 3 batched queries", queryCount)
-	}
-	if len(listed) != 100 {
-		t.Fatalf("listed %d collections, want 100", len(listed))
-	}
-	for index, collection := range listed {
-		expectedCollectionID := int64(100 - index)
-		if collection.ID != expectedCollectionID {
-			t.Fatalf("collection order at %d: got %d want %d", index, collection.ID, expectedCollectionID)
-		}
-		if collection.MemberCount != 4 {
-			t.Fatalf("collection %d readable member count = %d, want 4", collection.ID, collection.MemberCount)
-		}
-		if len(collection.Items) != domainvideo.MaxPublicCollectionPreviewItems {
-			t.Fatalf("collection %d preview length = %d, want %d", collection.ID, len(collection.Items), domainvideo.MaxPublicCollectionPreviewItems)
-		}
-		baseVideoID := collection.ID * 10
-		expectedVideoIDs := []int64{baseVideoID + 2, baseVideoID + 3, baseVideoID + 5}
-		for itemIndex, item := range collection.Items {
-			if item.VideoID != expectedVideoIDs[itemIndex] || item.Video == nil || item.Video.ID != expectedVideoIDs[itemIndex] {
-				t.Fatalf("collection %d item %d = %+v, want video %d", collection.ID, itemIndex, item, expectedVideoIDs[itemIndex])
-			}
-			if !item.Video.IsPubliclyReadable() {
-				t.Fatalf("collection %d returned unreadable video %+v", collection.ID, item.Video)
-			}
-		}
-	}
-
-	ownerItems, err := infravideo.New(db).ListCollectionItems(context.Background(), 100, false)
-	if err != nil {
-		t.Fatalf("list owner collection members: %v", err)
-	}
-	if len(ownerItems) != 6 {
-		t.Fatalf("owner collection members = %d, want all 6 for editing", len(ownerItems))
-	}
-	expectedOwnerVideoIDs := []int64{1001, 1002, 1003, 1004, 1005, 1006}
-	for index, item := range ownerItems {
-		if item.VideoID != expectedOwnerVideoIDs[index] {
-			t.Fatalf("owner item %d = %d, want %d", index, item.VideoID, expectedOwnerVideoIDs[index])
-		}
 	}
 }
 

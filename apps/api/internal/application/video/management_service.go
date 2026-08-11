@@ -98,12 +98,6 @@ type VideoByIDReader interface {
 	FindByIDAnyStatus(ctx context.Context, videoID int64) (*domainvideo.Video, error)
 }
 
-type CollectionListResult struct {
-	Items      []*domainvideo.Collection
-	NextCursor string
-	HasMore    bool
-}
-
 func NewManagement(repo domainvideo.ManagementRepository, invalidator VideoCacheInvalidator, options ...ManagementOption) *ManagementService {
 	service := &ManagementService{repo: repo, cacheInvalidator: invalidator}
 	for _, option := range options {
@@ -223,89 +217,6 @@ func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action
 		}
 	}
 	return &BatchResult{Action: operation.Action, VideoIDs: operation.VideoIDs, Replayed: replayed}, nil
-}
-
-func (s *ManagementService) CreateCollection(ctx context.Context, userID int64, title, description, visibility, idempotencyKey string) (*domainvideo.Collection, bool, error) {
-	if strings.TrimSpace(idempotencyKey) == "" {
-		return nil, false, domainvideo.ErrIdempotencyKeyRequired
-	}
-	collection, err := domainvideo.NewCollection(userID, title, description, visibility, idempotencyKey)
-	if err != nil {
-		return nil, false, err
-	}
-	return s.repo.CreateCollection(ctx, collection)
-}
-
-func (s *ManagementService) ListCollections(ctx context.Context, ownerID int64, publicOnly bool, cursorValue string, limit int) (*CollectionListResult, error) {
-	if ownerID <= 0 {
-		return nil, domainvideo.ErrInvalidAuthorID
-	}
-	if limit == 0 {
-		limit = defaultManagementLimit
-	}
-	if limit < 1 || limit > 100 {
-		return nil, domainvideo.ErrInvalidLimit
-	}
-	cursor, err := decodeCollectionCursor(cursorValue)
-	if err != nil {
-		return nil, err
-	}
-	items, err := s.repo.ListCollections(ctx, ownerID, publicOnly, cursor, limit+1)
-	if err != nil {
-		return nil, err
-	}
-	hasMore := len(items) > limit
-	if hasMore {
-		items = items[:limit]
-	}
-	next := ""
-	if hasMore && len(items) > 0 {
-		last := items[len(items)-1]
-		next = encodeCollectionCursor(last.UpdatedAt, last.ID)
-	}
-	return &CollectionListResult{Items: items, NextCursor: next, HasMore: hasMore}, nil
-}
-
-func (s *ManagementService) UpdateCollection(ctx context.Context, userID, collectionID int64, title, description, visibility *string) (*domainvideo.Collection, error) {
-	collection, err := s.repo.GetCollection(ctx, collectionID)
-	if err != nil {
-		return nil, err
-	}
-	update := domainvideo.CollectionUpdate{Title: title, Description: description, Visibility: visibility}
-	if err := collection.UpdateBy(userID, update); err != nil {
-		return nil, err
-	}
-	if !update.Empty() {
-		if err := s.repo.UpdateCollection(ctx, collection, update); err != nil {
-			return nil, err
-		}
-	}
-	updated, err := s.repo.GetCollection(ctx, collectionID)
-	if err != nil {
-		return nil, err
-	}
-	items, err := s.repo.ListCollectionItems(ctx, collectionID, false)
-	if err != nil {
-		return nil, err
-	}
-	updated.Items = items
-	updated.MemberCount = len(items)
-	return updated, nil
-}
-
-func (s *ManagementService) DeleteCollection(ctx context.Context, userID, collectionID int64) error {
-	collection, err := s.repo.GetCollection(ctx, collectionID)
-	if err != nil {
-		return err
-	}
-	if err := collection.DeleteBy(userID); err != nil {
-		return err
-	}
-	return s.repo.DeleteCollection(ctx, collection)
-}
-
-func (s *ManagementService) SetCollectionItem(ctx context.Context, userID, collectionID, videoID int64, active bool) error {
-	return s.repo.SetCollectionItem(ctx, userID, collectionID, videoID, active)
 }
 
 func (s *ManagementService) RecordLocalUpload(ctx context.Context, ownerID int64, assetURL, kind string) error {
@@ -490,21 +401,6 @@ func decodeCreatorCursor(value string) (*domainvideo.CreatorVideoCursor, error) 
 		return nil, nil
 	}
 	return &domainvideo.CreatorVideoCursor{CreatedAt: cursor.Time, VideoID: cursor.ID}, nil
-}
-
-func encodeCollectionCursor(value time.Time, id int64) string {
-	return encodeTimeIDCursor(value, id)
-}
-
-func decodeCollectionCursor(value string) (*domainvideo.CollectionCursor, error) {
-	cursor, err := decodeTimeIDCursor(value)
-	if err != nil {
-		return nil, err
-	}
-	if cursor == nil {
-		return nil, nil
-	}
-	return &domainvideo.CollectionCursor{UpdatedAt: cursor.Time, CollectionID: cursor.ID}, nil
 }
 
 func encodeTimeIDCursor(value time.Time, id int64) string {

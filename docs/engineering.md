@@ -360,7 +360,6 @@ DELETE /api/videos/{videoId}/like
 | 关注列表 | `updated_at DESC, target_user_id DESC` |
 | 粉丝列表 | `updated_at DESC, user_id DESC` |
 | 创作者作品查询 | `created_at DESC, id DESC` |
-| 创作者合集 | `updated_at DESC, id DESC` |
 | 喜欢、收藏、稍后再看 | `updated_at DESC, video_id DESC` |
 | 观看历史 | `last_watched_at DESC, video_id DESC` |
 

@@ -46,30 +46,34 @@ import { VideoStage, type VideoStageHandle } from "./VideoStage";
 import { Icon } from "./Icon";
 
 interface CollectionQueueViewerProps {
-  source: ProfileLibraryTab;
+  source: CollectionQueueSource;
   sourceState: ProfileLibraryState;
   selectedVideoID: number;
   onClose: () => void;
   onLoadMore: () => void;
-  onPatchVideo: (videoID: number, patch: Partial<Video>) => void;
-  onApplyVideoAction: (
+  onPatchVideo?: (videoID: number, patch: Partial<Video>) => void;
+  onApplyVideoAction?: (
     videoID: number,
     action: LibraryActionType,
     active: boolean,
     counts: LibraryActionCounts
   ) => void;
-  onAddWatchLater: (item: LibraryVideoItem, updatedAt: string) => void;
-  onRemoveWatchLater: (videoID: number) => Promise<boolean>;
+  onAddWatchLater?: (item: LibraryVideoItem, updatedAt: string) => void;
+  onRemoveWatchLater?: (videoID: number) => Promise<boolean>;
 }
 
-const queueScenes: Record<ProfileLibraryTab, string> = {
+export type CollectionQueueSource = ProfileLibraryTab | "publicWorks" | "publicLikes";
+
+const queueScenes: Record<CollectionQueueSource, string> = {
   likes: "library_likes",
   favorites: "library_favorites",
   history: "library_history",
-  watchLater: "library_watch_later"
+  watchLater: "library_watch_later",
+  publicWorks: "profile_works",
+  publicLikes: "profile_likes"
 };
 
-export function mapLibraryQueueItem(item: LibraryVideoItem, source: ProfileLibraryTab): FeedVideo {
+export function mapLibraryQueueItem(item: LibraryVideoItem, source: CollectionQueueSource): FeedVideo {
   const video = item.video;
   return {
     video_id: video.id,
@@ -111,10 +115,10 @@ export function CollectionQueueViewer({
   selectedVideoID,
   onClose,
   onLoadMore,
-  onPatchVideo,
-  onApplyVideoAction,
-  onAddWatchLater,
-  onRemoveWatchLater
+  onPatchVideo = () => {},
+  onApplyVideoAction = () => {},
+  onAddWatchLater = () => {},
+  onRemoveWatchLater = async () => false
 }: CollectionQueueViewerProps) {
   const session = useSession();
   const navigate = useNavigate();
@@ -507,7 +511,7 @@ export function CollectionQueueViewer({
   return (
     <div className="collection-queue-backdrop" role="presentation">
       <section
-        aria-label="个人内容连续播放"
+        aria-label="内容连续播放"
         aria-modal="true"
         className="collection-queue-dialog"
         data-active-video-id={current?.video_id || 0}
@@ -537,10 +541,10 @@ export function CollectionQueueViewer({
             onPointerCancel={handlePointerEnd}
           >
             {sourceState.state === "loading" && items.length === 0 && (
-              <FeedMessage icon="hourglass" title="正在加载个人内容" />
+              <FeedMessage icon="hourglass" title="正在加载内容" />
             )}
             {sourceState.state === "error" && items.length === 0 && (
-              <FeedMessage icon="alert" title={sourceState.error || "个人内容加载失败"} action="重试" onAction={loadMore} />
+              <FeedMessage icon="alert" title={sourceState.error || "内容加载失败"} action="重试" onAction={loadMore} />
             )}
             {sourceState.state === "error" && items.length > 0 && (
               <button className="feed-loading-pill collection-queue-retry" type="button" onClick={loadMore}>

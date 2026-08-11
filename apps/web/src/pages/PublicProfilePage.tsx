@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchPublicProfile, fetchUserVideos } from "../api/account";
 import { apiErrorMessage } from "../api/client";
-import { fetchPublicCollections } from "../api/creator";
 import { fetchPublicLikedVideos } from "../api/library";
 import { fetchFollowState, followUser } from "../api/social";
 import {
-  ProfileCollectionGrid,
   ProfileEmptyState,
   ProfileHero,
   ProfilePrimaryTabs,
   ProfileVideoGrid
 } from "../components/ProfileDashboard";
-import { WorkViewer } from "../components/WorkViewer";
+import { CollectionQueueViewer } from "../components/CollectionQueueViewer";
 import { image } from "../constants";
 import { useNavigate } from "../router";
 import { updateSessionRelationCount, useSession } from "../session";
@@ -20,8 +18,7 @@ import type {
   LibraryVideoItem,
   PublicProfileTab,
   PublicUserProfile,
-  Video,
-  VideoCollection
+  Video
 } from "../types";
 import { normalizePublicProfile, readPublicProfile, savePublicProfile } from "../utils";
 
@@ -49,19 +46,20 @@ function PublicProfileContent({ userID }: { userID: number }) {
   const [profileState, setProfileState] = useState<AsyncState>("loading");
   const [profileError, setProfileError] = useState("");
   const [activeTab, setActiveTab] = useState<PublicProfileTab>("works");
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [videosState, setVideosState] = useState<AsyncState>("loading");
-  const [videosError, setVideosError] = useState("");
+  const [videos, setVideos] = useState<CursorState<LibraryVideoItem>>(emptyCursorState);
   const [likes, setLikes] = useState<CursorState<LibraryVideoItem>>(emptyCursorState);
-  const [collections, setCollections] = useState<CursorState<VideoCollection>>(emptyCursorState);
-  const [selectedWork, setSelectedWork] = useState<Video | null>(null);
+  const [publicQueue, setPublicQueue] = useState<{
+    source: "publicWorks" | "publicLikes";
+    videoID: number;
+  } | null>(null);
   const [following, setFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
   const profileRequest = useRef(0);
   const videosRequest = useRef(0);
+  const videosRef = useRef(videos);
+  videosRef.current = videos;
   const followingRequest = useRef(0);
   const likesRequest = useRef(0);
-  const collectionsRequest = useRef(0);
 
   useEffect(() => {
     const requestID = profileRequest.current + 1;
@@ -87,26 +85,51 @@ function PublicProfileContent({ userID }: { userID: number }) {
     };
   }, [userID]);
 
-  const loadVideos = useCallback(async () => {
+  const loadVideos = useCallback(async (reset = false) => {
+    const current = videosRef.current;
+    if (!reset && (
+      current.state === "loading"
+      || current.state === "loadingMore"
+      || !current.hasMore
+    )) return;
+    const shouldReset = reset || current.state === "idle";
+    const offset = shouldReset ? 0 : Math.max(0, Number.parseInt(current.cursor, 10) || 0);
     const requestID = videosRequest.current + 1;
     videosRequest.current = requestID;
-    setVideosState("loading");
-    setVideosError("");
+    setVideos((state) => ({
+      ...state,
+      items: shouldReset ? [] : state.items,
+      state: shouldReset ? "loading" : "loadingMore",
+      error: ""
+    }));
     try {
-      const data = await fetchUserVideos(userID, 24);
+      const data = await fetchUserVideos(userID, 24, offset);
       if (videosRequest.current !== requestID) return;
-      setVideos(data.items || []);
-      setVideosState("ready");
+      const incoming = (data.items || []).map((video) => ({
+        video,
+        updated_at: video.published_at || video.updated_at || video.created_at
+      }));
+      setVideos((state) => ({
+        items: appendUniqueVideos(shouldReset ? [] : state.items, incoming),
+        cursor: String((data.offset || offset) + incoming.length),
+        hasMore: incoming.length > 0 && incoming.length >= (data.limit || 24),
+        state: "ready",
+        error: ""
+      }));
     } catch (error) {
       if (videosRequest.current !== requestID) return;
-      setVideos([]);
-      setVideosError(apiErrorMessage(error, "作品加载失败"));
-      setVideosState("error");
+      setVideos((state) => ({
+        ...state,
+        items: shouldReset ? [] : state.items,
+        state: "error",
+        error: apiErrorMessage(error, "作品加载失败")
+      }));
     }
   }, [userID]);
 
   useEffect(() => {
-    void loadVideos();
+    setVideos(emptyCursorState());
+    void loadVideos(true);
     return () => {
       videosRequest.current += 1;
     };
@@ -155,39 +178,30 @@ function PublicProfileContent({ userID }: { userID: number }) {
     [likes.cursor, likes.state, profile?.liked_videos_public, userID]
   );
 
-  const loadCollections = useCallback(
-    async (reset = false) => {
-      const requestID = collectionsRequest.current + 1;
-      collectionsRequest.current = requestID;
-      const shouldReset = reset || collections.state === "idle";
-      const cursor = shouldReset ? "" : collections.cursor;
-      setCollections((state) => ({ ...state, state: shouldReset ? "loading" : "loadingMore", error: "" }));
-      try {
-        const data = await fetchPublicCollections(userID, cursor);
-        if (collectionsRequest.current !== requestID) return;
-        setCollections((state) => ({
-          items: shouldReset ? data.items || [] : [...state.items, ...(data.items || [])],
-          cursor: data.next_cursor || "",
-          hasMore: Boolean(data.has_more && data.next_cursor),
-          state: "ready",
-          error: ""
-        }));
-      } catch (error) {
-        if (collectionsRequest.current !== requestID) return;
-        setCollections((state) => ({ ...state, state: "error", error: apiErrorMessage(error, "合集加载失败") }));
-      }
-    },
-    [collections.cursor, collections.state, userID]
-  );
-
   useEffect(() => {
     if (activeTab === "likes" && likes.state === "idle") void loadLikes(true);
-    if (activeTab === "collections" && collections.state === "idle") void loadCollections(true);
-  }, [activeTab, collections.state, likes.state, loadCollections, loadLikes]);
+  }, [activeTab, likes.state, loadLikes]);
 
   useEffect(() => {
     if (activeTab === "likes" && profile && !profile.liked_videos_public) setActiveTab("works");
   }, [activeTab, profile]);
+
+  const patchPublicQueueVideo = useCallback((videoID: number, patch: Partial<Video>) => {
+    setVideos((state) => patchCursorVideo(state, videoID, patch));
+    setLikes((state) => patchCursorVideo(state, videoID, patch));
+  }, []);
+
+  const applyPublicQueueVideoAction = useCallback((
+    videoID: number,
+    action: "like" | "favorite",
+    active: boolean,
+    counts: Partial<Pick<Video, "like_count" | "favorite_count">>
+  ) => {
+    patchPublicQueueVideo(videoID, {
+      ...counts,
+      ...(action === "like" ? { liked: active } : { favorited: active })
+    });
+  }, [patchPublicQueueVideo]);
 
   async function toggleFollow() {
     if (!session.token) {
@@ -220,14 +234,12 @@ function PublicProfileContent({ userID }: { userID: number }) {
     gender: cached?.gender || 0,
     public_work_count: cached?.public_work_count || cached?.work_count || 0,
     received_like_count: cached?.received_like_count || 0,
-    collection_count: cached?.collection_count || 0,
     liked_videos_public: Boolean(cached?.liked_videos_public)
   };
 
   const tabs = [
     { id: "works", label: "作品", count: display.public_work_count },
-    ...(display.liked_videos_public ? [{ id: "likes" as const, label: "喜欢" }] : []),
-    { id: "collections", label: "合集", count: display.collection_count }
+    ...(display.liked_videos_public ? [{ id: "likes" as const, label: "喜欢" }] : [])
   ] satisfies Array<{ id: PublicProfileTab; label: string; count?: number }>;
 
   return (
@@ -269,11 +281,13 @@ function PublicProfileContent({ userID }: { userID: number }) {
           {activeTab === "works" && (
             <ProfileVideoGrid
               emptyTitle="暂无公开作品"
-              error={videosError}
-              items={videos.map((video) => ({ video }))}
-              state={videosState}
-              onRetry={() => void loadVideos()}
-              onSelect={setSelectedWork}
+              error={videos.error}
+              hasMore={videos.hasMore}
+              items={videos.items}
+              state={videos.state}
+              onLoadMore={() => void loadVideos(false)}
+              onRetry={() => void loadVideos(true)}
+              onSelect={(video) => setPublicQueue({ source: "publicWorks", videoID: video.id })}
             />
           )}
           {activeTab === "likes" && display.liked_videos_public && (
@@ -285,18 +299,7 @@ function PublicProfileContent({ userID }: { userID: number }) {
               state={likes.state}
               onLoadMore={() => void loadLikes(false)}
               onRetry={() => void loadLikes(true)}
-              onSelect={setSelectedWork}
-            />
-          )}
-          {activeTab === "collections" && (
-            <ProfileCollectionGrid
-              collections={collections.items}
-              error={collections.error}
-              hasMore={collections.hasMore}
-              state={collections.state}
-              onLoadMore={() => void loadCollections(false)}
-              onOpenVideo={setSelectedWork}
-              onRetry={() => void loadCollections(true)}
+              onSelect={(video) => setPublicQueue({ source: "publicLikes", videoID: video.id })}
             />
           )}
           {profileState === "loading" && activeTab !== "works" && (
@@ -304,7 +307,73 @@ function PublicProfileContent({ userID }: { userID: number }) {
           )}
         </section>
       </section>
-      {selectedWork && <WorkViewer video={selectedWork} onClose={() => setSelectedWork(null)} />}
+      {publicQueue && (
+        <CollectionQueueViewer
+          source={publicQueue.source}
+          sourceState={publicQueueState(
+            publicQueue.source === "publicWorks" ? videos : likes,
+            publicQueue.source === "publicWorks" ? display : null
+          )}
+          selectedVideoID={publicQueue.videoID}
+          onClose={() => setPublicQueue(null)}
+          onLoadMore={() => {
+            if (publicQueue.source === "publicWorks") void loadVideos(false);
+            else void loadLikes(false);
+          }}
+          onPatchVideo={patchPublicQueueVideo}
+          onApplyVideoAction={applyPublicQueueVideoAction}
+        />
+      )}
     </main>
   );
+}
+
+function appendUniqueVideos(
+  current: LibraryVideoItem[],
+  incoming: LibraryVideoItem[]
+): LibraryVideoItem[] {
+  const seen = new Set(current.map((item) => item.video.id));
+  return [
+    ...current,
+    ...incoming.filter((item) => {
+      if (seen.has(item.video.id)) return false;
+      seen.add(item.video.id);
+      return true;
+    })
+  ];
+}
+
+function patchCursorVideo(
+  state: CursorState<LibraryVideoItem>,
+  videoID: number,
+  patch: Partial<Video>
+): CursorState<LibraryVideoItem> {
+  return {
+    ...state,
+    items: state.items.map((item) => item.video.id === videoID
+      ? { ...item, video: { ...item.video, ...patch } }
+      : item)
+  };
+}
+
+function publicQueueState(
+  state: CursorState<LibraryVideoItem>,
+  author: Pick<PublicUserProfile, "nickname" | "avatar_url"> | null
+) {
+  return {
+    items: state.items.map((item) => author
+      ? {
+          ...item,
+          video: {
+            ...item.video,
+            author_nickname: item.video.author_nickname || author.nickname,
+            author_avatar_url: item.video.author_avatar_url || author.avatar_url
+          }
+        }
+      : item),
+    nextCursor: state.cursor,
+    hasMore: state.hasMore,
+    state: state.state,
+    error: state.error
+  };
 }

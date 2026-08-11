@@ -70,8 +70,10 @@ export function fetchPublicProfile(userID: number): Promise<PublicUserProfile> {
   return apiRequest<PublicUserProfile>(`/api/users/${userID}`);
 }
 
-export function fetchUserVideos(userID: number, limit = 24): Promise<VideoListResponse> {
-  return apiRequest<VideoListResponse>(`/api/users/${userID}/videos?limit=${limit}`);
+export function fetchUserVideos(userID: number, limit = 24, offset = 0): Promise<VideoListResponse> {
+  return apiRequest<VideoListResponse>(
+    `/api/users/${userID}/videos?limit=${limit}&offset=${offset}`
+  );
 }
 
 export function fetchVideo(videoID: number): Promise<Video> {

@@ -7,8 +7,7 @@ import type {
   HistoryMetadata,
   ProfilePrimaryTab,
   PublicProfileTab,
-  Video,
-  VideoCollection
+  Video
 } from "../types";
 import { creatorVideoStatusLabel, formatMetric } from "../utils";
 import { Icon } from "./Icon";
@@ -182,8 +181,7 @@ interface CreatorWorkTabsProps {
 
 const workTabs: TabDefinition<CreatorWorkTab>[] = [
   { id: "published", label: "公开作品" },
-  { id: "private", label: "私密作品" },
-  { id: "collections", label: "合集" }
+  { id: "private", label: "私密作品" }
 ];
 
 export function CreatorWorkTabs({ active, onChange }: CreatorWorkTabsProps) {
@@ -435,103 +433,6 @@ export function ProfileVideoGrid({
             </article>
           );
         })}
-      </div>
-      {hasMore && onLoadMore && (
-        <button className="profile-load-more" type="button" disabled={state === "loadingMore"} onClick={onLoadMore}>
-          {state === "loadingMore" ? "加载中" : "加载更多"}
-        </button>
-      )}
-    </>
-  );
-}
-
-interface ProfileCollectionGridProps {
-  collections: VideoCollection[];
-  state: AsyncState;
-  error?: string;
-  owner?: boolean;
-  hasMore?: boolean;
-  onOpenVideo: (video: Video) => void;
-  onManage?: (collection: VideoCollection) => void;
-  onCreate?: () => void;
-  onRetry?: () => void;
-  onLoadMore?: () => void;
-}
-
-export function ProfileCollectionGrid({
-  collections,
-  state,
-  error,
-  owner = false,
-  hasMore = false,
-  onOpenVideo,
-  onManage,
-  onCreate,
-  onRetry,
-  onLoadMore
-}: ProfileCollectionGridProps) {
-  if (state === "loading" || state === "idle") {
-    return (
-      <div className="profile-collection-grid" aria-busy="true">
-        {Array.from({ length: 4 }, (_, index) => <div className="profile-collection-skeleton" key={index} />)}
-      </div>
-    );
-  }
-  if (state === "error" && collections.length === 0) {
-    return (
-      <ProfileEmptyState
-        error
-        title={error || "合集加载失败"}
-        action={onRetry && <button type="button" onClick={onRetry}>重试</button>}
-      />
-    );
-  }
-  if (collections.length === 0) {
-    return (
-      <ProfileEmptyState
-        title="暂无合集"
-        action={owner && onCreate && <button type="button" onClick={onCreate}>创建合集</button>}
-      />
-    );
-  }
-  return (
-    <>
-      {owner && onCreate && (
-        <div className="profile-collection-heading">
-          <button type="button" onClick={onCreate}>
-            <Icon name="plus" size={16} />
-            创建合集
-          </button>
-        </div>
-      )}
-      <div className="profile-collection-grid">
-        {collections.map((collection) => (
-          <article className="profile-collection-card" key={collection.id}>
-            <div className="profile-collection-covers">
-              {collection.items.slice(0, 3).map((item) => (
-                <button type="button" key={item.video_id} onClick={() => onOpenVideo(item.video)}>
-                  <img src={item.video.cover_url || image.stage} alt="" />
-                </button>
-              ))}
-              {collection.items.length === 0 && <span><Icon name="film" size={28} /></span>}
-            </div>
-            <div className="profile-collection-copy">
-              <div>
-                <h3>{collection.title}</h3>
-                <p>{collection.description || `${collection.member_count} 个作品`}</p>
-              </div>
-              {owner && onManage && (
-                <button type="button" onClick={() => onManage(collection)} aria-label={`管理合集：${collection.title}`}>
-                  <Icon name="more" size={18} />
-                </button>
-              )}
-            </div>
-            <span className="profile-collection-visibility">
-              {collection.visibility === "private" && <Icon name="lock" size={12} />}
-              {collection.visibility === "private" ? "私密" : "公开"} · {collection.member_count} 个作品
-            </span>
-          </article>
-        ))}
       </div>
       {hasMore && onLoadMore && (
         <button className="profile-load-more" type="button" disabled={state === "loadingMore"} onClick={onLoadMore}>

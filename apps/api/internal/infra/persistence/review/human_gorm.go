@@ -560,14 +560,14 @@ func (r *Repository) CommitHumanDecision(
 		if err := tx.Create(&humanModel).Error; err != nil {
 			return err
 		}
-		current := &domainvideo.Video{Status: video.Status, PublishedAt: video.PublishedAt}
 		transition := domainvideo.LifecycleApprove
 		nextCaseStatus := domainreview.CaseStatusApproved
 		if decision.Outcome == domainreview.OutcomeReject {
 			transition = domainvideo.LifecycleReject
 			nextCaseStatus = domainreview.CaseStatusRejected
 		}
-		if err := current.ApplyLifecycleTransition(transition, now); err != nil {
+		current, publicDelta, privateDelta, err := prepareReviewLifecycleTransition(video, transition, now)
+		if err != nil {
 			return domainreview.ErrReviewSubjectState
 		}
 		if err := tx.Model(&video).Updates(map[string]any{
@@ -590,8 +590,7 @@ func (r *Repository) CommitHumanDecision(
 				return err
 			}
 		}
-		publicDelta, privateDelta := reviewContentWorkDeltas(video, current.Status)
-		if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0, 0); err != nil {
+		if err := infravideo.AdjustContentStat(tx, video.AuthorID, publicDelta, privateDelta, 0); err != nil {
 			return err
 		}
 		reviewCase.Status = nextCaseStatus

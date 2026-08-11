@@ -41,40 +41,12 @@ type UserContentStatModel struct {
 	PublicWorkCount   int       `gorm:"column:public_work_count;not null;default:0"`
 	PrivateWorkCount  int       `gorm:"column:private_work_count;not null;default:0"`
 	ReceivedLikeCount int       `gorm:"column:received_like_count;not null;default:0"`
-	CollectionCount   int       `gorm:"column:collection_count;not null;default:0"`
 	CreatedAt         time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt         time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (UserContentStatModel) TableName() string {
 	return "user_content_stat"
-}
-
-type CollectionModel struct {
-	ID             int64     `gorm:"column:id;primaryKey;autoIncrement;index:idx_video_collection_owner_updated,priority:3"`
-	OwnerID        int64     `gorm:"column:owner_id;not null;index:idx_video_collection_owner_updated,priority:1;uniqueIndex:uk_video_collection_owner_idempotency,priority:1"`
-	Title          string    `gorm:"column:title;size:128;not null"`
-	Description    string    `gorm:"column:description;size:512"`
-	Visibility     string    `gorm:"column:visibility;size:16;not null;default:private"`
-	Status         int       `gorm:"column:status;type:smallint;not null;default:1"`
-	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128;uniqueIndex:uk_video_collection_owner_idempotency,priority:2"`
-	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime;index:idx_video_collection_owner_updated,priority:2"`
-}
-
-func (CollectionModel) TableName() string {
-	return "video_collection"
-}
-
-type CollectionItemModel struct {
-	CollectionID int64     `gorm:"column:collection_id;primaryKey;uniqueIndex:uk_video_collection_item_collection_video,priority:1;index:idx_video_collection_item_order,priority:1"`
-	VideoID      int64     `gorm:"column:video_id;primaryKey;uniqueIndex:uk_video_collection_item_collection_video,priority:2"`
-	Position     int       `gorm:"column:position;not null;index:idx_video_collection_item_order,priority:2"`
-	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime"`
-}
-
-func (CollectionItemModel) TableName() string {
-	return "video_collection_item"
 }
 
 type BatchOperationModel struct {

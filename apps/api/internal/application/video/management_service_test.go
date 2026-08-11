@@ -14,9 +14,6 @@ type managementRepoStub struct {
 	lastFingerprint  string
 	assetReferences  []domainvideo.AssetReference
 	localAssets      map[string]*domainvideo.LocalAsset
-	collection       *domainvideo.Collection
-	collectionItems  []*domainvideo.CollectionItem
-	lastUpdate       domainvideo.CollectionUpdate
 	mediaRefs        []MediaAssetRef
 	replayed         bool
 	videos           map[int64]*domainvideo.Video
@@ -74,41 +71,6 @@ func (r *managementRepoStub) MarkLifecyclePublicationReady(context.Context, stri
 	r.publicationReady = true
 	r.publicationMarks++
 	return nil
-}
-func (r *managementRepoStub) CreateCollection(context.Context, *domainvideo.Collection) (*domainvideo.Collection, bool, error) {
-	return nil, false, nil
-}
-func (r *managementRepoStub) ListCollections(context.Context, int64, bool, *domainvideo.CollectionCursor, int) ([]*domainvideo.Collection, error) {
-	return nil, nil
-}
-func (r *managementRepoStub) GetCollection(_ context.Context, collectionID int64) (*domainvideo.Collection, error) {
-	if r.collection == nil || r.collection.ID != collectionID {
-		return nil, domainvideo.ErrCollectionNotFound
-	}
-	cloned := *r.collection
-	return &cloned, nil
-}
-func (r *managementRepoStub) UpdateCollection(_ context.Context, collection *domainvideo.Collection, update domainvideo.CollectionUpdate) error {
-	r.lastUpdate = update
-	if update.Title != nil {
-		r.collection.Title = collection.Title
-	}
-	if update.Description != nil {
-		r.collection.Description = collection.Description
-	}
-	if update.Visibility != nil {
-		r.collection.Visibility = collection.Visibility
-	}
-	return nil
-}
-func (r *managementRepoStub) DeleteCollection(context.Context, *domainvideo.Collection) error {
-	return nil
-}
-func (r *managementRepoStub) SetCollectionItem(context.Context, int64, int64, int64, bool) error {
-	return nil
-}
-func (r *managementRepoStub) ListCollectionItems(context.Context, int64, bool) ([]*domainvideo.CollectionItem, error) {
-	return append([]*domainvideo.CollectionItem(nil), r.collectionItems...), nil
 }
 func (r *managementRepoStub) BatchGetReadable(context.Context, int64, []int64, bool) (map[int64]*domainvideo.Video, error) {
 	return nil, nil
@@ -286,35 +248,6 @@ func TestManagementCursorRoundTrip(t *testing.T) {
 	}
 	if _, err := decodeCreatorCursor("bad"); err != domainvideo.ErrInvalidCursor {
 		t.Fatalf("expected invalid cursor, got %v", err)
-	}
-}
-
-func TestUpdateCollectionPersistsOnlySuppliedFieldsAndHydratesMembers(t *testing.T) {
-	repo := &managementRepoStub{
-		collection: &domainvideo.Collection{
-			ID: 11, OwnerID: 7, Title: "original", Description: "preserve",
-			Visibility: domainvideo.VisibilityPublic, Status: domainvideo.CollectionStatusActive,
-		},
-		collectionItems: []*domainvideo.CollectionItem{{CollectionID: 11, VideoID: 99}},
-	}
-	service := NewManagement(repo, nil)
-	title := " renamed "
-
-	updated, err := service.UpdateCollection(context.Background(), 7, 11, &title, nil, nil)
-	if err != nil {
-		t.Fatalf("update collection: %v", err)
-	}
-	if updated.Title != "renamed" || updated.Description != "preserve" || updated.Visibility != domainvideo.VisibilityPublic {
-		t.Fatalf("partial update overwrote unrelated fields: %+v", updated)
-	}
-	if repo.lastUpdate.Title == nil || repo.lastUpdate.Description != nil || repo.lastUpdate.Visibility != nil {
-		t.Fatalf("repository received wrong update mask: %+v", repo.lastUpdate)
-	}
-	if len(updated.Items) != 1 || updated.Items[0].VideoID != 99 {
-		t.Fatalf("updated collection did not hydrate members: %+v", updated.Items)
-	}
-	if updated.MemberCount != 1 {
-		t.Fatalf("updated collection member count = %d, want 1", updated.MemberCount)
 	}
 }
 
