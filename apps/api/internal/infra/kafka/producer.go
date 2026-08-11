@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -131,15 +132,59 @@ func (p *Publisher) Publish(
 		resultLabel = "contract"
 		return ProduceMetadata{}, err
 	}
-	produceContext, cancel := boundedContext(ctx, timeout)
-	defer cancel()
 	record := &kgo.Record{
 		Topic: topicName, Key: append([]byte(nil), key...),
 		Value: value,
 	}
+	if err := validateTopicRecordSize(topicID, record); err != nil {
+		resultLabel = "contract"
+		return ProduceMetadata{}, err
+	}
+	produced, err := produceRecordSync(ctx, producer, timeout, record)
+	if err != nil {
+		if errors.Is(err, ErrProduceUncertain) {
+			resultLabel = "uncertain"
+		}
+		return ProduceMetadata{}, err
+	}
+	resultLabel = "acknowledged"
+	produced.Topic = topicID
+	return produced, nil
+}
+
+func (p *Publisher) PublishRecovery(
+	ctx context.Context,
+	destination TopicID,
+	key, value []byte,
+	headers []applicationeventstream.Header,
+) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %v", ErrProduceCanceled, err)
+	}
+	p.mu.RLock()
+	producer := p.producer
+	prefix := p.prefix
+	timeout := p.timeout
+	p.mu.RUnlock()
+	if producer == nil {
+		return ErrKafkaUnavailable
+	}
+	publisher := franzRecoveryPublisher{
+		producer: producer, prefix: prefix, timeout: timeout,
+	}
+	return publisher.PublishRecovery(ctx, destination, key, value, headers)
+}
+
+func produceRecordSync(
+	ctx context.Context,
+	producer syncProducer,
+	timeout time.Duration,
+	record *kgo.Record,
+) (ProduceMetadata, error) {
+	produceContext, cancel := boundedContext(ctx, timeout)
+	defer cancel()
 	results := producer.ProduceSync(produceContext, record)
 	if len(results) != 1 || results[0].Record == nil {
-		resultLabel = "uncertain"
 		return ProduceMetadata{}, &UncertainProduceError{
 			cause: errors.New("missing produce result"),
 		}
@@ -150,18 +195,15 @@ func (p *Publisher) Publish(
 		case errors.Is(result.Err, context.Canceled),
 			errors.Is(result.Err, context.DeadlineExceeded),
 			errors.Is(produceContext.Err(), context.DeadlineExceeded):
-			resultLabel = "uncertain"
 			return ProduceMetadata{}, &UncertainProduceError{
 				cause: errors.New("canceled or deadline"),
 			}
 		default:
 			if produceResultMayHaveAcknowledged(result.Err) {
-				resultLabel = "uncertain"
 				return ProduceMetadata{}, &UncertainProduceError{
 					cause: result.Err,
 				}
 			}
-			resultLabel = "failed"
 			return ProduceMetadata{}, fmt.Errorf(
 				"%w: %w",
 				ErrProduceFailed,
@@ -169,11 +211,42 @@ func (p *Publisher) Publish(
 			)
 		}
 	}
-	resultLabel = "acknowledged"
 	return ProduceMetadata{
-		Topic: topicID, Partition: result.Record.Partition,
-		Offset: result.Record.Offset, Timestamp: result.Record.Timestamp,
+		Partition: result.Record.Partition,
+		Offset:    result.Record.Offset, Timestamp: result.Record.Timestamp,
 	}, nil
+}
+
+func validateTopicRecordSize(topicID TopicID, record *kgo.Record) error {
+	topic, err := Topic(topicID)
+	if err != nil {
+		return err
+	}
+	return validateTopicRecordSizeForSpec(topic, record)
+}
+
+func validateTopicRecordSizeForSpec(topic TopicSpec, record *kgo.Record) error {
+	if record == nil {
+		return contractError(ContractOversizedRecord, nil)
+	}
+	baseSize := len(record.Key) + len(record.Value)
+	headerSize := 0
+	for _, header := range record.Headers {
+		headerSize += len(header.Key) + len(header.Value)
+	}
+	if topic.RecoverySource != "" {
+		source, err := Topic(topic.RecoverySource)
+		if err != nil ||
+			baseSize > brokerMaxMessageBytes(source) ||
+			len(record.Headers) > MaxRecoveryHeaders ||
+			headerSize > MaxRecoveryTotalHeaderBytes {
+			return contractError(ContractOversizedRecord, nil)
+		}
+	}
+	if baseSize+headerSize > topic.MaxRecordBytes {
+		return contractError(ContractOversizedRecord, nil)
+	}
+	return nil
 }
 
 func produceResultMayHaveAcknowledged(err error) bool {

@@ -11,6 +11,7 @@ import (
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
 	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
+	infrakafkafailure "github.com/shiyudesu/frux/internal/infra/persistence/kafkafailure"
 	infralibrary "github.com/shiyudesu/frux/internal/infra/persistence/library"
 	inframedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
 	inframessage "github.com/shiyudesu/frux/internal/infra/persistence/message"
@@ -58,6 +59,9 @@ func AutoMigrate(db *gorm.DB) error {
 			&infraaccount.UserModel{},
 			&infraaccount.ProfileSettingModel{},
 			&infraadminaudit.EventModel{},
+			&infrakafkafailure.ReplayAttemptModel{},
+			&infrakafkafailure.RetryGroupInitializationModel{},
+			&infrakafkafailure.RetryGroupInitializationPartitionModel{},
 			&infraembedding.VideoEmbeddingModel{},
 			&infravideo.VideoModel{},
 			&inframedia.AssetModel{},

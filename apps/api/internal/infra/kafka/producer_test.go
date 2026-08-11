@@ -1,6 +1,7 @@
 package infrakafka
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -101,6 +102,60 @@ func TestPublisherLeavesDuplicateSafeRetriesToIdempotentClient(t *testing.T) {
 	_, _ = publisher.Publish(context.Background(), TopicBackboneProbe, []byte("probe:one"), validProbeMetadata(), BackboneProbePayload{ProbeID: "one", Source: "test"})
 	if fake.calls != 1 {
 		t.Fatalf("application retried produce %d times; franz-go owns idempotent retries", fake.calls)
+	}
+}
+
+func TestRecoveryPublisherEnforcesRegisteredDestinationRecordSize(t *testing.T) {
+	source, err := Topic(TopicVideoPublished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic, err := Topic(TopicFeedVideoPublishedRetry5s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRecoveryRecordBoundary(t, source, topic)
+}
+
+func TestRecoveryRecordCapacityScalesForSmallerSourceTopics(t *testing.T) {
+	source, err := Topic(TopicMediaProcessingRequested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic := TopicSpec{
+		ID:             TopicID("test_media_recovery"),
+		MaxRecordBytes: recoveryMaxRecordBytes(source),
+		RecoverySource: source.ID,
+	}
+	assertRecoveryRecordBoundary(t, source, topic)
+}
+
+func assertRecoveryRecordBoundary(t *testing.T, source, destination TopicSpec) {
+	t.Helper()
+	key := []byte("source:key")
+	headers := []kgo.RecordHeader{{
+		Key: "h",
+		Value: bytes.Repeat(
+			[]byte("h"),
+			MaxRecoveryTotalHeaderBytes-len("h"),
+		),
+	}}
+	value := bytes.Repeat(
+		[]byte("x"),
+		brokerMaxMessageBytes(source)-len(key),
+	)
+	record := &kgo.Record{Key: key, Value: value, Headers: headers}
+	if err := validateTopicRecordSizeForSpec(destination, record); err != nil {
+		t.Fatalf("source broker boundary rejected: %v", err)
+	}
+	record.Value = append(record.Value, 'x')
+	if err := validateTopicRecordSizeForSpec(destination, record); !errors.Is(err, ErrContractFailure) {
+		t.Fatalf("above source broker boundary error=%v", err)
+	}
+	record.Value = record.Value[:len(record.Value)-1]
+	record.Headers[0].Value = append(record.Headers[0].Value, 'h')
+	if err := validateTopicRecordSizeForSpec(destination, record); !errors.Is(err, ErrContractFailure) {
+		t.Fatalf("above recovery header boundary error=%v", err)
 	}
 }
 

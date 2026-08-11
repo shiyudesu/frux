@@ -60,7 +60,13 @@
 | 稳定游标 | 游标绑定 actor/action/target/outcome/from/to，改变过滤条件后游标失效 |
 | 组合校验 | 每个 action/outcome 同时绑定 permission、target type、HTTP method、route、reason、状态转换和必需 detail，不能拼接出语义矛盾的不可变事实 |
 
-当前注册 action 包括审计查询、审核决定、内容处罚与恢复、配置发布、治理执行和死信重放。后续领域 change 使用 Application builder 创建事实，并由其 Infrastructure Repository 在已有 GORM 事务内调用共享追加 helper。
+当前注册 action 包括审计查询、审核决定、内容处罚与恢复、配置发布、治理执行、RabbitMQ
+`dead_letter.replay` 和独立 Kafka `kafka_dead_letter.replay`。Kafka action 的 target 为
+`kafka_dead_letter_record`，详情严格包含 DLQ/source 坐标、注册 Group、Event/Replay ID、
+reason 和封闭 failure code；不复用 RabbitMQ queue schema，不保存 key/value/Header。
+Replay ledger 与成功审计在 acknowledgement 后同一 PostgreSQL 事务提交，幂等键仍只保存
+SHA-256。后续领域 change 使用 Application builder 创建事实，并由其 Infrastructure Repository
+在已有 GORM 事务内调用共享追加 helper。
 
 `governance.execute` 成功事实支持 update 和 rollback：分别绑定
 `PATCH /api/admin/governance/controls/:key` 与

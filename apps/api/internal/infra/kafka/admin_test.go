@@ -99,3 +99,37 @@ func TestValidateTopicStateRejectsPartitionExpansionForVersionedTopic(t *testing
 		t.Fatalf("error = %v, want ErrTopicTopologyInvalid", err)
 	}
 }
+
+func TestRecoveryTopologyUsesSharedBrokerHeadroom(t *testing.T) {
+	source, err := Topic(TopicVideoPublished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := Topic(TopicFeedVideoPublishedRetry5s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery.MaxRecordBytes !=
+		brokerMaxMessageBytes(source)+MaxRecoveryTotalHeaderBytes {
+		t.Fatalf(
+			"recovery application max=%d source broker max=%d headers=%d",
+			recovery.MaxRecordBytes,
+			brokerMaxMessageBytes(source),
+			MaxRecoveryTotalHeaderBytes,
+		)
+	}
+	state := desiredTopicState(recovery.BaseName, recovery, 1, 1)
+	if state.MaxRecordBytes != brokerMaxMessageBytes(recovery) {
+		t.Fatalf(
+			"recovery broker max=%d want=%d",
+			state.MaxRecordBytes,
+			brokerMaxMessageBytes(recovery),
+		)
+	}
+	state.MaxRecordBytes--
+	if err := validateTopicState(
+		state, recovery, true, 1, 1,
+	); !errors.Is(err, ErrTopicTopologyInvalid) {
+		t.Fatalf("undersized recovery topology error=%v", err)
+	}
+}

@@ -1,0 +1,111 @@
+groups:
+  - name: frux-kafka-failure-recovery
+    rules:
+      - alert: FruxKafkaRecoveryPublicationFailure
+        expr: increase(frux_kafka_recovery_publish_total{result=~"failed|uncertain"}[10m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka retry or DLQ publication is not acknowledged"
+          description: "Registered group {{ $labels.group }} failed publication to tier {{ $labels.tier }}."
+
+      - alert: FruxKafkaRecoveryLagHigh
+        expr: frux_kafka_consumer_workflow_lag > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka recovery workflow lag is high"
+          description: "Registered group {{ $labels.group }} has high aggregate source and retry-tier lag."
+
+      - alert: FruxKafkaRecoveryConsumerStageUnhealthy
+        expr: frux_kafka_consumer_session_healthy{group=~"feed_video_published_active|embedding_video_published_active"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka recovery consumer stage is unhealthy"
+          description: "Registered group {{ $labels.group }} stage {{ $labels.stage }} has no healthy consumer session."
+
+      - alert: FruxKafkaRecoveryNoProgress
+        expr: |
+          (
+            max by (group, topic) (
+              delta(frux_kafka_recovery_retained_end_offset[15m])
+            ) > 0
+            and on (group, topic)
+            max by (group, topic) (
+              frux_kafka_recovery_retained_records
+            ) > 0
+            and on (group, topic)
+            max by (group, topic) (
+              delta(frux_kafka_recovery_oldest_record_timestamp_seconds[15m])
+            ) <= 0
+          )
+          unless on (group)
+          (
+            sum by (group) (
+              increase(frux_kafka_recovery_progress_total{kind=~"durable|replay"}[15m])
+            ) > 0
+          )
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka failure backlog is growing without recovery progress"
+          description: "Registered group {{ $labels.group }} has sustained DLQ ingress on {{ $labels.topic }} without durable recovery, successful replay, or oldest-record movement."
+
+      - alert: FruxKafkaRecoveryIngressGrowing
+        expr: frux_kafka_recovery_retained_offset_growth > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka dead-letter ingress continues"
+          description: "Registered DLQ topic {{ $labels.topic }} has continued end-offset growth."
+
+      - alert: FruxKafkaRecoveryOldestRecordAgeHigh
+        expr: frux_kafka_recovery_oldest_record_age_seconds > 3600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka dead-letter records remain unresolved"
+          description: "The oldest retained record on {{ $labels.topic }} is more than one hour old."
+
+      - alert: FruxKafkaRecoveryReplayFailure
+        expr: increase(frux_kafka_recovery_replay_total{result=~"failed|duplicate_failed|reconciled_failed|pending|duplicate_pending"}[10m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka dead-letter replay failed"
+          description: "A registered replay for group {{ $labels.group }} did not complete successfully."
+
+      - alert: FruxKafkaRecoveryMetricsStale
+        expr: frux_kafka_recovery_metrics_stale == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka recovery summary metrics are stale"
+          description: "The periodic DLQ summary collector has failed; retained growth, absolute offsets, oldest-record, no-progress inputs, and retention-risk gauges may be stale."
+
+      - alert: FruxKafkaRecoveryInspectionFailure
+        expr: increase(frux_kafka_recovery_inspection_total{result="failed"}[10m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka dead-letter inspection is unavailable"
+          description: "Kafka DLQ offset or record inspection has repeatedly failed."
+
+      - alert: FruxKafkaRecoveryRetentionRisk
+        expr: frux_kafka_recovery_retention_risk{state="detected"} == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka dead-letter records are approaching retention expiry"
+          description: "The oldest retained record on {{ $labels.topic }} has crossed 80% of registered retention."

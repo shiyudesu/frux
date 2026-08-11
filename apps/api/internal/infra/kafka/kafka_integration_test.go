@@ -10,8 +10,6 @@ import (
 
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
-
-	"github.com/twmb/franz-go/pkg/kadm"
 )
 
 func TestKafkaBackboneProvisionsProducesAndConsumesAfterClientRestart(t *testing.T) {
@@ -76,18 +74,7 @@ func TestKafkaBackboneProvisionsProducesAndConsumesAfterClientRestart(t *testing
 	if err != nil {
 		t.Fatalf("restart Kafka client: %v", err)
 	}
-	defer func() {
-		topicNames := make([]string, 0, len(Topics()))
-		for _, topic := range Topics() {
-			topicName, _ := TopicName(prefix, topic.ID)
-			topicNames = append(topicNames, topicName)
-		}
-		_, _ = kadm.NewClient(second.client.kgoClient).DeleteTopics(
-			context.Background(),
-			topicNames...,
-		)
-		_ = second.Close(context.Background())
-	}()
+	defer cleanupIntegrationKafka(t, second, prefix)
 	received := make(chan applicationeventstream.Event, 1)
 	consumeContext, stopConsume := context.WithCancel(ctx)
 	consumer, err := NewConsumer(

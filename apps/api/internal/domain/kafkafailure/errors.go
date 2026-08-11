@@ -1,0 +1,32 @@
+package domainkafkafailure
+
+import "errors"
+
+var (
+	ErrInvalidTopic              = errors.New("invalid Kafka dead-letter topic")
+	ErrTopicNotAllowed           = errors.New("Kafka dead-letter topic is not allowed")
+	ErrInvalidPartition          = errors.New("invalid Kafka dead-letter partition")
+	ErrInvalidOffset             = errors.New("invalid Kafka dead-letter offset")
+	ErrInvalidLimit              = errors.New("invalid Kafka dead-letter limit")
+	ErrInvalidActor              = errors.New("invalid Kafka replay actor")
+	ErrInvalidReason             = errors.New("invalid Kafka replay reason")
+	ErrIdempotencyKeyRequired    = errors.New("Kafka replay idempotency key is required")
+	ErrIdempotencyKeyTooLong     = errors.New("Kafka replay idempotency key is too long")
+	ErrIdempotencyConflict       = errors.New("Kafka replay idempotency conflict")
+	ErrReplayPending             = errors.New("Kafka replay outcome is pending operator reconciliation")
+	ErrInvalidReplayID           = errors.New("invalid Kafka replay ID")
+	ErrInvalidReplayStatus       = errors.New("invalid Kafka replay status")
+	ErrInvalidFailureCode        = errors.New("invalid Kafka replay failure code")
+	ErrInvalidProvenance         = errors.New("invalid Kafka dead-letter provenance")
+	ErrRecordNotFound            = errors.New("Kafka dead-letter record not found")
+	ErrRecordExpired             = errors.New("Kafka dead-letter record expired")
+	ErrInspectionUnavailable     = errors.New("Kafka dead-letter inspection unavailable")
+	ErrReplayPublishTimeout      = errors.New("Kafka replay publish timed out")
+	ErrReplayPublishUncertain    = errors.New("Kafka replay publish acknowledgement is uncertain")
+	ErrReplayPublishRejected     = errors.New("Kafka replay publish rejected")
+	ErrReplayPublishUnavailable  = errors.New("Kafka replay publish unavailable")
+	ErrReplayPublicationAbsent   = errors.New("Kafka replay publication was not found")
+	ErrReplayEvidenceExpired     = errors.New("Kafka replay publication evidence expired")
+	ErrReplayEvidenceUnavailable = errors.New("Kafka replay publication evidence is unavailable")
+	ErrReplayPersistence         = errors.New("Kafka replay persistence failed")
+)

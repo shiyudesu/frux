@@ -142,6 +142,16 @@ active/shadow Group 和 per-stream migration mode。视频首次公开事实现�
 `video_publication_event_outbox -> frux.video.published.v1`，Feed 与 embedding 各自维护 Offset；
 媒体仍由 PostgreSQL job 决定正确性，Kafka command 只负责唤醒。
 
+Kafka 故障恢复也是独立 sibling surface：实时事件 Consumer 可在有界本地重试后进入固定 delay
+Topic 和 Group 专属不可变 DLQ；API 只允许按注册 Topic/Partition/Offset 脱敏读取。Replay 在
+PostgreSQL 中按 actor/idempotency fingerprint 与坐标跨事务串行，先提交 pending claim，再在事务外
+保持 key/value 不变发布到 owning Group 第一 retry Topic，并在 acknowledgement 后用第二事务提交
+replay result 与 `kafka_dead_letter.replay` audit。Producer 结果可能已确认或 finalize 失败时保留
+pending/unknown；同 key 重复请求只验证注册目标 retention 内的稳定 Replay ID evidence，找到后
+finalize，不存在且完整扫描可证明时记录失败，malformed 或不可用 evidence 继续 pending，禁止重复发布。
+DLQ Record 保留到 retention；RabbitMQ Queue/Ack 接口不变。
+媒体和未来语义长任务仍以 PostgreSQL job 为恢复边界。
+
 ## 3. 核心请求链路
 
 这张图展示从注册、登录、上传、发布到刷 Feed 的 MVP 主链路。

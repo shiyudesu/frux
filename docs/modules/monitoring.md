@@ -238,11 +238,13 @@ Kafka 基础暴露：
 - `frux_kafka_produce_total{topic,producer,result}` 与 produce duration；
 - `frux_kafka_consumed_total{topic,group,outcome}` 与 consume duration；
 - `frux_kafka_commit_total{topic,group,result}`、`frux_kafka_rebalance_total{group,result}`；
-- `frux_kafka_consumer_lag{topic,group}`、delivery delay；
+- `frux_kafka_consumer_lag{topic,group,stage}`、`frux_kafka_consumer_workflow_lag{group}` 与
+  delivery delay；
 - `frux_kafka_contract_failures_total{topic,group,code}`；
 - `frux_kafka_topology_validation_total{topic,result}` 和 broker health。
-- `frux_kafka_consumer_session_total{group,result}` 与
-  `frux_kafka_consumer_session_healthy{group}`。
+- `frux_kafka_consumer_session_total{group,stage,result}`、
+  `frux_kafka_consumer_session_healthy{group,stage}` 与
+  `frux_kafka_consumer_workflow_healthy{group}`。
 
 Topic、Producer、Group、Outcome、Contract Code 和 Topology Result 均来自封闭集合。禁止使用
 event/user/video/key/partition/offset/payload/raw error 作为标签。`commit result=uncertain` 表示
@@ -251,9 +253,35 @@ event/user/video/key/partition/offset/payload/raw error 作为标签。`commit r
 lag 增长时按注册 Topic/Group 定位，不要添加动态 Partition/Offset 标签。
 `consumer_session result=fatal_failure` 表示认证、配置或 Handler 契约错误；active Group 会让
 Worker 明确失败，不能只观察 broker health。`retryable_failure` 表示暂时 Broker/DB/Parity
-依赖失败并按有界退避重建 Session。`started` 和 healthy gauge 只在
+依赖失败并按有界退避重建 Session。`stage` 只允许 `source` 和注册的
+`retry_5s/retry_30s/retry_2m/retry_10m/retry_30m`。Workflow lag 对已观测 stage 求和，
+workflow health 对已观测 stage 取最差值；空闲 retry tier 的 0 lag/healthy 不能覆盖 source，
+任一不健康 tier 也只影响 owning group。`started` 和 healthy gauge 只在
 `OnPartitionsAssigned` 返回至少一个 Partition 后出现；Client 已创建但尚未分配不能视为 ready。
 Worker 首次 assignment 超过配置的有界 timeout 会取消该 Consumer 并启动失败。
+
+## 14.1 Kafka failure-recovery observability
+
+Kafka 原生恢复在基础指标之外暴露：
+
+- `frux_kafka_recovery_publish_total{group,tier,result}`：retry/DLQ 下一跳 acknowledgement；
+- `frux_kafka_recovery_retained_offset_growth{topic}`：最近窗口 DLQ end-offset 增长；
+- `frux_kafka_recovery_retained_end_offset{group,topic}`：周期 collector 的 absolute end offset；
+- `frux_kafka_recovery_retained_records{group,topic}`：retained Record 估算；
+- `frux_kafka_recovery_oldest_record_age_seconds{topic}`：最老 retained Record 年龄；
+- `frux_kafka_recovery_oldest_record_timestamp_seconds{group,topic}`：最老 retained Record 的绝对时间；
+- `frux_kafka_recovery_progress_total{group,kind}`：`durable` retry 处理和成功非破坏 replay；
+- `frux_kafka_recovery_replay_total{group,result}`：成功、失败和幂等重复结果；
+- `frux_kafka_recovery_inspection_total{result}`：summary/record fetch 结果；
+- `frux_kafka_recovery_retention_risk{topic,state}`：oldest age 达到 retention 80%。
+
+标签只允许注册 `group/topic/stage/result/tier/state`；禁止 replay ID、Event ID、actor、reason、
+Partition、Offset、key、payload 或 raw error。告警位于
+`apps/monitoring/alerts/kafka_failure_recovery.yml`，看板为 `Frux Kafka Failure Recovery`。
+No-progress 告警比较 15 分钟 end-offset、backlog、oldest timestamp 和 progress counter；持续 ingress
+但成功 replay 不告警，持续 ingress 且无 durable/replay progress、oldest 不前移才告警。处置时组合
+观察 active lag、retained growth、oldest age、publication acknowledgement 和 replay outcome；Kafka
+DLQ 是 immutable retained log，不能把 end offset 解释为 RabbitMQ 可 Ack depth。
 
 ## 15. Behavior stream migration observability
 

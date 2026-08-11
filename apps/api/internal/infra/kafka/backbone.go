@@ -23,6 +23,7 @@ type Backbone struct {
 	client           *Client
 	admin            *Administrator
 	cutover          *CutoverAdministrator
+	dlqInspector     *DLQInspector
 	publisher        *Publisher
 	plan             []StreamMigration
 	environment      string
@@ -59,7 +60,7 @@ func StartSupervised(
 		supervisorCancel: cancel, supervisorDone: make(chan struct{}),
 		diagnostics: Diagnostics{
 			Enabled: cfg.Enabled, Environment: cfg.Environment,
-			RegisteredTopics: len(topics),
+			RegisteredTopics: len(Topics()),
 		},
 	}
 	if observer, ok := topologyObserver.(BrokerHealthObserver); ok {
@@ -101,6 +102,7 @@ func (b *Backbone) runConnectionSupervisor(
 				b.client = client
 				b.admin = admin
 				b.cutover = NewCutoverAdministrator(client, cfg)
+				b.dlqInspector = NewDLQInspector(client, cfg)
 				b.diagnostics.LastValidatedAt = time.Now().UTC()
 				b.diagnostics.ValidationResults = append(
 					[]TopicValidation(nil), results...,
@@ -157,7 +159,7 @@ func Start(
 		plan: plan, environment: cfg.Environment,
 		diagnostics: Diagnostics{
 			Enabled: cfg.Enabled, Environment: cfg.Environment,
-			RegisteredTopics: len(topics),
+			RegisteredTopics: len(Topics()),
 		},
 	}
 	if observer, ok := topologyObserver.(BrokerHealthObserver); ok {
@@ -177,6 +179,7 @@ func Start(
 	backbone.client = client
 	backbone.admin = NewAdministrator(client, cfg, topologyObserver)
 	backbone.cutover = NewCutoverAdministrator(client, cfg)
+	backbone.dlqInspector = NewDLQInspector(client, cfg)
 	backbone.publisher = NewPublisher(client, produceObserver)
 	results, err := backbone.admin.EnsureTopics(ctx)
 	backbone.mu.Lock()
@@ -234,6 +237,15 @@ func (b *Backbone) Publisher() *Publisher {
 		return nil
 	}
 	return b.publisher
+}
+
+func (b *Backbone) DLQInspector() *DLQInspector {
+	if b == nil {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.dlqInspector
 }
 
 func (b *Backbone) MigrationPlan() []StreamMigration {
@@ -332,6 +344,7 @@ func (b *Backbone) Close(ctx context.Context) error {
 	b.closed = true
 	client := b.client
 	b.client = nil
+	b.dlqInspector = nil
 	done := b.supervisorDone
 	b.mu.Unlock()
 	if done != nil {

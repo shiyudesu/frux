@@ -11,6 +11,7 @@ import (
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
+	applicationkafkafailure "github.com/shiyudesu/frux/internal/application/kafkafailure"
 	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
@@ -42,6 +43,7 @@ import (
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
 	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
+	infrakafkafailure "github.com/shiyudesu/frux/internal/infra/persistence/kafkafailure"
 	infralibrary "github.com/shiyudesu/frux/internal/infra/persistence/library"
 	infrapersistencemedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
 	inframessage "github.com/shiyudesu/frux/internal/infra/persistence/message"
@@ -60,6 +62,7 @@ import (
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpgovernance "github.com/shiyudesu/frux/internal/interfaces/http/governance"
 	interfaceshttpinteraction "github.com/shiyudesu/frux/internal/interfaces/http/interaction"
+	interfaceshttpkafkafailure "github.com/shiyudesu/frux/internal/interfaces/http/kafkafailure"
 	interfaceshttplibrary "github.com/shiyudesu/frux/internal/interfaces/http/library"
 	interfaceshttpmessage "github.com/shiyudesu/frux/internal/interfaces/http/message"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
@@ -134,6 +137,17 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		applicationadminaudit.WithAttemptObserver(adminAuditMetrics),
 	)
 	adminHandler := interfaceshttpadmin.New(interfaceshttpadmin.WithAuditQueryService(adminAuditService))
+	kafkaFailureAdapter := infrakafka.NewRecoveryAdapter(kafkaBackbone, cfg.Kafka)
+	kafkaFailureRepo := infrakafkafailure.New(gormDB, adminAuditRepo)
+	kafkaFailureService := applicationkafkafailure.New(
+		kafkaFailureAdapter,
+		kafkaFailureAdapter,
+		kafkaFailureAdapter,
+		kafkaFailureAdapter,
+		kafkaFailureRepo,
+		applicationkafkafailure.WithObserver(inframetrics.KafkaFailureRecoveryObserver{}),
+	)
+	kafkaFailureHandler := interfaceshttpkafkafailure.New(kafkaFailureService)
 	governanceRegistry := domaingovernance.DefaultRegistry()
 	governanceRepo := infragovernance.New(gormDB, governanceRegistry, adminAuditRepo)
 	governanceService := applicationgovernance.New(governanceRegistry, governanceRepo)
@@ -741,6 +755,33 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		),
 		deadLetterHandler.Replay,
 	)
+	kafkaFailurePermission := func(targetID string) app.HandlerFunc {
+		return interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionGovernanceExecute,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionKafkaDeadLetterReplay,
+				domainadminaudit.TargetKafkaDeadLetterRecord,
+				targetID,
+			),
+		)
+	}
+	admin.GET(
+		"/kafka-dead-letters",
+		kafkaFailurePermission("topics"),
+		kafkaFailureHandler.List,
+	)
+	admin.GET(
+		"/kafka-dead-letters/:topic/records",
+		kafkaFailurePermission("records"),
+		kafkaFailureHandler.Inspect,
+	)
+	admin.POST(
+		"/kafka-dead-letters/:topic/records/:partition/:offset/replay",
+		kafkaFailurePermission("record"),
+		kafkaFailureHandler.Replay,
+	)
 
 	// 视频是互动资源的父资源，点赞、收藏和评论都挂在具体视频下。
 	videos := api.Group("/videos")
@@ -804,6 +845,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	telemetryCleanerContext, stopTelemetryCleaner := context.WithCancel(context.Background())
 	governanceContext, stopGovernance := context.WithCancel(context.Background())
 	deadLetterContext, stopDeadLetter := context.WithCancel(context.Background())
+	kafkaFailureContext, stopKafkaFailure := context.WithCancel(context.Background())
 	notificationContext, stopNotifications := context.WithCancel(context.Background())
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
 	if err != nil {
@@ -835,6 +877,18 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			}
 		}()
 	}
+	if cfg.Kafka.Enabled {
+		kafkaFailureCollector := applicationkafkafailure.NewCollector(
+			kafkaFailureAdapter,
+			inframetrics.KafkaFailureRecoveryObserver{},
+			15*time.Second,
+			5*time.Second,
+			applicationkafkafailure.WithCollectionErrorHandler(func(error) {
+				log.Printf("Kafka failure-recovery observer unavailable")
+			}),
+		)
+		go kafkaFailureCollector.Run(kafkaFailureContext)
+	}
 	reviewNotificationWorker := applicationreview.NewReviewNotificationWorker(
 		reviewRepo, messageWriter, reviewObserver,
 	)
@@ -851,6 +905,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		stopTelemetryCleaner()
 		stopGovernance()
 		stopDeadLetter()
+		stopKafkaFailure()
 		stopNotifications()
 		if rabbitMQ != nil {
 			_ = rabbitMQ.Close()

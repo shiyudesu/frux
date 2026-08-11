@@ -62,6 +62,17 @@ Delivery Limit 和 Replay timeout 必须在发布前压测。
 
 完整配置字段、迁移模式和验证命令见 [Kafka event backbone](kafka.md)。
 
+Kafka failure recovery 额外要求平台预建每个 retry-topic Group 的固定 5s/30s/2m/10m/30m
+Topic 和 30 天 DLQ。当前 Feed、embedding 共 12 个 recovery Topic。按峰值失败率、平均 Record
+大小、retention、replication factor 和至少 1.5 安全系数规划磁盘；DLQ oldest age 达到 retention
+80% 前必须告警。API 使用已有有界 Kafka admin/reader/publisher client，不暴露 Broker 凭据。
+Prometheus 加载 `kafka_failure_recovery.yml`，Grafana 自动加载
+`frux-kafka-failure-recovery.json`。详细 replay/expiry runbook 见
+[Kafka 故障恢复模块](modules/kafka-failure-recovery.md)。API 每 15 秒独立刷新 Kafka DLQ 摘要；
+Broker outage 不阻止启动，`frux_kafka_recovery_metrics_stale` 用于识别旧 gauge。
+No-progress 告警使用 15 分钟 absolute end-offset、retained backlog、oldest timestamp 与
+`frux_kafka_recovery_progress_total`；成功的非破坏 replay 或 durable retry 处理会抑制该窗口告警。
+
 视频工作流按 publication producer、Feed consumer、embedding consumer、media wakeup 四个责任独立
 切换。`frux.video.published.v1` 必须保持 30 天 delete retention 和 `LogAppendTime`；
 `frux.media.processing-requested.v1` 为 6 小时 command。首次 active cutover 前必须在 advisory lock
@@ -70,7 +81,8 @@ boundary 或 Offset/data-loss 检测必须使 Worker 显式失败。
 
 API/Worker 对 RabbitMQ 与 Kafka 的 Compose 依赖使用 `service_started`，不使用 broker health gate。
 Kafka topology/publisher、active/shadow consumer 和 Rabbit consumer 在有界退避 supervisor 中重连；
-对应 `frux_kafka_broker_healthy`、`frux_kafka_consumer_session_healthy` 与
+对应 `frux_kafka_broker_healthy`、按 `stage` 区分的
+`frux_kafka_consumer_session_healthy`、`frux_kafka_consumer_workflow_healthy` 与
 `frux_rabbitmq_transport_healthy` 会显示故障，但 PostgreSQL outbox/job、媒体轮询和审核 worker
 继续启动。Active Kafka group 仍须在 Rabbit drain 与 cutover offset 初始化成功后才启动。
 
@@ -122,6 +134,8 @@ fallback 率、人工队列 oldest age 和回滚演练结果。
 
 Prometheus 加载 `apps/monitoring/alerts/rabbitmq_dead_letter.yml`，Grafana 自动加载
 `frux-rabbitmq-dead-letter.json`。API 每 15 秒通过 Management API 更新 DLQ depth。
+RabbitMQ 路由在迁移窗口内继续可用；Kafka 原生接口位于
+`/api/admin/kafka-dead-letters*`，不得用 Kafka replay 替代 RabbitMQ Queue Ack。
 
 ## 灰度与回滚
 

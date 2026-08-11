@@ -73,9 +73,10 @@ func (a *Administrator) EnsureTopics(ctx context.Context) ([]TopicValidation, er
 	if a == nil || a.backend == nil {
 		return nil, ErrKafkaUnavailable
 	}
-	names := make([]string, 0, len(topics))
-	specByName := make(map[string]TopicSpec, len(topics))
-	for _, spec := range topics {
+	registeredTopics := Topics()
+	names := make([]string, 0, len(registeredTopics))
+	specByName := make(map[string]TopicSpec, len(registeredTopics))
+	for _, spec := range registeredTopics {
 		name, err := TopicName(a.prefix, spec.ID)
 		if err != nil {
 			return nil, err
@@ -155,10 +156,6 @@ func validateTopicState(
 	return nil
 }
 
-func brokerMaxMessageBytes(spec TopicSpec) int {
-	return spec.MaxRecordBytes + 64<<10
-}
-
 func (a *Administrator) observe(topic TopicID, result string) {
 	if a.observer != nil {
 		a.observer.ObserveTopology(topic, result)
@@ -166,7 +163,7 @@ func (a *Administrator) observe(topic TopicID, result string) {
 }
 
 func (a *Administrator) observeAll(result string) {
-	for _, spec := range topics {
+	for _, spec := range Topics() {
 		a.observe(spec.ID, result)
 	}
 }

@@ -51,8 +51,8 @@ Frux 是一个短视频 Feed 系统，目标是用最小可行架构承载完整
 | 审核 | 已实现 | 视频审核状态机、模型无关自动审核、人工队列/租约/决定、审计和作者通知 |
 | 后台运营 | 部分实现 | typed 懒加载内容运营工作台、审核队列/详情/租约/决定和视频查询/下架/恢复；配置管理仍规划中 |
 | 播放优化 | 已实现 | 播放参数、预加载建议、旧 QoS、准确首帧/卡顿/错误遥测、Web Feed 接入 |
-| 系统治理 | 已实现 | 已实现版本化运行时降级控制、typed 分层请求限流，以及 RabbitMQ 有界重试、DLQ 检查和审计重放 |
-| 监控告警 | 部分实现 | 已实现播放、推荐、审核、降级控制、限流和 RabbitMQ 死信恢复 Prometheus 指标/告警/Grafana；业务指标写入仍规划中 |
+| 系统治理 | 已实现 | 已实现版本化运行时降级控制、typed 分层请求限流、RabbitMQ 恢复，以及独立 Kafka retry/DLQ inspection 和非破坏审计重放 |
+| 监控告警 | 部分实现 | 已实现播放、推荐、审核、降级控制、限流、RabbitMQ 与 Kafka 故障恢复 Prometheus 指标/告警/Grafana；业务指标写入仍规划中 |
 
 ## 4. P0 首发闭环
 
@@ -149,6 +149,9 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 已实现 | 系统治理 | GET | `/api/admin/dead-letter-queues` | `governance.execute` 保护的 DLQ 深度和状态摘要 |
 | 已实现 | 系统治理 | GET | `/api/admin/dead-letter-queues/{queue}/messages` | 有界、脱敏且立即 requeue 的队头诊断 |
 | 已实现 | 系统治理 | POST | `/api/admin/dead-letter-messages/{messageId}/replay` | 保持原 Event ID、增加 Replay ID、confirm-before-ack 的单消息审计重放 |
+| 已实现 | 系统治理 | GET | `/api/admin/kafka-dead-letters` | Kafka allowlist DLQ retained range、growth、ingress 和 oldest age 摘要 |
+| 已实现 | 系统治理 | GET | `/api/admin/kafka-dead-letters/{topic}/records` | 按 Partition/Offset 有界读取脱敏 immutable Record 诊断 |
+| 已实现 | 系统治理 | POST | `/api/admin/kafka-dead-letters/{topic}/records/{partition}/{offset}/replay` | 必需幂等键、注册 reason、保持 key/value 且不删除 DLQ 的确认后审计重放 |
 | 规划中 | 监控告警 | GET | `/api/admin/metric-dashboard` | 监控看板查询 |
 | 规划中 | 监控告警 | POST | `/api/admin/alerts/rules` | 告警规则创建 |
 | 规划中 | 监控告警 | GET | `/api/admin/alerts/events` | 告警事件查询 |

@@ -20,6 +20,11 @@ type ProducerMode string
 type ConsumerMode string
 
 const (
+	videoPublishedMaxRecordBytes = 256 << 10
+	brokerRecordHeadroomBytes    = 64 << 10
+)
+
+const (
 	TopicBackboneProbe            TopicID = "backbone_probe"
 	TopicActionChanged            TopicID = "action_changed"
 	TopicViewEventRecorded        TopicID = "view_event_recorded"
@@ -95,6 +100,7 @@ type TopicSpec struct {
 	AllowedGroups      []ConsumerGroupID
 	ReplayAllowed      bool
 	RetryTopicsAllowed bool
+	RecoverySource     TopicID
 }
 
 type ConsumerGroupSpec struct {
@@ -112,7 +118,7 @@ type MigrationSpec struct {
 	KafkaConsumerAvailable bool
 }
 
-var topics = [...]TopicSpec{
+var businessTopics = [...]TopicSpec{
 	{
 		ID: TopicBackboneProbe, BaseName: "frux.platform.backbone_probe.v1",
 		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindProbeID,
@@ -127,7 +133,7 @@ var topics = [...]TopicSpec{
 		Version: 1, Class: TopicClassEvent, KeyKind: KeyKindActionState,
 		LocalPartitions: 12, Retention: 7 * 24 * time.Hour, CleanupPolicy: CleanupDelete,
 		MessageTimestamp: MessageTimestampLogAppendTime,
-		MaxRecordBytes:   256 << 10,
+		MaxRecordBytes:   videoPublishedMaxRecordBytes,
 		AllowedProducers: []ProducerID{ProducerInteractionAPI},
 		AllowedGroups:    []ConsumerGroupID{GroupPersistActionActive, GroupPersistActionShadow},
 	},
@@ -151,7 +157,7 @@ var topics = [...]TopicSpec{
 			GroupFeedVideoPublishedActive, GroupFeedVideoPublishedShadow,
 			GroupEmbeddingVideoPublishedActive, GroupEmbeddingVideoPublishedShadow,
 		},
-		ReplayAllowed: true,
+		ReplayAllowed: true, RetryTopicsAllowed: true,
 	},
 	{
 		ID: TopicMediaProcessingRequested, BaseName: "frux.media.processing-requested.v1",
@@ -209,7 +215,10 @@ var migrations = [...]MigrationSpec{
 var topicPrefixPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$`)
 
 func Topics() []TopicSpec {
-	return append([]TopicSpec(nil), topics[:]...)
+	result := make([]TopicSpec, 0, len(businessTopics)+len(recoveryTopics))
+	result = append(result, businessTopics[:]...)
+	result = append(result, recoveryTopics...)
+	return result
 }
 
 func ConsumerGroups() []ConsumerGroupSpec {
@@ -221,12 +230,32 @@ func Migrations() []MigrationSpec {
 }
 
 func Topic(id TopicID) (TopicSpec, error) {
-	for _, spec := range topics {
+	if spec, ok := businessTopic(id); ok {
+		return spec, nil
+	}
+	for _, spec := range recoveryTopics {
 		if spec.ID == id {
 			return spec, nil
 		}
 	}
 	return TopicSpec{}, fmt.Errorf("%w: topic %q", ErrUnknownRegistryValue, id)
+}
+
+func businessTopic(id TopicID) (TopicSpec, bool) {
+	for _, spec := range businessTopics {
+		if spec.ID == id {
+			return spec, true
+		}
+	}
+	return TopicSpec{}, false
+}
+
+func brokerMaxMessageBytes(spec TopicSpec) int {
+	return spec.MaxRecordBytes + brokerRecordHeadroomBytes
+}
+
+func recoveryMaxRecordBytes(source TopicSpec) int {
+	return brokerMaxMessageBytes(source) + MaxRecoveryTotalHeaderBytes
 }
 
 func ConsumerGroup(id ConsumerGroupID) (ConsumerGroupSpec, error) {

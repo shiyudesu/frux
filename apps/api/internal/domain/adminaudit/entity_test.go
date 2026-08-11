@@ -194,6 +194,7 @@ func TestDeadLetterReplayAuditCapturesIdentityAndFailure(t *testing.T) {
 			"replay_id":         "replay-0123456789abcdef0123456789abcdef",
 		},
 	}
+
 	base.Outcome = OutcomeSuccess
 	if _, err := NewFact(base); err != nil {
 		t.Fatalf("valid replay success audit rejected: %v", err)
@@ -203,5 +204,54 @@ func TestDeadLetterReplayAuditCapturesIdentityAndFailure(t *testing.T) {
 	base.Detail["failure_code"] = "publish_timeout"
 	if _, err := NewFact(base); err != nil {
 		t.Fatalf("valid replay failure audit rejected: %v", err)
+	}
+}
+
+func TestKafkaDeadLetterReplayAuditIsSeparateAndStrict(t *testing.T) {
+	base := FactInput{
+		ActorID: 12, Permission: domainaccount.PermissionGovernanceExecute,
+		Action: ActionKafkaDeadLetterReplay, TargetType: TargetKafkaDeadLetterRecord,
+		TargetID:  "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		RequestID: NewRequestID(), CreatedAt: time.Date(2026, 8, 10, 15, 0, 0, 0, time.UTC),
+		Detail: map[string]string{
+			"http_method": "POST",
+			"route":       "/api/admin/kafka-dead-letters/:topic/records/:partition/:offset/replay",
+			"reason_code": "operator_retry",
+			"topic":       "frux.feed.video-published.dlq.v1",
+			"partition":   "2", "offset": "91",
+			"source_topic":     "frux.video.published.v1",
+			"source_partition": "1", "source_offset": "42",
+			"consumer_group":    "feed_video_published_active",
+			"original_event_id": "event-video-42",
+			"replay_id":         "replay-0123456789abcdef0123456789abcdef",
+		},
+	}
+	base.Outcome = OutcomeSuccess
+	if _, err := NewFact(base); err != nil {
+		t.Fatalf("valid Kafka replay success rejected: %v", err)
+	}
+	base.Outcome = OutcomeFailure
+	base.Detail = cloneDetail(base.Detail)
+	base.Detail["failure_code"] = "publish_timeout"
+	if _, err := NewFact(base); err != nil {
+		t.Fatalf("valid Kafka replay failure rejected: %v", err)
+	}
+	base.Detail["queue"] = "rabbit-queue"
+	if _, err := NewFact(base); err == nil {
+		t.Fatal("Kafka audit accepted RabbitMQ detail")
+	}
+	denied := FactInput{
+		ActorID: 12, Permission: domainaccount.PermissionGovernanceExecute,
+		Action: ActionKafkaDeadLetterReplay, TargetType: TargetKafkaDeadLetterRecord,
+		TargetID: "topics", Outcome: OutcomeDenied,
+		RequestID: NewRequestID(), CreatedAt: base.CreatedAt,
+		Detail: map[string]string{
+			"http_method": "GET",
+			"route":       "/api/admin/kafka-dead-letters",
+			"reason_code": "permission_denied",
+		},
+	}
+	if _, err := NewFact(denied); err != nil {
+		t.Fatalf("valid Kafka denied audit rejected: %v", err)
 	}
 }

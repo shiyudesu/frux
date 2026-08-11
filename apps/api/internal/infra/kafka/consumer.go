@@ -25,23 +25,53 @@ var (
 	ErrRebalanceDrain         = errors.New("kafka consumer drained for rebalance")
 	ErrConsumerDataLoss       = errors.New("kafka consumer detected data loss")
 	ErrConsumerStartupTimeout = errors.New("kafka consumer assignment startup timeout")
+	ErrRecoveryPublish        = errors.New("kafka recovery publication failed")
 )
 
+type recoveryPublishError struct {
+	cause error
+}
+
+func (e *recoveryPublishError) Error() string {
+	if e == nil || e.cause == nil {
+		return ErrRecoveryPublish.Error()
+	}
+	return ErrRecoveryPublish.Error() + ": " + sanitizeKafkaError(e.cause)
+}
+
+func (e *recoveryPublishError) Unwrap() []error {
+	if e == nil || e.cause == nil {
+		return []error{ErrRecoveryPublish}
+	}
+	return []error{ErrRecoveryPublish, e.cause}
+}
+
+func wrapRecoveryPublishError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &recoveryPublishError{cause: err}
+}
+
 type brokerRecord struct {
-	Topic     string
-	Partition int32
-	Offset    int64
-	Timestamp time.Time
-	Key       []byte
-	Value     []byte
-	Headers   []applicationeventstream.Header
-	original  *kgo.Record
+	Topic      string
+	Partition  int32
+	Offset     int64
+	Timestamp  time.Time
+	Key        []byte
+	Value      []byte
+	Headers    []applicationeventstream.Header
+	original   *kgo.Record
+	resumed    bool
+	generation uint64
 }
 
 type consumerSource interface {
 	Poll(ctx context.Context, maxRecords int) ([]brokerRecord, bool, error)
 	Commit(ctx context.Context, records []brokerRecord) error
 	Lag(ctx context.Context, groupName string) (int64, error)
+	Pause(topic string, partition int32)
+	Resume(topic string, partition int32)
 	AllowRebalance()
 	Close(ctx context.Context) error
 }
@@ -56,8 +86,32 @@ type ConsumerObserver interface {
 	ObserveCommit(topic TopicID, group ConsumerGroupID, result string)
 	ObserveRebalance(group ConsumerGroupID, result string)
 	ObserveContract(topic TopicID, group ConsumerGroupID, code ContractFailureCode)
-	ObserveLag(topic TopicID, group ConsumerGroupID, lag int64)
+	ObserveLag(topic TopicID, group ConsumerGroupID, stage ConsumerStage, lag int64)
 	ObserveDataLoss(topic TopicID, group ConsumerGroupID)
+}
+
+type ConsumerRecoveryObserver interface {
+	ObserveRecoveryPublish(group ConsumerGroupID, destination, result string)
+	ObserveRecoveryDelay(group ConsumerGroupID, tier, result string, duration time.Duration)
+	ObserveLocalRetry(group ConsumerGroupID, result string)
+}
+
+type ConsumerRecoveryProgressObserver interface {
+	ObserveRecoveryProgress(group ConsumerGroupID, kind string)
+}
+
+type ConsumerOption func(*consumerOptions)
+
+type consumerOptions struct {
+	retryOffsetStore RetryOffsetInitializationStore
+}
+
+func WithRetryOffsetInitializationStore(
+	store RetryOffsetInitializationStore,
+) ConsumerOption {
+	return func(options *consumerOptions) {
+		options.retryOffsetStore = store
+	}
 }
 
 type assignmentReadiness struct {
@@ -91,10 +145,16 @@ func (r *assignmentReadiness) assigned(partitions map[string][]int32) {
 type Consumer struct {
 	source         consumerSource
 	topicID        TopicID
+	consumeTopicID TopicID
 	topicName      string
+	topicPrefix    string
 	groupID        ConsumerGroupID
 	groupName      string
+	stage          ConsumerStage
 	handler        applicationeventstream.Handler
+	recovery       *RecoverySpec
+	recoveryTier   int
+	recoveryWriter recoveryPublisher
 	maxPollRecords int
 	concurrency    int
 	drainTimeout   time.Duration
@@ -105,6 +165,262 @@ type Consumer struct {
 	lastLagSample  time.Time
 	rebalance      <-chan struct{}
 	assignment     *assignmentReadiness
+	partitions     *consumerPartitionLifecycle
+	now            func() time.Time
+	delayedMu      sync.Mutex
+	delayed        map[delayedPartitionKey]delayedPartition
+	delayedChanged chan struct{}
+}
+
+type delayedPartitionKey struct {
+	topic     string
+	partition int32
+}
+
+type delayedPartition struct {
+	records    []brokerRecord
+	notBefore  time.Time
+	tier       int
+	pausedAt   time.Time
+	generation uint64
+}
+
+type consumerPartitionLifecycle struct {
+	mu       sync.Mutex
+	cond     *sync.Cond
+	consumer *Consumer
+	states   map[delayedPartitionKey]*partitionOwnershipState
+}
+
+type partitionOwnershipState struct {
+	generation uint64
+	owned      bool
+	revoking   bool
+	active     int
+}
+
+type partitionOwnershipLease struct {
+	lifecycle  *consumerPartitionLifecycle
+	key        delayedPartitionKey
+	generation uint64
+	once       sync.Once
+}
+
+type readyDelayedBatch struct {
+	records []brokerRecord
+	leases  []*partitionOwnershipLease
+}
+
+func (l *consumerPartitionLifecycle) bind(consumer *Consumer) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.consumer = consumer
+	l.mu.Unlock()
+}
+
+func (l *consumerPartitionLifecycle) assigned(
+	partitions map[string][]int32,
+) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ensureLocked()
+	for topic, assigned := range partitions {
+		for _, partition := range assigned {
+			key := delayedPartitionKey{topic: topic, partition: partition}
+			state := l.states[key]
+			if state == nil {
+				state = &partitionOwnershipState{}
+				l.states[key] = state
+			}
+			state.generation++
+			state.owned = true
+			state.revoking = false
+		}
+	}
+}
+
+func (l *consumerPartitionLifecycle) generation(
+	key delayedPartitionKey,
+) (uint64, bool) {
+	if l == nil {
+		return 0, true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ensureLocked()
+	state := l.states[key]
+	if state == nil || !state.owned || state.revoking {
+		return 0, false
+	}
+	return state.generation, true
+}
+
+func (l *consumerPartitionLifecycle) acquire(
+	key delayedPartitionKey,
+	generation uint64,
+) (*partitionOwnershipLease, bool) {
+	if l == nil {
+		return &partitionOwnershipLease{}, true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ensureLocked()
+	state := l.states[key]
+	if state == nil || !state.owned || state.revoking ||
+		state.generation != generation {
+		return nil, false
+	}
+	state.active++
+	return &partitionOwnershipLease{
+		lifecycle: l, key: key, generation: generation,
+	}, true
+}
+
+func (l *consumerPartitionLifecycle) discard(
+	partitions map[string][]int32,
+	result string,
+) {
+	if l == nil {
+		return
+	}
+	selected := delayedPartitionSelection(partitions)
+	l.mu.Lock()
+	l.ensureLocked()
+	consumer := l.consumer
+	keys := make([]delayedPartitionKey, 0)
+	force := result == "lost"
+	for key, state := range l.states {
+		if partitions != nil {
+			if _, ok := selected[key]; !ok {
+				continue
+			}
+		}
+		if state.owned {
+			if force {
+				state.owned = false
+				state.revoking = false
+				state.generation++
+				state.active = 0
+			} else {
+				state.revoking = true
+			}
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(left, right int) bool {
+		if keys[left].topic == keys[right].topic {
+			return keys[left].partition < keys[right].partition
+		}
+		return keys[left].topic < keys[right].topic
+	})
+	if !force {
+		for ownershipActive(l.states, keys) {
+			l.cond.Wait()
+		}
+		for _, key := range keys {
+			state := l.states[key]
+			state.owned = false
+			state.revoking = false
+			state.generation++
+		}
+	}
+	l.mu.Unlock()
+	if consumer != nil {
+		consumer.discardDelayedPartitions(partitions, result)
+	}
+}
+
+func (l *consumerPartitionLifecycle) ensureLocked() {
+	if l.states == nil {
+		l.states = make(map[delayedPartitionKey]*partitionOwnershipState)
+	}
+	if l.cond == nil {
+		l.cond = sync.NewCond(&l.mu)
+	}
+}
+
+func (l *partitionOwnershipLease) valid() bool {
+	if l == nil || l.lifecycle == nil {
+		return true
+	}
+	l.lifecycle.mu.Lock()
+	defer l.lifecycle.mu.Unlock()
+	state := l.lifecycle.states[l.key]
+	return state != nil && state.owned &&
+		state.generation == l.generation && state.active > 0
+}
+
+func (l *partitionOwnershipLease) release() {
+	if l == nil || l.lifecycle == nil {
+		return
+	}
+	l.once.Do(func() {
+		l.lifecycle.mu.Lock()
+		defer l.lifecycle.mu.Unlock()
+		state := l.lifecycle.states[l.key]
+		if state != nil && state.generation == l.generation &&
+			state.active > 0 {
+			state.active--
+		}
+		l.lifecycle.cond.Broadcast()
+	})
+}
+
+func (b *readyDelayedBatch) valid() bool {
+	if b == nil {
+		return true
+	}
+	for _, lease := range b.leases {
+		if !lease.valid() {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *readyDelayedBatch) release() {
+	if b == nil {
+		return
+	}
+	for _, lease := range b.leases {
+		lease.release()
+	}
+	b.leases = nil
+}
+
+func delayedPartitionSelection(
+	partitions map[string][]int32,
+) map[delayedPartitionKey]struct{} {
+	selected := make(map[delayedPartitionKey]struct{})
+	for topic, assigned := range partitions {
+		for _, partition := range assigned {
+			selected[delayedPartitionKey{topic: topic, partition: partition}] = struct{}{}
+		}
+	}
+	return selected
+}
+
+func ownershipActive(
+	states map[delayedPartitionKey]*partitionOwnershipState,
+	keys []delayedPartitionKey,
+) bool {
+	for _, key := range keys {
+		if state := states[key]; state != nil && state.active > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+type pollResult struct {
+	records  []brokerRecord
+	dataLoss bool
+	err      error
 }
 
 func NewConsumer(
@@ -113,6 +429,31 @@ func NewConsumer(
 	groupID ConsumerGroupID,
 	handler applicationeventstream.Handler,
 	observer ConsumerObserver,
+	options ...ConsumerOption,
+) (*Consumer, error) {
+	return newConsumer(ctx, cfg, groupID, 0, handler, observer, options...)
+}
+
+func NewRetryTierConsumer(
+	ctx context.Context,
+	cfg infraconfig.KafkaConfig,
+	groupID ConsumerGroupID,
+	tier int,
+	handler applicationeventstream.Handler,
+	observer ConsumerObserver,
+	options ...ConsumerOption,
+) (*Consumer, error) {
+	return newConsumer(ctx, cfg, groupID, tier, handler, observer, options...)
+}
+
+func newConsumer(
+	ctx context.Context,
+	cfg infraconfig.KafkaConfig,
+	groupID ConsumerGroupID,
+	recoveryTier int,
+	handler applicationeventstream.Handler,
+	observer ConsumerObserver,
+	configure ...ConsumerOption,
 ) (*Consumer, error) {
 	if !cfg.Enabled {
 		return nil, ErrKafkaDisabled
@@ -131,16 +472,54 @@ func NewConsumer(
 	if !groupAllowed(topicSpec, groupID) {
 		return nil, fmt.Errorf("%w: group is not registered for topic", ErrConsumerConfiguration)
 	}
-	topicName, err := TopicName(cfg.TopicPrefix, groupSpec.Topic)
+	var recoverySpec *RecoverySpec
+	if !groupSpec.Shadow {
+		registered, recoveryErr := Recovery(groupID)
+		if recoveryErr != nil || registered.SourceTopic != groupSpec.Topic {
+			return nil, fmt.Errorf("%w: recovery policy is not registered", ErrConsumerConfiguration)
+		}
+		recoverySpec = &registered
+	}
+	consumeTopicID := groupSpec.Topic
+	if recoveryTier > 0 {
+		if recoverySpec == nil || recoverySpec.Policy != RecoveryRetryTopics {
+			return nil, fmt.Errorf("%w: retry tier group is not registered", ErrConsumerConfiguration)
+		}
+		tierSpec, ok := recoverySpec.RetryTier(recoveryTier)
+		if !ok {
+			return nil, fmt.Errorf("%w: retry tier is not registered", ErrConsumerConfiguration)
+		}
+		consumeTopicID = tierSpec.Topic
+	}
+	consumeTopicSpec, err := Topic(consumeTopicID)
+	if err != nil || !groupAllowed(consumeTopicSpec, groupID) {
+		return nil, fmt.Errorf("%w: group is not registered for consumed topic", ErrConsumerConfiguration)
+	}
+	topicName, err := TopicName(cfg.TopicPrefix, consumeTopicID)
 	if err != nil {
 		return nil, err
 	}
-	groupName, err := ResolvedGroupName(cfg.TopicPrefix, cfg.ShadowDeployment, groupID)
+	stage, err := RecoveryConsumerStage(groupID, recoveryTier)
+	if err != nil {
+		return nil, fmt.Errorf("%w: consumer stage is not registered", ErrConsumerConfiguration)
+	}
+	var groupName string
+	if recoveryTier > 0 {
+		groupName, err = RecoveryConsumerGroupName(cfg.TopicPrefix, groupID, recoveryTier)
+	} else {
+		groupName, err = ResolvedGroupName(cfg.TopicPrefix, cfg.ShadowDeployment, groupID)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if err := validateGroupHandler(groupSpec, groupName, handler); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConsumerConfiguration, err)
+	}
+	consumerConfig := consumerOptions{}
+	for _, option := range configure {
+		if option != nil {
+			option(&consumerConfig)
+		}
 	}
 	options, err := clientOptions(cfg)
 	if err != nil {
@@ -154,9 +533,21 @@ func NewConsumer(
 	if err != nil {
 		return nil, fmt.Errorf("%w: request timeout", ErrConsumerConfiguration)
 	}
+	produceTimeout, err := time.ParseDuration(cfg.Timeouts.Produce)
+	if err != nil {
+		return nil, fmt.Errorf("%w: produce timeout", ErrConsumerConfiguration)
+	}
 	closeTimeout, err := time.ParseDuration(cfg.Timeouts.Shutdown)
 	if err != nil {
 		return nil, fmt.Errorf("%w: shutdown timeout", ErrConsumerConfiguration)
+	}
+	dialTimeout, err := time.ParseDuration(cfg.Timeouts.Dial)
+	if err != nil {
+		return nil, fmt.Errorf("%w: dial timeout", ErrConsumerConfiguration)
+	}
+	adminTimeout, err := time.ParseDuration(cfg.Timeouts.Admin)
+	if err != nil {
+		return nil, fmt.Errorf("%w: admin timeout", ErrConsumerConfiguration)
 	}
 	rebalanceTimeout := drainTimeout + commitTimeout + 10*time.Second
 	if rebalanceTimeout < time.Minute {
@@ -164,10 +555,51 @@ func NewConsumer(
 	}
 	rebalanceRequested := make(chan struct{}, 1)
 	assignment := newAssignmentReadiness()
+	partitionLifecycle := &consumerPartitionLifecycle{}
+	resetOffset := kgo.NoResetOffset()
+	if recoveryTier > 0 {
+		if consumerConfig.retryOffsetStore == nil {
+			return nil, fmt.Errorf(
+				"%w: durable retry offset initialization store is required",
+				ErrConsumerConfiguration,
+			)
+		}
+		resetOffset = resetOffset.AtCommitted()
+		adminClient, clientErr := kgo.NewClient(options...)
+		if clientErr != nil {
+			return nil, fmt.Errorf("%w: initialize admin client", ErrConsumerConfiguration)
+		}
+		pingContext, cancel := context.WithTimeout(ctx, dialTimeout)
+		clientErr = adminClient.Ping(pingContext)
+		cancel()
+		if clientErr == nil {
+			identity, identityErr := NewRetryOffsetInitializationIdentity(
+				cfg.Environment,
+				cfg.TopicPrefix,
+				groupName,
+				topicName,
+			)
+			if identityErr != nil {
+				clientErr = identityErr
+			}
+			initializer := &retryOffsetAdministrator{
+				backend: &franzRetryOffsetBackend{client: kadm.NewClient(adminClient)},
+				store:   consumerConfig.retryOffsetStore, identity: identity,
+				timeout: adminTimeout,
+			}
+			if clientErr == nil {
+				clientErr = initializer.Initialize(ctx, groupName, topicName)
+			}
+		}
+		adminClient.Close()
+		if clientErr != nil {
+			return nil, clientErr
+		}
+	}
 	options = append(options,
 		kgo.ConsumerGroup(groupName),
 		kgo.ConsumeTopics(topicName),
-		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
+		kgo.ConsumeResetOffset(resetOffset),
 		kgo.DisableAutoCommit(),
 		kgo.Balancers(kgo.CooperativeStickyBalancer()),
 		kgo.BlockRebalanceOnPoll(),
@@ -183,17 +615,20 @@ func NewConsumer(
 			if len(partitions) == 0 {
 				return
 			}
+			partitionLifecycle.assigned(partitions)
 			assignment.assigned(partitions)
 			if observer != nil {
 				observer.ObserveRebalance(groupID, "assigned")
 			}
 		}),
 		kgo.OnPartitionsRevoked(func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
+			partitionLifecycle.discard(partitions, "revoked")
 			if observer != nil && len(partitions) > 0 {
 				observer.ObserveRebalance(groupID, "revoked")
 			}
 		}),
 		kgo.OnPartitionsLost(func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
+			partitionLifecycle.discard(partitions, "lost")
 			if observer != nil && len(partitions) > 0 {
 				observer.ObserveRebalance(groupID, "lost")
 			}
@@ -203,28 +638,35 @@ func NewConsumer(
 	if err != nil {
 		return nil, fmt.Errorf("%w: initialize group client", ErrConsumerConfiguration)
 	}
-	dialTimeout, err := time.ParseDuration(cfg.Timeouts.Dial)
-	if err != nil {
-		client.CloseAllowingRebalance()
-		return nil, fmt.Errorf("%w: dial timeout", ErrConsumerConfiguration)
-	}
 	pingContext, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	if err := client.Ping(pingContext); err != nil {
 		client.CloseAllowingRebalance()
 		return nil, fmt.Errorf("%w: broker ping: %w", ErrKafkaUnavailable, err)
 	}
-	return &Consumer{
+	consumer := &Consumer{
 		source:  &franzConsumerSource{client: client, admin: kadm.NewClient(client)},
-		topicID: groupSpec.Topic, topicName: topicName,
-		groupID: groupID, groupName: groupName, handler: handler,
+		topicID: groupSpec.Topic, consumeTopicID: consumeTopicID, topicName: topicName,
+		topicPrefix: cfg.TopicPrefix,
+		groupID:     groupID, groupName: groupName, stage: stage, handler: handler,
+		recovery: recoverySpec, recoveryTier: recoveryTier,
 		maxPollRecords: cfg.Consumer.MaxPollRecords,
 		concurrency:    cfg.Consumer.PartitionConcurrency,
 		drainTimeout:   drainTimeout, commitTimeout: commitTimeout,
 		closeTimeout: closeTimeout,
 		observer:     observer, lagSampleEvery: 15 * time.Second,
 		rebalance: rebalanceRequested, assignment: assignment,
-	}, nil
+		partitions:     partitionLifecycle,
+		now:            time.Now,
+		delayedChanged: make(chan struct{}, 1),
+	}
+	partitionLifecycle.bind(consumer)
+	if recoverySpec != nil && recoverySpec.Policy == RecoveryRetryTopics {
+		consumer.recoveryWriter = &franzRecoveryPublisher{
+			producer: client, prefix: cfg.TopicPrefix, timeout: produceTimeout,
+		}
+	}
+	return consumer, nil
 }
 
 func (c *Consumer) AssignmentReady() <-chan struct{} {
@@ -239,6 +681,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 		return ErrConsumerSession
 	}
 	defer func() {
+		if c.partitions != nil {
+			c.partitions.discard(nil, "canceled")
+		} else {
+			c.discardDelayedPartitions(nil, "canceled")
+		}
 		closeContext, cancel := context.WithTimeout(context.Background(), c.closeTimeout)
 		_ = c.source.Close(closeContext)
 		cancel()
@@ -248,18 +695,35 @@ func (c *Consumer) Run(ctx context.Context) error {
 			return nil
 		}
 		c.sampleLag(ctx, false)
-		records, dataLoss, err := c.source.Poll(ctx, c.maxPollRecords)
+		ready := c.takeReadyDelayed()
+		records := ready.records
+		dataLoss := false
+		var err error
+		if len(records) == 0 {
+			records, dataLoss, err = c.poll(ctx)
+			c.assignRecordGenerations(records)
+		}
 		if dataLoss {
+			ready.release()
 			c.observeDataLoss()
 			return ErrConsumerDataLoss
 		}
 		if err != nil {
+			ready.release()
+			if errors.Is(err, ErrRebalanceDrain) {
+				c.source.AllowRebalance()
+				return err
+			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil
+				if ctx.Err() != nil {
+					return nil
+				}
+				continue
 			}
 			return fmt.Errorf("%w: poll: %w", ErrConsumerSession, err)
 		}
 		if len(records) == 0 {
+			ready.release()
 			c.source.AllowRebalance()
 			c.clearRebalanceRequest()
 			if ctx.Err() != nil {
@@ -268,11 +732,17 @@ func (c *Consumer) Run(ctx context.Context) error {
 			continue
 		}
 		eligible, processErr := c.processBatch(ctx, records)
+		if !ready.valid() {
+			ready.release()
+			c.source.AllowRebalance()
+			return ErrRebalanceDrain
+		}
 		if len(eligible) > 0 {
 			commitContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.commitTimeout)
 			err = c.source.Commit(commitContext, eligible)
 			cancel()
 			if err != nil {
+				ready.release()
 				c.observeCommit("uncertain")
 				c.source.AllowRebalance()
 				c.sampleLag(ctx, true)
@@ -284,6 +754,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			}
 			c.observeCommit("success")
 		}
+		ready.release()
 		c.source.AllowRebalance()
 		c.clearRebalanceRequest()
 		if processErr != nil {
@@ -390,6 +861,9 @@ func (c *Consumer) processBatch(
 			if item.eligible != nil {
 				eligible = append(eligible, *item.eligible)
 			}
+			if len(item.delayed) > 0 {
+				c.delayPartition(item)
+			}
 			if item.err != nil && processErr == nil {
 				processErr = item.err
 			}
@@ -427,11 +901,66 @@ func (c *Consumer) processPartition(
 	for index := range records {
 		record := records[index]
 		started := time.Now()
+		recoveryMetadata, err := c.prepareRecoveryRecord(ctx, record)
+		if err != nil {
+			if c.recoveryTier > 0 && c.routesRecoveryRecords() {
+				if quarantineErr := c.quarantineInvalidRecovery(
+					ctx, record, err,
+				); quarantineErr != nil {
+					c.observeConsume(
+						"recovery_quarantine_failed", started, record.Timestamp,
+					)
+					return result{eligible: lastEligible, err: quarantineErr}
+				}
+				c.observeConsume("routed_quarantine", started, record.Timestamp)
+				copy := record
+				lastEligible = &copy
+				continue
+			}
+			c.observeConsume("recovery_invalid", started, record.Timestamp)
+			return result{eligible: lastEligible, err: err}
+		}
+		if recoveryMetadata != nil {
+			now := time.Now
+			if c.now != nil {
+				now = c.now
+			}
+			delay := recoveryMetadata.NotBefore.Sub(now().UTC())
+			if delay > 0 {
+				return result{
+					eligible:  lastEligible,
+					delayed:   append([]brokerRecord(nil), records[index:]...),
+					notBefore: recoveryMetadata.NotBefore,
+					tier:      recoveryMetadata.Tier,
+				}
+			}
+			if !record.resumed {
+				c.observeRecoveryDelay(recoveryMetadata.Tier, "ready", 0)
+			}
+		}
 		decoded, err := DecodeEvent(c.topicID, record.Key, record.Value, time.Now().UTC())
 		if err != nil {
 			var contract *ContractError
 			if errors.As(err, &contract) && contract.Terminal() {
 				c.observeContract(contract.Code)
+				if c.routesRecoveryRecords() {
+					eventID, schemaVersion := RecoveryEventIdentity(record.Value)
+					if routeErr := c.routeRecovery(
+						ctx,
+						record,
+						recoveryMetadata,
+						eventID,
+						schemaVersion,
+						FailureTerminalContract,
+					); routeErr != nil {
+						c.observeConsume("recovery_publish_failed", started, record.Timestamp)
+						return result{eligible: lastEligible, err: routeErr}
+					}
+					c.observeConsume("routed_dlq", started, record.Timestamp)
+					copy := record
+					lastEligible = &copy
+					continue
+				}
 				c.observeConsume("terminal_contract", started, record.Timestamp)
 				copy := record
 				lastEligible = &copy
@@ -454,16 +983,62 @@ func (c *Consumer) processPartition(
 			CorrelationID: decoded.Envelope.CorrelationID,
 			Payload:       decoded.Payload,
 		}
-		outcome, handleErr := c.handleWithRequestedRetry(ctx, applicationEvent)
+		outcome, handleErr, exhausted := c.handleWithRegisteredRetry(ctx, applicationEvent)
 		if !applicationeventstream.ValidOutcome(outcome) {
 			c.observeConsume("retryable", started, record.Timestamp)
 			return result{eligible: lastEligible, err: applicationeventstream.ErrInvalidOutcome}
 		}
-		c.observeConsume(string(outcome), started, record.Timestamp)
-		if applicationeventstream.CommitEligible(outcome) {
+		switch outcome {
+		case applicationeventstream.OutcomeDurableSuccess:
+			c.observeConsume(string(outcome), started, record.Timestamp)
+			if recoveryMetadata != nil {
+				c.observeRecoveryProgress()
+			}
 			copy := record
 			lastEligible = &copy
 			continue
+		case applicationeventstream.OutcomeTerminal:
+			if c.routesRecoveryRecords() {
+				if routeErr := c.routeRecovery(
+					ctx,
+					record,
+					recoveryMetadata,
+					decoded.Envelope.EventID,
+					decoded.Envelope.SchemaVersion,
+					FailureTerminalDomain,
+				); routeErr != nil {
+					c.observeConsume("recovery_publish_failed", started, record.Timestamp)
+					return result{eligible: lastEligible, err: routeErr}
+				}
+				c.observeConsume("routed_dlq", started, record.Timestamp)
+			} else {
+				c.observeConsume(string(outcome), started, record.Timestamp)
+			}
+			copy := record
+			lastEligible = &copy
+			continue
+		case applicationeventstream.OutcomeRetryable:
+			c.observeConsume("retryable", started, record.Timestamp)
+			if lifecycleErr := ctx.Err(); lifecycleErr != nil {
+				return result{eligible: lastEligible, err: lifecycleErr}
+			}
+			if c.routesRecoveryRecords() && exhausted {
+				if routeErr := c.routeRecovery(
+					ctx,
+					record,
+					recoveryMetadata,
+					decoded.Envelope.EventID,
+					decoded.Envelope.SchemaVersion,
+					FailureLocalRetryExhausted,
+				); routeErr != nil {
+					c.observeConsume("recovery_publish_failed", started, record.Timestamp)
+					return result{eligible: lastEligible, err: routeErr}
+				}
+				c.observeConsume("routed_retry", started, record.Timestamp)
+				copy := record
+				lastEligible = &copy
+				continue
+			}
 		}
 		if handleErr == nil {
 			handleErr = ErrConsumerSession
@@ -471,6 +1046,267 @@ func (c *Consumer) processPartition(
 		return result{eligible: lastEligible, err: handleErr}
 	}
 	return result{eligible: lastEligible}
+}
+
+func (c *Consumer) prepareRecoveryRecord(
+	ctx context.Context,
+	record brokerRecord,
+) (*RecoveryMetadata, error) {
+	if c == nil {
+		return nil, nil
+	}
+	if c.recoveryTier == 0 {
+		if !c.routesRecoveryRecords() ||
+			!containsRecoveryHeader(record.Headers) {
+			return nil, nil
+		}
+		metadata, err := DecodeRecoveryHeaders(
+			c.topicPrefix,
+			c.consumeTopicID,
+			record.Headers,
+			record.Key,
+			record.Value,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if metadata.ConsumerGroup != c.groupID {
+			return nil, nil
+		}
+		if metadata.Tier != 0 || metadata.ReplayID == "" {
+			return nil, recoveryMetadataError(RecoveryMetadataInvalidTopic)
+		}
+		return &metadata, nil
+	}
+	metadata, err := DecodeRecoveryHeaders(
+		c.topicPrefix,
+		c.consumeTopicID,
+		record.Headers,
+		record.Key,
+		record.Value,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if metadata.ConsumerGroup != c.groupID || metadata.Tier != c.recoveryTier {
+		return nil, recoveryMetadataError(RecoveryMetadataInvalidTopic)
+	}
+	return &metadata, nil
+}
+
+func containsRecoveryHeader(headers []applicationeventstream.Header) bool {
+	for _, header := range headers {
+		if header.Key == RecoveryHeaderKey {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Consumer) routesRecoveryRecords() bool {
+	return c != nil && c.recovery != nil &&
+		c.recovery.Policy == RecoveryRetryTopics &&
+		c.recoveryWriter != nil
+}
+
+func (c *Consumer) routeRecovery(
+	ctx context.Context,
+	record brokerRecord,
+	previous *RecoveryMetadata,
+	eventID string,
+	schemaVersion int,
+	failureClass FailureClass,
+) error {
+	if !c.routesRecoveryRecords() || !c.recovery.AllowsFailure(failureClass) {
+		return ErrConsumerConfiguration
+	}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	failedAt := now().UTC()
+	destination := c.recovery.DLQTopic
+	nextTier := 0
+	if failureClass == FailureLocalRetryExhausted &&
+		c.recoveryTier < len(c.recovery.RetryTiers) {
+		nextTier = c.recoveryTier + 1
+		tier, ok := c.recovery.RetryTier(nextTier)
+		if !ok {
+			return ErrConsumerConfiguration
+		}
+		destination = tier.Topic
+	}
+	sourceTopic, err := TopicName(c.topicPrefix, c.recovery.SourceTopic)
+	if err != nil {
+		return err
+	}
+	metadata := RecoveryMetadata{
+		SourceTopic: sourceTopic, SourcePartition: record.Partition,
+		SourceOffset: record.Offset, EventID: eventID, SchemaVersion: schemaVersion,
+		ConsumerGroup: c.groupID, Attempt: 1, Tier: nextTier,
+		FailureClass: failureClass, FirstFailureAt: failedAt,
+		LatestFailureAt: failedAt, NotBefore: failedAt,
+		PayloadSHA256: PayloadSHA256(record.Value),
+	}
+	if previous != nil {
+		metadata.SourceTopic = previous.SourceTopic
+		metadata.SourcePartition = previous.SourcePartition
+		metadata.SourceOffset = previous.SourceOffset
+		metadata.EventID = previous.EventID
+		metadata.SchemaVersion = previous.SchemaVersion
+		metadata.Attempt = previous.Attempt + 1
+		metadata.FirstFailureAt = previous.FirstFailureAt
+		metadata.ReplayID = previous.ReplayID
+	}
+	if nextTier > 0 {
+		tier, _ := c.recovery.RetryTier(nextTier)
+		metadata.NotBefore = failedAt.Add(tier.Delay)
+	}
+	var headers []applicationeventstream.Header
+	if failureClass == FailureTerminalContract &&
+		previous == nil &&
+		destination == c.recovery.DLQTopic {
+		headers, err = encodeTerminalContractDLQHeaders(
+			c.topicPrefix,
+			destination,
+			metadata,
+			record.Key,
+			record.Value,
+		)
+	} else {
+		headers, err = EncodeRecoveryHeaders(
+			c.topicPrefix,
+			destination,
+			metadata,
+			record.Key,
+			record.Value,
+		)
+	}
+	if err != nil {
+		return err
+	}
+	err = c.recoveryWriter.PublishRecovery(
+		ctx,
+		destination,
+		record.Key,
+		record.Value,
+		headers,
+	)
+	if err != nil {
+		result := "failed"
+		if errors.Is(err, ErrProduceUncertain) {
+			result = "uncertain"
+		}
+		c.observeRecoveryPublish(nextTier, result)
+		return wrapRecoveryPublishError(err)
+	}
+	c.observeRecoveryPublish(nextTier, "acknowledged")
+	return nil
+}
+
+func (c *Consumer) quarantineInvalidRecovery(
+	ctx context.Context,
+	record brokerRecord,
+	cause error,
+) error {
+	if c == nil || c.recovery == nil || c.recoveryTier < 1 ||
+		!c.routesRecoveryRecords() {
+		return ErrConsumerConfiguration
+	}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	headers, err := EncodeRecoveryQuarantineHeaders(
+		c.topicPrefix,
+		c.recovery.DLQTopic,
+		RecoveryQuarantineMetadata{
+			ConsumedTopic:     record.Topic,
+			ConsumedPartition: record.Partition,
+			ConsumedOffset:    record.Offset,
+			ConsumerGroup:     c.groupID,
+			FailureClass:      FailureRecoveryMetadataInvalid,
+			MetadataCode:      recoveryMetadataCode(cause),
+			QuarantinedAt:     now().UTC(),
+			PayloadSHA256:     PayloadSHA256(record.Value),
+			KeySHA256:         PayloadSHA256(record.Key),
+			NonReplayable:     true,
+		},
+		record.Key,
+		record.Value,
+	)
+	if err != nil {
+		return err
+	}
+	err = c.recoveryWriter.PublishRecovery(
+		ctx,
+		c.recovery.DLQTopic,
+		record.Key,
+		record.Value,
+		headers,
+	)
+	if err != nil {
+		result := "failed"
+		if errors.Is(err, ErrProduceUncertain) {
+			result = "uncertain"
+		}
+		c.observeRecoveryPublish(0, result)
+		return wrapRecoveryPublishError(err)
+	}
+	c.observeRecoveryPublish(0, "acknowledged")
+	return nil
+}
+
+func (c *Consumer) handleWithRegisteredRetry(
+	ctx context.Context,
+	event applicationeventstream.Event,
+) (applicationeventstream.Outcome, error, bool) {
+	if c == nil || c.recovery == nil {
+		outcome, err := c.handleWithRequestedRetry(ctx, event)
+		return outcome, err, outcome == applicationeventstream.OutcomeRetryable
+	}
+	spec := c.recovery.LocalRetry
+	delay := spec.InitialDelay
+	totalDelay := time.Duration(0)
+	for attempt := 1; ; attempt++ {
+		outcome, err := c.handler.Handle(ctx, event)
+		if outcome != applicationeventstream.OutcomeRetryable ||
+			!applicationeventstream.ValidOutcome(outcome) {
+			return outcome, err, false
+		}
+		if err == nil {
+			err = ErrConsumerSession
+		}
+		if attempt >= spec.MaxAttempts {
+			return outcome, err, true
+		}
+		type retryAfter interface {
+			RetryAfter() time.Duration
+		}
+		var requested retryAfter
+		wait := delay
+		if errors.As(err, &requested) && requested.RetryAfter() > 0 {
+			wait = requested.RetryAfter()
+		}
+		if wait <= 0 || totalDelay+wait > spec.MaxTotalDelay {
+			return outcome, err, true
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return outcome, ctx.Err(), false
+		case <-timer.C:
+		}
+		totalDelay += wait
+		c.observeLocalRetry("attempted")
+		if delay < spec.MaxDelay {
+			delay *= 2
+			if delay > spec.MaxDelay {
+				delay = spec.MaxDelay
+			}
+		}
+	}
 }
 
 func (c *Consumer) handleWithRequestedRetry(
@@ -500,8 +1336,264 @@ func (c *Consumer) handleWithRequestedRetry(
 }
 
 type result struct {
-	eligible *brokerRecord
-	err      error
+	eligible  *brokerRecord
+	err       error
+	delayed   []brokerRecord
+	notBefore time.Time
+	tier      int
+}
+
+func (c *Consumer) delayPartition(item result) {
+	if c == nil || c.source == nil || len(item.delayed) == 0 ||
+		item.notBefore.IsZero() {
+		return
+	}
+	first := item.delayed[0]
+	key := delayedPartitionKey{topic: first.Topic, partition: first.Partition}
+	generation := uint64(0)
+	if c.partitions != nil {
+		var owned bool
+		generation, owned = c.partitions.generation(key)
+		if !owned || (first.generation != 0 && first.generation != generation) {
+			return
+		}
+	}
+	c.delayedMu.Lock()
+	defer c.delayedMu.Unlock()
+	if c.delayed == nil {
+		c.delayed = make(map[delayedPartitionKey]delayedPartition)
+	}
+	if existing, ok := c.delayed[key]; ok {
+		if existing.generation != generation {
+			return
+		}
+		existing.records = append(existing.records, item.delayed...)
+		if item.notBefore.Before(existing.notBefore) {
+			existing.notBefore = item.notBefore
+			existing.tier = item.tier
+		}
+		c.delayed[key] = existing
+		c.signalDelayedChanged()
+		return
+	}
+	pausedAt := time.Now().UTC()
+	c.source.Pause(first.Topic, first.Partition)
+	c.delayed[key] = delayedPartition{
+		records:    append([]brokerRecord(nil), item.delayed...),
+		notBefore:  item.notBefore,
+		tier:       item.tier,
+		pausedAt:   pausedAt,
+		generation: generation,
+	}
+	c.signalDelayedChanged()
+}
+
+func (c *Consumer) assignRecordGenerations(records []brokerRecord) {
+	if c == nil || c.partitions == nil {
+		return
+	}
+	for index := range records {
+		if records[index].generation != 0 {
+			continue
+		}
+		key := delayedPartitionKey{
+			topic: records[index].Topic, partition: records[index].Partition,
+		}
+		generation, owned := c.partitions.generation(key)
+		if owned {
+			records[index].generation = generation
+		}
+	}
+}
+
+func (c *Consumer) takeReadyDelayed() readyDelayedBatch {
+	if c == nil {
+		return readyDelayedBatch{}
+	}
+	now := time.Now().UTC()
+	if c.now != nil {
+		now = c.now().UTC()
+	}
+	c.delayedMu.Lock()
+	if len(c.delayed) == 0 {
+		c.delayedMu.Unlock()
+		return readyDelayedBatch{}
+	}
+	keys := make([]delayedPartitionKey, 0, len(c.delayed))
+	for key, delayed := range c.delayed {
+		if !delayed.notBefore.After(now) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(left, right int) bool {
+		if keys[left].topic == keys[right].topic {
+			return keys[left].partition < keys[right].partition
+		}
+		return keys[left].topic < keys[right].topic
+	})
+	ready := make([]struct {
+		key     delayedPartitionKey
+		delayed delayedPartition
+		lease   *partitionOwnershipLease
+	}, 0, len(keys))
+	for _, key := range keys {
+		delayed := c.delayed[key]
+		lease, owned := c.partitions.acquire(key, delayed.generation)
+		if !owned {
+			delete(c.delayed, key)
+			continue
+		}
+		delete(c.delayed, key)
+		if !lease.valid() {
+			lease.release()
+			continue
+		}
+		ready = append(ready, struct {
+			key     delayedPartitionKey
+			delayed delayedPartition
+			lease   *partitionOwnershipLease
+		}{key: key, delayed: delayed, lease: lease})
+	}
+	if len(ready) > 0 {
+		c.signalDelayedChanged()
+	}
+	c.delayedMu.Unlock()
+
+	batch := readyDelayedBatch{
+		records: make([]brokerRecord, 0),
+		leases:  make([]*partitionOwnershipLease, 0, len(ready)),
+	}
+	for _, item := range ready {
+		key := item.key
+		delayed := item.delayed
+		c.source.Resume(key.topic, key.partition)
+		duration := time.Since(delayed.pausedAt)
+		if duration < 0 {
+			duration = 0
+		}
+		c.observeRecoveryDelay(delayed.tier, "resumed", duration)
+		batch.leases = append(batch.leases, item.lease)
+		for _, record := range delayed.records {
+			record.resumed = true
+			batch.records = append(batch.records, record)
+		}
+	}
+	return batch
+}
+
+func (c *Consumer) discardDelayedPartitions(
+	partitions map[string][]int32,
+	result string,
+) {
+	if c == nil {
+		return
+	}
+	selected := delayedPartitionSelection(partitions)
+	c.delayedMu.Lock()
+	discarded := make([]delayedPartition, 0)
+	for key, delayed := range c.delayed {
+		if partitions != nil {
+			if _, ok := selected[key]; !ok {
+				continue
+			}
+		}
+		discarded = append(discarded, delayed)
+		delete(c.delayed, key)
+	}
+	if len(discarded) > 0 {
+		c.signalDelayedChanged()
+	}
+	c.delayedMu.Unlock()
+	for _, delayed := range discarded {
+		duration := time.Since(delayed.pausedAt)
+		if duration < 0 {
+			duration = 0
+		}
+		c.observeRecoveryDelay(delayed.tier, result, duration)
+	}
+}
+
+func (c *Consumer) nextDelayedAt() time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	c.delayedMu.Lock()
+	defer c.delayedMu.Unlock()
+	var earliest time.Time
+	for _, delayed := range c.delayed {
+		if earliest.IsZero() || delayed.notBefore.Before(earliest) {
+			earliest = delayed.notBefore
+		}
+	}
+	return earliest
+}
+
+func (c *Consumer) signalDelayedChanged() {
+	if c == nil || c.delayedChanged == nil {
+		return
+	}
+	select {
+	case c.delayedChanged <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Consumer) poll(ctx context.Context) ([]brokerRecord, bool, error) {
+	pollContext, cancelPoll := context.WithCancel(ctx)
+	defer cancelPoll()
+	done := make(chan pollResult, 1)
+	go func() {
+		records, dataLoss, err := c.source.Poll(pollContext, c.maxPollRecords)
+		done <- pollResult{records: records, dataLoss: dataLoss, err: err}
+	}()
+
+	var timer *time.Timer
+	var due <-chan time.Time
+	if next := c.nextDelayedAt(); !next.IsZero() {
+		delay := time.Until(next)
+		if c.now != nil {
+			delay = next.Sub(c.now().UTC())
+		}
+		if delay < 0 {
+			delay = 0
+		}
+		timer = time.NewTimer(delay)
+		due = timer.C
+		defer timer.Stop()
+	}
+
+	select {
+	case result := <-done:
+		return result.records, result.dataLoss, result.err
+	case <-due:
+		cancelPoll()
+		result := <-done
+		if len(result.records) > 0 || result.dataLoss ||
+			(result.err != nil &&
+				!errors.Is(result.err, context.Canceled) &&
+				!errors.Is(result.err, context.DeadlineExceeded)) {
+			return result.records, result.dataLoss, result.err
+		}
+		return nil, false, context.DeadlineExceeded
+	case <-c.delayedChanged:
+		cancelPoll()
+		result := <-done
+		if len(result.records) > 0 || result.dataLoss ||
+			(result.err != nil &&
+				!errors.Is(result.err, context.Canceled) &&
+				!errors.Is(result.err, context.DeadlineExceeded)) {
+			return result.records, result.dataLoss, result.err
+		}
+		return nil, false, context.DeadlineExceeded
+	case <-c.rebalance:
+		cancelPoll()
+		<-done
+		return nil, false, ErrRebalanceDrain
+	case <-ctx.Done():
+		cancelPoll()
+		<-done
+		return nil, false, ctx.Err()
+	}
 }
 
 func (c *Consumer) observeConsume(outcome string, started time.Time, timestamp time.Time) {
@@ -533,6 +1625,48 @@ func (c *Consumer) observeDataLoss() {
 	}
 }
 
+func (c *Consumer) observeRecoveryPublish(tier int, result string) {
+	observer, ok := c.observer.(ConsumerRecoveryObserver)
+	if !ok {
+		return
+	}
+	destination := "dlq"
+	if c.recovery != nil && tier > 0 {
+		if registered, exists := c.recovery.RetryTier(tier); exists {
+			destination = "retry_" + registered.Label
+		}
+	}
+	observer.ObserveRecoveryPublish(c.groupID, destination, result)
+}
+
+func (c *Consumer) observeRecoveryDelay(tier int, result string, duration time.Duration) {
+	observer, ok := c.observer.(ConsumerRecoveryObserver)
+	if !ok {
+		return
+	}
+	label := "unknown"
+	if c.recovery != nil {
+		if registered, exists := c.recovery.RetryTier(tier); exists {
+			label = registered.Label
+		}
+	}
+	observer.ObserveRecoveryDelay(c.groupID, label, result, duration)
+}
+
+func (c *Consumer) observeLocalRetry(result string) {
+	observer, ok := c.observer.(ConsumerRecoveryObserver)
+	if ok {
+		observer.ObserveLocalRetry(c.groupID, result)
+	}
+}
+
+func (c *Consumer) observeRecoveryProgress() {
+	observer, ok := c.observer.(ConsumerRecoveryProgressObserver)
+	if ok {
+		observer.ObserveRecoveryProgress(c.groupID, "durable")
+	}
+}
+
 func (c *Consumer) sampleLag(ctx context.Context, force bool) {
 	if c.observer == nil || c.source == nil {
 		return
@@ -551,7 +1685,7 @@ func (c *Consumer) sampleLag(ctx context.Context, force bool) {
 	if lag < 0 {
 		lag = 0
 	}
-	c.observer.ObserveLag(c.topicID, c.groupID, lag)
+	c.observer.ObserveLag(c.consumeTopicID, c.groupID, c.stage, lag)
 }
 
 func (s *franzConsumerSource) Poll(ctx context.Context, maxRecords int) ([]brokerRecord, bool, error) {
@@ -621,6 +1755,20 @@ func (s *franzConsumerSource) Lag(ctx context.Context, groupName string) (int64,
 	return totalGroupLag(group.Lag)
 }
 
+func (s *franzConsumerSource) Pause(topic string, partition int32) {
+	if s == nil || s.client == nil {
+		return
+	}
+	s.client.PauseFetchPartitions(map[string][]int32{topic: {partition}})
+}
+
+func (s *franzConsumerSource) Resume(topic string, partition int32) {
+	if s == nil || s.client == nil {
+		return
+	}
+	s.client.ResumeFetchPartitions(map[string][]int32{topic: {partition}})
+}
+
 func totalGroupLag(lag kadm.GroupLag) (int64, error) {
 	var total int64
 	for _, partition := range lag.Sorted() {
@@ -681,12 +1829,13 @@ func cloneHeaders(headers []applicationeventstream.Header) []applicationeventstr
 type ConsumerFactory func(ctx context.Context) (*Consumer, error)
 
 type ConsumerSessionObserver interface {
-	ObserveConsumerSession(group ConsumerGroupID, result string)
+	ObserveConsumerSession(group ConsumerGroupID, stage ConsumerStage, result string)
 }
 
 type Supervisor struct {
 	NewConsumer ConsumerFactory
 	Group       ConsumerGroupID
+	Stage       ConsumerStage
 	Observer    ConsumerSessionObserver
 	Ready       chan<- struct{}
 	MinBackoff  time.Duration
@@ -830,6 +1979,6 @@ func consumerRetryDelay(err error, backoff, maximum time.Duration) time.Duration
 
 func (s Supervisor) observe(result string) {
 	if s.Observer != nil {
-		s.Observer.ObserveConsumerSession(s.Group, result)
+		s.Observer.ObserveConsumerSession(s.Group, s.Stage, result)
 	}
 }

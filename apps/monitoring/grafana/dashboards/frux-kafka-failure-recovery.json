@@ -1,0 +1,74 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Retry and DLQ publication outcomes",
+      "targets": [{"expr": "rate(frux_kafka_recovery_publish_total[5m])", "legendFormat": "{{group}} / {{tier}} / {{result}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Consumer lag by stage and workflow",
+      "targets": [
+        {"expr": "frux_kafka_consumer_lag", "legendFormat": "{{group}} / {{stage}} / {{topic}}"},
+        {"expr": "frux_kafka_consumer_workflow_lag", "legendFormat": "{{group}} / workflow total"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "DLQ retained offset growth",
+      "targets": [{"expr": "frux_kafka_recovery_retained_offset_growth", "legendFormat": "{{topic}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Oldest retained record age",
+      "targets": [{"expr": "frux_kafka_recovery_oldest_record_age_seconds", "legendFormat": "{{topic}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Replay outcomes",
+      "targets": [{"expr": "rate(frux_kafka_recovery_replay_total[5m])", "legendFormat": "{{group}} / {{result}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+    },
+    {
+      "type": "timeseries",
+      "title": "Inspection failures",
+      "targets": [{"expr": "rate(frux_kafka_recovery_inspection_total{result=\"failed\"}[5m])", "legendFormat": "{{result}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+    },
+    {
+      "type": "stat",
+      "title": "No-progress state",
+      "targets": [{"expr": "(max by (group, topic) (delta(frux_kafka_recovery_retained_end_offset[15m])) > 0 and on (group, topic) max by (group, topic) (frux_kafka_recovery_retained_records) > 0 and on (group, topic) max by (group, topic) (delta(frux_kafka_recovery_oldest_record_timestamp_seconds[15m])) <= 0) unless on (group) (sum by (group) (increase(frux_kafka_recovery_progress_total{kind=~\"durable|replay\"}[15m])) > 0)", "legendFormat": "{{group}} / {{topic}}"}],
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 24}
+    },
+    {
+      "type": "stat",
+      "title": "Retention risk",
+      "targets": [{"expr": "frux_kafka_recovery_retention_risk{state=\"detected\"}", "legendFormat": "{{topic}}"}],
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 24}
+    },
+    {
+      "type": "stat",
+      "title": "Consumer stage and workflow health",
+      "targets": [
+        {"expr": "frux_kafka_consumer_session_healthy{group=~\"feed_video_published_active|embedding_video_published_active\"}", "legendFormat": "{{group}} / {{stage}}"},
+        {"expr": "frux_kafka_consumer_workflow_healthy{group=~\"feed_video_published_active|embedding_video_published_active\"}", "legendFormat": "{{group}} / workflow"}
+      ],
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 30}
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["frux", "kafka", "failure-recovery"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Frux Kafka Failure Recovery",
+  "uid": "frux-kafka-failure-recovery",
+  "version": 1
+}

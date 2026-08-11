@@ -57,6 +57,13 @@ const (
 	CodeDeadLetterMessageConflict  = "DEAD_LETTER_MESSAGE_CONFLICT"
 	CodeDeadLetterUnavailable      = "DEAD_LETTER_UNAVAILABLE"
 
+	CodeKafkaDeadLetterValidationFailed  = "KAFKA_DEAD_LETTER_VALIDATION_FAILED"
+	CodeKafkaDeadLetterRecordNotFound    = "KAFKA_DEAD_LETTER_RECORD_NOT_FOUND"
+	CodeKafkaDeadLetterRecordExpired     = "KAFKA_DEAD_LETTER_RECORD_EXPIRED"
+	CodeKafkaDeadLetterInvalidProvenance = "KAFKA_DEAD_LETTER_INVALID_PROVENANCE"
+	CodeKafkaDeadLetterReplayConflict    = "KAFKA_DEAD_LETTER_REPLAY_CONFLICT"
+	CodeKafkaDeadLetterUnavailable       = "KAFKA_DEAD_LETTER_UNAVAILABLE"
+
 	CodeFeedValidationFailed             = "FEED_VALIDATION_FAILED"
 	CodeFeedRecommendationContextInvalid = "FEED_RECOMMENDATION_CONTEXT_INVALID"
 	CodeFeedCursorInvalid                = "FEED_CURSOR_INVALID"

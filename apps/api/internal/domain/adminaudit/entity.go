@@ -20,7 +20,7 @@ const (
 	MaxRequestIDLength       = 128
 	MaxIdempotencyKeyLength  = 128
 	IdempotencyKeyHashLength = 71
-	MaxDetailEntries         = 12
+	MaxDetailEntries         = 13
 	MaxDetailKeyLength       = 64
 	MaxDetailValueLength     = 256
 	MaxDetailBytes           = 2048
@@ -31,24 +31,26 @@ const (
 type Action string
 
 const (
-	ActionAuditQuery        Action = "audit.query"
-	ActionReviewDecide      Action = "review.decide"
-	ActionContentEnforce    Action = "content.enforce"
-	ActionContentRestore    Action = "content.restore"
-	ActionConfigPublish     Action = "config.publish"
-	ActionGovernanceExecute Action = "governance.execute"
-	ActionDeadLetterReplay  Action = "dead_letter.replay"
+	ActionAuditQuery            Action = "audit.query"
+	ActionReviewDecide          Action = "review.decide"
+	ActionContentEnforce        Action = "content.enforce"
+	ActionContentRestore        Action = "content.restore"
+	ActionConfigPublish         Action = "config.publish"
+	ActionGovernanceExecute     Action = "governance.execute"
+	ActionDeadLetterReplay      Action = "dead_letter.replay"
+	ActionKafkaDeadLetterReplay Action = "kafka_dead_letter.replay"
 )
 
 type TargetType string
 
 const (
-	TargetAuditTrail        TargetType = "audit_trail"
-	TargetReviewCase        TargetType = "review_case"
-	TargetVideo             TargetType = "video"
-	TargetConfig            TargetType = "config"
-	TargetGovernanceControl TargetType = "governance_control"
-	TargetDeadLetterMessage TargetType = "dead_letter_message"
+	TargetAuditTrail            TargetType = "audit_trail"
+	TargetReviewCase            TargetType = "review_case"
+	TargetVideo                 TargetType = "video"
+	TargetConfig                TargetType = "config"
+	TargetGovernanceControl     TargetType = "governance_control"
+	TargetDeadLetterMessage     TargetType = "dead_letter_message"
+	TargetKafkaDeadLetterRecord TargetType = "kafka_dead_letter_record"
 )
 
 type Outcome string
@@ -79,6 +81,11 @@ var allowedDetailsByAction = map[Action]map[string]struct{}{
 	ActionDeadLetterReplay: detailKeys(
 		"failure_code", "http_method", "original_event_id", "queue", "reason_code",
 		"replay_id", "route",
+	),
+	ActionKafkaDeadLetterReplay: detailKeys(
+		"consumer_group", "failure_code", "http_method", "offset", "original_event_id",
+		"partition", "reason_code", "replay_id", "route", "source_offset",
+		"source_partition", "source_topic", "topic",
 	),
 }
 
@@ -149,15 +156,27 @@ var schemasByAction = map[Action]actionSchema{
 			"http_method", "original_event_id", "queue", "reason_code", "replay_id", "route",
 		),
 	},
+	ActionKafkaDeadLetterReplay: {
+		permission: domainaccount.PermissionGovernanceExecute,
+		targetType: TargetKafkaDeadLetterRecord,
+		route:      "/api/admin/kafka-dead-letters/:topic/records/:partition/:offset/replay",
+		method:     "POST",
+		successKeys: detailKeys(
+			"consumer_group", "http_method", "offset", "original_event_id",
+			"partition", "reason_code", "replay_id", "route", "source_offset",
+			"source_partition", "source_topic", "topic",
+		),
+	},
 }
 
 var validTargetTypes = map[TargetType]struct{}{
-	TargetAuditTrail:        {},
-	TargetReviewCase:        {},
-	TargetVideo:             {},
-	TargetConfig:            {},
-	TargetGovernanceControl: {},
-	TargetDeadLetterMessage: {},
+	TargetAuditTrail:            {},
+	TargetReviewCase:            {},
+	TargetVideo:                 {},
+	TargetConfig:                {},
+	TargetGovernanceControl:     {},
+	TargetDeadLetterMessage:     {},
+	TargetKafkaDeadLetterRecord: {},
 }
 
 var detailNumberPattern = regexp.MustCompile(`^[0-9]+$`)
@@ -185,6 +204,12 @@ var governanceRoutes = map[string]string{
 	"/api/admin/governance/controls/:key/revisions": "GET",
 	"/api/admin/governance/controls/:key":           "PATCH",
 	"/api/admin/governance/controls/:key/rollback":  "POST",
+}
+
+var kafkaDeadLetterRoutes = map[string]string{
+	"/api/admin/kafka-dead-letters":                                          "GET",
+	"/api/admin/kafka-dead-letters/:topic/records":                           "GET",
+	"/api/admin/kafka-dead-letters/:topic/records/:partition/:offset/replay": "POST",
 }
 
 var validStatuses = map[string]struct{}{
@@ -371,7 +396,8 @@ func validDetailValue(action Action, key, value string) bool {
 		return false
 	}
 	switch key {
-	case "filter_count", "new_revision", "previous_revision", "review_version":
+	case "filter_count", "new_revision", "previous_revision", "review_version",
+		"offset", "partition", "source_offset", "source_partition":
 		return len(value) <= 20 && detailNumberPattern.MatchString(value)
 	case "http_method":
 		switch value {
@@ -383,6 +409,10 @@ func validDetailValue(action Action, key, value string) bool {
 	case "route":
 		if action == ActionGovernanceExecute {
 			_, ok := governanceRoutes[value]
+			return ok
+		}
+		if action == ActionKafkaDeadLetterReplay {
+			_, ok := kafkaDeadLetterRoutes[value]
 			return ok
 		}
 		return value == schemasByAction[action].route
@@ -397,10 +427,16 @@ func validDetailValue(action Action, key, value string) bool {
 	case "reason_code":
 		return len(value) <= 64 && detailCodePattern.MatchString(value)
 	case "failure_code":
-		return action == ActionDeadLetterReplay &&
+		return (action == ActionDeadLetterReplay || action == ActionKafkaDeadLetterReplay) &&
 			len(value) <= 64 && detailCodePattern.MatchString(value)
-	case "queue", "original_event_id", "replay_id":
+	case "queue":
 		return action == ActionDeadLetterReplay &&
+			len(value) <= MaxDetailValueLength && detailIdentifierPattern.MatchString(value)
+	case "topic", "source_topic", "consumer_group":
+		return action == ActionKafkaDeadLetterReplay &&
+			len(value) <= MaxDetailValueLength && detailIdentifierPattern.MatchString(value)
+	case "original_event_id", "replay_id":
+		return (action == ActionDeadLetterReplay || action == ActionKafkaDeadLetterReplay) &&
 			len(value) <= MaxDetailValueLength && detailIdentifierPattern.MatchString(value)
 	default:
 		return false
@@ -417,6 +453,10 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 			if governanceRoutes[detail["route"]] != detail["http_method"] {
 				return false
 			}
+		} else if action == ActionKafkaDeadLetterReplay {
+			if kafkaDeadLetterRoutes[detail["route"]] != detail["http_method"] {
+				return false
+			}
 		} else if detail["http_method"] != schema.method || detail["route"] != schema.route {
 			return false
 		}
@@ -429,6 +469,19 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 			expected = detailKeys(
 				"failure_code", "http_method", "original_event_id", "queue",
 				"reason_code", "replay_id", "route",
+			)
+		}
+		return sameDetailKeys(detail, expected) &&
+			detail["http_method"] == schema.method &&
+			detail["route"] == schema.route
+	}
+	if action == ActionKafkaDeadLetterReplay {
+		expected := schema.successKeys
+		if outcome == OutcomeFailure {
+			expected = detailKeys(
+				"consumer_group", "failure_code", "http_method", "offset",
+				"original_event_id", "partition", "reason_code", "replay_id",
+				"route", "source_offset", "source_partition", "source_topic", "topic",
 			)
 		}
 		return sameDetailKeys(detail, expected) &&

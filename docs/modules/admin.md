@@ -19,6 +19,9 @@
 | 已实现 | GET | `/api/admin/review/cases/{caseId}/preview-access` | 获取审核专用短期保护预览 | `review.read` |
 | 已实现 | POST/DELETE | `/api/admin/review/cases/{caseId}/claim`、`.../lease/*` | 开始、恢复、延长和放回审核任务 | `review.decide` |
 | 已实现 | POST | `/api/admin/review/cases/{caseId}/decision` | 幂等批准或拒绝 | `review.decide` |
+| 已实现 | GET | `/api/admin/kafka-dead-letters` | Kafka DLQ retained offset/age 摘要 | `governance.execute` |
+| 已实现 | GET | `/api/admin/kafka-dead-letters/{topic}/records` | 按 Partition/Offset 脱敏检查 | `governance.execute` |
+| 已实现 | POST | `/api/admin/kafka-dead-letters/{topic}/records/{partition}/{offset}/replay` | 幂等、非破坏的单 Record 审计重放 | `governance.execute` |
 | 规划中 | PATCH | `/api/admin/configs/{configKey}` | 发布配置修订 | `config.publish` |
 
 ## 3. 角色和权限

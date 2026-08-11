@@ -191,6 +191,12 @@ GORM Repository 规则：
   `internal/infra/kafka` 封闭注册表。业务代码不得接受任意 Topic/Group 字符串；Domain 不导入
   franz-go 类型。JSON Envelope 和 Payload 使用显式版本、严格未知字段/尾随数据校验及有界大小。
 - Kafka Producer 固定使用 idempotence、`acks=all`、有界 delivery deadline 和逐 Record 结果；
+  franz-go `ProducerBatchMaxBytesFn` 按解析后的注册 Topic 返回各自 broker 上限，未知 Topic 使用注册
+  Topic 中最小的保守上限；每次发布仍按目标 Topic 的
+  `MaxRecordBytes` 精确校验 key/value/Header。统一 headroom 计算在应用上限上增加 64 KiB 得到
+  broker `max.message.bytes`；recovery Topic 应用上限必须容纳 source broker 可接受的最大
+  key/value/envelope 再加有界 recovery Header，并再次增加同一 broker headroom。Recovery Producer
+  还必须独立拒绝超过 source broker 上限的原 Record，不能借用未使用的 Header 容量。
   Application 不在不确定结果后自行无界重发。Consumer 禁用 auto commit，按 Partition 顺序和有界
   并发处理，只在 durable-success 或注册 terminal 结果后显式提交 Offset；Commit 不确定必须结束
   当前 Session，由稳定 Event ID 和耐久幂等边界承受重投。
@@ -222,6 +228,36 @@ GORM Repository 规则：
 - `frux.media.processing-requested.v1` 只是不权威的短保留唤醒提示。Consumer 校验数据库任务并
   有界 signal 后立即提交，不得在 ffmpeg 期间持有 Offset；数据库租约、心跳、轮询与 reconciliation
   继续决定正确性。
+- Kafka retry Topic 只允许注册的事件投递 Consumer 使用。固定 delay tier 与 consumer-specific
+  DLQ 由 `internal/infra/kafka` 注册；下一跳 acknowledgement 前不得提交当前 Offset。单 Record
+  replay 使用 Topic/Partition/Offset、跨 pending/publish/finalize 的 PostgreSQL session advisory
+  lock、幂等键 SHA-256 和独立 `kafka_dead_letter.replay` 审计；pending claim 必须先提交，发布在
+  事务外进行，结果与 audit 在第二事务提交。共享 Source 的 Group 只重放到 owning Group 第一 retry
+  Topic；producer 返回 `ErrProduceUncertain`/`MayHaveAcknowledged` 或 acknowledgement 后 finalize
+  失败时必须保留 pending/unknown，同 key 重试只能在注册目标的
+  retention 窗口内按稳定 Replay ID 验证 immutable broker evidence，找到后提交结果与 audit。absence
+  必须等待 producer uncertainty window 结束后，在有界 settlement window 内重复 end-offset snapshot
+  和完整扫描；bounds 任意增长都重启 scan/stability，只有连续稳定 bounds + clean complete scans 才提交
+  bounded failure；不得再次发布，无法稳定、取消、证据过期、含无法排除的 malformed Record 或不可用时
+  继续 pending。保持 key/value 不变且不删除
+  DLQ Record。terminal contract 的 malformed key 只允许 direct-DLQ metadata codec 跳过已失败的 source
+  key-kind 校验，retry tier/replay 禁止使用。Retry `not_before` 只暂停对应 Partition；delayed Record
+  必须绑定 assignment generation，ready handling 到 Offset commit 全程持有 ownership lease。revoke/lost
+  若先发生则丢弃旧 state，若 handling 已取得 lease 则等待其提交或中止后再完成 revoke；旧 owner 禁止在
+  revoke 后提交，其他 Partition 继续 poll/process。媒体处理和未来
+  语义长任务在 durable handoff 后继续由 PostgreSQL job 恢复，禁止转入 Kafka retry Topic。
+  Handler 子依赖 deadline 在 Consumer context 有效时必须按 exhausted recovery 路由；只有 Consumer
+  context 自身取消才跳过。Retry metadata 无效必须将原 key/value 以 sanitized、non-replayable
+  quarantine metadata 发布到 owning DLQ，acknowledgement 后才提交，且 inspect 可见、replay 拒绝。
+  Brand-new retry Group 必须在 inactive admin boundary 中，以 environment/prefix/resolved Group/
+  versioned Topic 为 identity 取得 PostgreSQL session advisory lock，并先持久化非过期 marker 与
+  per-Partition retained-start plan。Kafka Commit 按 Partition 稳定顺序逐个提交、逐响应检查，并在
+  PostgreSQL 记录成功 Partition；partial failure 只续跑缺失项，fresh Kafka snapshot 验证完整后 marker
+  才能 complete。重启保留现有 Commit；仅当缺失 Offset 全部是既有连续 Partition 后新增的 trailing
+  Partition 时才扩展 marker。Complete marker 对应的 Group dead、Offset 缺失/删除/过期或 retained
+  range 外 Commit 必须按 data loss/offset fatal，禁止当作 brand-new 或用永久 `AtStart` 静默回绕。
+  Source/retry tier lag 与 session health 必须带注册 stage，并显式聚合 owning workflow，禁止
+  last-writer-wins 掩盖 source 或任一 tier 故障。
 - Media Kafka signal 与 polling 必须进入同一个有界 scheduler/worker pool，先占 slot 再 claim 一个
   job。每次 claim 使用唯一 token；heartbeat 与最终 transition 均按 token 与未过期 lease fencing。
   媒体 asset、variants、cleanup/job 最终状态必须在同一事务、验证 fence 后提交，public/notification

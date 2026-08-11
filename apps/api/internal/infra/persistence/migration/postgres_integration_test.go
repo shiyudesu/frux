@@ -32,6 +32,7 @@ import (
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
+	infrakafkafailure "github.com/shiyudesu/frux/internal/infra/persistence/kafkafailure"
 	infralibrary "github.com/shiyudesu/frux/internal/infra/persistence/library"
 	inframedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
 	inframessage "github.com/shiyudesu/frux/internal/infra/persistence/message"
@@ -210,6 +211,9 @@ func TestPostgreSQLMigration(t *testing.T) {
 		"account",
 		"account_profile_setting",
 		"admin_audit_event",
+		"kafka_failure_replay_attempt",
+		"kafka_retry_group_initialization",
+		"kafka_retry_group_initialization_partition",
 		"video_embedding",
 		"video",
 		"media_asset",
@@ -272,6 +276,9 @@ func TestPostgreSQLMigration(t *testing.T) {
 		{&infraadminaudit.EventModel{}, "idx_admin_audit_event_created_id"},
 		{&infraadminaudit.EventModel{}, "idx_admin_audit_event_actor_created"},
 		{&infraadminaudit.EventModel{}, "idx_admin_audit_event_target_created"},
+		{&infrakafkafailure.ReplayAttemptModel{}, "uk_kafka_failure_replay_actor_key"},
+		{&infrakafkafailure.ReplayAttemptModel{}, "idx_kafka_failure_replay_coordinate"},
+		{&infrakafkafailure.RetryGroupInitializationModel{}, "idx_kafka_retry_group_initialization_state"},
 		{&infravideo.VideoModel{}, "idx_video_timeline"},
 		{&infravideo.VideoModel{}, "idx_video_public_timeline"},
 		{&infravideo.PublicationEventFactModel{}, "idx_video_publication_fact_video"},

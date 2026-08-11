@@ -41,6 +41,7 @@ import (
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
 	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
 	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
+	infrakafkafailure "github.com/shiyudesu/frux/internal/infra/persistence/kafkafailure"
 	infrapersistencemedia "github.com/shiyudesu/frux/internal/infra/persistence/media"
 	inframessage "github.com/shiyudesu/frux/internal/infra/persistence/message"
 	migration "github.com/shiyudesu/frux/internal/infra/persistence/migration"
@@ -251,6 +252,27 @@ func startWorkers(
 	if err := actionWorker.Start(ctx); err != nil {
 		return err
 	}
+	retryOffsetStore := infrakafkafailure.NewRetryOffsetInitializationStore(gormDB)
+	kafkaStarter := func(
+		starterContext context.Context,
+		backbone *infrakafka.Backbone,
+		kafkaConfig infraconfig.KafkaConfig,
+		group infrakafka.ConsumerGroupID,
+		cutoverBoundary string,
+		handler applicationeventstream.Handler,
+		failures chan<- error,
+	) error {
+		return startKafkaConsumer(
+			starterContext,
+			backbone,
+			kafkaConfig,
+			group,
+			cutoverBoundary,
+			handler,
+			failures,
+			retryOffsetStore,
+		)
+	}
 
 	exposureRepo := infraexposure.New(gormDB)
 	viewPublisher, err := infrabehaviorstream.NewViewPublisher(
@@ -316,7 +338,7 @@ func startWorkers(
 		cfg.Kafka,
 		behaviorConsumers,
 		runtimeFailures,
-		startKafkaConsumer,
+		kafkaStarter,
 	); err != nil {
 		return err
 	}
@@ -546,7 +568,7 @@ func startWorkers(
 		cfg.Kafka,
 		videoConsumers,
 		runtimeFailures,
-		startKafkaConsumer,
+		kafkaStarter,
 	)
 }
 
@@ -792,6 +814,7 @@ func startKafkaConsumer(
 	cutoverBoundary string,
 	handler applicationeventstream.Handler,
 	runtimeFailures chan<- error,
+	retryOffsetStore infrakafka.RetryOffsetInitializationStore,
 ) error {
 	observer := inframetrics.KafkaObserver{}
 	if cutoverBoundary != "" {
@@ -799,11 +822,83 @@ func startKafkaConsumer(
 			ctx, group, cutoverBoundary, infrakafka.CutoverInitializeOnly,
 		)
 		if err != nil {
-			observer.ObserveConsumerSession(group, "fatal_failure")
+			observer.ObserveConsumerSession(
+				group, infrakafka.ConsumerStageSource, "fatal_failure",
+			)
 			return err
 		}
 		log.Printf("kafka consumer %s cutover offsets: %s", group, result)
 	}
+	if err := startKafkaConsumerInstance(
+		ctx,
+		cfg,
+		group,
+		infrakafka.ConsumerStageSource,
+		runtimeFailures,
+		func(sessionContext context.Context) (*infrakafka.Consumer, error) {
+			return infrakafka.NewConsumer(
+				sessionContext,
+				cfg,
+				group,
+				handler,
+				observer,
+				infrakafka.WithRetryOffsetInitializationStore(retryOffsetStore),
+			)
+		},
+		observer,
+	); err != nil {
+		return err
+	}
+	groupSpec, err := infrakafka.ConsumerGroup(group)
+	if err != nil {
+		return err
+	}
+	if groupSpec.Shadow {
+		return nil
+	}
+	recovery, err := infrakafka.Recovery(group)
+	if err != nil {
+		return err
+	}
+	if recovery.Policy != infrakafka.RecoveryRetryTopics {
+		return nil
+	}
+	for _, tier := range recovery.RetryTiers {
+		tier := tier
+		if err := startKafkaConsumerInstance(
+			ctx,
+			cfg,
+			group,
+			infrakafka.ConsumerStage("retry_"+tier.Label),
+			runtimeFailures,
+			func(sessionContext context.Context) (*infrakafka.Consumer, error) {
+				return infrakafka.NewRetryTierConsumer(
+					sessionContext,
+					cfg,
+					group,
+					tier.Tier,
+					handler,
+					observer,
+					infrakafka.WithRetryOffsetInitializationStore(retryOffsetStore),
+				)
+			},
+			observer,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func startKafkaConsumerInstance(
+	ctx context.Context,
+	cfg infraconfig.KafkaConfig,
+	group infrakafka.ConsumerGroupID,
+	stage infrakafka.ConsumerStage,
+	runtimeFailures chan<- error,
+	newConsumer infrakafka.ConsumerFactory,
+	observer inframetrics.KafkaObserver,
+) error {
 	assignmentTimeout, err := time.ParseDuration(cfg.Consumer.AssignmentTimeout)
 	if err != nil || assignmentTimeout <= 0 {
 		return fmt.Errorf("%w: invalid assignment timeout", infrakafka.ErrConsumerConfiguration)
@@ -812,16 +907,8 @@ func startKafkaConsumer(
 	ready := make(chan struct{})
 	supervisorDone := make(chan error, 1)
 	supervisor := infrakafka.Supervisor{
-		Group: group, Observer: observer, Ready: ready,
-		NewConsumer: func(sessionContext context.Context) (*infrakafka.Consumer, error) {
-			return infrakafka.NewConsumer(
-				sessionContext,
-				cfg,
-				group,
-				handler,
-				observer,
-			)
-		},
+		Group: group, Stage: stage, Observer: observer, Ready: ready,
+		NewConsumer: newConsumer,
 	}
 	go func() {
 		err := supervisor.Run(consumerCtx)

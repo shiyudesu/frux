@@ -7,9 +7,10 @@ registries, strict JSON contracts, franz-go clients, explicit offset commits, mi
 metrics, diagnostics, and local KRaft provisioning.
 
 Business streams include behavior events, the retained video-publication fact, and media-processing
-wakeup commands. RabbitMQ remains available
-as primary/mirror and rollback transport. This foundation does **not** remove AMQP, provide
-cross-system exactly-once semantics, or add retry topics, DLQ inspection, replay, Kafka Connect, CDC,
+wakeup commands. RabbitMQ remains available as primary/mirror and rollback transport. Kafka now has
+a separate native failure-recovery surface with registered retry tiers, immutable consumer-specific
+DLQs, offset inspection, and audited non-destructive single-record replay. It does **not** remove
+AMQP, provide cross-system exactly-once semantics, arbitrary Kafka browsing, Kafka Connect, CDC,
 Flink, or a schema registry.
 
 ## Configuration
@@ -82,6 +83,56 @@ Feed commits after idempotent preheat/index work. Embedding commits after condit
 `media_processing_job`, signal bounded local scheduling, and commit without waiting for ffmpeg.
 PostgreSQL polling and reconciliation remain the media correctness path.
 
+## Failure recovery
+
+Only registered event-delivery consumers may use Kafka retry Topics. Feed and embedding each own
+fixed 5s, 30s, 2m, 10m, and 30m tiers plus a 30-day DLQ. A Consumer acknowledges the current Record
+only after durable handler success or acknowledged publication to its registered next hop. Moving a
+Record to retry breaks source Partition ordering; stable Event IDs and business versions make
+duplicates and late delivery safe.
+
+The producer uses franz-go `ProducerBatchMaxBytesFn` to apply each resolved registered Topic's broker
+limit; unknown Topics receive the smallest registered conservative bound. It also checks key, value,
+and headers against the exact destination `MaxRecordBytes` before every publish.
+One shared calculation adds 64 KiB of broker batch/protocol headroom to an application Topic limit.
+Recovery Topics reserve the full source broker allowance plus bounded recovery headers, then add the
+same broker headroom to their own `max.message.bytes`. Recovery publication independently rejects
+source key/value bytes above the source broker maximum. Thus an application-oversized poison record
+that the source broker accepted can reach DLQ unchanged, while a record above that broker limit cannot
+borrow unused header capacity. The calculation applies equally to video and smaller registered Topics.
+
+A brand-new retry consumer group is initialized before joining. A PostgreSQL advisory lock protects a
+non-expiring marker keyed by environment, prefix, resolved group, versioned Topic, and marker version.
+The inactive-group plan is durable before Kafka commits; partitions commit in deterministic order,
+per-partition responses are checked, and acknowledged partitions are persisted so partial initialization
+resumes only missing work. A fresh Kafka snapshot completes the marker. Retry consumers then use
+committed-only `NoResetOffset`. Once complete, a dead group or missing/deleted/expired/out-of-range
+established offset fails visibly as data loss and is never treated as a new group. Only new trailing
+partitions extend the marker.
+
+Media processing and future semantic long-running work remain PostgreSQL jobs. Kafka may wake a
+durable job, but failures after handoff use job lease/retry/reconciliation rather than Kafka retry
+Topics.
+
+A handler dependency deadline is a retryable failure while the Consumer context remains active; only
+the Consumer context's own cancellation bypasses recovery routing. Invalid or obsolete retry metadata
+is quarantined to the owning DLQ with unchanged key/value, consumed retry coordinates, bounded hashes,
+`failure_class=recovery_metadata_invalid`, and `non_replayable=true`. The retry offset advances only
+after that quarantine publication is acknowledged, and operator replay rejects the record.
+
+Operators use `/api/admin/kafka-dead-letters` and exact Topic/Partition/Offset reads. Replay keeps
+the DLQ Record retained, validates registry provenance, event contract and payload SHA-256, then
+commits a pending claim and republishes unchanged key/value outside that transaction with a new
+Replay ID to the owning group's first retry tier. The replay ledger stores only the idempotency-key
+SHA-256 fingerprint; possibly acknowledged publications and acknowledged publications whose
+finalize/audit transaction fails remain pending/unknown. Repeating the identical authorized request
+verifies the stable Replay ID only in the registry destination's retained window, finalizes success
+plus audit when found, or records a bounded absence failure only after the producer uncertainty window
+and repeated complete scans observe stable retained bounds. Any growth restarts scanning and settlement.
+Malformed, expired, canceled, unstable, incomplete, or unavailable evidence remains pending; reconciliation never republishes the
+claim. Detailed topology sizing, incident and expiry procedures are in
+[Kafka failure recovery](modules/kafka-failure-recovery.md).
+
 ## Contracts and topology
 
 Every record uses a registered Topic, Producer, Consumer Group, Event Type, Schema Version, and Key
@@ -110,8 +161,10 @@ including `CreateTime`.
 - Rebalance timeout covers handler cancellation and offset commit; a blocked rebalance cancels the current batch before partition ownership is released.
 - franz-go data-loss notifications are recorded as bounded metrics and stop the active consumer before any accompanying records are processed or committed.
 - Worker processes continuously probe Kafka health so broker failure and recovery update the exported health gauge after startup.
-- Consumer supervisors export bounded session lifecycle counters and a per-registered-group health
-  gauge. Transient broker/session failures restart with bounded backoff; authentication,
+- Consumer supervisors export bounded stage (`source` or registered retry tier) lifecycle, lag, and
+  health series plus owning-workflow lag/health aggregation. An idle retry tier cannot overwrite source
+  lag or source health, and one failed tier does not affect unrelated groups. Transient broker/session
+  failures restart with bounded backoff; authentication,
   configuration, and handler-contract failures stop a required active consumer and fail the worker
   runtime visibly.
 - Shadow parity reports a missing durable fact as pending, retries it three times with a delayed

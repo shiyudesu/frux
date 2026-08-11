@@ -94,6 +94,10 @@ func clientOptions(cfg infraconfig.KafkaConfig) ([]kgo.Opt, error) {
 	if err != nil {
 		return nil, err
 	}
+	batchMaxBytes, err := producerBatchMaxBytesFn(cfg.TopicPrefix)
+	if err != nil {
+		return nil, err
+	}
 	options := []kgo.Opt{
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.ClientID(cfg.ClientID),
@@ -104,7 +108,7 @@ func clientOptions(cfg infraconfig.KafkaConfig) ([]kgo.Opt, error) {
 		kgo.RecordDeliveryTimeout(produceTimeout),
 		kgo.ProduceRequestTimeout(produceTimeout),
 		kgo.AllowIdempotentProduceCancellation(),
-		kgo.ProducerBatchMaxBytes(producerBatchMaxBytes()),
+		kgo.ProducerBatchMaxBytesFn(batchMaxBytes),
 	}
 
 	switch cfg.Authentication.Mechanism {
@@ -134,18 +138,29 @@ func clientOptions(cfg infraconfig.KafkaConfig) ([]kgo.Opt, error) {
 	return options, nil
 }
 
-func producerBatchMaxBytes() int32 {
-	var minimum int
+func producerBatchMaxBytesFn(prefix string) (func(string) int32, error) {
+	limits := make(map[string]int32, len(Topics()))
+	var conservative int32
 	for _, topic := range Topics() {
-		limit := brokerMaxMessageBytes(topic)
-		if minimum == 0 || limit < minimum {
-			minimum = limit
+		name, err := TopicName(prefix, topic.ID)
+		if err != nil {
+			return nil, err
+		}
+		limit := int32(brokerMaxMessageBytes(topic))
+		limits[name] = limit
+		if conservative == 0 || limit < conservative {
+			conservative = limit
 		}
 	}
-	if minimum <= 0 {
-		minimum = 1 << 20
+	if conservative < 512 {
+		conservative = 512
 	}
-	return int32(minimum)
+	return func(topic string) int32 {
+		if limit, ok := limits[topic]; ok {
+			return limit
+		}
+		return conservative
+	}, nil
 }
 
 func loadTLSConfig(cfg infraconfig.KafkaTLSConfig) (*tls.Config, error) {

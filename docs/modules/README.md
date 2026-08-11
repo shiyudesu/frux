@@ -24,6 +24,7 @@
 | 体验 | 播放优化 | [playback.md](playback.md) | 已实现 |
 | 稳定性 | 系统治理 | [governance.md](governance.md) | 部分实现（运行时降级控制和分层限流已实现） |
 | 稳定性 | 分层请求限流 | [rate-limiting.md](rate-limiting.md) | 已实现 |
+| 稳定性 | Kafka 故障恢复 | [kafka-failure-recovery.md](kafka-failure-recovery.md) | 已实现 |
 | 稳定性 | 监控告警 | [monitoring.md](monitoring.md) | 部分实现（Prometheus、告警和 Grafana 已实现） |
 
 ## 模块文档模板
