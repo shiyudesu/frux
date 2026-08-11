@@ -1,3 +1,6 @@
+# LOCAL DEVELOPMENT ONLY.
+# Services bind to loopback, but credentials below are predictable defaults.
+# Replace them before using this stack on any shared or remote host.
 services:
   postgres:
     image: postgres:17.5-alpine
@@ -5,9 +8,9 @@ services:
     environment:
       POSTGRES_DB: frux
       POSTGRES_USER: frux
-      POSTGRES_PASSWORD: sealos123
+      POSTGRES_PASSWORD: password
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -68,8 +71,8 @@ services:
       MINIO_ROOT_PASSWORD: frux-secret
       MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:5173,http://localhost:5173"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -116,7 +119,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./api/configs/config.docker.yaml:/app/configs/config.yaml:ro
       - api_uploads:/app/uploads
@@ -162,7 +165,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     networks:
       default:
         ipv4_address: 172.31.250.10
@@ -174,7 +177,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerts:/etc/prometheus/alerts:ro
@@ -189,7 +192,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin

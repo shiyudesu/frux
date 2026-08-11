@@ -12,7 +12,7 @@ database:
   host: "postgres"
   port: 5432
   user: "frux"
-  password: "sealos123"
+  password: "password"
   name: "frux"
   ssl_mode: "disable"
   time_zone: "UTC"

@@ -1,5 +1,36 @@
 .DS_Store
-apps/api/uploads/*
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Editor and temporary files
+.idea/
+.vscode/
+*.log
+*.tmp
+*.swp
+*~
+*.orig
+*.rej
+
+# Test and build artifacts
+coverage/
+coverage.out
+*.coverprofile
+*.test
+node_modules/
+dist/
+.vite/
+
+apps/api/uploads/
 apps/api/feed
 apps/api/worker
 .clone-ui/

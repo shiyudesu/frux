@@ -1,3 +1,7 @@
+# LOCAL DEVELOPMENT EXAMPLE ONLY.
+# This manifest uses placeholder secrets, single replicas, plaintext Kafka,
+# local provisioning, and no TLS. Do not apply it to a production cluster
+# without replacing those defaults and reviewing docs/deployment.md.
 apiVersion: v1
 kind: Namespace
 metadata:
