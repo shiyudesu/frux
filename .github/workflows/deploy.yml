@@ -1,0 +1,162 @@
+name: Publish Prod
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-publication
+  cancel-in-progress: false
+
+jobs:
+  build-images:
+    name: Build application images
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api_digest: ${{ steps.api.outputs.digest }}
+      web_digest: ${{ steps.web.outputs.digest }}
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      API_IMAGE: ghcr.io/shiyudesu/frux-api
+      WEB_IMAGE: ghcr.io/shiyudesu/frux-web
+
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push API image
+        id: api
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: apps/api
+          file: apps/api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.API_IMAGE }}:${{ env.RELEASE_SHA }}
+            ${{ env.API_IMAGE }}:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+          provenance: mode=max
+          sbom: true
+
+      - name: Build and push Web image
+        id: web
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: apps/web
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.WEB_IMAGE }}:${{ env.RELEASE_SHA }}
+            ${{ env.WEB_IMAGE }}:latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+          provenance: mode=max
+          sbom: true
+
+  promote-prod:
+    name: Approve Prod release
+    needs:
+      - build-images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      API_IMAGE: ghcr.io/shiyudesu/frux-api
+      WEB_IMAGE: ghcr.io/shiyudesu/frux-web
+      DEPLOY_IMAGE: ghcr.io/shiyudesu/frux-deploy
+      API_DIGEST: ${{ needs.build-images.outputs.api_digest }}
+      WEB_DIGEST: ${{ needs.build-images.outputs.web_digest }}
+
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and promote deployment bundle
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$API_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$WEB_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          context="$RUNNER_TEMP/frux-deploy"
+          bundle="$context/bundle"
+          mkdir -p "$bundle/apps/api/configs" "$bundle/scripts"
+
+          cp apps/docker-compose.prod.yml "$bundle/apps/"
+          cp apps/.env.prod.example "$bundle/apps/"
+          cp apps/api/configs/config.prod.yaml "$bundle/apps/api/configs/"
+          cp scripts/postgres-backup.sh "$bundle/scripts/"
+
+          cat >"$bundle/apps/.env.release" <<EOF
+          FRUX_API_IMAGE=${API_IMAGE}@${API_DIGEST}
+          FRUX_WEB_IMAGE=${WEB_IMAGE}@${WEB_DIGEST}
+          FRUX_RELEASE_SHA=${RELEASE_SHA}
+          EOF
+
+          (
+            cd "$bundle"
+            find apps scripts -type f -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 sha256sum >manifest.sha256
+          )
+
+          cat >"$context/Dockerfile" <<'EOF'
+          FROM alpine:3.22
+          COPY bundle /bundle
+          EOF
+
+          docker buildx build \
+            --file "$context/Dockerfile" \
+            --tag "${DEPLOY_IMAGE}:${RELEASE_SHA}" \
+            --tag "${DEPLOY_IMAGE}:prod" \
+            --label "org.opencontainers.image.revision=${RELEASE_SHA}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --provenance=mode=max \
+            --sbom=true \
+            --push \
+            "$context"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check GHCR hourly for an approved Frux Prod release
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+Unit=frux-deploy.service
+
+[Install]
+WantedBy=timers.target
