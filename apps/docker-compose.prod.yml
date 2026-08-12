@@ -69,12 +69,7 @@ services:
       - backend
 
   api:
-    image: frux-api:${FRUX_IMAGE_TAG:-latest}
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-      args:
-        GOPROXY: https://goproxy.cn,direct
+    image: ${FRUX_API_IMAGE:?load .env.release}
     environment: &app-environment
       FRUX_JWT_SECRET: ${FRUX_JWT_SECRET:?set FRUX_JWT_SECRET}
       FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN}
@@ -107,7 +102,7 @@ services:
       backend:
 
   worker:
-    image: frux-api:${FRUX_IMAGE_TAG:-latest}
+    image: ${FRUX_API_IMAGE:?load .env.release}
     profiles: ["worker"]
     command: ["./frux-worker"]
     environment:
@@ -132,10 +127,7 @@ services:
       - backend
 
   web:
-    image: frux-web:${FRUX_IMAGE_TAG:-latest}
-    build:
-      context: ./web
-      dockerfile: Dockerfile
+    image: ${FRUX_WEB_IMAGE:?load .env.release}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
       interval: 10s
@@ -165,6 +157,12 @@ services:
       - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     restart: unless-stopped
     networks:
       frontend:

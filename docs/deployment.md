@@ -38,6 +38,10 @@ API 凭据需要 Put/Head/Get，Worker 另需 List/Delete；浏览器只获得�
 使用 `apps/docker-compose.prod.yml`、`apps/api/configs/config.prod.yaml` 和 `.env.prod`。
 该简单方案运行单PostgreSQL、Redis和Kafka，不具备高可用或生产级Kafka安全。
 
+Prod服务器不Clone仓库。GitHub Actions在CI通过后构建API/Web镜像，经过 `production` Environment
+人工批准后发布公开的GHCR部署包。服务器不接收部署SSH或Webhook，而是通过systemd每小时主动检查，
+验证部署包后执行 `docker compose pull` 和更新。
+
 不得让使用不同PostgreSQL数据库的两套API/Worker同时连接同一个 `frux1`，也不得把已有对象的
 Bucket直接连接到空数据库后启动Worker。
 

@@ -68,7 +68,7 @@ moderation/*  私有
 
 ## 4. 填写两个 Key
 
-在服务器的 `apps/.env.prod` 中填写：
+在服务器的 `/opt/frux/.env.prod` 中填写：
 
 ```dotenv
 FRUX_S3_ACCESS_KEY=你的AccessKey
