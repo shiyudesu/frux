@@ -43,11 +43,36 @@ curl -i -X OPTIONS \
 
 雨云允许所有Origin跨域调用，但上传URL仍是Frux API签发的短期单对象URL。不要泄露签名URL。
 
-## 3. 只公开 `media/*`
+## 3. `media/*` 公开读取需要先验证
 
-Bucket 仍然保持私有，只让已经发布的视频文件可以被浏览器读取。
+雨云面板目前没有Bucket Policy入口。`cn-zj1.rains3.com` 会响应S3的 `?policy` 请求，但未登录时只会
+返回403，这不能证明雨云允许你的账号写入Bucket Policy。
 
-如果雨云控制台有“Bucket 策略”或“自定义策略”，填入：
+在确认之前：
+
+- `frux1` 保持私有。
+- 不要点击整个Bucket公共读。
+- 不要把下面的策略当成已经支持。
+- Prod公开视频播放仍属于上线阻塞项。
+
+需要使用Bucket所有者的AccessKey，通过S3 API执行：
+
+```bash
+aws --endpoint-url https://cn-zj1.rains3.com \
+  s3api get-bucket-policy \
+  --bucket frux1
+```
+
+结果判断：
+
+| 结果 | 含义 |
+| --- | --- |
+| `NoSuchBucketPolicy` | 接口可用，只是还没有策略 |
+| 返回Policy JSON | 接口可用，Bucket已有策略 |
+| `NotImplemented` | 雨云未开放该能力 |
+| 使用Bucket所有者Key仍返回 `AccessDenied` | 凭据权限不足或雨云限制了该接口 |
+
+只有确认 `get-bucket-policy` 可用后，才尝试应用：
 
 ```json
 {
@@ -63,17 +88,26 @@ Bucket 仍然保持私有，只让已经发布的视频文件可以被浏览器�
 }
 ```
 
-配置后应该是：
+应用命令：
 
-```text
-media/*       可以公开读取
-uploads/*     私有
-processed/*   私有
-moderation/*  私有
+```bash
+aws --endpoint-url https://cn-zj1.rains3.com \
+  s3api put-bucket-policy \
+  --bucket frux1 \
+  --policy file://rainyun-media-policy.json
 ```
 
-如果控制台只有“整个 Bucket 公共读”按钮，不要点。需要通过 S3 Bucket Policy 或只开放
-`media/*` 的 CDN 来处理。
+应用后必须实际验证：
+
+```text
+media/*       匿名访问成功
+uploads/*     匿名访问失败
+processed/*   匿名访问失败
+moderation/*  匿名访问失败
+```
+
+如果Policy接口不可用，只能改用支持前缀限制的CDN、对象级ACL或拆分公有/私有Bucket。当前Frux没有
+实现这些替代方案，不能退化成整个 `frux1` 公共读。
 
 ## 4. 填写两个 Key
 
