@@ -63,7 +63,7 @@ kafka:
 media:
   backend: "s3"
   local_root: "./uploads"
-  public_base_url: "https://cn-zj1.rains3.com/frux1"
+  public_base_url: "https://${FRUX_DOMAIN}/media"
   signed_url_ttl: "15m"
   upload_session_ttl: "15m"
   processing:

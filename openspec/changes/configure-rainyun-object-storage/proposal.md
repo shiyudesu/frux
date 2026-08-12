@@ -8,7 +8,7 @@ Frux currently uses the bundled MinIO service for local Docker Compose developme
 - Add a production Compose override that injects Rainyun credentials through environment variables and mounts the production configuration.
 - Preserve the existing default Compose configuration, bundled MinIO services, MinIO initialization, local credentials, and local browser CORS unchanged.
 - Document and verify Rainyun's provider-wide wildcard CORS behavior for browser direct upload.
-- Keep the bucket private and document a prefix-scoped public-read policy for promoted `media/*` objects only.
+- Keep the entire bucket private and deliver promoted public media through a Frux authorization endpoint that redirects to short-lived Rainyun signed GET URLs.
 - Validate the production override, direct upload, checksum metadata, media processing, protected access, and public playback independently from the existing local MinIO workflow.
 
 ## Capabilities
@@ -19,11 +19,11 @@ None.
 
 ### Modified Capabilities
 
-- `production-media-delivery`: Define a production-only external S3-compatible deployment, credential, browser-origin, public-prefix, and verification contract while retaining MinIO for local development.
+- `production-media-delivery`: Define a production-only external S3-compatible deployment, credential, browser upload, private-bucket public redirect, and verification contract while retaining MinIO for local development.
 
 ## Impact
 
 - Affected configuration: a new production API configuration and production Compose override; existing local Docker configuration remains unchanged.
-- Affected operations: Rainyun gateway CORS verification and prefix-scoped anonymous read policy.
+- Affected operations: Rainyun gateway CORS verification and Frux-authorized public-media redirects.
 - Affected runtime systems: production API direct upload, production Worker media processing and cleanup, and production browser playback.
 - No HTTP API or database schema changes are expected.

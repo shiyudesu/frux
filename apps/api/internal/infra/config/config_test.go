@@ -333,6 +333,7 @@ func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 
 func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 	environment := map[string]string{
+		"FRUX_DOMAIN":            "frux.example.com",
 		"FRUX_JWT_SECRET":        "prod-jwt-secret",
 		"FRUX_INTERNAL_TOKEN":    "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y",
 		"FRUX_POSTGRES_USER":     "frux",
@@ -357,7 +358,7 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 		!cfg.Media.Processing.DisableOrphanCleanup {
 		t.Fatalf("prod media config = %+v", cfg.Media)
 	}
-	if cfg.Media.PublicBaseURL != "https://cn-zj1.rains3.com/frux1" ||
+	if cfg.Media.PublicBaseURL != "https://frux.example.com/media" ||
 		cfg.Database.Host != "postgres" ||
 		cfg.Redis.Addr != "redis:6379" ||
 		cfg.Kafka.Environment != "local" ||

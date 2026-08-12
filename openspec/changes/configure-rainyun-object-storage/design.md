@@ -14,7 +14,7 @@ The production Web origin and CDN/custom media domain do not exist yet. AccessKe
 - Add a separate production configuration for Rainyun bucket `frux1`.
 - Add a separate production Compose definition that selects the production configuration and requires deployment secrets.
 - Preserve separate server, browser-presign, and public-media URL semantics.
-- Keep protected prefixes private while allowing anonymous reads only from promoted `media/*`.
+- Keep every Rainyun object private while delivering eligible public media through authorized signed redirects.
 - Verify Rainyun support for the exact checksum, metadata, HEAD, listing, deletion, Range, and cache behavior Frux uses before production rollout.
 
 **Non-Goals:**
@@ -49,9 +49,9 @@ Production PostgreSQL, Redis, Kafka, JWT, internal token, and related security v
 
 ### Separate upload, presign, and public delivery addresses
 
-The Rainyun server and browser-presign endpoints remain `https://cn-zj1.rains3.com`. Until a CDN or custom domain exists, the production public media base is `https://cn-zj1.rains3.com/frux1`, matching path-style object URLs.
+The Rainyun server and browser-presign endpoints remain `https://cn-zj1.rains3.com`. The production public media base is `https://${FRUX_DOMAIN}/media`; the resolver appends promoted object keys and produces stable application URLs such as `/media/media/v2/...`.
 
-The public base can later change independently to a production CDN/custom domain without changing storage object keys.
+Storage URLs remain private implementation details. A future CDN can replace the signed redirect target without changing object keys or public application URLs.
 
 ### Accept and verify Rainyun gateway CORS
 
@@ -59,39 +59,46 @@ Rainyun does not expose Bucket-level CORS controls in its current panel. The `cn
 
 No provider-side CORS mutation is required. Deployment documentation records the observed behavior and a repeatable OPTIONS check. Browser upload security continues to rely on the authenticated Frux API issuing short-lived, single-object presigned URLs with signed checksum and metadata headers.
 
-### Keep protected prefixes private
+### Keep the whole bucket private and redirect eligible public reads
 
-The bucket remains private by default. A provider-side S3 bucket policy will grant anonymous `s3:GetObject` only for `arn:aws:s3:::frux1/media/*`. Prefixes such as uploads, protected processed outputs, moderation samples, and other non-promoted objects remain private.
+Rainyun's published management API exposes only a Bucket-wide anonymous-access toggle. It does not expose prefix-scoped public access. Frux therefore does not enable anonymous access on `frux1`.
 
-If Rainyun rejects prefix-scoped bucket policy operations, production rollout stops before enabling bucket-wide public access. The fallback choices are a CDN/origin policy that exposes only `media/*` or a separate design change; making the whole bucket public is not an acceptable shortcut.
+Production `public_base_url` points to `https://${FRUX_DOMAIN}/media`. Public object URLs remain stable Frux URLs. For GET or HEAD, the API:
+
+1. validates the object key and `media/` prefix;
+2. asks the video repository whether that exact promoted object is currently public;
+3. serves DASH MPD manifests and HEAD metadata from the stable Frux URL so relative segment URLs remain on the Frux origin;
+4. creates a Rainyun presigned GET lasting no more than 60 seconds for MP4 and DASH segment GET requests;
+5. returns a no-store `307 Temporary Redirect`, preserving Range headers.
+
+The signed Rainyun GET overrides response caching to `private, no-store`. The browser downloads MP4 and segment bytes from Rainyun, so the VPS handles authorization, small manifests, HEAD metadata, and redirects rather than video bandwidth. Originals, protected outputs, moderation samples, and unknown public keys never receive redirects.
 
 ### Validate production independently from local development
 
 Local validation continues to use MinIO and must remain green. Rainyun compatibility validation uses the production configuration and operator-supplied deployment secrets without printing credentials or signed URLs.
 
-The production browser flow must receive a direct upload session, pass CORS preflight from the eventual production origin, complete the signed PUT with checksum and custom metadata, and complete the session after `HeadObject`. Worker validation must confirm source read, processed object write, list/delete permissions, baseline readiness, public Range/HEAD/ETag behavior, and protected signed GET.
+The production browser flow must receive a direct upload session, pass CORS preflight, complete the signed PUT with checksum and custom metadata, and complete the session after `HeadObject`. Worker validation must confirm source read, processed object write, list/delete permissions, and baseline readiness. Public playback validation must traverse the stable Frux URL, public authorization, 307 redirect, signed Rainyun GET, Range, HEAD, and ETag behavior.
 
 ## Risks / Trade-offs
 
 - [Rainyun wildcard CORS permits requests from any browser origin] → Keep presigned URLs short-lived and object-scoped, never expose storage credentials, and treat signed URL leakage as credential leakage.
 - [Rainyun may not support `x-amz-checksum-sha256` exactly as AWS S3 does] → Run a real production-config upload-session test before rollout and do not weaken checksum verification silently.
-- [Rainyun may expose only bucket-wide public ACL in its UI] → Use S3 bucket policy or a prefix-restricted CDN; never enable bucket-wide public read.
+- [Every public media object request requires API authorization] → Keep the check indexed and lightweight; Rainyun still serves MP4 and segment bytes and Range traffic.
 - [A separate production configuration can drift from the local template] → Document shared fields and validate both configurations whenever configuration structure changes.
 - [Both production API and Worker receive one shared credential] → Use the narrowest bucket-scoped credential Rainyun supports; split credentials later if provider and deployment configuration allow it.
-- [Public playback has no CDN initially] → Use the Rainyun path-style public base URL with Frux's existing 60-second revalidation contract, then replace it with a CDN/custom domain later.
+- [Signed Rainyun URLs appear in browser network logs] → Keep TTL short, issue them only after current public authorization, and treat them as temporary credentials.
 
 ## Migration Plan
 
 1. Leave the existing local Compose and MinIO configuration unchanged.
 2. Add a secret-free production configuration template and separate production Compose definition.
 3. Supply Rainyun and other production secrets only through the deployment environment.
-4. Apply prefix-scoped public-read policy to `media/*`.
+4. Keep `frux1` private and configure the public base URL to the Frux `/media` route.
 5. Verify the Rainyun gateway preflight response for Frux's signed PUT headers.
-6. Validate Rainyun direct upload, processing, protected access, and public playback through the production configuration.
+6. Validate Rainyun direct upload, processing, protected access, authorized public redirect, and playback.
 7. If any provider contract fails, do not deploy the production definition; local MinIO development remains unaffected.
 
 ## Open Questions
 
-- Does Rainyun accept AWS S3 `PutBucketPolicy` with the `arn:aws:s3:::frux1/media/*` resource form?
 - Does Rainyun preserve `x-amz-meta-sha256` and expose the checksum fields required by Frux `HeadObject` validation?
-- Does the Rainyun public path preserve Range, HEAD, ETag, and Frux's object Cache-Control metadata without rewriting?
+- Does Rainyun's signed GET preserve Range, HEAD, ETag, and object Cache-Control behavior through browser redirects?

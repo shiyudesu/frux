@@ -30,20 +30,28 @@ The deployment SHALL verify that Rainyun's provider-managed wildcard CORS respon
 - **WHEN** another browser origin obtains an unexpired presigned PUT URL
 - **THEN** the URL is treated as a temporary credential limited to its signed object, headers, checksum, and expiry
 
-### Requirement: Prefix-Scoped Public Media Access
-The Rainyun bucket SHALL remain private by default and SHALL grant anonymous object reads only for promoted objects under `media/*`.
+### Requirement: Private-Bucket Public Media Redirect
+The Rainyun bucket SHALL remain private, and Frux SHALL serve stable public-media application URLs that authorize each promoted object. Frux SHALL serve DASH manifests and HEAD metadata from the stable URL and SHALL redirect media-byte GET requests to a Rainyun presigned GET lasting no more than 60 seconds.
 
 #### Scenario: Public promoted media is requested
-- **WHEN** a browser requests an eligible promoted object through `https://cn-zj1.rains3.com/frux1/media/...`
-- **THEN** Rainyun returns the object with Range, HEAD, ETag, and bounded revalidation cache behavior
+- **WHEN** a browser requests a currently eligible promoted `media/*` object through the Frux public media route
+- **THEN** Frux returns a no-store temporary redirect to a short-lived signed Rainyun URL and the browser can use Range and ETag behavior
+
+#### Scenario: DASH manifest is requested
+- **WHEN** a browser requests an eligible MPD manifest
+- **THEN** Frux serves the small authorized manifest from the stable application URL so relative segment requests return through Frux authorization
+
+#### Scenario: Public object metadata is requested
+- **WHEN** a browser sends HEAD for an eligible public object
+- **THEN** Frux returns authorized content type, content length, ETag, Range support, and bounded cache metadata without exposing a storage URL
 
 #### Scenario: Protected object is requested anonymously
-- **WHEN** an unauthenticated caller requests an original upload, protected processed output, moderation sample, or any object outside `media/*`
-- **THEN** Rainyun denies access without revealing storage credentials
+- **WHEN** an unauthenticated caller requests an original upload, protected output, moderation sample, unknown key, or public-ineligible media object
+- **THEN** Frux denies the request and issues no signed URL
 
-#### Scenario: Provider cannot enforce prefix policy
-- **WHEN** Rainyun cannot apply or verify anonymous read restricted to `media/*`
-- **THEN** production deployment SHALL NOT enable bucket-wide public read or proceed until a safe delivery design exists
+#### Scenario: Video becomes public-ineligible
+- **WHEN** a previously public video's stable media URL is requested after it becomes private, offline, rejected, deleted, or failed
+- **THEN** Frux denies a new redirect while previously issued signed URLs expire within their bounded lifetime
 
 ### Requirement: Rainyun Provider Contract Verification
 The Rainyun rollout SHALL verify the exact S3 operations and metadata semantics required by Frux before the external storage migration is considered complete.
@@ -57,7 +65,7 @@ The Rainyun rollout SHALL verify the exact S3 operations and metadata semantics 
 - **THEN** Worker can read the source, write and verify outputs, list and delete scoped objects, and publish a playable baseline
 
 #### Scenario: Provider contract is incompatible
-- **WHEN** checksum, custom metadata, signed request, listing, deletion, Range, HEAD, ETag, or cache behavior is incompatible
+- **WHEN** checksum, custom metadata, signed PUT/GET, listing, deletion, redirect, Range, HEAD, ETag, or cache behavior is incompatible
 - **THEN** production rollout fails explicitly without changing or weakening the default local MinIO workflow
 
 ### Requirement: Secret-Safe Production Storage Configuration

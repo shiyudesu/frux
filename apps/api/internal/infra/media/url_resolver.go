@@ -2,12 +2,15 @@ package inframedia
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
 
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
+
+var ErrInvalidPublicBaseURL = errors.New("invalid public media base URL")
 
 type URLResolver struct {
 	publicBaseURL string
@@ -17,10 +20,22 @@ type URLResolver struct {
 func NewURLResolver(publicBaseURL string, store domainmedia.MediaObjectStore) (*URLResolver, error) {
 	publicBaseURL = strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
 	if publicBaseURL == "" || store == nil {
-		return nil, domainmedia.ErrInvalidObjectKey
+		return nil, ErrInvalidPublicBaseURL
 	}
-	if _, err := url.Parse(publicBaseURL); err != nil {
-		return nil, err
+	parsed, err := url.Parse(publicBaseURL)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, ErrInvalidPublicBaseURL
+	}
+	switch {
+	case parsed.IsAbs():
+		if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return nil, ErrInvalidPublicBaseURL
+		}
+	case strings.HasPrefix(publicBaseURL, "/") &&
+		!strings.HasPrefix(publicBaseURL, "//") &&
+		parsed.Host == "":
+	default:
+		return nil, ErrInvalidPublicBaseURL
 	}
 	return &URLResolver{publicBaseURL: publicBaseURL, store: store}, nil
 }

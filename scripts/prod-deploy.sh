@@ -81,6 +81,7 @@ prod_domain() {
 wait_caddy_routes() {
   local domain
   local health
+  local media_probe media_status
   local attempt
 
   domain=$(prod_domain)
@@ -94,7 +95,20 @@ wait_caddy_routes() {
         --resolve "$domain:443:127.0.0.1" \
         "https://$domain/health" 2>/dev/null || true
     )
+    media_probe=$(
+      "$CURL_BIN" \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        --include \
+        --write-out $'\n%{http_code}' \
+        --resolve "$domain:443:127.0.0.1" \
+        "https://$domain/media/processed/not-public.mp4" 2>/dev/null || true
+    )
+    media_status=${media_probe##*$'\n'}
     if grep -q '"ready":true' <<<"$health" &&
+      [[ $media_status == 404 ]] &&
+      grep -Eiq '^cache-control:[[:space:]]*private,[[:space:]]*no-store[[:space:]]*$' <<<"$media_probe" &&
       "$CURL_BIN" \
         --fail \
         --silent \

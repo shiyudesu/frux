@@ -115,7 +115,7 @@ sudo ss -ltnp | grep -E ':(18080|18081)\s' || true
 
 ```caddyfile
 frux.example.com {
-	@api path /api/* /uploads/* /health
+	@api path /api/* /uploads/* /media/* /health
 
 	handle @api {
 		reverse_proxy 127.0.0.1:18081

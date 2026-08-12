@@ -3,6 +3,7 @@ package interfaceshttprouter
 import (
 	"context"
 	"database/sql"
+	"errors"
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
 	applicationadminauth "github.com/shiyudesu/frux/internal/application/adminauth"
@@ -489,6 +490,25 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			cfg.Media.LocalRoot,
 			"/media",
 			interfaceshttpupload.WithPublicMediaAuthorizer(videoRepo),
+		)
+		if err != nil {
+			return err
+		}
+		h.GET("/media/*filepath", publicMediaHandler.Get)
+		h.HEAD("/media/*filepath", publicMediaHandler.Head)
+	} else {
+		publicMediaStore, ok := mediaStore.(interfaceshttpupload.PublicMediaRedirectStore)
+		if !ok {
+			return errors.New("S3 media store does not support public media redirects")
+		}
+		publicRedirectTTL := signedURLTTL
+		if publicRedirectTTL > time.Minute {
+			publicRedirectTTL = time.Minute
+		}
+		publicMediaHandler, err := interfaceshttpupload.NewPublicMediaRedirectHandler(
+			publicMediaStore,
+			videoRepo,
+			publicRedirectTTL,
 		)
 		if err != nil {
 			return err
