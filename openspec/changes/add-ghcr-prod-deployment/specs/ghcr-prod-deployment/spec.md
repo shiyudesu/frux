@@ -69,8 +69,8 @@ The deployment agent SHALL switch `current` only after API and Web are healthy a
 - **THEN** the previous Compose/configuration and digest-pinned images are recreated without deleting volumes
 
 ### Requirement: Public Repository Protection
-Privileged files and deployment SHALL be protected by CODEOWNERS, branch protection, GitHub-hosted runners, minimal permissions, pinned actions, and reviewer-protected Environment promotion.
+Privileged files SHALL be identified by CODEOWNERS, and deployment SHALL be protected by PR-only main, required CI, GitHub-hosted runners, minimal permissions, pinned actions, and reviewer-protected Environment promotion. A solo maintainer SHALL NOT be blocked by an impossible self-approval requirement.
 
 #### Scenario: PR changes a deployment workflow
 - **WHEN** a contributor modifies a privileged workflow or deployment file
-- **THEN** the repository rules require the configured code owner to approve before merge
+- **THEN** the change must pass a Pull Request and all required CI checks, and it cannot advance Prod without the separate Environment approval

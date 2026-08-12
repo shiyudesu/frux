@@ -21,11 +21,12 @@ PR → 无Secret CI
 
 - 必须通过Pull Request合并。
 - 必须通过CI中的Backend、Web和Repository检查。
-- 必须通过CODEOWNERS审核。
-- 新提交后撤销旧批准。
+- 单人仓库不要求PR批准，因为GitHub不允许作者批准自己的PR。
+- 合并前由你检查变更内容，真正发布仍需单独批准 `production` Environment。
 - 禁止Force Push和删除分支。
 
-`.github/CODEOWNERS` 已把工作流、Dockerfile、Prod Compose和部署脚本交给仓库所有者审核。
+`.github/CODEOWNERS` 标出了工作流、Dockerfile、Prod Compose和部署脚本等敏感文件。以后添加协作者
+时，可以直接开启Code Owner强制审核。
 
 ### 2. 配置production Environment
 

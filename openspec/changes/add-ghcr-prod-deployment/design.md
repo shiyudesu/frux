@@ -95,14 +95,14 @@ On success, `/opt/frux/current` points to the new release and the deployed bundl
 - No self-hosted runner is registered to the public repository.
 - The privileged workflow validates same-repository `main` and checks out the exact CI-tested SHA.
 - Only the promotion job targets the `production` Environment, which must require owner approval and restrict deployments to `main`.
-- CODEOWNERS covers workflows, Dockerfiles, Prod Compose/configuration, and deployment-agent files; branch protection must require code-owner review.
+- CODEOWNERS identifies workflows, Dockerfiles, Prod Compose/configuration, and deployment-agent files for review. The current solo-maintainer branch rule requires PR plus CI but no impossible self-approval; the protected Prod Environment remains the separate manual release gate.
 - Privileged workflow actions are pinned to commit SHAs.
 - GHCR API, Web, and deploy packages are made public once, so the server stores no registry credential.
 
 ## Risks / Trade-offs
 
 - [GHCR packages remain private] → The hourly pull fails without changing the current release; package visibility is a documented one-time setup.
-- [A malicious change reaches main] → Require branch protection, code-owner approval for privileged files, successful CI, and a separate Prod Environment approval.
+- [A malicious change reaches main] → Require PR-only main, successful CI, owner diff review, and a separate Prod Environment approval; enable mandatory code-owner approval when another trusted maintainer is added.
 - [Polling overlaps a prior deployment] → The script uses `flock`; the second run exits.
 - [Application rollback cannot reverse schema changes] → Keep migrations backward compatible and limit automatic rollback to images/configuration.
 - [The deployment agent itself needs an update] → Keep it small, root-owned, manually installed, and update it explicitly rather than from the deploy bundle.
