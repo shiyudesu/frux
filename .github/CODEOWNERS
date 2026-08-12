@@ -1,4 +1,6 @@
 /.github/CODEOWNERS @shiyudesu
+/.github/ISSUE_TEMPLATE/ @shiyudesu
+/.github/pull_request_template.md @shiyudesu
 /.github/workflows/ @shiyudesu
 /apps/api/Dockerfile @shiyudesu
 /apps/web/Dockerfile @shiyudesu

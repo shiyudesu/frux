@@ -1,0 +1,90 @@
+name: Bug 报告
+description: 报告可以稳定复现的问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认问题不是由本地未提交改动或错误配置造成的。不要粘贴密码、Token、AccessKey 或签名 URL。
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 问题范围
+      options:
+        - API
+        - Worker
+        - Web
+        - Docker / 部署
+        - Kafka / Redis / PostgreSQL
+        - 对象存储 / 媒体处理
+        - 文档
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 运行环境
+      options:
+        - 本地 Docker Compose
+        - Prod Docker Compose
+        - 直接运行 API / Worker / Web
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: Commit SHA、分支或镜像标签
+      placeholder: 例如 da846a1
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请写出最短、稳定的复现过程。
+      placeholder: |
+        1. 启动……
+        2. 打开……
+        3. 执行……
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图
+      description: 请先删除密钥、Token、Cookie、签名 URL 和个人信息。
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经搜索过现有 Issue，没有发现相同问题。
+          required: true
+        - label: 我确认上面的内容不包含密码、Token 或其他敏感信息。
+          required: true
