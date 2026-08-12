@@ -397,9 +397,14 @@ func startWorkers(
 	); err != nil {
 		return err
 	}
+	reconcilerOptions := []applicationmedia.ReconcilerOption{}
+	if cfg.Media.Processing.DisableOrphanCleanup {
+		reconcilerOptions = append(reconcilerOptions, applicationmedia.WithoutOrphanObjectCleanup())
+	}
 	reconciler := applicationmedia.NewReconciler(
 		mediaRepo, mediaStore, mediaPublication, cfg.Media.Backend,
 		cfg.Media.Processing.ProfileVersion, cfg.Media.Processing.MaxAttempts, cleanupDelay,
+		reconcilerOptions...,
 	)
 	applicationmedia.NewReconciliationWorker(reconciler).Start(ctx)
 	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))

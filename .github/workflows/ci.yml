@@ -24,10 +24,10 @@ jobs:
         working-directory: apps/api
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
@@ -59,16 +59,16 @@ jobs:
         working-directory: apps/web
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.33.2
           run_install: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -95,21 +95,21 @@ jobs:
       OPENSPEC_TELEMETRY: "0"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.33.2
           run_install: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
@@ -119,6 +119,21 @@ jobs:
 
       - name: Validate Docker Compose
         run: docker compose -f apps/docker-compose.yml config --quiet
+
+      - name: Validate Prod Compose
+        env:
+          FRUX_DOMAIN: frux.example.com
+          FRUX_JWT_SECRET: CI-Only-JWT-Secret-1234567890!
+          FRUX_POSTGRES_PASSWORD: CI-Only-Postgres-Password-123!
+          FRUX_REDIS_PASSWORD: CI-Only-Redis-Password-123!
+          FRUX_S3_ACCESS_KEY: ci-access
+          FRUX_S3_SECRET_KEY: CI-Only-Rainyun-Secret
+        run: |
+          docker compose \
+            --env-file apps/.env.release.example \
+            -f apps/docker-compose.prod.yml \
+            --profile worker \
+            config --quiet
 
       - name: Validate OpenSpec
         run: pnpm dlx @fission-ai/openspec@1.6.0 validate --all --strict

@@ -1,0 +1,105 @@
+# Personal/pre-production prod configuration.
+port: 8080
+jwt:
+  secret: "${FRUX_JWT_SECRET}"
+  access_ttl: "15m"
+  admin_access_ttl: "30m"
+
+internal:
+  enabled: true
+  token: "${FRUX_INTERNAL_TOKEN}"
+
+database:
+  host: "postgres"
+  port: 5432
+  user: "${FRUX_POSTGRES_USER}"
+  password: "${FRUX_POSTGRES_PASSWORD}"
+  name: "${FRUX_POSTGRES_DATABASE}"
+  ssl_mode: "disable"
+  time_zone: "UTC"
+
+redis:
+  addr: "redis:6379"
+  password: "${FRUX_REDIS_PASSWORD}"
+  db: 0
+
+kafka:
+  enabled: true
+  environment: "local"
+  brokers:
+    - "kafka:9092"
+  client_id: "frux-prod"
+  topic_prefix: ""
+  allow_local_provisioning: true
+  authentication:
+    mechanism: "none"
+    username: ""
+    password: ""
+  tls:
+    enabled: false
+    ca_file: ""
+    certificate_file: ""
+    private_key_file: ""
+    server_name: ""
+    insecure_skip_verify: false
+  timeouts:
+    dial: "5s"
+    request: "10s"
+    produce: "10s"
+    admin: "10s"
+    shutdown: "15s"
+  consumer:
+    max_poll_records: 100
+    max_poll_bytes: 8388608
+    partition_concurrency: 8
+    drain_timeout: "10s"
+    assignment_timeout: "15s"
+  production_validation:
+    replication_factor: 1
+    min_in_sync_replicas: 1
+    require_authentication: false
+    require_tls: false
+
+media:
+  backend: "s3"
+  local_root: "./uploads"
+  public_base_url: "https://${FRUX_DOMAIN}/media"
+  signed_url_ttl: "15m"
+  upload_session_ttl: "15m"
+  processing:
+    profile_version: "v1"
+    max_attempts: 5
+    worker_concurrency: 1
+    lease_ttl: "10m"
+    cleanup_delay: "24h"
+    disable_orphan_cleanup: true
+  s3:
+    endpoint: "https://cn-zj1.rains3.com"
+    presign_endpoint: "https://cn-zj1.rains3.com"
+    region: "us-east-1"
+    bucket: "frux1"
+    access_key: "${FRUX_S3_ACCESS_KEY}"
+    secret_key: "${FRUX_S3_SECRET_KEY}"
+    use_path_style: true
+    auto_create_bucket: false
+
+moderation:
+  mode: "disabled"
+
+playback:
+  telemetry:
+    retention: "168h"
+    cleanup_interval: "1h"
+    cleanup_batch_size: 1000
+    max_batches_per_minute: 60
+
+governance:
+  poll_interval: "5s"
+  poll_timeout: "2s"
+
+rate_limit:
+  max_entries: 10000
+  idle_ttl: "10m"
+  redis_timeout: "75ms"
+  trusted_proxies:
+    - "172.31.254.0/24"

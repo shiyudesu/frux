@@ -80,6 +80,24 @@ func TestURLResolverPublicAndProtectedURLs(t *testing.T) {
 	}
 }
 
+func TestURLResolverRejectsHostlessAbsoluteURL(t *testing.T) {
+	store := &presignStore{}
+	for _, value := range []string{
+		"https:///media",
+		"//media.example.test",
+		"ftp://media.example.test",
+		"https://user@example.test/media",
+		"https://media.example.test/media?token=x",
+	} {
+		if _, err := NewURLResolver(value, store); !errors.Is(err, ErrInvalidPublicBaseURL) {
+			t.Fatalf("NewURLResolver(%q) error = %v", value, err)
+		}
+	}
+	if _, err := NewURLResolver("/media", store); err != nil {
+		t.Fatalf("relative local media URL: %v", err)
+	}
+}
+
 func TestLocalProtectedURLSignerExpiryAndTampering(t *testing.T) {
 	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
 	signer, err := NewLocalProtectedURLSigner("/review-media", "preview-secret", 5*time.Minute)

@@ -118,11 +118,12 @@ type S3Config struct {
 }
 
 type MediaProcessingConfig struct {
-	ProfileVersion    string `yaml:"profile_version"`
-	MaxAttempts       int    `yaml:"max_attempts"`
-	WorkerConcurrency int    `yaml:"worker_concurrency"`
-	LeaseTTL          string `yaml:"lease_ttl"`
-	CleanupDelay      string `yaml:"cleanup_delay"`
+	ProfileVersion       string `yaml:"profile_version"`
+	MaxAttempts          int    `yaml:"max_attempts"`
+	WorkerConcurrency    int    `yaml:"worker_concurrency"`
+	LeaseTTL             string `yaml:"lease_ttl"`
+	CleanupDelay         string `yaml:"cleanup_delay"`
+	DisableOrphanCleanup bool   `yaml:"disable_orphan_cleanup"`
 }
 
 type PlaybackConfig struct {
