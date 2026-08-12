@@ -56,7 +56,6 @@ The small Alpine `frux-deploy` image contains `/bundle` with:
 
 ```text
 apps/docker-compose.prod.yml
-apps/Caddyfile.prod
 apps/.env.prod.example
 apps/.env.release
 apps/api/configs/config.prod.yaml

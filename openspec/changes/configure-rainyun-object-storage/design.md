@@ -43,7 +43,7 @@ SFTP and WebDAV are rejected because they do not support Frux's existing browser
 
 A tracked production configuration template contains no usable credentials and references deployment environment variables for secrets. The separate production Compose stack implemented by `add-single-server-production-compose` mounts that configuration into API and Worker and requires the Rainyun credential variables.
 
-The selected server definition includes PostgreSQL, Redis, one internal Kafka broker, Caddy, and PostgreSQL backup without inheriting the local MinIO dependency. The local Compose file remains unchanged and does not require Rainyun variables.
+The selected server definition includes PostgreSQL, Redis, one internal Kafka broker, loopback API/Web ports for the existing host Caddy, and PostgreSQL backup without inheriting the local MinIO dependency. The local Compose file remains unchanged and does not require Rainyun variables.
 
 Production PostgreSQL, Redis, Kafka, JWT, internal token, and related security values remain environment-injected rather than copying local defaults into production.
 

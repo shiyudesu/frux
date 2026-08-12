@@ -7,7 +7,8 @@ The current worktree contains a strict production prototype with three secured K
 **Goals:**
 
 - Provide a short `prod` deployment path with one Compose file and one environment file.
-- Run PostgreSQL, Redis, one Kafka broker, API, Worker, Web, Caddy, and PostgreSQL backup in Docker.
+- Run PostgreSQL, Redis, one Kafka broker, API, Worker, Web, and PostgreSQL backup in Docker.
+- Integrate with the server's existing systemd Caddy through loopback-only API/Web ports.
 - Use Rainyun `frux1`, persistent volumes, strong secrets, HTTPS, and no public database/message-broker ports.
 - Preserve the existing local Compose/MinIO workflow.
 - Remove unused strict-production Kafka security, provisioning, monitoring, and backup machinery.
@@ -23,7 +24,7 @@ The current worktree contains a strict production prototype with three secured K
 
 ### Add a separate simple prod stack
 
-`apps/docker-compose.prod.yml` will be structurally similar to local Compose but use required environment secrets from `.env.prod`, Rainyun configuration from `config.prod.yaml`, Caddy, and no MinIO. `apps/docker-compose.yml` remains unchanged.
+`apps/docker-compose.prod.yml` will be structurally similar to local Compose but use required environment secrets from `.env.prod`, Rainyun configuration from `config.prod.yaml`, loopback-only API/Web ports, and no MinIO. `apps/docker-compose.yml` remains unchanged.
 
 ### Use one internal Kafka broker
 
@@ -33,7 +34,7 @@ This deployment is therefore documented as personal/pre-production. Broker or ho
 
 ### Keep minimum useful safeguards
 
-PostgreSQL and Redis require strong passwords and persistent volumes. Only Caddy publishes ports 80/443. Caddy handles HTTPS for the configured domain. PostgreSQL backup runs periodically into an operator-selected host directory.
+PostgreSQL and Redis require strong passwords and persistent volumes. Prod publishes API and Web only on `127.0.0.1`; the existing host Caddy owns public ports 80/443 and HTTPS. PostgreSQL backup runs periodically.
 
 ### Remove the unselected strict prototype
 
@@ -50,7 +51,7 @@ Rainyun policy documentation remains because Bucket privacy and CORS are still r
 
 ## Migration Plan
 
-1. Add simple `prod` environment, application configuration, Compose, Caddy, and backup files.
+1. Add simple `prod` environment, application configuration, Compose loopback ports, and backup files.
 2. Remove strict-production Kafka/security/provisioner surfaces that are no longer selected.
 3. Update deployment documentation to one short `prod` workflow and label limitations.
 4. Validate local Compose remains unchanged and the simple `prod` Compose renders and starts with isolated validation values.

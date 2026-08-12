@@ -86,6 +86,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
+    ports:
+      - "127.0.0.1:${FRUX_API_PORT:-18081}:8080"
     volumes:
       - ./api/configs/config.prod.yaml:/app/configs/config.yaml:ro
       - api_uploads:/app/uploads
@@ -128,6 +130,8 @@ services:
 
   web:
     image: ${FRUX_WEB_IMAGE:?load .env.release}
+    ports:
+      - "127.0.0.1:${FRUX_WEB_PORT:-18080}:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
       interval: 10s
@@ -138,35 +142,6 @@ services:
     networks:
       frontend:
         ipv4_address: 172.31.254.3
-
-  caddy:
-    image: caddy:2.10.0-alpine
-    environment:
-      FRUX_DOMAIN: ${FRUX_DOMAIN:?set FRUX_DOMAIN}
-      FRUX_ACME_EMAIL: ${FRUX_ACME_EMAIL:?set FRUX_ACME_EMAIL}
-    depends_on:
-      api:
-        condition: service_healthy
-      web:
-        condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    healthcheck:
-      test: ["CMD", "caddy", "version"]
-      interval: 15s
-      timeout: 5s
-      retries: 6
-      start_period: 10s
-    restart: unless-stopped
-    networks:
-      frontend:
-        ipv4_address: 172.31.254.2
 
   postgres-backup:
     image: postgres:17.5-alpine
@@ -206,8 +181,6 @@ volumes:
   kafka_data:
   api_uploads:
   postgres_backups:
-  caddy_data:
-  caddy_config:
 
 networks:
   frontend:

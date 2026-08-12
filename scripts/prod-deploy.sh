@@ -80,17 +80,21 @@ prod_domain() {
 
 wait_caddy_routes() {
   local domain
+  local health
   local attempt
 
   domain=$(prod_domain)
   for ((attempt = 1; attempt <= FRUX_HEALTH_ATTEMPTS; attempt++)); do
-    if "$CURL_BIN" \
-      --fail \
-      --silent \
-      --show-error \
-      --max-time 10 \
-      --resolve "$domain:443:127.0.0.1" \
-      "https://$domain/health" >/dev/null 2>&1 &&
+    health=$(
+      "$CURL_BIN" \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        --resolve "$domain:443:127.0.0.1" \
+        "https://$domain/health" 2>/dev/null || true
+    )
+    if grep -q '"ready":true' <<<"$health" &&
       "$CURL_BIN" \
         --fail \
         --silent \
@@ -132,15 +136,13 @@ wait_worker_ready() {
   return 1
 }
 
-wait_release_ready() {
+wait_compose_ready() {
   local release=$1
   local worker_running=$2
 
   wait_healthy "$release" api &&
     wait_healthy "$release" web &&
-    wait_healthy "$release" caddy &&
     wait_healthy "$release" postgres-backup &&
-    wait_caddy_routes &&
     {
       [[ $worker_running != true ]] || wait_worker_ready "$release"
     }
@@ -160,7 +162,6 @@ validate_bundle() {
     printf '%s\n' \
       apps/.env.prod.example \
       apps/.env.release \
-      apps/Caddyfile.prod \
       apps/api/configs/config.prod.yaml \
       apps/docker-compose.prod.yml \
       manifest.sha256 \
@@ -177,7 +178,6 @@ validate_bundle() {
     printf '%s\n' \
       apps/.env.prod.example \
       apps/.env.release \
-      apps/Caddyfile.prod \
       apps/api/configs/config.prod.yaml \
       apps/docker-compose.prod.yml \
       scripts/postgres-backup.sh |
@@ -208,7 +208,7 @@ restore_release() {
     compose_release "$previous" --profile worker pull worker || true
     compose_release "$previous" --profile worker up -d worker || return 1
   fi
-  wait_release_ready "$previous" "$worker_running"
+  wait_compose_ready "$previous" "$worker_running"
 }
 
 prune_releases() {
@@ -357,9 +357,11 @@ main() {
       compose_release "$release_dir" --profile worker up -d worker || deploy_ok=false
     fi
   fi
-  if [[ $deploy_ok == true ]] &&
-    ! wait_release_ready "$release_dir" "$worker_running"; then
-    deploy_ok=false
+  if [[ $deploy_ok == true ]]; then
+    wait_compose_ready "$release_dir" "$worker_running" || deploy_ok=false
+  fi
+  if [[ $deploy_ok == true ]]; then
+    wait_caddy_routes || deploy_ok=false
   fi
 
   if [[ $deploy_ok != true ]]; then

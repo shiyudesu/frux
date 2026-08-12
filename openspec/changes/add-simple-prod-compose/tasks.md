@@ -2,8 +2,8 @@
 
 - [x] 1.1 Add a concise `.env.prod.example` with domain, application, PostgreSQL, Redis, Rainyun, backup, and optional image variables.
 - [x] 1.2 Add `config.prod.yaml` using container PostgreSQL/Redis, one local-mode Kafka broker, and Rainyun `frux1`.
-- [x] 1.3 Add `docker-compose.prod.yml` with PostgreSQL, Redis, one Kafka, API, Worker, Web, Caddy, and PostgreSQL backup; publish only 80/443.
-- [x] 1.4 Add a minimal Caddyfile and retain the tested atomic PostgreSQL backup script.
+- [x] 1.3 Add `docker-compose.prod.yml` with PostgreSQL, Redis, one Kafka, API, Worker, Web, and PostgreSQL backup; bind API/Web only to loopback ports.
+- [x] 1.4 Document the existing host Caddy site block and retain the atomic PostgreSQL backup script.
 
 ## 2. Remove Unselected Strict Prototype
 
@@ -19,7 +19,7 @@
 
 ## 4. Verification
 
-- [x] 4.1 Render and inspect Prod Compose to confirm Rainyun is used, MinIO is absent, only Caddy publishes public ports, and local Compose remains unchanged.
+- [x] 4.1 Render and inspect Prod Compose to confirm Rainyun is used, MinIO is absent, only loopback API/Web ports are published, and local Compose remains unchanged.
 - [x] 4.2 Start an isolated simple `prod` validation stack through API/Worker health using non-secret test values.
 - [x] 4.3 Run backend tests/build, frontend tests/build, local/`prod` Compose validation, and `openspec validate --all --strict`.
 - [ ] 4.4 With the real domain and Rainyun credentials, deploy and verify HTTPS, upload, processing, playback, and backup.

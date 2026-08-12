@@ -4,7 +4,8 @@ The strict single-server production prototype adds operational complexity that t
 
 ## What Changes
 
-- Add a simple `prod` Compose stack with one PostgreSQL, Redis, Kafka, API, Worker, Web, Caddy, and PostgreSQL backup service.
+- Add a simple `prod` Compose stack with one PostgreSQL, Redis, Kafka, API, Worker, Web, and PostgreSQL backup service.
+- Bind API and Web only to loopback ports so the server's existing host Caddy can route the Frux domain.
 - Use Rainyun bucket `frux1` instead of MinIO while preserving the separate local development Compose.
 - Use strong environment-injected secrets, private container networking, persistent volumes, HTTPS, and basic PostgreSQL backup.
 - Run Kafka as one internal plaintext KRaft broker with local topic provisioning and no public port.

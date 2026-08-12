@@ -128,7 +128,6 @@ jobs:
           mkdir -p "$bundle/apps/api/configs" "$bundle/scripts"
 
           cp apps/docker-compose.prod.yml "$bundle/apps/"
-          cp apps/Caddyfile.prod "$bundle/apps/"
           cp apps/.env.prod.example "$bundle/apps/"
           cp apps/api/configs/config.prod.yaml "$bundle/apps/api/configs/"
           cp scripts/postgres-backup.sh "$bundle/scripts/"

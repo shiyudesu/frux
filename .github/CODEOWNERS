@@ -3,7 +3,6 @@
 /apps/api/Dockerfile @shiyudesu
 /apps/web/Dockerfile @shiyudesu
 /apps/docker-compose.prod.yml @shiyudesu
-/apps/Caddyfile.prod @shiyudesu
 /apps/api/configs/config.prod.yaml @shiyudesu
 /scripts/prod-deploy.sh @shiyudesu
 /scripts/postgres-backup.sh @shiyudesu

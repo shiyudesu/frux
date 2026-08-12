@@ -90,7 +90,6 @@ sudo editor /opt/frux/.env.prod
 | 配置 | 填什么 |
 | --- | --- |
 | `FRUX_DOMAIN` | Frux域名，例如 `frux.example.com` |
-| `FRUX_ACME_EMAIL` | HTTPS证书联系邮箱 |
 | `FRUX_JWT_SECRET` | 随机字符串 |
 | `FRUX_INTERNAL_TOKEN` | 随机字符串 |
 | `FRUX_POSTGRES_PASSWORD` | PostgreSQL密码 |
@@ -103,6 +102,39 @@ sudo editor /opt/frux/.env.prod
 ```bash
 openssl rand -base64 48 | tr -d '\n'
 ```
+
+确认默认回环端口没有被其他项目使用：
+
+```bash
+sudo ss -ltnp | grep -E ':(18080|18081)\s' || true
+```
+
+如有占用，修改 `.env.prod` 中的 `FRUX_WEB_PORT` 和 `FRUX_API_PORT`。
+
+编辑现有的 `/etc/caddy/Caddyfile`，加入下面的站点。端口必须和 `.env.prod` 一致：
+
+```caddyfile
+frux.example.com {
+	@api path /api/* /uploads/* /health
+
+	handle @api {
+		reverse_proxy 127.0.0.1:18081
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:18080
+	}
+}
+```
+
+把 `frux.example.com` 换成你的域名，然后检查并重载现有Caddy：
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+自动部署不会修改 `/etc/caddy/Caddyfile`，也不会影响服务器上的其他站点。
 
 安装部署脚本和systemd配置。生产使用时建议把下面URL中的 `main` 换成你已经检查过的Commit SHA：
 
@@ -198,7 +230,7 @@ journalctl -u frux-deploy.service -n 200 --no-pager
 2. 验证部署包文件和SHA-256。
 3. 拉取固定Digest的API/Web镜像。
 4. 更新Compose。
-5. 等待API、Web、Caddy公网入口和数据库备份健康。
+5. 通过现有Caddy检查首页和 `/health`，并确认数据库备份健康。
 6. 如果Worker原来已启用，确认Kafka Broker和Consumer工作流均已就绪。
 7. 失败时恢复上一套配置和镜像。
 
@@ -236,7 +268,8 @@ docker compose \
 
 ## 数据
 
-PostgreSQL、Redis、Kafka、兼容上传目录、Caddy证书和PostgreSQL备份都在Docker Volume中。
+PostgreSQL、Redis、Kafka、兼容上传目录和PostgreSQL备份都在Docker Volume中。Caddy证书继续由
+服务器现有Caddy管理。
 
 不要执行：
 

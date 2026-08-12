@@ -6,7 +6,7 @@ The Prod server should run released container images without cloning source code
 
 - Publish API/Worker and Web images to GHCR with commit-SHA and `latest` tags after CI succeeds on `main`.
 - Change Prod Compose to pull configurable GHCR images instead of using local build contexts.
-- Package Compose, Caddy, application configuration, backup script, checksums, and digest-pinned image references into `ghcr.io/shiyudesu/frux-deploy`.
+- Package Compose, application configuration, backup script, checksums, and digest-pinned image references into `ghcr.io/shiyudesu/frux-deploy`.
 - Promote the mutable `frux-deploy:prod` pointer only after the protected GitHub `production` Environment is approved.
 - Add a fixed server deployment script and systemd timer that anonymously poll public GHCR once per hour.
 - Preserve the server-owned `.env.prod`, Worker state, persistent volumes, current release, and previous release.

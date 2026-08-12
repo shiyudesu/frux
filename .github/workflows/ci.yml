@@ -123,7 +123,6 @@ jobs:
       - name: Validate Prod Compose
         env:
           FRUX_DOMAIN: frux.example.com
-          FRUX_ACME_EMAIL: ops@example.com
           FRUX_JWT_SECRET: CI-Only-JWT-Secret-1234567890!
           FRUX_POSTGRES_PASSWORD: CI-Only-Postgres-Password-123!
           FRUX_REDIS_PASSWORD: CI-Only-Redis-Password-123!
