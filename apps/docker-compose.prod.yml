@@ -1,0 +1,219 @@
+# Personal/pre-production prod stack. Not highly available.
+services:
+  postgres:
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_USER: ${FRUX_POSTGRES_USER:-frux}
+      POSTGRES_PASSWORD: ${FRUX_POSTGRES_PASSWORD:?set FRUX_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${FRUX_POSTGRES_DATABASE:-frux}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  redis:
+    image: redis:7.4-alpine
+    environment:
+      REDIS_PASSWORD: ${FRUX_REDIS_PASSWORD:?set FRUX_REDIS_PASSWORD}
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  kafka:
+    image: apache/kafka:4.0.0
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: "LogAppendTime"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  api:
+    image: frux-api:${FRUX_IMAGE_TAG:-latest}
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      args:
+        GOPROXY: https://goproxy.cn,direct
+    environment: &app-environment
+      FRUX_JWT_SECRET: ${FRUX_JWT_SECRET:?set FRUX_JWT_SECRET}
+      FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN}
+      FRUX_POSTGRES_USER: ${FRUX_POSTGRES_USER:-frux}
+      FRUX_POSTGRES_PASSWORD: ${FRUX_POSTGRES_PASSWORD:?set FRUX_POSTGRES_PASSWORD}
+      FRUX_POSTGRES_DATABASE: ${FRUX_POSTGRES_DATABASE:-frux}
+      FRUX_REDIS_PASSWORD: ${FRUX_REDIS_PASSWORD:?set FRUX_REDIS_PASSWORD}
+      FRUX_S3_ACCESS_KEY: ${FRUX_S3_ACCESS_KEY:?set FRUX_S3_ACCESS_KEY}
+      FRUX_S3_SECRET_KEY: ${FRUX_S3_SECRET_KEY:?set FRUX_S3_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    volumes:
+      - ./api/configs/config.prod.yaml:/app/configs/config.yaml:ro
+      - api_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      frontend:
+        ipv4_address: 172.31.254.4
+      backend:
+
+  worker:
+    image: frux-api:${FRUX_IMAGE_TAG:-latest}
+    profiles: ["worker"]
+    command: ["./frux-worker"]
+    environment:
+      <<: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    volumes:
+      - ./api/configs/config.prod.yaml:/app/configs/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9091/metrics >/dev/null"]
+      interval: 15s
+      timeout: 3s
+      retries: 12
+      start_period: 45s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  web:
+    image: frux-web:${FRUX_IMAGE_TAG:-latest}
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      frontend:
+        ipv4_address: 172.31.254.3
+
+  caddy:
+    image: caddy:2.10.0-alpine
+    environment:
+      FRUX_DOMAIN: ${FRUX_DOMAIN:?set FRUX_DOMAIN}
+      FRUX_ACME_EMAIL: ${FRUX_ACME_EMAIL:?set FRUX_ACME_EMAIL}
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    networks:
+      frontend:
+        ipv4_address: 172.31.254.2
+
+  postgres-backup:
+    image: postgres:17.5-alpine
+    command: ["/opt/frux/postgres-backup.sh"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${FRUX_POSTGRES_USER:-frux}
+      POSTGRES_PASSWORD: ${FRUX_POSTGRES_PASSWORD:?set FRUX_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${FRUX_POSTGRES_DATABASE:-frux}
+      BACKUP_INTERVAL_SECONDS: ${FRUX_BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${FRUX_BACKUP_RETENTION_DAYS:-14}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../scripts/postgres-backup.sh:/opt/frux/postgres-backup.sh:ro
+      - postgres_backups:/backups
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -s /backups/.last-success &&
+          now=$$(date +%s) &&
+          last=$$(cat /backups/.last-success) &&
+          test $$((now - last)) -le $$((BACKUP_INTERVAL_SECONDS * 2 + 600))
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 2m
+    restart: unless-stopped
+    networks:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
+  api_uploads:
+  postgres_backups:
+  caddy_data:
+  caddy_config:
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.31.254.0/24
+  backend:

@@ -32,6 +32,20 @@ Secret 注入 `FRUX_INTERNAL_TOKEN`；配置中的 `internal.enabled=true` 会�
 
 API 凭据需要 Put/Head/Get，Worker 另需 List/Delete；浏览器只获得单对象、短时 PUT 签名。生产 bucket 不应整体公开，CDN origin 只读取内容寻址公共前缀。
 
+### 雨云生产配置
+
+默认 `apps/docker-compose.yml` 和 `config.docker.yaml` 始终保留为本地 MinIO 开发环境。Prod
+使用 `apps/docker-compose.prod.yml`、`apps/api/configs/config.prod.yaml` 和 `.env.prod`。
+该简单方案运行单PostgreSQL、Redis和Kafka，不具备高可用或生产级Kafka安全。
+
+不得让使用不同PostgreSQL数据库的两套API/Worker同时连接同一个 `frux1`，也不得把已有对象的
+Bucket直接连接到空数据库后启动Worker。
+
+Rainyun CORS、`media/*` 前缀公共策略、Secret 注入、启动命令和验证步骤见
+[雨云对象存储生产接入](operations/rainyun-object-storage.md)。
+
+完整启动步骤见[简单 Prod 部署](operations/prod.md)。
+
 运行时降级控制由 API 与 Worker 使用 `governance.poll_interval` 和
 `governance.poll_timeout` 轮询 PostgreSQL；默认分别为 5 秒和 2 秒。timeout 必须不大于
 interval。发布时应同时确认两个进程的 `/metrics` 中 active revision 和 snapshot age 正常。

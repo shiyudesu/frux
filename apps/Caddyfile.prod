@@ -1,0 +1,18 @@
+{
+	# Public prod entry point.
+	email {$FRUX_ACME_EMAIL}
+	admin off
+}
+
+{$FRUX_DOMAIN} {
+	encode zstd gzip
+
+	@api path /api/* /uploads/* /health
+	handle @api {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy web:80
+	}
+}

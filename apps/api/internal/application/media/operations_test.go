@@ -114,6 +114,27 @@ func TestReconcilerResetsIncompleteVariantsAndQueuesOrphans(t *testing.T) {
 	}
 }
 
+func TestReconcilerCanDisableOrphanObjectCleanup(t *testing.T) {
+	now := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
+	repo := &operationsRepositoryStub{}
+	store := &operationsStore{objects: map[string]domainmedia.ObjectMetadata{
+		"media/orphan.mp4": {
+			Key: "media/orphan.mp4", LastModified: now.Add(-time.Hour),
+		},
+	}}
+	reconciler := NewReconciler(
+		repo, store, nil, domainmedia.StorageBackendS3, "v1", 5, time.Minute,
+		WithoutOrphanObjectCleanup(),
+	)
+	reconciler.now = func() time.Time { return now }
+	if err := reconciler.RunOnce(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.cleanupTasks) != 0 {
+		t.Fatalf("unexpected orphan cleanup tasks: %+v", repo.cleanupTasks)
+	}
+}
+
 type operationsRepositoryStub struct {
 	assets       map[int64]*domainmedia.MediaAsset
 	variants     map[int64][]*domainmedia.MediaVariant

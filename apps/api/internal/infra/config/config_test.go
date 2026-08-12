@@ -331,6 +331,45 @@ func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
+	environment := map[string]string{
+		"FRUX_JWT_SECRET":        "prod-jwt-secret",
+		"FRUX_INTERNAL_TOKEN":    "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y",
+		"FRUX_POSTGRES_USER":     "frux",
+		"FRUX_POSTGRES_PASSWORD": "database-secret",
+		"FRUX_POSTGRES_DATABASE": "frux",
+		"FRUX_REDIS_PASSWORD":    "redis-secret",
+		"FRUX_S3_ACCESS_KEY":     "rainyun-access-key",
+		"FRUX_S3_SECRET_KEY":     "rainyun-secret-key",
+	}
+	for name, value := range environment {
+		t.Setenv(name, value)
+	}
+
+	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.prod.yaml"))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Media.S3.Endpoint != "https://cn-zj1.rains3.com" ||
+		cfg.Media.S3.Bucket != "frux1" ||
+		!cfg.Media.S3.UsePathStyle ||
+		cfg.Media.S3.AutoCreateBucket ||
+		!cfg.Media.Processing.DisableOrphanCleanup {
+		t.Fatalf("prod media config = %+v", cfg.Media)
+	}
+	if cfg.Media.PublicBaseURL != "https://cn-zj1.rains3.com/frux1" ||
+		cfg.Database.Host != "postgres" ||
+		cfg.Redis.Addr != "redis:6379" ||
+		cfg.Kafka.Environment != "local" ||
+		!cfg.Kafka.AllowLocalProvisioning ||
+		cfg.Kafka.TLS.Enabled ||
+		cfg.Kafka.Authentication.Mechanism != "none" ||
+		len(cfg.Kafka.Brokers) != 1 ||
+		cfg.Kafka.Brokers[0] != "kafka:9092" {
+		t.Fatalf("prod runtime config = %+v", cfg)
+	}
+}
+
 func TestLoadConfigDoesNotAcceptLegacyInternalTokenEnvironment(t *testing.T) {
 	t.Setenv("FRUX_INTERNAL_TOKEN", "")
 	t.Setenv("GC"+"FEED_INTERNAL_TOKEN", "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y")
