@@ -1,0 +1,11 @@
+/.github/CODEOWNERS @shiyudesu
+/.github/ISSUE_TEMPLATE/ @shiyudesu
+/.github/pull_request_template.md @shiyudesu
+/.github/workflows/ @shiyudesu
+/apps/api/Dockerfile @shiyudesu
+/apps/web/Dockerfile @shiyudesu
+/apps/docker-compose.prod.yml @shiyudesu
+/apps/api/configs/config.prod.yaml @shiyudesu
+/scripts/prod-deploy.sh @shiyudesu
+/scripts/postgres-backup.sh @shiyudesu
+/deploy/systemd/ @shiyudesu

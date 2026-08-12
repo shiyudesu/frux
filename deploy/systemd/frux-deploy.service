@@ -1,0 +1,14 @@
+[Unit]
+Description=Check and deploy the approved Frux Prod release
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/frux-deploy
+UMask=0077
+TimeoutStartSec=1h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

@@ -31,15 +31,31 @@ type Reconciler struct {
 	profileVersion string
 	maxAttempts    int
 	orphanDelay    time.Duration
+	orphanCleanup  bool
 	now            func() time.Time
 }
 
-func NewReconciler(repo ReconciliationRepository, store domainmedia.MediaObjectStore, notifier MediaStateNotifier, backend, profileVersion string, maxAttempts int, orphanDelay time.Duration) *Reconciler {
-	return &Reconciler{
+type ReconcilerOption func(*Reconciler)
+
+func WithoutOrphanObjectCleanup() ReconcilerOption {
+	return func(reconciler *Reconciler) {
+		reconciler.orphanCleanup = false
+	}
+}
+
+func NewReconciler(repo ReconciliationRepository, store domainmedia.MediaObjectStore, notifier MediaStateNotifier, backend, profileVersion string, maxAttempts int, orphanDelay time.Duration, options ...ReconcilerOption) *Reconciler {
+	reconciler := &Reconciler{
 		repo: repo, store: store, notifier: notifier, backend: backend,
 		profileVersion: profileVersion, maxAttempts: maxAttempts, orphanDelay: orphanDelay,
-		now: func() time.Time { return time.Now().UTC() },
+		orphanCleanup: true,
+		now:           func() time.Time { return time.Now().UTC() },
 	}
+	for _, option := range options {
+		if option != nil {
+			option(reconciler)
+		}
+	}
+	return reconciler
 }
 
 func (r *Reconciler) RunOnce(ctx context.Context, limit int) error {
@@ -82,14 +98,16 @@ func (r *Reconciler) RunOnce(ctx context.Context, limit int) error {
 			reconcileErr = errors.Join(reconcileErr, err)
 		}
 	}
-	if err := r.reconcileOrphanObjects(ctx, "media", now); err != nil {
-		reconcileErr = errors.Join(reconcileErr, err)
-	}
-	if err := r.reconcileOrphanObjects(ctx, "processed", now); err != nil {
-		reconcileErr = errors.Join(reconcileErr, err)
-	}
-	if err := r.reconcileOrphanObjects(ctx, "uploads", now); err != nil {
-		reconcileErr = errors.Join(reconcileErr, err)
+	if r.orphanCleanup {
+		if err := r.reconcileOrphanObjects(ctx, "media", now); err != nil {
+			reconcileErr = errors.Join(reconcileErr, err)
+		}
+		if err := r.reconcileOrphanObjects(ctx, "processed", now); err != nil {
+			reconcileErr = errors.Join(reconcileErr, err)
+		}
+		if err := r.reconcileOrphanObjects(ctx, "uploads", now); err != nil {
+			reconcileErr = errors.Join(reconcileErr, err)
+		}
 	}
 	return reconcileErr
 }

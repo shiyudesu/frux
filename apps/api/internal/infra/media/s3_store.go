@@ -227,6 +227,7 @@ func (s *S3Store) PresignGet(ctx context.Context, key string, expiry time.Durati
 	}
 	output, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket), Key: aws.String(key),
+		ResponseCacheControl: aws.String("private, no-store"),
 	}, func(options *s3.PresignOptions) {
 		options.Expires = expiry
 	})
