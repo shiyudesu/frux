@@ -217,6 +217,9 @@ systemctl list-timers frux-deploy.timer
 journalctl -u frux-deploy.service -n 200 --no-pager
 ```
 
+首次从GHCR下载镜像可能较慢，Service允许最多1小时。已经下载完成的镜像层会被Docker缓存，后续发布
+通常只需要下载变化部分。
+
 ## 第一次发布
 
 1. Push或合并到 `main`。
