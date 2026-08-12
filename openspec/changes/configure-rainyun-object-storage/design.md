@@ -53,11 +53,11 @@ The Rainyun server and browser-presign endpoints remain `https://cn-zj1.rains3.c
 
 The public base can later change independently to a production CDN/custom domain without changing storage object keys.
 
-### Defer production CORS origins until the Web origin exists
+### Accept and verify Rainyun gateway CORS
 
-Rainyun CORS will allow `PUT`, `GET`, and `HEAD`, the headers required by Frux signed uploads, and expose `ETag` and `x-amz-checksum-sha256`. `AllowedOrigins` MUST contain the actual production Web origin and MUST NOT default to `*` or the local Vite origins.
+Rainyun does not expose Bucket-level CORS controls in its current panel. The `cn-zj1.rains3.com` gateway answers preflight with wildcard origin, methods, request headers, and exposed headers.
 
-The repository will document a placeholder and verification process, but applying the final CORS rule remains a deployment task blocked on the production Web origin.
+No provider-side CORS mutation is required. Deployment documentation records the observed behavior and a repeatable OPTIONS check. Browser upload security continues to rely on the authenticated Frux API issuing short-lived, single-object presigned URLs with signed checksum and metadata headers.
 
 ### Keep protected prefixes private
 
@@ -73,7 +73,7 @@ The production browser flow must receive a direct upload session, pass CORS pref
 
 ## Risks / Trade-offs
 
-- [The production Web origin is unknown] → Prepare the CORS rule but leave deployment incomplete until the real HTTPS origin is available.
+- [Rainyun wildcard CORS permits requests from any browser origin] → Keep presigned URLs short-lived and object-scoped, never expose storage credentials, and treat signed URL leakage as credential leakage.
 - [Rainyun may not support `x-amz-checksum-sha256` exactly as AWS S3 does] → Run a real production-config upload-session test before rollout and do not weaken checksum verification silently.
 - [Rainyun may expose only bucket-wide public ACL in its UI] → Use S3 bucket policy or a prefix-restricted CDN; never enable bucket-wide public read.
 - [A separate production configuration can drift from the local template] → Document shared fields and validate both configurations whenever configuration structure changes.
@@ -86,13 +86,12 @@ The production browser flow must receive a direct upload session, pass CORS pref
 2. Add a secret-free production configuration template and separate production Compose definition.
 3. Supply Rainyun and other production secrets only through the deployment environment.
 4. Apply prefix-scoped public-read policy to `media/*`.
-5. After the production Web origin exists, apply the exact-origin Rainyun CORS rule.
+5. Verify the Rainyun gateway preflight response for Frux's signed PUT headers.
 6. Validate Rainyun direct upload, processing, protected access, and public playback through the production configuration.
 7. If any provider contract fails, do not deploy the production definition; local MinIO development remains unaffected.
 
 ## Open Questions
 
-- What HTTPS origin will host the production Frux Web application?
 - Does Rainyun accept AWS S3 `PutBucketPolicy` with the `arn:aws:s3:::frux1/media/*` resource form?
 - Does Rainyun preserve `x-amz-meta-sha256` and expose the checksum fields required by Frux `HeadObject` validation?
 - Does the Rainyun public path preserve Range, HEAD, ETag, and Frux's object Cache-Control metadata without rewriting?

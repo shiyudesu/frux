@@ -18,21 +18,30 @@ Region: us-east-1
 
 Frux 的原视频和处理中间文件也在这个 Bucket 里，整个 Bucket 公开会把这些文件一起暴露出去。
 
-## 2. 配置 CORS
+## 2. CORS 不用配置
 
-有域名以后，进入 `frux1` 的 CORS 或跨域设置，添加一条规则：
+雨云面板目前没有Bucket级CORS设置。`cn-zj1.rains3.com` 的网关已经统一返回：
 
-| 项目 | 填写内容 |
-| --- | --- |
-| 允许来源 | `https://你的域名` |
-| 允许方法 | `PUT`、`GET`、`HEAD` |
-| 允许请求头 | `*` |
-| 暴露响应头 | `ETag`、`x-amz-checksum-sha256` |
-| 缓存时间 | `3600` |
+```text
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: *
+Access-Control-Allow-Headers: *
+Access-Control-Expose-Headers: *
+```
 
-允许来源不要填 `*`，也不要填本地开发地址。
+所以浏览器直传不需要你在控制台增加规则。我们已经用 `frux1` 路径做过OPTIONS预检，返回200。
 
-如果现在还没有域名，先跳过 CORS，等域名确定后再配。
+上线后如果浏览器出现跨域错误，可再次检查：
+
+```bash
+curl -i -X OPTIONS \
+  "https://cn-zj1.rains3.com/frux1/uploads/cors-test" \
+  -H "Origin: https://你的Frux域名" \
+  -H "Access-Control-Request-Method: PUT" \
+  -H "Access-Control-Request-Headers: content-type,cache-control,x-amz-checksum-sha256,x-amz-meta-sha256"
+```
+
+雨云允许所有Origin跨域调用，但上传URL仍是Frux API签发的短期单对象URL。不要泄露签名URL。
 
 ## 3. 只公开 `media/*`
 
@@ -81,7 +90,7 @@ FRUX_S3_SECRET_KEY=你的SecretKey
 
 上线后确认：
 
-- 上传视频时，浏览器向雨云发送的 PUT 请求成功。
+- OPTIONS预检和浏览器向雨云发送的PUT请求成功。
 - 已发布的 `media/*` 可以播放。
 - `uploads/*` 和 `processed/*` 直接用浏览器访问时仍然提示无权限。
 

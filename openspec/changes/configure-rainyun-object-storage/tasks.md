@@ -7,7 +7,7 @@
 
 ## 2. Provider Policy and Operations
 
-- [x] 2.1 Document a Rainyun CORS template requiring the actual production HTTPS Web origin, signed upload methods, required headers, exposed headers, and preflight verification; prohibit wildcard and local-development origins.
+- [x] 2.1 Document Rainyun's provider-wide wildcard CORS behavior and the OPTIONS verification for Frux signed upload headers.
 - [ ] 2.2 Document and apply a private-by-default bucket policy that grants anonymous `s3:GetObject` only to `arn:aws:s3:::frux1/media/*`; stop rollout if Rainyun cannot enforce that prefix.
 - [x] 2.3 Update deployment and startup documentation to distinguish default local MinIO startup from explicit production Rainyun startup, secret injection, and the prohibition on bucket-wide public read.
 

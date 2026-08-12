@@ -16,19 +16,19 @@ Frux SHALL retain bundled MinIO as the default local Docker Compose media storag
 - **THEN** production deployment fails explicitly while the independent default local MinIO configuration remains usable
 
 ### Requirement: Production Browser Direct Upload Policy
-The Rainyun bucket CORS policy SHALL permit Frux direct-upload requests only from the configured production Web origin with the signed methods and headers required by the existing upload-session contract and SHALL NOT default to wildcard or local-development origins.
+The deployment SHALL verify that Rainyun's provider-managed wildcard CORS response permits the methods and headers required by the existing upload-session contract, and Frux SHALL rely on short-lived object-scoped presigned URLs rather than Bucket credentials for browser upload authorization.
 
 #### Scenario: Production browser uploads a signed object
 - **WHEN** the production Frux Web application sends the issued presigned PUT with content type, private cache control, SHA-256 checksum, and SHA-256 metadata headers
 - **THEN** Rainyun accepts the preflight and object upload and exposes the response headers required for diagnostics
 
-#### Scenario: Unlisted browser origin attempts direct upload
-- **WHEN** a browser origin other than the configured production Web origin attempts to use the bucket direct-upload path
-- **THEN** the storage CORS policy does not grant that origin browser access
+#### Scenario: Rainyun panel has no CORS editor
+- **WHEN** the operator configures bucket `frux1`
+- **THEN** no nonexistent Bucket CORS setting is required and the operator verifies the gateway OPTIONS response instead
 
-#### Scenario: Production Web origin is not configured
-- **WHEN** the production Web origin is still unknown
-- **THEN** Rainyun rollout remains incomplete and the deployment does not substitute `*`, `http://127.0.0.1:5173`, or `http://localhost:5173`
+#### Scenario: Signed upload URL leaks
+- **WHEN** another browser origin obtains an unexpired presigned PUT URL
+- **THEN** the URL is treated as a temporary credential limited to its signed object, headers, checksum, and expiry
 
 ### Requirement: Prefix-Scoped Public Media Access
 The Rainyun bucket SHALL remain private by default and SHALL grant anonymous object reads only for promoted objects under `media/*`.
