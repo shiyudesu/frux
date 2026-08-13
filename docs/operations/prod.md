@@ -1,61 +1,70 @@
-# Prod 部署
+# Prod 操作手册
 
-Prod服务器不Clone仓库，也不接收GitHub的SSH部署或Webhook。GitHub只负责发布公开的GHCR镜像，
-服务器每小时主动检查一次。
-
-```text
-PR → 无Secret CI
-       ↓ 合并main并通过CI
-构建API/Web镜像
-       ↓ 你批准 production Environment
-发布 frux-deploy:prod
-       ↓ 每小时
-服务器主动拉取、更新、检查、失败回滚
-```
-
-## GitHub仓库设置
-
-### 1. 保护main
-
-在仓库Rulesets或Branch protection中保护 `main`：
-
-- 必须通过Pull Request合并。
-- 必须通过CI中的Backend、Web和Repository检查。
-- 单人仓库不要求PR批准，因为GitHub不允许作者批准自己的PR。
-- 合并前由你检查变更内容，真正发布仍需单独批准 `production` Environment。
-- 禁止Force Push和删除分支。
-
-`.github/CODEOWNERS` 标出了工作流、Dockerfile、Prod Compose和部署脚本等敏感文件。以后添加协作者
-时，可以直接开启Code Owner强制审核。
-
-### 2. 配置production Environment
-
-打开：
+Prod服务器不Clone仓库。GitHub Actions发布公开GHCR镜像，服务器用systemd每小时检查一次。
 
 ```text
-Settings → Environments → New environment → production
+main CI通过
+    ↓ 检查部署相关路径
+    ├─ 只有文档/模板变化：结束
+    └─ 代码或Prod配置变化：构建API/Web
+                              ↓ 人工批准production
+                              发布frux-deploy:prod
+                                      ↓
+                              服务器拉取并部署
 ```
 
-设置：
+当前方案适合个人项目和小流量试运行。它只有一台服务器和一个Kafka，不是高可用架构。
 
-- Required reviewers：选择你自己。
-- Deployment branches：只允许 `main`。
-- 不需要配置服务器密码或SSH Key。
+## 一次性设置GitHub
 
-CI成功后，API和Web镜像会先构建。只有你批准Environment后，
-`ghcr.io/shiyudesu/frux-deploy:prod` 才会更新。
+### main分支
 
-### 3. 公共仓库安全
+仓库当前规则：
 
-- 不使用自托管Runner。公共仓库的Fork PR可能在自托管机器上执行恶意代码。
-- 不使用 `pull_request_target`。
-- Fork PR只运行GitHub托管Runner上的无Secret CI。
-- 仓库默认 `GITHUB_TOKEN` 权限保持只读；只有镜像发布Job单独申请 `packages: write`。
-- `.github/workflows/deploy.yml` 中有权限的Action固定到了具体Commit SHA。
+- Backend、Web和Repository三项CI必须通过。
+- 外部贡献者通过Pull Request提交。
+- 仓库管理员可以直接Push。
+- 禁止Force Push和删除main。
+- 只允许普通Merge Commit，不使用Squash或Rebase Merge。
 
-### 4. 将GHCR Package设为Public
+`.github/CODEOWNERS` 标记了工作流、Dockerfile、Prod配置和部署脚本。以后增加可信协作者后，可开启
+强制Code Owner审核。
 
-第一次发布后，GitHub Packages中会出现：
+### production Environment
+
+在GitHub打开：
+
+```text
+Settings → Environments → production
+```
+
+确认：
+
+- Required reviewers中有你。
+- 只允许受保护的main分支部署。
+- 管理员不能绕过审批。
+
+CI通过后，只有这些路径发生变化才会构建镜像并等待审批：
+
+```text
+apps/api/**
+apps/web/**
+apps/docker-compose.prod.yml
+apps/.env.prod.example
+apps/.env.release.example
+scripts/postgres-backup.sh
+.github/workflows/deploy.yml
+```
+
+README、`docs/**`、Issue/PR模板和普通OpenSpec改动只运行CI，不触发CD。
+
+比较基线是上一次成功的main CI，不是上一次已批准的Prod。这样纯文档提交不会因为之前有未发布代码
+而再次触发审批。某次代码发布被取消后，需要发布该版本时，在Actions里重新运行原来的
+`Publish Prod` Run。
+
+### GHCR Packages
+
+第一次成功发布后会生成：
 
 ```text
 frux-api
@@ -63,17 +72,24 @@ frux-web
 frux-deploy
 ```
 
-进入每个Package的设置，把Visibility改为Public。服务器之后可以匿名拉取，不保存GHCR Token。
+进入三个Package的设置，将Visibility改为Public。服务器匿名拉取，不保存GitHub Token。
 
-## 服务器第一次准备
+公共仓库不要使用自托管Runner，也不要添加 `pull_request_target` 工作流。外部Fork只在GitHub托管
+Runner上执行无Secret CI。
 
-服务器需要：
+## 一次性设置服务器
 
-- Docker和Docker Compose。
-- curl。
-- systemd。
+需要安装：
 
-创建目录和Prod环境文件：
+- Docker
+- Docker Compose
+- curl
+- systemd
+- Caddy（服务器已在使用）
+
+### 创建Prod环境文件
+
+建议把URL中的 `main` 换成你检查过的Commit SHA：
 
 ```bash
 sudo install -d -m 700 /opt/frux
@@ -86,9 +102,9 @@ sudo chmod 600 /opt/frux/.env.prod
 sudo editor /opt/frux/.env.prod
 ```
 
-需要填写：
+填写：
 
-| 配置 | 填什么 |
+| 配置 | 内容 |
 | --- | --- |
 | `FRUX_DOMAIN` | Frux域名，例如 `frux.example.com` |
 | `FRUX_JWT_SECRET` | 随机字符串 |
@@ -98,13 +114,28 @@ sudo editor /opt/frux/.env.prod
 | `FRUX_S3_ACCESS_KEY` | 雨云AccessKey |
 | `FRUX_S3_SECRET_KEY` | 雨云SecretKey |
 
-随机值可用下面的命令生成：
+生成随机值：
 
 ```bash
 openssl rand -base64 48 | tr -d '\n'
 ```
 
-确认默认回环端口没有被其他项目使用：
+`FRUX_DOMAIN` 只填域名，不要加协议、引号或末尾斜杠：
+
+```dotenv
+FRUX_DOMAIN=frux.example.com
+```
+
+### 配置现有Caddy
+
+Prod默认使用：
+
+```text
+Web  127.0.0.1:18080
+API  127.0.0.1:18081
+```
+
+先确认没有占用：
 
 ```bash
 sudo ss -ltnp | grep -E ':(18080|18081)\s' || true
@@ -112,7 +143,7 @@ sudo ss -ltnp | grep -E ':(18080|18081)\s' || true
 
 如有占用，修改 `.env.prod` 中的 `FRUX_WEB_PORT` 和 `FRUX_API_PORT`。
 
-编辑现有的 `/etc/caddy/Caddyfile`，加入下面的站点。端口必须和 `.env.prod` 一致：
+在 `/etc/caddy/Caddyfile` 中加入：
 
 ```caddyfile
 frux.example.com {
@@ -128,16 +159,16 @@ frux.example.com {
 }
 ```
 
-把 `frux.example.com` 换成你的域名，然后检查并重载现有Caddy：
+替换域名和端口，然后执行：
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-自动部署不会修改 `/etc/caddy/Caddyfile`，也不会影响服务器上的其他站点。
+自动部署不会修改Caddyfile。
 
-安装部署脚本和systemd配置。生产使用时建议把下面URL中的 `main` 换成你已经检查过的Commit SHA：
+### 安装拉取代理
 
 ```bash
 sudo curl -fsSL \
@@ -157,7 +188,18 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now frux-deploy.timer
 ```
 
-如果服务器之前已经用 `docker-compose.prod.yml` 手动运行过 `frux-prod`，先在旧Compose目录执行：
+Timer配置：
+
+```ini
+OnBootSec=2min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+```
+
+首次拉取镜像可能较慢，Service允许运行1小时。Docker会缓存已下载的镜像层。
+
+如果服务器原来手动运行过 `frux-prod`，启用代理前先停止旧容器：
 
 ```bash
 FRUX_API_IMAGE=unused \
@@ -171,76 +213,46 @@ docker compose \
   down
 ```
 
-这些值只用于让 `compose down` 解析旧文件，不会拉取镜像。不要加 `-v`，数据库和其他Volume会保留。
-拉取代理发现已有容器但没有自己的 `current` 记录时会拒绝接管，不会擅自停止现有服务。
+不要加 `-v`。Volume会保留。代理检测到未纳管的 `frux-prod` 容器时会拒绝接管，不会擅自停服务。
 
-服务器最终只多出：
+## 发布
+
+代码或Prod配置进入main后：
+
+1. 等CI通过。
+2. 打开Actions中的 `Publish Prod`。
+3. 批准 `production` Environment。
+4. 等下一次每小时检查，或立即执行：
+
+```bash
+sudo systemctl start frux-deploy.service
+```
+
+部署流程：
+
+1. 拉取 `frux-deploy:prod`。
+2. 验证文件白名单和SHA-256。
+3. 拉取固定Digest的API/Web镜像。
+4. 保留Worker当前启用状态。
+5. 更新Compose。
+6. 检查API、Web、Caddy路由、数据库备份和Worker Kafka状态。
+7. 失败时恢复上一版本。
+
+服务器只保留：
 
 ```text
 /opt/frux/.env.prod
-/opt/frux/releases/当前和上一版本
 /opt/frux/current
+/opt/frux/releases/当前和上一版本
 /usr/local/sbin/frux-deploy
 /etc/systemd/system/frux-deploy.service
 /etc/systemd/system/frux-deploy.timer
 Docker镜像和Volumes
 ```
 
-## 检查频率
-
-Timer在开机两分钟后检查一次，之后每小时检查：
-
-```ini
-OnBootSec=2min
-OnUnitActiveSec=1h
-RandomizedDelaySec=5min
-Persistent=true
-```
-
-镜像没有变化时只查询GHCR清单，不会重启容器。
-
-需要立即检查时：
-
-```bash
-sudo systemctl start frux-deploy.service
-```
-
-查看Timer：
-
-```bash
-systemctl list-timers frux-deploy.timer
-```
-
-查看部署日志：
-
-```bash
-journalctl -u frux-deploy.service -n 200 --no-pager
-```
-
-首次从GHCR下载镜像可能较慢，Service允许最多1小时。已经下载完成的镜像层会被Docker缓存，后续发布
-通常只需要下载变化部分。
-
-## 第一次发布
-
-1. Push或合并到 `main`。
-2. 等CI通过。
-3. 打开GitHub Actions中的 `Publish Prod`。
-4. 批准 `production` Environment。
-5. 等服务器下一次检查，或手动启动Service。
-
-部署脚本会：
-
-1. 拉取公开的 `frux-deploy:prod`。
-2. 验证部署包文件和SHA-256。
-3. 拉取固定Digest的API/Web镜像。
-4. 更新Compose。
-5. 通过现有Caddy检查首页和 `/health`，并确认数据库备份健康。
-6. 如果Worker原来已启用，确认Kafka Broker和Consumer工作流均已就绪。
-7. 失败时恢复上一套配置和镜像。
-
 ## Worker
 
-Worker默认不启动。确认 `frux1` 是空Bucket，或者已经恢复匹配的PostgreSQL后：
+Worker默认不启动。确认 `frux1` 是空Bucket，或者已恢复匹配的PostgreSQL后：
 
 ```bash
 cd /opt/frux/current/apps
@@ -254,9 +266,65 @@ docker compose \
   up -d worker
 ```
 
-后续自动部署会记住Worker是否已经运行。
+后续发布会保持Worker现有状态。
 
-## 查看运行状态
+## 设置后台管理员
+
+先在Frux网页注册账号，然后执行：
+
+```bash
+sudo -i
+set -a
+. /opt/frux/.env.prod
+set +a
+
+read -r -p "Frux账号: " ACCOUNT
+cd /opt/frux/current/apps
+
+docker compose \
+  --env-file /opt/frux/.env.prod \
+  --env-file .env.release \
+  -p frux-prod \
+  -f docker-compose.prod.yml \
+  exec -T postgres \
+  psql \
+  -U "$FRUX_POSTGRES_USER" \
+  -d "$FRUX_POSTGRES_DATABASE" \
+  -v a="$ACCOUNT" <<'SQL'
+UPDATE account
+SET role = 'admin',
+    updated_at = NOW()
+WHERE account = lower(:'a')
+RETURNING id, account, role;
+SQL
+
+unset ACCOUNT
+exit
+```
+
+返回账号、ID和 `admin` 说明设置成功。
+
+## 常用命令
+
+立即检查新版本：
+
+```bash
+sudo systemctl start frux-deploy.service
+```
+
+查看部署日志：
+
+```bash
+sudo journalctl -u frux-deploy.service -n 200 -o cat
+```
+
+查看Timer：
+
+```bash
+systemctl list-timers frux-deploy.timer
+```
+
+查看容器：
 
 ```bash
 cd /opt/frux/current/apps
@@ -272,8 +340,8 @@ docker compose \
 
 ## 数据
 
-PostgreSQL、Redis、Kafka、兼容上传目录和PostgreSQL备份都在Docker Volume中。Caddy证书继续由
-服务器现有Caddy管理。
+PostgreSQL、Redis、Kafka、兼容上传目录和PostgreSQL备份保存在Docker Volume中。Caddy证书由服务器
+现有Caddy管理。
 
 不要执行：
 
@@ -281,4 +349,4 @@ PostgreSQL、Redis、Kafka、兼容上传目录和PostgreSQL备份都在Docker V
 docker compose -p frux-prod -f docker-compose.prod.yml down -v
 ```
 
-这会删除持久数据。
+这会删除持久数据。数据库和备份Volume仍在同一台服务器，重要备份还要复制到别处。

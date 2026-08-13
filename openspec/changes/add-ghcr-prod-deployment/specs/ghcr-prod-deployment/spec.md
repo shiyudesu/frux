@@ -11,6 +11,33 @@ API and Web images SHALL be published only after CI succeeds for the exact same-
 - **WHEN** any required CI job fails
 - **THEN** no image or deployable bundle is published for that SHA
 
+### Requirement: Deployment-Relevant Path Filtering
+The publication workflow SHALL compare the current successful `main` CI SHA with the previous successful `main` CI SHA and SHALL continue only when runtime or Prod deployment files changed.
+
+#### Scenario: Documentation-only main update
+- **WHEN** the successful comparison contains only README, `docs/**`, Issue/PR templates, or ordinary OpenSpec files
+- **THEN** CI remains successful but no GHCR image build or Prod Environment approval is created
+
+#### Scenario: Runtime code changes
+- **WHEN** `apps/api/**` or `apps/web/**` changes in the successful comparison
+- **THEN** application images are built and the protected Prod promotion flow is eligible to continue
+
+#### Scenario: Prod deployment configuration changes
+- **WHEN** Prod Compose, Prod API config, Prod environment examples, PostgreSQL backup script, or the deployment workflow changes
+- **THEN** the deployment images and approved bundle are rebuilt
+
+#### Scenario: Multiple commits are pushed together
+- **WHEN** a single successful CI run covers multiple new commits
+- **THEN** the comparison from the previous successful CI detects relevant changes in any covered commit
+
+#### Scenario: No previous successful main CI exists
+- **WHEN** path detection has no valid successful CI baseline
+- **THEN** it compares the empty Git tree with the current tested SHA
+
+#### Scenario: Previous promotion was canceled
+- **WHEN** CI succeeded for runtime changes but the protected Prod promotion did not advance `frux-deploy:prod`
+- **THEN** later documentation-only updates do not recreate approval, and the original `Publish Prod` run can be rerun to publish that SHA
+
 ### Requirement: Reviewer-Protected Prod Promotion
 The mutable `frux-deploy:prod` pointer SHALL advance only from a job protected by the GitHub `production` Environment and approved by an authorized reviewer.
 

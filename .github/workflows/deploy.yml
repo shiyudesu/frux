@@ -15,12 +15,120 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-images:
-    name: Build application images
+  detect-changes:
+    name: Detect deployment changes
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      publish: ${{ steps.changes.outputs.publish }}
+      base_sha: ${{ steps.changes.outputs.base_sha }}
+      reason: ${{ steps.changes.outputs.reason }}
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      CURRENT_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect runtime or Prod deployment changes
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CURRENT_CI_RUN_ID" =~ ^[0-9]+$ ]]
+
+          runs=$(
+            gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+              -f branch=main \
+              -f status=completed \
+              -f per_page=100
+          )
+          base_sha=$(
+            jq -r \
+              --argjson current_run "$CURRENT_CI_RUN_ID" \
+              --arg current_sha "$RELEASE_SHA" '
+                [.workflow_runs[]
+                  | select(
+                      .id != $current_run
+                      and .conclusion == "success"
+                      and .head_sha != $current_sha
+                    )
+                  | .head_sha][0] // ""
+              ' <<<"$runs"
+          )
+
+          empty_tree=$(git hash-object -t tree /dev/null)
+          compare_base=$empty_tree
+          baseline_mode=missing-baseline
+          if [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] &&
+            ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$base_sha" || true
+          fi
+          if [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] &&
+            git cat-file -e "${base_sha}^{commit}" 2>/dev/null &&
+            git merge-base --is-ancestor "$base_sha" "$RELEASE_SHA"; then
+            compare_base=$base_sha
+            baseline_mode=successful-ci-baseline
+          else
+            base_sha=
+          fi
+
+          paths=(
+            apps/api
+            apps/web
+            apps/docker-compose.prod.yml
+            apps/api/configs/config.prod.yaml
+            apps/.env.prod.example
+            apps/.env.release.example
+            scripts/postgres-backup.sh
+            .github/workflows/deploy.yml
+          )
+
+          changed=$(git diff --name-only "$compare_base" "$RELEASE_SHA" -- "${paths[@]}")
+          publish=false
+          reason=no-relevant-paths
+          if [[ -n "$changed" ]]; then
+            echo "Deployable paths changed:"
+            printf '%s\n' "$changed"
+            publish=true
+            reason=relevant-paths
+          else
+            echo "Only non-deployable paths changed; skipping image publication and Prod approval."
+          fi
+
+          echo "publish=$publish" >>"$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >>"$GITHUB_OUTPUT"
+          echo "reason=$reason" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Prod path detection"
+            echo
+            echo "- Current tested SHA: \`$RELEASE_SHA\`"
+            echo "- Comparison base: \`${base_sha:-empty tree}\`"
+            echo "- Baseline mode: \`$baseline_mode\`"
+            echo "- Publish Prod: \`$publish\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  build-images:
+    name: Build application images
+    needs:
+      - detect-changes
+    if: needs.detect-changes.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -84,7 +192,9 @@ jobs:
   promote-prod:
     name: Approve Prod release
     needs:
+      - detect-changes
       - build-images
+    if: needs.detect-changes.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

@@ -26,7 +26,26 @@ The current Prod Compose is image-only, but the uncommitted CD draft gives GitHu
 
 `.github/workflows/deploy.yml` runs after workflow `CI` completes. It proceeds only when CI succeeded, `head_branch` is `main`, and `head_repository` is this repository.
 
-A GitHub-hosted build job checks out the exact tested SHA and pushes:
+Before building images, a read-only detection job anonymously pulls the small public `frux-deploy:prod` image and reads its `org.opencontainers.image.revision` label. That SHA is the last reviewer-approved Prod revision, so canceled or failed promotions do not become the comparison baseline. If the image, label, or commit is unavailable, the workflow publishes conservatively.
+
+Only these paths are deployment-relevant:
+
+```text
+apps/api/**
+apps/web/**
+apps/docker-compose.prod.yml
+apps/api/configs/config.prod.yaml
+apps/.env.prod.example
+apps/.env.release.example
+scripts/postgres-backup.sh
+.github/workflows/deploy.yml
+```
+
+README, `docs/**`, Issue/PR templates, and ordinary OpenSpec-only edits still run CI but do not build GHCR images or request Prod approval. Comparing with the previous successful main CI rather than only `HEAD^` also handles a single push containing multiple commits.
+
+If a relevant promotion is canceled, later documentation-only pushes intentionally do not reopen approval. The operator can rerun the original `Publish Prod` workflow when that tested SHA should be published.
+
+A GitHub-hosted build job runs only when the detection output is true, checks out the exact tested SHA, and pushes:
 
 - `ghcr.io/shiyudesu/frux-api:<sha>`
 - `ghcr.io/shiyudesu/frux-web:<sha>`
@@ -103,6 +122,7 @@ On success, `/opt/frux/current` points to the new release and the deployed bundl
 
 - [GHCR packages remain private] → The hourly pull fails without changing the current release; package visibility is a documented one-time setup.
 - [A malicious change reaches main] → Require PR-only main, successful CI, owner diff review, and a separate Prod Environment approval; enable mandatory code-owner approval when another trusted maintainer is added.
+- [Path detection misses a relevant change in a multi-commit push] → Compare the current successful CI SHA with the previous successful main CI SHA, not only the immediate parent.
 - [Polling overlaps a prior deployment] → The script uses `flock`; the second run exits.
 - [Application rollback cannot reverse schema changes] → Keep migrations backward compatible and limit automatic rollback to images/configuration.
 - [The deployment agent itself needs an update] → Keep it small, root-owned, manually installed, and update it explicitly rather than from the deploy bundle.
@@ -110,7 +130,7 @@ On success, `/opt/frux/current` points to the new release and the deployed bundl
 ## Migration Plan
 
 1. Change Prod Compose to complete digest image references.
-2. Replace the SSH workflow with CI-gated image build and reviewer-approved deploy-bundle promotion.
+2. Add a previous-successful-CI path gate, then run CI-gated image build and reviewer-approved deploy-bundle promotion only for relevant changes.
 3. Add the fixed deployment script and systemd hourly timer.
 4. Add CODEOWNERS and document repository/Environment settings.
 5. Validate workflow trust checks, image digests, bundle allowlist/checksums, unchanged polling, successful deployment, rollback, Worker preservation, locking, and timer behavior.

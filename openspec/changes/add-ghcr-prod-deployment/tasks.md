@@ -6,10 +6,12 @@
 ## 2. Protected GHCR Publication
 
 - [x] 2.1 Replace the SSH draft with a workflow triggered only by successful same-repository `main` CI completion.
-- [x] 2.2 Build and push API and Web images with SHA tags and capture their immutable digests.
-- [x] 2.3 Add a reviewer-protected `production` Environment job that builds and promotes public `frux-deploy:<sha>` and `frux-deploy:prod` images.
-- [x] 2.4 Include only allowlisted deployment files, digest release references, and `manifest.sha256` in the deploy image.
-- [x] 2.5 Pin privileged workflow actions to commit SHAs and use minimal job permissions.
+- [x] 2.2 Add a read-only path-detection job comparing the previous successful `main` CI SHA with the current tested SHA.
+- [x] 2.3 Gate image build and Prod promotion on runtime/Prod deployment paths while skipping documentation and template-only updates.
+- [x] 2.4 Build and push API and Web images with SHA tags and capture their immutable digests.
+- [x] 2.5 Add a reviewer-protected `production` Environment job that builds and promotes public `frux-deploy:<sha>` and `frux-deploy:prod` images.
+- [x] 2.6 Include only allowlisted deployment files, digest release references, and `manifest.sha256` in the deploy image.
+- [x] 2.7 Pin privileged workflow actions to commit SHAs and use minimal job permissions.
 
 ## 3. Hourly Server Pull Agent
 
@@ -27,9 +29,10 @@
 ## 5. Verification
 
 - [x] 5.1 Validate workflow syntax, same-repository/main trust checks, pinned actions, and minimal permissions.
-- [x] 5.2 Validate Prod Compose resolves complete digest references and has no build contexts.
-- [x] 5.3 Verify the deploy image contains only allowlisted files, valid checksums, and no secrets/source.
-- [x] 5.4 Test unchanged polling, Worker preservation, successful update, failed-health rollback, release pruning, and lock behavior with local fixture images.
-- [x] 5.5 Validate systemd units, hourly schedule, boot recovery, and manual service start.
-- [x] 5.6 Run repository tests/build, Compose validation, and `openspec validate --all --strict`.
-- [ ] 5.7 Make real GHCR packages public, configure protected Prod promotion, and complete a live deployment and rollback drill.
+- [x] 5.2 Test relevant-code, deployment-config, documentation-only, multi-commit, previous-successful-CI, and missing-baseline path detection.
+- [x] 5.3 Validate Prod Compose resolves complete digest references and has no build contexts.
+- [x] 5.4 Verify the deploy image contains only allowlisted files, valid checksums, and no secrets/source.
+- [x] 5.5 Test unchanged polling, Worker preservation, successful update, failed-health rollback, release pruning, and lock behavior with local fixture images.
+- [x] 5.6 Validate systemd units, hourly schedule, boot recovery, and manual service start.
+- [x] 5.7 Run repository tests/build, Compose validation, and `openspec validate --all --strict`.
+- [ ] 5.8 Make real GHCR packages public, configure protected Prod promotion, and complete a live deployment and rollback drill.

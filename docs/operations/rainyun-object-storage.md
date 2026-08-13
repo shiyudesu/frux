@@ -1,26 +1,46 @@
-# 雨云对象存储怎么配
+# 雨云对象存储
 
-Frux 使用的雨云信息已经写进配置：
+Frux Prod 固定使用：
 
 ```text
-Endpoint: https://cn-zj1.rains3.com
-Bucket: frux1
-Region: us-east-1
+Endpoint  https://cn-zj1.rains3.com
+Bucket    frux1
+Region    us-east-1
 ```
 
-你只需要在雨云控制台做下面几步。
+你在雨云只需要做两件事：保持Bucket私有，把AccessKey和SecretKey填进服务器。
 
-## 1. 保持 Bucket 私有
+## 保持 frux1 私有
 
-进入雨云控制台，打开对象存储 `frux1`。
+雨云控制台中，`frux1` 的匿名访问必须关闭。
 
-访问权限选择“私有”。不要开启整个 Bucket 公共读，更不能开启公共写。
+不要开启整桶公共读或公共写。这个Bucket同时保存：
 
-Frux 的原视频和处理中间文件也在这个 Bucket 里，整个 Bucket 公开会把这些文件一起暴露出去。
+```text
+uploads/*      用户上传的原文件
+processed/*    转码结果和私有输出
+moderation/*   审核样本
+media/*        已发布媒体对象
+```
 
-## 2. CORS 不用配置
+雨云公开API只有整桶匿名访问开关，没有目录级公共读。Frux不会依赖Bucket Policy或公开ACL。
 
-雨云面板目前没有Bucket级CORS设置。`cn-zj1.rains3.com` 的网关已经统一返回：
+## 填写Key
+
+在服务器 `/opt/frux/.env.prod` 中填写：
+
+```dotenv
+FRUX_S3_ACCESS_KEY=你的AccessKey
+FRUX_S3_SECRET_KEY=你的SecretKey
+```
+
+不要把真实Key提交到Git、发到聊天或放进截图。
+
+## CORS
+
+雨云面板没有Bucket级CORS设置，不需要配置。
+
+`cn-zj1.rains3.com` 网关当前统一返回：
 
 ```text
 Access-Control-Allow-Origin: *
@@ -29,9 +49,10 @@ Access-Control-Allow-Headers: *
 Access-Control-Expose-Headers: *
 ```
 
-所以浏览器直传不需要你在控制台增加规则。我们已经用 `frux1` 路径做过OPTIONS预检，返回200。
+浏览器上传权限不靠CORS限制，而是靠Frux API签发的短期、单对象签名URL。签名URL在过期前相当于临时
+凭证，不要泄露。
 
-上线后如果浏览器出现跨域错误，可再次检查：
+需要排查跨域时：
 
 ```bash
 curl -i -X OPTIONS \
@@ -41,45 +62,39 @@ curl -i -X OPTIONS \
   -H "Access-Control-Request-Headers: content-type,cache-control,x-amz-checksum-sha256,x-amz-meta-sha256"
 ```
 
-雨云允许所有Origin跨域调用，但上传URL仍是Frux API签发的短期单对象URL。不要泄露签名URL。
+正常响应包含状态码200和上述 `Access-Control-*` 响应头。
 
-## 3. 不要开启任何公共访问
+## 上传和播放
 
-雨云公开API只提供整个Bucket的匿名访问开关，没有目录或前缀级公共读。`frux1` 必须一直保持私有，
-不要开启Bucket公共读。
+上传：
 
-公开视频使用下面的流程：
+```text
+浏览器请求上传会话
+    ↓
+API签发雨云PUT URL
+    ↓
+浏览器直传雨云
+    ↓
+API校验大小、类型和SHA-256
+```
+
+公开视频：
 
 ```text
 浏览器请求 https://你的Frux域名/media/...
-        ↓
-Frux确认该对象属于当前可公开视频
-        ↓
-返回最多60秒有效的雨云签名下载地址
-        ↓
-浏览器直接从雨云读取视频
+    ↓
+Frux确认对象仍属于当前可公开视频
+    ├─ MPD和HEAD：Frux返回
+    └─ MP4和DASH分片：307到最长60秒的雨云签名GET
 ```
 
-视频字节仍由雨云提供，不会经过VPS。原视频、私密视频、审核样本和未知对象不会获得签名地址。
+视频字节由雨云发送，不经过VPS。原文件、私密视频、审核样本和未知对象不会获得下载签名。
 
-## 4. 填写两个 Key
+## 上线检查
 
-在服务器的 `/opt/frux/.env.prod` 中填写：
+- 浏览器直传PUT成功。
+- 视频处理完成后可以播放。
+- Range拖动和HEAD请求正常。
+- 直接匿名访问雨云中的 `uploads/*`、`processed/*` 和 `media/*` 均返回无权限。
 
-```dotenv
-FRUX_S3_ACCESS_KEY=你的AccessKey
-FRUX_S3_SECRET_KEY=你的SecretKey
-```
-
-不要把真实 Key 提交到 Git，也不要发到聊天或截图里。
-
-## 5. 最后检查
-
-上线后确认：
-
-- OPTIONS预检和浏览器向雨云发送的PUT请求成功。
-- 已发布的 `media/*` 可以播放。
-- `uploads/*` 和 `processed/*` 直接用浏览器访问时仍然提示无权限。
-
-一个 `frux1` 只能配一套 Frux PostgreSQL 数据库。换服务器时可以继续使用原来的 Bucket，但要先恢复
-对应数据库，再启动 Worker。
+一个 `frux1` 只能对应一套Frux PostgreSQL。换服务器时先恢复数据库，再启动Worker。

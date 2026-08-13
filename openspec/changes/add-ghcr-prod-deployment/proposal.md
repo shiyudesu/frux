@@ -5,6 +5,7 @@ The Prod server should run released container images without cloning source code
 ## What Changes
 
 - Publish API/Worker and Web images to GHCR with commit-SHA and `latest` tags after CI succeeds on `main`.
+- Skip GHCR builds and Prod approval when the successful `main` CI contains no runtime or Prod deployment-file changes since the previous successful `main` CI.
 - Change Prod Compose to pull configurable GHCR images instead of using local build contexts.
 - Package Compose, application configuration, backup script, checksums, and digest-pinned image references into `ghcr.io/shiyudesu/frux-deploy`.
 - Promote the mutable `frux-deploy:prod` pointer only after the protected GitHub `production` Environment is approved.
@@ -26,6 +27,7 @@ None.
 ## Impact
 
 - Adds a GitHub Actions deployment workflow and GHCR package permissions.
+- Keeps documentation-only and repository-template changes out of the Prod publication path while still running normal CI.
 - Changes `docker-compose.prod.yml` image configuration and removes Prod build contexts.
 - Adds a root-owned deployment script, systemd service, and hourly timer.
 - Updates Prod deployment documentation, GitHub Environment settings, branch protection, and CODEOWNERS.

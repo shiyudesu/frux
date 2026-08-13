@@ -83,9 +83,9 @@ docker compose up --build
 
 > `docker compose down -v` 会删除 PostgreSQL、Redis、Kafka 和 MinIO 的本地数据卷。
 
-该 Compose 文件只用于本地开发，并始终使用 MinIO。Prod部署使用独立的简单Compose，见
-[简单 Prod 部署](docs/operations/prod.md)；雨云权限与CORS见
-[雨云对象存储生产接入](docs/operations/rainyun-object-storage.md)。
+该 Compose 文件只用于本地开发，并始终使用MinIO。Prod操作见
+[Prod操作手册](docs/operations/prod.md)，雨云设置见
+[雨云对象存储](docs/operations/rainyun-object-storage.md)。
 Prod由GitHub Actions构建并推送公开GHCR镜像；服务器不Clone仓库，也不开放部署Webhook或保存
 GitHub部署SSH Key，而是通过systemd每小时主动检查已批准的部署包。
 
