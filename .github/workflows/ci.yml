@@ -145,7 +145,10 @@ jobs:
               -f apps/docker-compose.prod.yml \
               config --profiles
           )
-          ! grep -qx worker <<<"$profiles"
+          if grep -qx worker <<<"$profiles"; then
+            echo "Prod Worker must not require an optional Compose profile."
+            exit 1
+          fi
           docker compose \
             --env-file apps/.env.release.example \
             -f apps/docker-compose.prod.yml \
