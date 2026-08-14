@@ -265,6 +265,39 @@ Docker镜像和Volumes
 Worker是生产核心服务，会随API和Web一起启动。首次部署前必须确认 `frux1` 是空Bucket，或者已经恢复
 与对象存储匹配的PostgreSQL；不要让空数据库连接已有数据的Bucket后启动完整Compose。
 
+当前媒体策略是单并发、最大源时长 180 分钟、单次 ffmpeg 命令超时 360 分钟和 `veryfast` preset。
+`processing` 表示正在执行；`pending`、`retryable` 表示排队；`completed`、`failed` 表示终态。
+
+查看当前任务和失败原因：
+
+```bash
+sudo -i
+set -a
+. /opt/frux/.env.prod
+set +a
+release=$(readlink -f /opt/frux/current)
+
+docker compose \
+  --env-file /opt/frux/.env.prod \
+  --env-file "$release/apps/.env.release" \
+  -p frux-prod \
+  -f "$release/apps/docker-compose.prod.yml" \
+  exec -T postgres psql \
+  -U "$FRUX_POSTGRES_USER" \
+  -d "$FRUX_POSTGRES_DATABASE" \
+  -x -c "
+SELECT v.id, v.title, j.state, j.attempts, j.max_attempts,
+       j.error_code, j.error_message, j.lease_until, j.updated_at
+FROM media_processing_job j
+LEFT JOIN video v ON v.media_asset_id = j.asset_id
+ORDER BY j.updated_at DESC
+LIMIT 20;"
+```
+
+`lease_expired` 表示 Worker 中断后由 reconciliation 回收；`duration_limit` 是源视频超过配置上限；
+`probe_timeout`、`transcode_timeout`、`dash_timeout` 表示对应命令超过预算。retryable 任务会由
+数据库 polling 自动重新领取，不需要恢复 Kafka 消息。
+
 ## 设置后台管理员
 
 先在Frux网页注册账号，然后执行：

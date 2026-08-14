@@ -296,6 +296,14 @@ func startWorkers(
 	if err != nil {
 		return err
 	}
+	maxDuration, err := time.ParseDuration(cfg.Media.Processing.MaxDuration)
+	if err != nil {
+		return err
+	}
+	commandTimeout, err := time.ParseDuration(cfg.Media.Processing.CommandTimeout)
+	if err != nil {
+		return err
+	}
 	cleanupDelay, err := time.ParseDuration(cfg.Media.Processing.CleanupDelay)
 	if err != nil {
 		return err
@@ -309,7 +317,12 @@ func startWorkers(
 	}); err != nil {
 		return err
 	}
-	mediaProcessor := inframedia.NewFFmpegProcessor(mediaStore)
+	mediaProcessor := inframedia.NewFFmpegProcessor(
+		mediaStore,
+		inframedia.WithFFmpegMaxDuration(maxDuration),
+		inframedia.WithFFmpegCommandTimeout(commandTimeout),
+		inframedia.WithFFmpegPreset(cfg.Media.Processing.FFmpegPreset),
+	)
 	mediaURLResolver, err := inframedia.NewURLResolver(cfg.Media.PublicBaseURL, mediaStore)
 	if err != nil {
 		return err

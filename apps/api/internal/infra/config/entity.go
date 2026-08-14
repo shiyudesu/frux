@@ -127,6 +127,9 @@ type MediaProcessingConfig struct {
 	MaxAttempts          int    `yaml:"max_attempts"`
 	WorkerConcurrency    int    `yaml:"worker_concurrency"`
 	LeaseTTL             string `yaml:"lease_ttl"`
+	MaxDuration          string `yaml:"max_duration"`
+	CommandTimeout       string `yaml:"command_timeout"`
+	FFmpegPreset         string `yaml:"ffmpeg_preset"`
 	CleanupDelay         string `yaml:"cleanup_delay"`
 	DisableOrphanCleanup bool   `yaml:"disable_orphan_cleanup"`
 }

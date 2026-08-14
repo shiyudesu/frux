@@ -1,6 +1,11 @@
 package inframedia
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
 
 func TestRenditionHeightsNeverUpscales(t *testing.T) {
 	tests := []struct {
@@ -31,5 +36,31 @@ func TestScaledEvenWidth(t *testing.T) {
 	}
 	if got := scaledEvenWidth(853, 480, 360); got%2 != 0 {
 		t.Fatalf("expected even width, got %d", got)
+	}
+}
+
+func TestFFmpegProcessorCommandTimeoutAndCancellationAreDistinct(t *testing.T) {
+	processor := NewFFmpegProcessor(
+		nil,
+		WithFFmpegCommandTimeout(20*time.Millisecond),
+	)
+	if _, err := processor.runCommand(
+		context.Background(), "sh", "-c", "sleep 1",
+	); !errors.Is(err, ErrMediaCommandTimeout) {
+		t.Fatalf("timeout error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := processor.runCommand(
+		ctx, "sh", "-c", "sleep 1",
+	); !errors.Is(err, context.Canceled) || errors.Is(err, ErrMediaCommandTimeout) {
+		t.Fatalf("cancellation error = %v", err)
+	}
+}
+
+func TestTailTextKeepsActionableSuffix(t *testing.T) {
+	if got := tailText("prefix-actionable-tail", 15); got != "actionable-tail" {
+		t.Fatalf("tail = %q", got)
 	}
 }

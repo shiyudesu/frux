@@ -550,7 +550,7 @@ func processingRetryDelay(attempts int) time.Duration {
 func truncateProcessingError(err error) string {
 	value := fmt.Sprint(err)
 	if len(value) > 512 {
-		return value[:512]
+		return value[len(value)-512:]
 	}
 	return value
 }

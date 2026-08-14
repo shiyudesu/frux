@@ -139,6 +139,13 @@ jobs:
               config --services
           )
           grep -qx worker <<<"$services"
+          profiles=$(
+            docker compose \
+              --env-file apps/.env.release.example \
+              -f apps/docker-compose.prod.yml \
+              config --profiles
+          )
+          ! grep -qx worker <<<"$profiles"
           docker compose \
             --env-file apps/.env.release.example \
             -f apps/docker-compose.prod.yml \

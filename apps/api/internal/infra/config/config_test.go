@@ -16,8 +16,25 @@ func TestNormalizeAndValidateMediaConfigDefaultsToLocal(t *testing.T) {
 	}
 	if cfg.Backend != domainmedia.StorageBackendLocal ||
 		cfg.LocalRoot != "./uploads" ||
-		cfg.PublicBaseURL != "/media" {
+		cfg.PublicBaseURL != "/media" ||
+		cfg.Processing.MaxDuration != "180m" ||
+		cfg.Processing.CommandTimeout != "360m" ||
+		cfg.Processing.FFmpegPreset != "veryfast" {
 		t.Fatalf("unexpected local defaults: %+v", cfg)
+	}
+}
+
+func TestNormalizeAndValidateMediaConfigRejectsUnsafeProcessingPolicy(t *testing.T) {
+	tests := []MediaProcessingConfig{
+		{MaxDuration: "180m", CommandTimeout: "60m", FFmpegPreset: "veryfast"},
+		{MaxDuration: "25h", CommandTimeout: "25h", FFmpegPreset: "veryfast"},
+		{MaxDuration: "180m", CommandTimeout: "360m", FFmpegPreset: "invalid"},
+	}
+	for _, processing := range tests {
+		cfg := MediaConfig{Processing: processing}
+		if err := normalizeAndValidateMediaConfig(&cfg); !errors.Is(err, ErrInvalidMediaConfig) {
+			t.Fatalf("processing=%+v error=%v", processing, err)
+		}
 	}
 }
 
@@ -357,6 +374,9 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 		cfg.Media.S3.Bucket != "frux1" ||
 		!cfg.Media.S3.UsePathStyle ||
 		cfg.Media.S3.AutoCreateBucket ||
+		cfg.Media.Processing.MaxDuration != "180m" ||
+		cfg.Media.Processing.CommandTimeout != "360m" ||
+		cfg.Media.Processing.FFmpegPreset != "veryfast" ||
 		!cfg.Media.Processing.DisableOrphanCleanup {
 		t.Fatalf("prod media config = %+v", cfg.Media)
 	}

@@ -81,6 +81,48 @@ func TestCleanupTaskPostgreSQLFencingAndDeadline(t *testing.T) {
 	}
 }
 
+func TestExpiredProcessingLeaseRecordsReasonAndCanBeReclaimed(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set")
+	}
+	db := openMediaPostgres(t, dsn)
+	repository := New(db)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	expiredAt := now.Add(-time.Minute)
+	job := ProcessingJobModel{
+		AssetID: 41, ProfileVersion: "v1",
+		State: domainmedia.JobStateProcessing, Attempts: 1, MaxAttempts: 5,
+		LeaseOwner: "stopped-worker", LeaseUntil: &expiredAt,
+		NextAttemptAt: now.Add(-time.Hour),
+	}
+	if err := db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	released, err := repository.ReleaseExpiredProcessingLeases(context.Background(), now)
+	if err != nil || released != 1 {
+		t.Fatalf("released=%d err=%v", released, err)
+	}
+	var recovered ProcessingJobModel
+	if err := db.First(&recovered, job.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recovered.State != domainmedia.JobStateRetryable ||
+		recovered.ErrorCode != "lease_expired" ||
+		recovered.ErrorMessage != "processing lease expired before finalization" ||
+		recovered.LeaseOwner != "" || recovered.LeaseUntil != nil {
+		t.Fatalf("recovered job = %+v", recovered)
+	}
+	claimed, err := repository.LeaseProcessingJobs(
+		context.Background(), "new-worker", now, now.Add(10*time.Minute), 1,
+	)
+	if err != nil || len(claimed) != 1 ||
+		claimed[0].State != domainmedia.JobStateProcessing ||
+		claimed[0].Attempts != 2 {
+		t.Fatalf("claimed=%+v err=%v", claimed, err)
+	}
+}
+
 func TestVideoLifecycleTaskPostgreSQLDuplicateLeaseAndReclaim(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {
@@ -291,7 +333,7 @@ func openMediaPostgres(t *testing.T, dsn string) *gorm.DB {
 	}
 	if err := db.AutoMigrate(
 		&CleanupTaskModel{}, &VideoLifecycleTaskModel{},
-		&UploadSessionModel{}, &AssetModel{}, &VariantModel{},
+		&UploadSessionModel{}, &AssetModel{}, &VariantModel{}, &ProcessingJobModel{},
 	); err != nil {
 		t.Fatal(err)
 	}

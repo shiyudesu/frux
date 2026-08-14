@@ -33,6 +33,7 @@ const minInternalTokenLength = 32
 const maxAdminAccessTTL = 8 * time.Hour
 const maxConsumerAccessTTL = 15 * time.Minute
 const maxJWTClockLeeway = 2 * time.Minute
+const maxMediaProcessingDuration = 24 * time.Hour
 
 // LoadConfig 读取 YAML 配置文件，并反序列化为应用启动配置。
 func LoadConfig(path string) (*Config, error) {
@@ -700,12 +701,33 @@ func normalizeAndValidateMediaConfig(cfg *MediaConfig) error {
 		cfg.Processing.WorkerConcurrency = 1
 	}
 	cfg.Processing.LeaseTTL = defaultDuration(cfg.Processing.LeaseTTL, "10m")
+	cfg.Processing.MaxDuration = defaultDuration(cfg.Processing.MaxDuration, "180m")
+	cfg.Processing.CommandTimeout = defaultDuration(cfg.Processing.CommandTimeout, "360m")
+	cfg.Processing.FFmpegPreset = strings.ToLower(strings.TrimSpace(cfg.Processing.FFmpegPreset))
+	if cfg.Processing.FFmpegPreset == "" {
+		cfg.Processing.FFmpegPreset = "veryfast"
+	}
 	cfg.Processing.CleanupDelay = defaultDuration(cfg.Processing.CleanupDelay, "24h")
-	for _, value := range []string{cfg.SignedURLTTL, cfg.UploadSessionTTL, cfg.Processing.LeaseTTL, cfg.Processing.CleanupDelay} {
+	for _, value := range []string{
+		cfg.SignedURLTTL,
+		cfg.UploadSessionTTL,
+		cfg.Processing.LeaseTTL,
+		cfg.Processing.MaxDuration,
+		cfg.Processing.CommandTimeout,
+		cfg.Processing.CleanupDelay,
+	} {
 		duration, err := time.ParseDuration(value)
 		if err != nil || duration <= 0 {
 			return ErrInvalidMediaConfig
 		}
+	}
+	maxDuration, _ := time.ParseDuration(cfg.Processing.MaxDuration)
+	commandTimeout, _ := time.ParseDuration(cfg.Processing.CommandTimeout)
+	if maxDuration > maxMediaProcessingDuration ||
+		commandTimeout < maxDuration ||
+		commandTimeout > maxMediaProcessingDuration ||
+		!validFFmpegPreset(cfg.Processing.FFmpegPreset) {
+		return ErrInvalidMediaConfig
 	}
 	if cfg.Backend != domainmedia.StorageBackendS3 {
 		return nil
@@ -726,6 +748,15 @@ func normalizeAndValidateMediaConfig(cfg *MediaConfig) error {
 		return ErrInvalidMediaConfig
 	}
 	return nil
+}
+
+func validFFmpegPreset(value string) bool {
+	switch value {
+	case "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow":
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultDuration(value string, fallback string) string {

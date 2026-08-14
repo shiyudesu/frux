@@ -3,6 +3,7 @@ package applicationmedia
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -66,6 +67,14 @@ func TestMediaProcessingWorkerRecordsTerminalFailure(t *testing.T) {
 	if repo.asset.State != domainmedia.AssetStateFailed || repo.asset.ErrorCode != "probe_invalid" ||
 		repo.job.State != domainmedia.JobStateFailed {
 		t.Fatalf("unexpected failure state: asset=%+v job=%+v", repo.asset, repo.job)
+	}
+}
+
+func TestTruncateProcessingErrorKeepsDiagnosticTail(t *testing.T) {
+	message := strings.Repeat("x", 600) + "actionable-terminal-error"
+	got := truncateProcessingError(errors.New(message))
+	if len(got) != 512 || !strings.HasSuffix(got, "actionable-terminal-error") {
+		t.Fatalf("truncated error = %q", got)
 	}
 }
 

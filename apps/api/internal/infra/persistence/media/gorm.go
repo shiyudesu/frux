@@ -571,6 +571,7 @@ func (r *Repository) ReleaseExpiredProcessingLeases(ctx context.Context, now tim
 		Where("state = ? AND lease_until < ?", domainmedia.JobStateProcessing, now).
 		Updates(map[string]any{
 			"state": domainmedia.JobStateRetryable, "lease_owner": "", "lease_until": nil,
+			"error_code": "lease_expired", "error_message": "processing lease expired before finalization",
 			"next_attempt_at": now, "updated_at": now,
 		})
 	return result.RowsAffected, result.Error

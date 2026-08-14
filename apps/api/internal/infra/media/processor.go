@@ -24,7 +24,11 @@ import (
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
-const defaultMediaCommandTimeout = 15 * time.Minute
+const defaultMediaCommandTimeout = 360 * time.Minute
+const defaultMediaMaxDuration = 180 * time.Minute
+const defaultFFmpegPreset = "veryfast"
+
+var ErrMediaCommandTimeout = errors.New("media command timed out")
 
 type generatedMP4 struct {
 	path      string
@@ -38,11 +42,53 @@ type generatedMP4 struct {
 type FFmpegProcessor struct {
 	store          domainmedia.MediaObjectStore
 	commandTimeout time.Duration
+	maxDuration    time.Duration
+	ffmpegPreset   string
 	tempRoot       string
 }
 
-func NewFFmpegProcessor(store domainmedia.MediaObjectStore) *FFmpegProcessor {
-	return &FFmpegProcessor{store: store, commandTimeout: defaultMediaCommandTimeout}
+type FFmpegProcessorOption func(*FFmpegProcessor)
+
+func WithFFmpegCommandTimeout(timeout time.Duration) FFmpegProcessorOption {
+	return func(processor *FFmpegProcessor) {
+		if timeout > 0 {
+			processor.commandTimeout = timeout
+		}
+	}
+}
+
+func WithFFmpegMaxDuration(maxDuration time.Duration) FFmpegProcessorOption {
+	return func(processor *FFmpegProcessor) {
+		if maxDuration > 0 {
+			processor.maxDuration = maxDuration
+		}
+	}
+}
+
+func WithFFmpegPreset(preset string) FFmpegProcessorOption {
+	return func(processor *FFmpegProcessor) {
+		if preset = strings.TrimSpace(preset); preset != "" {
+			processor.ffmpegPreset = preset
+		}
+	}
+}
+
+func NewFFmpegProcessor(
+	store domainmedia.MediaObjectStore,
+	options ...FFmpegProcessorOption,
+) *FFmpegProcessor {
+	processor := &FFmpegProcessor{
+		store:          store,
+		commandTimeout: defaultMediaCommandTimeout,
+		maxDuration:    defaultMediaMaxDuration,
+		ffmpegPreset:   defaultFFmpegPreset,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(processor)
+		}
+	}
+	return processor
 }
 
 func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaAsset, job *domainmedia.MediaProcessingJob) (*applicationmedia.ProcessResult, error) {
@@ -269,6 +315,9 @@ func (p *FFmpegProcessor) probe(ctx context.Context, path string) (*probeMetadat
 		"-of", "json", path,
 	)
 	if err != nil {
+		if errors.Is(err, ErrMediaCommandTimeout) {
+			return nil, &applicationmedia.ProcessError{Code: "probe_timeout", Err: err}
+		}
 		return nil, &applicationmedia.ProcessError{Code: "probe_failed", Terminal: true, Err: err}
 	}
 	var decoded ffprobeOutput
@@ -299,8 +348,12 @@ func (p *FFmpegProcessor) probe(ctx context.Context, path string) (*probeMetadat
 		return nil, &applicationmedia.ProcessError{Code: "probe_metadata", Terminal: true, Err: errors.New("invalid media metadata")}
 	}
 	result.DurationMS = int64(math.Round(duration * 1000))
-	if result.DurationMS > int64(10*time.Minute/time.Millisecond) {
-		return nil, &applicationmedia.ProcessError{Code: "duration_limit", Terminal: true, Err: errors.New("media duration exceeds limit")}
+	if time.Duration(result.DurationMS)*time.Millisecond > p.maxDuration {
+		return nil, &applicationmedia.ProcessError{
+			Code:     "duration_limit",
+			Terminal: true,
+			Err:      fmt.Errorf("media duration exceeds %s limit", p.maxDuration),
+		}
 	}
 	if result.Width > 3840 || result.Height > 3840 {
 		return nil, &applicationmedia.ProcessError{Code: "dimension_limit", Terminal: true, Err: errors.New("media dimensions exceed limit")}
@@ -334,19 +387,25 @@ func (p *FFmpegProcessor) transcodeMP4(ctx context.Context, sourcePath, outputPa
 		"-y", "-i", sourcePath,
 		"-map", "0:v:0", "-map", "0:a:0?",
 		"-vf", fmt.Sprintf("scale=%d:%d", width, height),
-		"-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p",
+		"-c:v", "libx264", "-preset", p.ffmpegPreset, "-pix_fmt", "yuv420p",
 		"-b:v", strconv.Itoa(bitrate), "-maxrate", strconv.Itoa(bitrate), "-bufsize", strconv.Itoa(bitrate*2),
 		"-c:a", "aac", "-b:a", "128k",
+		"-map_metadata", "-1", "-map_chapters", "-1",
+		"-avoid_negative_ts", "make_zero",
 		"-movflags", "+faststart", outputPath,
 	)
 	if err != nil {
-		return &applicationmedia.ProcessError{Code: "transcode_failed", Err: err}
+		code := "transcode_failed"
+		if errors.Is(err, ErrMediaCommandTimeout) {
+			code = "transcode_timeout"
+		}
+		return &applicationmedia.ProcessError{Code: code, Err: err}
 	}
 	return nil
 }
 
 func (p *FFmpegProcessor) generateDASH(ctx context.Context, inputs []string, manifestPath string, hasAudio bool, segmentSeconds int) error {
-	args := []string{"-y"}
+	args := []string{"-y", "-fflags", "+genpts"}
 	for _, input := range inputs {
 		args = append(args, "-i", input)
 	}
@@ -361,12 +420,17 @@ func (p *FFmpegProcessor) generateDASH(ctx context.Context, inputs []string, man
 	args = append(args,
 		"-c", "copy", "-f", "dash", "-seg_duration", strconv.Itoa(segmentSeconds),
 		"-use_template", "1", "-use_timeline", "1",
+		"-avoid_negative_ts", "make_zero",
 		"-init_seg_name", "init-$RepresentationID$.m4s",
 		"-media_seg_name", "chunk-$RepresentationID$-$Number%05d$.m4s",
 		"-adaptation_sets", adaptationSets, manifestPath,
 	)
 	if _, err := p.runCommand(ctx, "ffmpeg", args...); err != nil {
-		return &applicationmedia.ProcessError{Code: "dash_failed", Err: err}
+		code := "dash_failed"
+		if errors.Is(err, ErrMediaCommandTimeout) {
+			code = "dash_timeout"
+		}
+		return &applicationmedia.ProcessError{Code: code, Err: err}
 	}
 	return nil
 }
@@ -461,13 +525,34 @@ func (p *FFmpegProcessor) runCommand(ctx context.Context, name string, args ...s
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if len(message) > 2048 {
-			message = message[len(message)-2048:]
+		message := tailText(strings.TrimSpace(stderr.String()), 2048)
+		if ctx.Err() != nil {
+			return nil, commandError(name, ctx.Err(), message)
 		}
-		return nil, fmt.Errorf("%s: %w: %s", name, err, message)
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return nil, commandError(
+				name,
+				fmt.Errorf("%w after %s", ErrMediaCommandTimeout, p.commandTimeout),
+				message,
+			)
+		}
+		return nil, commandError(name, err, message)
 	}
 	return stdout.Bytes(), nil
+}
+
+func commandError(name string, err error, diagnostic string) error {
+	if diagnostic == "" {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	return fmt.Errorf("%s: %w: %s", name, err, diagnostic)
+}
+
+func tailText(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[len(value)-limit:]
 }
 
 type processingProfile struct {

@@ -101,6 +101,10 @@ API用HeadObject校验大小、类型和SHA-256
 Worker转码并写回雨云
 ```
 
+Worker 是 Prod 必需服务，部署与回滚都和 API、Web 一起启动并通过健康检查。当前单机策略保持一个
+媒体执行 slot，最大源时长 180 分钟，单次 ffmpeg 命令预算 360 分钟，并使用 `veryfast` preset；
+PostgreSQL 中的 durable job 继续负责排队、租约、重试和失败原因。
+
 公开视频播放：
 
 ```text

@@ -86,6 +86,9 @@ media:
     max_attempts: 5
     worker_concurrency: 1
     lease_ttl: "10m"
+    max_duration: "180m"
+    command_timeout: "360m"
+    ffmpeg_preset: "veryfast"
     cleanup_delay: "24h"
   s3:
     endpoint: ""

@@ -22,13 +22,29 @@ complete、retry 和 failed transition 都要求 token 匹配且 lease 尚未过
 ## 3. 恢复与监控
 
 Worker 保留处理租约续期、过期 lease 回收、重试时间、终态通知、缺失输出修复和孤儿对象清理。
+过期处理租约回到 `retryable` 时记录 `lease_expired`，便于区分进程中断和媒体内容错误。ffmpeg
+失败只持久化有界诊断，但保留 stderr 末尾，因为最终错误通常出现在输出尾部；命令超时使用
+`probe_timeout`、`transcode_timeout` 或 `dash_timeout`，不再只显示 `signal: killed`。
 监控区分 `signaled`、`capacity_full`、`publish_failed`、`missing_job`、`stale` 与
 `polling_recovery`。Kafka 只优化唤醒延迟，不是正确性或长期重试来源。
 
 media shadow 只读 `(asset_id, profile_version)` durable job；缺失为 propagation pending，
 已存在但 profile 冲突为 mismatch，不会 claim 或 signal job。
 
-## 4. 受保护浏览器访问
+## 4. 处理策略
+
+`media.processing` 显式配置：
+
+- `max_duration`：允许处理的最大源视频时长。
+- `command_timeout`：单次 ffprobe/ffmpeg 命令预算，必须不小于 `max_duration`。
+- `ffmpeg_preset`：封闭允许列表中的 x264 preset。
+
+当前本地、Docker 和 Prod 默认分别为 180 分钟、360 分钟和 `veryfast`。`profile_version=v1` 继续表示
+输出分辨率、码率、codec 和 DASH 拓扑；超时、最大输入时长和编码速度属于运行策略，因此现有
+`v1` retryable 任务无需迁移即可使用新预算。Prod 保持单个媒体执行 slot，避免同一 VPS 上多个 x264
+进程竞争 CPU 和内存。
+
+## 5. 受保护浏览器访问
 
 本地 `/uploads` 的私密视频、封面和处理中预览继续由不可变 owner、视频引用和生命周期共同授权。
 浏览器 `<video>/<img>` 使用仅限 `/uploads` 的 HttpOnly 资产 JWT，并同时要求 Web 维护的
