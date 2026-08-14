@@ -39,10 +39,11 @@ media shadow 只读 `(asset_id, profile_version)` durable job；缺失为 propag
 - `command_timeout`：单次 ffprobe/ffmpeg 命令预算，必须不小于 `max_duration`。
 - `ffmpeg_preset`：封闭允许列表中的 x264 preset。
 
-当前本地、Docker 和 Prod 默认分别为 180 分钟、360 分钟和 `veryfast`。`profile_version=v1` 继续表示
-输出分辨率、码率、codec 和 DASH 拓扑；超时、最大输入时长和编码速度属于运行策略，因此现有
-`v1` retryable 任务无需迁移即可使用新预算。Prod 保持单个媒体执行 slot，避免同一 VPS 上多个 x264
-进程竞争 CPU 和内存。
+当前本地、Docker 和 Prod 默认分别为 180 分钟、360 分钟和 `veryfast`。活动
+`profile_version=v2` 只生成一个源分辨率 H.264/AAC faststart MP4，不再生成多清晰度或 DASH。
+H.264/AAC 源走 stream copy，只有音频不兼容时只转 AAC，其他已接受视频 codec 只执行一次原分辨率
+H.264 转码。未完成的 `v1` retryable 任务使用相同单输出恢复路径，已完成的历史多源对象不改动。
+Prod 保持单个媒体执行 slot，避免同一 VPS 上多个 x264 进程竞争 CPU 和内存。
 
 ## 5. 受保护浏览器访问
 

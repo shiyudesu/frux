@@ -17,6 +17,7 @@ func TestNormalizeAndValidateMediaConfigDefaultsToLocal(t *testing.T) {
 	if cfg.Backend != domainmedia.StorageBackendLocal ||
 		cfg.LocalRoot != "./uploads" ||
 		cfg.PublicBaseURL != "/media" ||
+		cfg.Processing.ProfileVersion != "v2" ||
 		cfg.Processing.MaxDuration != "180m" ||
 		cfg.Processing.CommandTimeout != "360m" ||
 		cfg.Processing.FFmpegPreset != "veryfast" {
@@ -374,6 +375,7 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 		cfg.Media.S3.Bucket != "frux1" ||
 		!cfg.Media.S3.UsePathStyle ||
 		cfg.Media.S3.AutoCreateBucket ||
+		cfg.Media.Processing.ProfileVersion != "v2" ||
 		cfg.Media.Processing.MaxDuration != "180m" ||
 		cfg.Media.Processing.CommandTimeout != "360m" ||
 		cfg.Media.Processing.FFmpegPreset != "veryfast" ||

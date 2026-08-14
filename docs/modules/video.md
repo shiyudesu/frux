@@ -192,7 +192,7 @@ publication outbox 的 pending/oldest 统计查询与 dispatch 操作错误分�
 | 待审作品列表与查看 | 本人作品网格按需获取 cover 短期访问，WorkViewer 并发获取 media/cover 短期访问；ready baseline 可播放，只有封面或浏览器不支持原始编码时展示真实处理提示和重试 |
 | 非本人请求保护资产 | 返回权限错误且不签发对象 URL |
 | 视频仍在处理 | 作者列表返回 `media_status=processing`，公共详情、Feed、推荐和预加载均不返回 |
-| 基线完成 | `media_url` 投影到基线，`playback_sources` 按基线、MP4 清晰度、DASH manifest 稳定排序 |
+| 基线完成 | 新任务的 `media_url` 与 `playback_sources` 投影到同一个源分辨率 MP4；历史多源继续稳定排序 |
 | 首次发布投递失败 | 视频事实保持提交；publication Outbox 延迟重试，通知 readiness 与事件 dispatch 独立，且同一 event 不重复创建 |
 | 发布副作用中断 | 未 ready 的 publication 事实由 API/Worker 恢复后再投递，不提前声称视频已公开 |
 | 删除生产视频 | 公开发现立即消失，物理对象在安全延迟后由 Worker 清理 |

@@ -200,10 +200,12 @@ feed:hot:window:v1:{windowEndUnix}
 ## 12. 生产媒体交付
 
 - Web 直接上传对象存储，避免大文件经过 API 进程；完成接口只执行有界元数据校验和任务持久化。
-- Worker 生成不超过源分辨率的 480p、720p、1080p MP4，以及同一目录下的 DASH manifest/segment；720p 或源分辨率基线优先保证兼容。
+- Worker 只生成一个源分辨率 H.264/AAC faststart MP4；兼容 H.264/AAC 源使用 stream copy，
+  不再为新任务生成 480p/720p/1080p rendition 或 DASH bundle。
 - 单机 Prod 保持一个媒体 slot，使用启动时验证的 180 分钟源时长、360 分钟单命令预算和 `veryfast`
   preset；不要用增加并发掩盖单条命令预算不足。
-- 处理输出先保留在受保护前缀，公开发布时提升为按资产、处理版本和校验和组成的稳定键。MP4、segment、cover 和 manifest 使用 60 秒可重验证缓存，以支持审核下架和恢复。
+- 处理输出先保留在受保护前缀，公开发布时提升为按资产、处理版本和校验和组成的稳定键。新 MP4 与
+  cover 使用 60 秒可重验证缓存；历史 segment 和 manifest 继续按原策略读取。
 - `media_url` 保留基线兼容，`playback_sources` 增量返回多源，避免旧客户端同步升级。
 - 重点指标为对象操作耗时、处理成功/失败、输出数量、过期租约、孤儿对象和清理积压；标签不得包含用户、视频、资产或对象键。
 

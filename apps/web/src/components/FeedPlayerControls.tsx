@@ -47,6 +47,7 @@ export function FeedPlayerControls({
   const playing = state.status === "playing" || (state.status === "buffering" && state.intendedPlay);
   const busy = state.status === "loading";
   const statusText = playerStatusText(state);
+  const showQualityMenu = state.qualities.length > 1;
   const qualityOptions = [
     { value: "auto", label: "自动" },
     ...state.qualities.map((quality) => ({ value: quality.id, label: quality.label }))
@@ -89,12 +90,14 @@ export function FeedPlayerControls({
           {formatPlaybackTime(safeCurrentTime)} / {formatPlaybackTime(safeDuration)}
         </span>
         <span className="player-controls-spacer" />
-        <PlayerChoiceMenu
-          label="清晰度"
-          options={qualityOptions}
-          value={state.selectedQuality}
-          onSelect={onSelectQuality}
-        />
+        {showQualityMenu && (
+          <PlayerChoiceMenu
+            label="清晰度"
+            options={qualityOptions}
+            value={state.selectedQuality}
+            onSelect={onSelectQuality}
+          />
+        )}
         <PlayerChoiceMenu
           label="播放速度"
           options={SUPPORTED_PLAYBACK_RATES.map((rate) => ({ value: String(rate), label: `${rate}x` }))}

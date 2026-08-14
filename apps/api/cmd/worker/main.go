@@ -311,8 +311,8 @@ func startWorkers(
 	mediaRepo := infrapersistencemedia.New(gormDB)
 	if err := mediaRepo.UpsertProcessingProfile(ctx, &domainmedia.ProcessingProfile{
 		Version:    cfg.Media.Processing.ProfileVersion,
-		Name:       "Frux baseline H.264/AAC and DASH profile",
-		ConfigJSON: `{"baseline_max_height":720,"renditions":[480,720,1080],"dash_segment_seconds":4}`,
+		Name:       "Frux source-resolution H.264/AAC MP4 profile",
+		ConfigJSON: `{"output":"source-resolution-mp4","video_codec":"h264","audio_codec":"aac","dash":false}`,
 		Active:     true,
 	}); err != nil {
 		return err

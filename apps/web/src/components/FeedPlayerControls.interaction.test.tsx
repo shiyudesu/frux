@@ -30,7 +30,10 @@ describe("FeedPlayerControls menus", () => {
         state={{
           ...createInitialPlayerState(),
           selectedQuality: "auto",
-          qualities: [{ id: "720p", label: "720p", selected: false, active: true }]
+          qualities: [
+            { id: "480p", label: "480p", selected: false, active: false },
+            { id: "720p", label: "720p", selected: false, active: true }
+          ]
         }}
         onTogglePlayback={() => {}}
         onToggleMute={() => {}}

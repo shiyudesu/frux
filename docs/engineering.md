@@ -258,6 +258,10 @@ GORM Repository 规则：
   command timeout 不得小于最大允许时长。ffmpeg timeout、普通退出和父 context 取消必须区分，
   durable error 保留有界 stderr 尾部。过期处理租约回到 retryable 时记录 `lease_expired`，不得留下
   无原因的重试状态。
+- 活动媒体 profile 只生成一个源分辨率 baseline MP4。H.264/AAC 或无音频源优先 stream copy；
+  H.264 加其他受支持音频只复制视频并规范为 AAC；其他视频 codec 只转码一次。新处理不得生成
+  rendition、manifest 或 segment；旧 ready variants 继续兼容读取。播放器只有在至少两个可选源时
+  才显示清晰度菜单。
 - Kafka DLQ 检查只允许代码注册 Topic 的精确 Partition/Offset 读取，返回 Payload 大小、SHA-256 和有界 JSON 诊断，不复制 Payload 到 PostgreSQL。Operator Replay 保持原 key/value/Event ID，增加稳定 Replay ID，先持久化 pending claim，再发布到 owning Group 的第一 retry tier；acknowledgement 不确定时通过 Kafka evidence reconciliation 收敛，不能重复发布。
 - 持久化特权操作必须接收已验证的 `domain/adminaudit.Fact`，并在拥有业务变更的 GORM 事务中通过 `infra/persistence/adminaudit.AppendInTransaction` 追加成功事实。审计 Repository 不提供更新或删除；审计插入失败必须使受保护变更回滚。外层事务成功返回后，拥有者才调用 `RecordCommittedWrite` 记录提交指标，不得在事务提交前报告成功。审计 Domain 按 action/outcome 封闭校验 permission、target、method、route、reason 和状态转换；request ID 必须由服务端生成，幂等键只保存 SHA-256 摘要。授权拒绝等无业务提交的尝试由 Application 审计服务使用进程总窗口限额、每操作者窗口限额、全局并发槽和独立短超时异步记录；数据库失败进入低基数指标和安全日志，限额或并发饱和只计 dropped 指标，不能延迟或替换原始 403。
 - 运行时降级控制使用 `domain/governance` 封闭注册表；定义必须包含 typed normal/failure

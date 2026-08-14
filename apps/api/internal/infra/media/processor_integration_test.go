@@ -3,11 +3,9 @@ package inframedia
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,77 +13,69 @@ import (
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
-func TestFFmpegProcessorGeneratesBaselineAndDASH(t *testing.T) {
-	store, asset, job := ffmpegProcessorFixture(t, "640x360", "1")
-	processor := NewFFmpegProcessor(store)
-	result, err := processor.Process(context.Background(), asset, job)
-	if err != nil {
-		t.Fatalf("process source media: %v", err)
-	}
-	var baseline, manifest *domainmedia.MediaVariant
-	for _, variant := range result.Variants {
-		switch variant.Role {
-		case domainmedia.VariantRoleBaseline:
-			baseline = variant
-		case domainmedia.VariantRoleManifest:
-			manifest = variant
-		}
-		if variant.Height > 360 {
-			t.Fatalf("processor upscaled source: %+v", variant)
-		}
-	}
-	if baseline == nil || manifest == nil {
-		t.Fatalf("missing baseline or DASH manifest: %+v", result.Variants)
-	}
-	if _, err := store.Head(context.Background(), baseline.ObjectKey); err != nil {
-		t.Fatalf("baseline object missing: %v", err)
-	}
-	if _, err := store.Head(context.Background(), manifest.ObjectKey); err != nil {
-		t.Fatalf("manifest object missing: %v", err)
+func TestFFmpegProcessorProducesOneSourceResolutionBaselineForV1AndV2(t *testing.T) {
+	for _, profileVersion := range []string{"v1", "v2"} {
+		t.Run(profileVersion, func(t *testing.T) {
+			store, asset, job := ffmpegProcessorFixture(
+				t,
+				fixtureOptions{
+					dimensions: "608x1080", duration: "1",
+					profileVersion: profileVersion, videoCodec: "libx264",
+					audioCodec: "aac", extension: ".mp4", contentType: "video/mp4",
+				},
+			)
+			result, err := NewFFmpegProcessor(store).Process(context.Background(), asset, job)
+			if err != nil {
+				t.Fatalf("process source media: %v", err)
+			}
+			if result.Width != 608 || result.Height != 1080 ||
+				result.VideoCodec != "h264" || result.AudioCodec != "aac" ||
+				len(result.Variants) != 1 {
+				t.Fatalf("unexpected result: %+v", result)
+			}
+			baseline := result.Variants[0]
+			if baseline.Role != domainmedia.VariantRoleBaseline ||
+				baseline.SourceType != domainmedia.SourceTypeMP4 ||
+				baseline.ProfileVersion != profileVersion ||
+				baseline.Width != 608 || baseline.Height != 1080 {
+				t.Fatalf("unexpected baseline: %+v", baseline)
+			}
+			if _, err := store.Head(context.Background(), baseline.ObjectKey); err != nil {
+				t.Fatalf("baseline object missing: %v", err)
+			}
+		})
 	}
 }
 
-func TestFFmpegProcessorGeneratesMultiRenditionDASHWithAudio(t *testing.T) {
-	store, asset, job := ffmpegProcessorFixture(t, "608x1080", "1")
+func TestFFmpegProcessorNormalizesVP9OnceAtSourceResolution(t *testing.T) {
+	store, asset, job := ffmpegProcessorFixture(
+		t,
+		fixtureOptions{
+			dimensions: "640x360", duration: "1", profileVersion: "v2",
+			videoCodec: "libvpx-vp9", extension: ".webm", contentType: "video/webm",
+		},
+	)
 	result, err := NewFFmpegProcessor(store).Process(context.Background(), asset, job)
 	if err != nil {
-		t.Fatalf("process portrait source: %v", err)
+		t.Fatalf("normalize VP9 media: %v", err)
 	}
-	mp4Count := 0
-	segmentCount := 0
-	var manifest *domainmedia.MediaVariant
-	for _, variant := range result.Variants {
-		switch variant.SourceType {
-		case domainmedia.SourceTypeMP4:
-			mp4Count++
-		case domainmedia.SourceTypeDASH:
-			if variant.Role == domainmedia.VariantRoleManifest {
-				manifest = variant
-			} else if variant.Role == domainmedia.VariantRoleSegment {
-				segmentCount++
-			}
-		}
-	}
-	if mp4Count != 3 || manifest == nil || segmentCount == 0 {
-		t.Fatalf("unexpected multi-rendition outputs: mp4=%d segments=%d manifest=%+v",
-			mp4Count, segmentCount, manifest)
-	}
-	reader, _, err := store.Open(context.Background(), manifest.ObjectKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, readErr := io.ReadAll(reader)
-	closeErr := reader.Close()
-	if readErr != nil || closeErr != nil {
-		t.Fatalf("read manifest: read=%v close=%v", readErr, closeErr)
-	}
-	if !strings.Contains(string(body), "<AdaptationSet") {
-		t.Fatalf("invalid DASH manifest: %s", body)
+	if len(result.Variants) != 1 ||
+		result.Width != 640 || result.Height != 360 ||
+		result.VideoCodec != "h264" || result.AudioCodec != "" ||
+		result.Variants[0].Codec != "h264" {
+		t.Fatalf("unexpected normalized result: %+v", result)
 	}
 }
 
 func TestFFmpegProcessorHonorsConfiguredDurationLimit(t *testing.T) {
-	store, asset, job := ffmpegProcessorFixture(t, "640x360", "1")
+	store, asset, job := ffmpegProcessorFixture(
+		t,
+		fixtureOptions{
+			dimensions: "640x360", duration: "1", profileVersion: "v2",
+			videoCodec: "libx264", audioCodec: "aac",
+			extension: ".mp4", contentType: "video/mp4",
+		},
+	)
 	_, err := NewFFmpegProcessor(
 		store,
 		WithFFmpegMaxDuration(500*time.Millisecond),
@@ -98,10 +88,19 @@ func TestFFmpegProcessorHonorsConfiguredDurationLimit(t *testing.T) {
 	}
 }
 
+type fixtureOptions struct {
+	dimensions     string
+	duration       string
+	profileVersion string
+	videoCodec     string
+	audioCodec     string
+	extension      string
+	contentType    string
+}
+
 func ffmpegProcessorFixture(
 	t *testing.T,
-	dimensions string,
-	duration string,
+	options fixtureOptions,
 ) (*LocalStore, *domainmedia.MediaAsset, *domainmedia.MediaProcessingJob) {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -111,15 +110,27 @@ func ffmpegProcessorFixture(
 		t.Skip("ffprobe is not installed")
 	}
 	root := t.TempDir()
-	sourcePath := filepath.Join(root, "source.mp4")
-	command := exec.Command(
-		"ffmpeg", "-v", "error", "-y",
-		"-f", "lavfi", "-i", "testsrc2=size="+dimensions+":rate=24",
-		"-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100",
-		"-t", duration, "-c:v", "libx264", "-preset", "ultrafast",
-		"-pix_fmt", "yuv420p", "-c:a", "aac",
-		sourcePath,
-	)
+	sourcePath := filepath.Join(root, "source"+options.extension)
+	args := []string{
+		"-v", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=" + options.dimensions + ":rate=24",
+	}
+	if options.audioCodec != "" {
+		args = append(args,
+			"-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100",
+		)
+	}
+	args = append(args, "-t", options.duration, "-c:v", options.videoCodec)
+	if options.videoCodec == "libx264" {
+		args = append(args, "-preset", "ultrafast", "-pix_fmt", "yuv420p")
+	} else if options.videoCodec == "libvpx-vp9" {
+		args = append(args, "-deadline", "realtime", "-cpu-used", "8")
+	}
+	if options.audioCodec != "" {
+		args = append(args, "-c:a", options.audioCodec)
+	}
+	args = append(args, sourcePath)
+	command := exec.Command("ffmpeg", args...)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("generate source media: %v: %s", err, output)
 	}
@@ -135,7 +146,8 @@ func ffmpegProcessorFixture(
 	if err != nil {
 		t.Fatalf("open source media: %v", err)
 	}
-	if _, err := store.Put(context.Background(), "uploads/1/source.mp4", source, size, "video/mp4", checksum); err != nil {
+	objectKey := "uploads/1/source" + options.extension
+	if _, err := store.Put(context.Background(), objectKey, source, size, options.contentType, checksum); err != nil {
 		_ = source.Close()
 		t.Fatalf("store source media: %v", err)
 	}
@@ -144,9 +156,9 @@ func ffmpegProcessorFixture(
 	return store, &domainmedia.MediaAsset{
 			ID: 1, OwnerID: 1, Kind: domainmedia.AssetKindVideo,
 			StorageBackend: domainmedia.StorageBackendLocal,
-			ObjectKey:      "uploads/1/source.mp4", ContentType: "video/mp4", SizeBytes: size,
+			ObjectKey:      objectKey, ContentType: options.contentType, SizeBytes: size,
 			ChecksumSHA256: checksum, State: domainmedia.AssetStateUploaded,
 		}, &domainmedia.MediaProcessingJob{
-			ID: 1, AssetID: 1, ProfileVersion: "v1", MaxAttempts: 3,
+			ID: 1, AssetID: 1, ProfileVersion: options.profileVersion, MaxAttempts: 3,
 		}
 }

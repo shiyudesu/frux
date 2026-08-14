@@ -692,7 +692,7 @@ func normalizeAndValidateMediaConfig(cfg *MediaConfig) error {
 	cfg.UploadSessionTTL = defaultDuration(cfg.UploadSessionTTL, "15m")
 	cfg.Processing.ProfileVersion = strings.TrimSpace(cfg.Processing.ProfileVersion)
 	if cfg.Processing.ProfileVersion == "" {
-		cfg.Processing.ProfileVersion = "v1"
+		cfg.Processing.ProfileVersion = "v2"
 	}
 	if cfg.Processing.MaxAttempts <= 0 {
 		cfg.Processing.MaxAttempts = 5

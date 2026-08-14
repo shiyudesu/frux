@@ -621,14 +621,15 @@ flowchart LR
   Web -->|"完成会话"| API
   API -->|"提交资产与 PostgreSQL job；尽力发布唤醒"| MQ["Kafka command"]
   MQ --> Worker["Media Worker"]
-  Worker -->|"ffprobe + FFmpeg"| Outputs["基线 MP4 / 多码率 MP4 / DASH"]
+  Worker -->|"ffprobe + FFmpeg"| Outputs["单个源分辨率 MP4"]
   Worker -->|"临时键校验后发布"| S3
   Worker -->|"更新 ready 与兼容 URL"| PostgreSQL[("PostgreSQL")]
   S3 -->|"不可变公共资源"| CDN["CDN / 公共前缀"]
 ```
 
 - 本地开发继续支持 `/api/uploads` 和受保护 `/uploads/*`；生产模式通过 `media.backend=s3` 使用上传会话。
-- `media_asset` 保存原始资产，`media_variant` 保存基线、清晰度、manifest 和 segment，`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。
+- `media_asset` 保存原始资产，`media_variant` 为新任务保存单个源分辨率基线，并继续兼容历史清晰度、
+  manifest 和 segment；`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。
 - 转码输出的 asset metadata、variants、cleanup/job 最终 transition 在一个 PostgreSQL 事务内先验证
   claim token 与未过期 lease；只有 fenced commit 成功后才允许媒体公开投影和生命周期通知。
 - `frux.media.processing-requested.v1` Consumer 只校验 job 并有界 signal 后提交，不在转码期间持有

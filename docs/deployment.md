@@ -103,7 +103,8 @@ Worker转码并写回雨云
 
 Worker 是 Prod 必需服务，部署与回滚都和 API、Web 一起启动并通过健康检查。当前单机策略保持一个
 媒体执行 slot，最大源时长 180 分钟，单次 ffmpeg 命令预算 360 分钟，并使用 `veryfast` preset；
-PostgreSQL 中的 durable job 继续负责排队、租约、重试和失败原因。
+新任务只生成一个源分辨率 MP4，兼容 H.264/AAC 源通过 stream copy 快速封装。PostgreSQL 中的
+durable job 继续负责排队、租约、重试和失败原因。
 
 公开视频播放：
 
@@ -111,8 +112,8 @@ PostgreSQL 中的 durable job 继续负责排队、租约、重试和失败原�
 浏览器请求 Frux /media/*
     ↓
 API确认对象仍属于当前可公开视频
-    ├─ MPD清单和HEAD：API直接返回
-    └─ MP4和DASH分片：307到最长60秒的雨云签名GET
+    ├─ 新视频MP4：307到最长60秒的雨云签名GET
+    └─ 历史MPD/分片：继续按原授权路径交付
 ```
 
 视频字节由雨云提供，VPS只处理授权、小型MPD清单和重定向。原视频、私密视频、审核样本和未知对象

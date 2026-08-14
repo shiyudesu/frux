@@ -84,7 +84,7 @@ media:
   signed_url_ttl: "15m"
   upload_session_ttl: "15m"
   processing:
-    profile_version: "v1"
+    profile_version: "v2"
     max_attempts: 5
     worker_concurrency: 1
     lease_ttl: "10m"

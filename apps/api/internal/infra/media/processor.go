@@ -11,11 +11,9 @@ import (
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	"io"
 	"math"
-	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,15 +27,6 @@ const defaultMediaMaxDuration = 180 * time.Minute
 const defaultFFmpegPreset = "veryfast"
 
 var ErrMediaCommandTimeout = errors.New("media command timed out")
-
-type generatedMP4 struct {
-	path      string
-	height    int
-	width     int
-	bitrate   int
-	role      string
-	sortOrder int
-}
 
 type FFmpegProcessor struct {
 	store          domainmedia.MediaObjectStore
@@ -111,8 +100,7 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 	if err != nil {
 		return nil, err
 	}
-	profile, err := selectProcessingProfile(job.ProfileVersion)
-	if err != nil {
+	if _, err := selectProcessingProfile(job.ProfileVersion); err != nil {
 		return nil, err
 	}
 
@@ -120,172 +108,36 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, &applicationmedia.ProcessError{Code: "output_dir", Err: err}
 	}
-	heights := renditionHeights(probe.Height, profile.Heights)
-	baselineHeight := min(probe.Height, profile.BaselineMaxHeight)
-	if baselineHeight <= 0 {
-		return nil, &applicationmedia.ProcessError{Code: "invalid_dimensions", Terminal: true, Err: errors.New("invalid source dimensions")}
-	}
-	heights = appendUniqueHeight([]int{baselineHeight}, heights...)
-	generated := make([]generatedMP4, 0, len(heights))
-	for index, height := range heights {
-		width := scaledEvenWidth(probe.Width, probe.Height, height)
-		role := domainmedia.VariantRoleRendition
-		sortOrder := 20 + index
-		if height == baselineHeight {
-			role = domainmedia.VariantRoleBaseline
-			sortOrder = 10
-		}
-		bitrate := profile.bitrateForHeight(height)
-		path := filepath.Join(outputDir, fmt.Sprintf("%dp.mp4", height))
-		start := time.Now()
-		err := p.transcodeMP4(ctx, sourcePath, path, width, height, bitrate)
-		inframetrics.ObserveVideoProcessing("media_mp4_"+strconv.Itoa(height), time.Since(start), err)
-		if err != nil {
-			return nil, err
-		}
-		generated = append(generated, generatedMP4{
-			path: path, height: height, width: width, bitrate: bitrate, role: role, sortOrder: sortOrder,
-		})
-	}
-	sort.SliceStable(generated, func(i, j int) bool {
-		return generated[i].sortOrder < generated[j].sortOrder
-	})
-
-	variants := make([]*domainmedia.MediaVariant, 0, len(generated)+8)
-	for _, output := range generated {
-		objectKey, checksum, size, err := p.publishFile(
-			ctx, asset.ID, job.ID, job.ProfileVersion, output.path, "video/mp4",
-		)
-		if err != nil {
-			return nil, err
-		}
-		variants = append(variants, &domainmedia.MediaVariant{
-			AssetID: asset.ID, ProfileVersion: job.ProfileVersion,
-			SourceType: domainmedia.SourceTypeMP4, Format: "mp4", Codec: "h264", AudioCodec: "aac",
-			Width: output.width, Height: output.height, Bitrate: output.bitrate,
-			Quality: fmt.Sprintf("%dp", output.height), ObjectKey: objectKey, Role: output.role,
-			SortOrder: output.sortOrder, State: domainmedia.VariantStateReady,
-			ChecksumSHA256: checksum, SizeBytes: size, Public: false,
-		})
-	}
-
-	dashDir := filepath.Join(outputDir, "dash")
-	if err := os.MkdirAll(dashDir, 0o755); err != nil {
-		return nil, &applicationmedia.ProcessError{Code: "dash_dir", Err: err}
-	}
-	manifestPath := filepath.Join(dashDir, "manifest.mpd")
+	mode := baselineModeFor(probe)
+	outputPath := filepath.Join(outputDir, "source.mp4")
 	start := time.Now()
-	err = p.generateDASH(ctx, generatedPaths(generated), manifestPath, probe.HasAudio, profile.DASHSegmentSeconds)
-	inframetrics.ObserveVideoProcessing("media_dash", time.Since(start), err)
+	outputWidth, outputHeight, audioCodec, err := p.writeBaselineMP4(
+		ctx, sourcePath, outputPath, probe, mode,
+	)
+	inframetrics.ObserveVideoProcessing("media_"+string(mode), time.Since(start), err)
 	if err != nil {
 		return nil, err
 	}
-	dashFiles, err := os.ReadDir(dashDir)
-	if err != nil {
-		return nil, &applicationmedia.ProcessError{Code: "dash_read", Err: err}
-	}
-	publishedDash, err := p.publishBundle(ctx, asset.ID, job.ID, job.ProfileVersion, dashDir, dashFiles)
+	objectKey, checksum, size, err := p.publishFile(
+		ctx, asset.ID, job.ID, job.ProfileVersion, outputPath, "video/mp4",
+	)
 	if err != nil {
 		return nil, err
 	}
-	for _, file := range dashFiles {
-		if file.IsDir() {
-			continue
-		}
-		path := filepath.Join(dashDir, file.Name())
-		published := publishedDash[file.Name()]
-		role := domainmedia.VariantRoleSegment
-		sortOrder := 0
-		if file.Name() == filepath.Base(manifestPath) {
-			role = domainmedia.VariantRoleManifest
-			sortOrder = 100
-		}
-		variants = append(variants, &domainmedia.MediaVariant{
-			AssetID: asset.ID, ProfileVersion: job.ProfileVersion,
-			SourceType: domainmedia.SourceTypeDASH, Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
-			ObjectKey: published.objectKey, Role: role, SortOrder: sortOrder, State: domainmedia.VariantStateReady,
-			ChecksumSHA256: published.checksum, SizeBytes: published.size, Public: false,
-		})
+	variant := &domainmedia.MediaVariant{
+		AssetID: asset.ID, ProfileVersion: job.ProfileVersion,
+		SourceType: domainmedia.SourceTypeMP4, Format: "mp4", Codec: "h264",
+		AudioCodec: audioCodec, Width: outputWidth, Height: outputHeight,
+		Quality: fmt.Sprintf("%dp", outputHeight), ObjectKey: objectKey,
+		Role: domainmedia.VariantRoleBaseline, SortOrder: 10, State: domainmedia.VariantStateReady,
+		ChecksumSHA256: checksum, SizeBytes: size, Public: false,
 	}
 
 	return &applicationmedia.ProcessResult{
-		Width: probe.Width, Height: probe.Height, DurationMS: probe.DurationMS,
-		VideoCodec: probe.VideoCodec, AudioCodec: probe.AudioCodec, Variants: variants,
+		Width: outputWidth, Height: outputHeight, DurationMS: probe.DurationMS,
+		VideoCodec: "h264", AudioCodec: audioCodec,
+		Variants: []*domainmedia.MediaVariant{variant},
 	}, nil
-}
-
-type publishedFile struct {
-	objectKey string
-	checksum  string
-	size      int64
-}
-
-func (p *FFmpegProcessor) publishBundle(ctx context.Context, assetID, jobID int64, profileVersion, directory string, entries []os.DirEntry) (map[string]publishedFile, error) {
-	names := make([]string, 0, len(entries))
-	files := make(map[string]publishedFile, len(entries))
-	bundleHash := sha256.New()
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		checksum, size, err := fileChecksum(filepath.Join(directory, name))
-		if err != nil {
-			return nil, &applicationmedia.ProcessError{Code: "bundle_checksum_failed", Err: err}
-		}
-		names = append(names, name)
-		files[name] = publishedFile{checksum: checksum, size: size}
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		file := files[name]
-		_, _ = io.WriteString(bundleHash, name+"\x00"+file.checksum+"\n")
-	}
-	bundleChecksum := hex.EncodeToString(bundleHash.Sum(nil))
-	tempPrefix := fmt.Sprintf("tmp/media/%d/%d/dash", assetID, jobID)
-	finalPrefix := fmt.Sprintf("processed/%d/%s/dash-%s", assetID, profileVersion, bundleChecksum)
-	for _, name := range names {
-		file := files[name]
-		path := filepath.Join(directory, name)
-		contentType := contentTypeForPath(path)
-		tempKey := tempPrefix + "/" + name
-		if err := p.putFile(ctx, tempKey, path, file.size, contentType, file.checksum); err != nil {
-			return nil, err
-		}
-		metadata, err := p.store.Head(ctx, tempKey)
-		if err != nil || metadata.SizeBytes != file.size || !strings.EqualFold(metadata.ChecksumSHA256, file.checksum) {
-			if err == nil {
-				err = domainmedia.ErrObjectChecksumMismatch
-			}
-			return nil, &applicationmedia.ProcessError{Code: "bundle_temp_verify_failed", Err: err}
-		}
-		finalKey := finalPrefix + "/" + name
-		reader, _, err := p.store.Open(ctx, tempKey)
-		if err != nil {
-			return nil, &applicationmedia.ProcessError{Code: "bundle_temp_open_failed", Err: err}
-		}
-		_, putErr := p.store.Put(ctx, finalKey, reader, file.size, contentType, file.checksum)
-		closeErr := reader.Close()
-		if putErr != nil {
-			return nil, &applicationmedia.ProcessError{Code: "bundle_publish_failed", Err: putErr}
-		}
-		if closeErr != nil {
-			return nil, &applicationmedia.ProcessError{Code: "bundle_publish_close_failed", Err: closeErr}
-		}
-		finalMetadata, err := p.store.Head(ctx, finalKey)
-		if err != nil || finalMetadata.SizeBytes != file.size || !strings.EqualFold(finalMetadata.ChecksumSHA256, file.checksum) {
-			if err == nil {
-				err = domainmedia.ErrObjectChecksumMismatch
-			}
-			return nil, &applicationmedia.ProcessError{Code: "bundle_publish_verify_failed", Err: err}
-		}
-		if err := p.store.Delete(ctx, tempKey); err != nil {
-			return nil, &applicationmedia.ProcessError{Code: "bundle_temp_cleanup_failed", Err: err}
-		}
-		file.objectKey = finalKey
-		files[name] = file
-	}
-	return files, nil
 }
 
 type probeMetadata struct {
@@ -382,57 +234,74 @@ func supportedAudioCodec(value string) bool {
 	}
 }
 
-func (p *FFmpegProcessor) transcodeMP4(ctx context.Context, sourcePath, outputPath string, width, height, bitrate int) error {
-	_, err := p.runCommand(ctx, "ffmpeg",
+type baselineMode string
+
+const (
+	baselineModeRemux          baselineMode = "remux"
+	baselineModeNormalizeAudio baselineMode = "normalize_audio"
+	baselineModeTranscode      baselineMode = "transcode"
+)
+
+func baselineModeFor(probe *probeMetadata) baselineMode {
+	if probe != nil && probe.VideoCodec == "h264" {
+		if !probe.HasAudio || probe.AudioCodec == "aac" {
+			return baselineModeRemux
+		}
+		return baselineModeNormalizeAudio
+	}
+	return baselineModeTranscode
+}
+
+func (p *FFmpegProcessor) writeBaselineMP4(
+	ctx context.Context,
+	sourcePath string,
+	outputPath string,
+	probe *probeMetadata,
+	mode baselineMode,
+) (int, int, string, error) {
+	if probe == nil || probe.Width <= 0 || probe.Height <= 0 {
+		return 0, 0, "", &applicationmedia.ProcessError{
+			Code: "invalid_dimensions", Terminal: true, Err: errors.New("invalid source dimensions"),
+		}
+	}
+	width, height := probe.Width, probe.Height
+	args := []string{
 		"-y", "-i", sourcePath,
 		"-map", "0:v:0", "-map", "0:a:0?",
-		"-vf", fmt.Sprintf("scale=%d:%d", width, height),
-		"-c:v", "libx264", "-preset", p.ffmpegPreset, "-pix_fmt", "yuv420p",
-		"-b:v", strconv.Itoa(bitrate), "-maxrate", strconv.Itoa(bitrate), "-bufsize", strconv.Itoa(bitrate*2),
-		"-c:a", "aac", "-b:a", "128k",
+	}
+	switch mode {
+	case baselineModeRemux:
+		args = append(args, "-c", "copy")
+	case baselineModeNormalizeAudio:
+		args = append(args, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k")
+	default:
+		width, height = evenDimensions(width, height)
+		if width != probe.Width || height != probe.Height {
+			args = append(args, "-vf", fmt.Sprintf("scale=%d:%d", width, height))
+		}
+		args = append(args,
+			"-c:v", "libx264", "-preset", p.ffmpegPreset,
+			"-crf", "23", "-pix_fmt", "yuv420p",
+			"-c:a", "aac", "-b:a", "128k",
+		)
+	}
+	args = append(args,
 		"-map_metadata", "-1", "-map_chapters", "-1",
 		"-avoid_negative_ts", "make_zero",
 		"-movflags", "+faststart", outputPath,
 	)
-	if err != nil {
-		code := "transcode_failed"
-		if errors.Is(err, ErrMediaCommandTimeout) {
-			code = "transcode_timeout"
-		}
-		return &applicationmedia.ProcessError{Code: code, Err: err}
-	}
-	return nil
-}
-
-func (p *FFmpegProcessor) generateDASH(ctx context.Context, inputs []string, manifestPath string, hasAudio bool, segmentSeconds int) error {
-	args := []string{"-y", "-fflags", "+genpts"}
-	for _, input := range inputs {
-		args = append(args, "-i", input)
-	}
-	for index := range inputs {
-		args = append(args, "-map", fmt.Sprintf("%d:v:0", index))
-	}
-	adaptationSets := "id=0,streams=v"
-	if hasAudio && len(inputs) > 0 {
-		args = append(args, "-map", "0:a:0?")
-		adaptationSets += " id=1,streams=a"
-	}
-	args = append(args,
-		"-c", "copy", "-f", "dash", "-seg_duration", strconv.Itoa(segmentSeconds),
-		"-use_template", "1", "-use_timeline", "1",
-		"-avoid_negative_ts", "make_zero",
-		"-init_seg_name", "init-$RepresentationID$.m4s",
-		"-media_seg_name", "chunk-$RepresentationID$-$Number%05d$.m4s",
-		"-adaptation_sets", adaptationSets, manifestPath,
-	)
 	if _, err := p.runCommand(ctx, "ffmpeg", args...); err != nil {
-		code := "dash_failed"
+		code := string(mode) + "_failed"
 		if errors.Is(err, ErrMediaCommandTimeout) {
-			code = "dash_timeout"
+			code = string(mode) + "_timeout"
 		}
-		return &applicationmedia.ProcessError{Code: code, Err: err}
+		return 0, 0, "", &applicationmedia.ProcessError{Code: code, Err: err}
 	}
-	return nil
+	audioCodec := ""
+	if probe.HasAudio {
+		audioCodec = "aac"
+	}
+	return width, height, audioCodec, nil
 }
 
 func (p *FFmpegProcessor) publishFile(ctx context.Context, assetID, jobID int64, profileVersion, path, contentType string) (string, string, int64, error) {
@@ -556,81 +425,26 @@ func tailText(value string, limit int) string {
 }
 
 type processingProfile struct {
-	Version            string
-	BaselineMaxHeight  int
-	Heights            []int
-	Bitrates           map[int]int
-	DASHSegmentSeconds int
+	Version string
 }
 
 func selectProcessingProfile(version string) (*processingProfile, error) {
 	switch strings.TrimSpace(version) {
-	case "v1":
-		return &processingProfile{
-			Version: "v1", BaselineMaxHeight: 720, Heights: []int{480, 720, 1080},
-			Bitrates:           map[int]int{480: 1_200_000, 720: 2_500_000, 1080: 5_000_000},
-			DASHSegmentSeconds: 4,
-		}, nil
+	case "v1", "v2":
+		return &processingProfile{Version: strings.TrimSpace(version)}, nil
 	default:
 		return nil, &applicationmedia.ProcessError{Code: "unsupported_profile", Terminal: true, Err: errors.New("unsupported media processing profile")}
 	}
 }
 
-func renditionHeights(sourceHeight int, configured []int) []int {
-	result := make([]int, 0, len(configured))
-	for _, height := range configured {
-		if height <= sourceHeight {
-			result = append(result, height)
-		}
-	}
-	return result
-}
-
-func appendUniqueHeight(values []int, candidates ...int) []int {
-	seen := make(map[int]struct{}, len(values)+len(candidates))
-	result := make([]int, 0, len(values)+len(candidates))
-	for _, value := range append(values, candidates...) {
-		if value <= 0 {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func scaledEvenWidth(sourceWidth, sourceHeight, targetHeight int) int {
-	if sourceWidth <= 0 || sourceHeight <= 0 || targetHeight <= 0 {
-		return 2
-	}
-	width := int(math.Round(float64(sourceWidth) * float64(targetHeight) / float64(sourceHeight)))
+func evenDimensions(width, height int) (int, int) {
 	if width%2 != 0 {
 		width--
 	}
-	return max(width, 2)
-}
-
-func (p *processingProfile) bitrateForHeight(height int) int {
-	if value := p.Bitrates[height]; value > 0 {
-		return value
+	if height%2 != 0 {
+		height--
 	}
-	for _, configuredHeight := range p.Heights {
-		if height <= configuredHeight && p.Bitrates[configuredHeight] > 0 {
-			return p.Bitrates[configuredHeight]
-		}
-	}
-	return 5_000_000
-}
-
-func generatedPaths(generated []generatedMP4) []string {
-	paths := make([]string, 0, len(generated))
-	for _, output := range generated {
-		paths = append(paths, output.path)
-	}
-	return paths
+	return max(width, 2), max(height, 2)
 }
 
 func fileChecksum(path string) (string, int64, error) {
@@ -645,20 +459,6 @@ func fileChecksum(path string) (string, int64, error) {
 		return "", 0, err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), size, nil
-}
-
-func contentTypeForPath(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".mpd":
-		return "application/dash+xml"
-	case ".m4s":
-		return "video/iso.segment"
-	default:
-		if value := mime.TypeByExtension(filepath.Ext(path)); value != "" {
-			return value
-		}
-		return "application/octet-stream"
-	}
 }
 
 func sourceExtension(contentType, objectKey string) string {

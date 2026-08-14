@@ -29,6 +29,7 @@ describe("FeedPlayerControls", () => {
           playbackRate: 1.25,
           selectedQuality: "720p",
           qualities: [
+            { id: "480p", label: "480p", selected: false, active: false },
             { id: "720p", label: "720p", selected: true, active: true }
           ]
         }}
@@ -42,6 +43,27 @@ describe("FeedPlayerControls", () => {
     expect(html).not.toContain("<select");
     expect(html).toContain("720p");
     expect(html).toContain("1.25x");
+  });
+
+  it("hides quality selection when only the source-resolution MP4 is available", () => {
+    const html = renderToStaticMarkup(
+      <FeedPlayerControls
+        {...callbacks}
+        fullscreen={false}
+        continuousPlay={false}
+        state={{
+          ...createInitialPlayerState(),
+          status: "playing",
+          qualities: [
+            { id: "source", label: "1080p", selected: true, active: true }
+          ],
+          selectedQuality: "source"
+        }}
+      />
+    );
+
+    expect(html).not.toContain("清晰度");
+    expect(html).toContain("播放速度");
   });
 
   it("announces buffering and exposes retry only for recoverable errors", () => {
