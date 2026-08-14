@@ -38,14 +38,6 @@ compose_release() {
     "$@"
 }
 
-worker_is_running() {
-  local release=$1
-  local container
-  container=$(compose_release "$release" --profile worker ps -q worker 2>/dev/null || true)
-  [[ -n $container ]] &&
-    [[ $("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true) == true ]]
-}
-
 wait_healthy() {
   local release=$1
   local service=$2
@@ -152,14 +144,11 @@ wait_worker_ready() {
 
 wait_compose_ready() {
   local release=$1
-  local worker_running=$2
 
   wait_healthy "$release" api &&
     wait_healthy "$release" web &&
     wait_healthy "$release" postgres-backup &&
-    {
-      [[ $worker_running != true ]] || wait_worker_ready "$release"
-    }
+    wait_worker_ready "$release"
 }
 
 validate_bundle() {
@@ -214,15 +203,10 @@ validate_bundle() {
 
 restore_release() {
   local previous=$1
-  local worker_running=$2
 
-  compose_release "$previous" pull api web || true
-  compose_release "$previous" up -d || return 1
-  if [[ $worker_running == true ]]; then
-    compose_release "$previous" --profile worker pull worker || true
-    compose_release "$previous" --profile worker up -d worker || return 1
-  fi
-  wait_compose_ready "$previous" "$worker_running"
+  compose_release "$previous" --profile worker pull api web worker || true
+  compose_release "$previous" --profile worker up -d || return 1
+  wait_compose_ready "$previous"
 }
 
 prune_releases() {
@@ -275,7 +259,7 @@ prune_images() {
 main() {
   local lock_file releases_dir prod_env current_link digest_file
   local digest_ref digest_id release_dir incoming container
-  local previous_release worker_running deploy_ok
+  local previous_release deploy_ok
   local link_temp digest_temp
 
   require_command "$DOCKER_BIN"
@@ -352,27 +336,19 @@ main() {
   fi
 
   previous_release=
-  worker_running=false
   if [[ -L $current_link ]]; then
     previous_release=$(readlink -f "$current_link")
     safe_release_path "$previous_release" ||
       die "current release points outside the release directory"
-    worker_is_running "$previous_release" && worker_running=true
   fi
 
   deploy_ok=true
-  compose_release "$release_dir" pull api web || deploy_ok=false
+  compose_release "$release_dir" --profile worker pull api web worker || deploy_ok=false
   if [[ $deploy_ok == true ]]; then
-    compose_release "$release_dir" up -d || deploy_ok=false
-  fi
-  if [[ $deploy_ok == true && $worker_running == true ]]; then
-    compose_release "$release_dir" --profile worker pull worker || deploy_ok=false
-    if [[ $deploy_ok == true ]]; then
-      compose_release "$release_dir" --profile worker up -d worker || deploy_ok=false
-    fi
+    compose_release "$release_dir" --profile worker up -d || deploy_ok=false
   fi
   if [[ $deploy_ok == true ]]; then
-    wait_compose_ready "$release_dir" "$worker_running" || deploy_ok=false
+    wait_compose_ready "$release_dir" || deploy_ok=false
   fi
   if [[ $deploy_ok == true ]]; then
     wait_caddy_routes || deploy_ok=false
@@ -380,7 +356,7 @@ main() {
 
   if [[ $deploy_ok != true ]]; then
     echo "New Prod release is unhealthy; restoring the previous release." >&2
-    if [[ -n $previous_release ]] && restore_release "$previous_release" "$worker_running"; then
+    if [[ -n $previous_release ]] && restore_release "$previous_release"; then
       echo "Previous Prod release restored." >&2
       safe_release_path "$release_dir" ||
         die "refusing to remove an unsafe failed release path"

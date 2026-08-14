@@ -221,7 +221,6 @@ docker compose \
   --env-file .env.prod \
   -p frux-prod \
   -f docker-compose.prod.yml \
-  --profile worker \
   down
 ```
 
@@ -245,10 +244,9 @@ sudo systemctl start frux-deploy.service
 1. 拉取 `frux-deploy:prod`。
 2. 验证文件白名单和SHA-256。
 3. 拉取固定Digest的API/Web镜像。
-4. 保留Worker当前启用状态。
-5. 更新Compose。
-6. 检查API、Web、Caddy路由、数据库备份和Worker Kafka状态。
-7. 失败时恢复上一版本。
+4. 更新Compose并启动API、Web和Worker。
+5. 检查API、Web、Caddy路由、数据库备份和Worker Kafka状态。
+6. 失败时恢复上一版本。
 
 服务器只保留：
 
@@ -264,21 +262,8 @@ Docker镜像和Volumes
 
 ## Worker
 
-Worker默认不启动。确认 `frux1` 是空Bucket，或者已恢复匹配的PostgreSQL后：
-
-```bash
-cd /opt/frux/current/apps
-
-docker compose \
-  --env-file /opt/frux/.env.prod \
-  --env-file .env.release \
-  -p frux-prod \
-  -f docker-compose.prod.yml \
-  --profile worker \
-  up -d worker
-```
-
-后续发布会保持Worker现有状态。
+Worker是生产核心服务，会随API和Web一起启动。首次部署前必须确认 `frux1` 是空Bucket，或者已经恢复
+与对象存储匹配的PostgreSQL；不要让空数据库连接已有数据的Bucket后启动完整Compose。
 
 ## 设置后台管理员
 
@@ -346,7 +331,6 @@ docker compose \
   --env-file .env.release \
   -p frux-prod \
   -f docker-compose.prod.yml \
-  --profile worker \
   ps
 ```
 

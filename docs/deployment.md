@@ -54,7 +54,7 @@ docker compose down -v
 Docker Compose
     ├─ Web
     ├─ API
-    ├─ Worker（默认不启动）
+    ├─ Worker
     ├─ PostgreSQL
     ├─ Redis
     ├─ 单节点 Kafka
@@ -126,8 +126,7 @@ PostgreSQL是业务数据和媒体元数据的权威来源。一个 `frux1` 只�
 1. 停止旧环境写入。
 2. 备份并恢复PostgreSQL。
 3. 确认媒体表和视频表已经恢复。
-4. 启动API。
-5. 最后启动Worker。
+4. 启动包含API和Worker的完整Compose。
 
 不要让空数据库直接连接已有数据的 `frux1` 后启动Worker。当前Prod已关闭未知对象自动清理，避免误删
 旧对象，但数据库不知道的旧视频仍然无法使用。
@@ -141,10 +140,9 @@ Prod部署包固定API和Web镜像Digest。部署代理会：
 
 1. 验证部署包文件和SHA-256。
 2. 拉取镜像。
-3. 保留Worker当前启用状态。
-4. 更新Compose。
-5. 检查API、Web、现有Caddy路由、数据库备份和Worker Kafka状态。
-6. 失败时恢复上一版本。
+3. 更新Compose并启动API、Web和Worker。
+4. 检查API、Web、现有Caddy路由、数据库备份和Worker Kafka状态。
+5. 失败时恢复上一版本。
 
 数据库迁移不会自动回滚。新迁移必须兼容上一版应用，避免镜像回滚后无法读取数据库。
 

@@ -111,7 +111,6 @@ services:
 
   worker:
     image: ${FRUX_API_IMAGE:?load .env.release}
-    profiles: ["worker"]
     command: ["./frux-worker"]
     environment:
       <<: *app-environment

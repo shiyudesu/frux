@@ -126,15 +126,22 @@ jobs:
           FRUX_JWT_CONSUMER_SECRET: CI-Only-Consumer-JWT-Secret-123!
           FRUX_JWT_ADMIN_SECRET: CI-Only-Admin-JWT-Secret-123456!
           FRUX_HMAC_SECRET: CI-Only-Application-HMAC-Secret-123!
+          FRUX_INTERNAL_TOKEN: CI-Only-Internal-Token-123456!
           FRUX_POSTGRES_PASSWORD: CI-Only-Postgres-Password-123!
           FRUX_REDIS_PASSWORD: CI-Only-Redis-Password-123!
           FRUX_S3_ACCESS_KEY: ci-access
           FRUX_S3_SECRET_KEY: CI-Only-Rainyun-Secret
         run: |
+          services=$(
+            docker compose \
+              --env-file apps/.env.release.example \
+              -f apps/docker-compose.prod.yml \
+              config --services
+          )
+          grep -qx worker <<<"$services"
           docker compose \
             --env-file apps/.env.release.example \
             -f apps/docker-compose.prod.yml \
-            --profile worker \
             config --quiet
 
       - name: Validate OpenSpec
