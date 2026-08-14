@@ -1,6 +1,8 @@
 package infraconfig
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net"
 	"net/netip"
@@ -24,10 +26,13 @@ var ErrInvalidInternalToken = errors.New("invalid internal token")
 var ErrInvalidRateLimitConfig = errors.New("invalid rate limit config")
 var ErrInvalidKafkaConfig = errors.New("invalid kafka config")
 var ErrInvalidJWTConfig = errors.New("invalid jwt config")
+var ErrInvalidSecurityConfig = errors.New("invalid security config")
 var ErrInvalidModerationConfig = errors.New("invalid moderation config")
 
 const minInternalTokenLength = 32
 const maxAdminAccessTTL = 8 * time.Hour
+const maxConsumerAccessTTL = 15 * time.Minute
+const maxJWTClockLeeway = 2 * time.Minute
 
 // LoadConfig 读取 YAML 配置文件，并反序列化为应用启动配置。
 func LoadConfig(path string) (*Config, error) {
@@ -48,6 +53,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	if err := normalizeAndValidateJWTConfig(&cfg.JWT); err != nil {
+		return nil, err
+	}
+	if err := normalizeAndValidateSecurityConfig(&cfg.Security, cfg.JWT.Secret); err != nil {
 		return nil, err
 	}
 	if err := normalizeAndValidateMediaConfig(&cfg.Media); err != nil {
@@ -439,21 +447,124 @@ func normalizeAndValidateJWTConfig(cfg *JWTConfig) error {
 	if cfg == nil {
 		return ErrInvalidJWTConfig
 	}
+
 	cfg.Secret = strings.TrimSpace(cfg.Secret)
-	cfg.AccessTTL = defaultDuration(cfg.AccessTTL, "15m")
+	cfg.Issuer = defaultValue(cfg.Issuer, "frux")
+	cfg.AccessTTL = defaultDuration(cfg.AccessTTL, "5m")
 	cfg.AdminAccessTTL = defaultDuration(cfg.AdminAccessTTL, "30m")
-	if cfg.Secret == "" {
-		return ErrInvalidJWTConfig
-	}
+	cfg.ClockLeeway = defaultDuration(cfg.ClockLeeway, "30s")
+	cfg.LegacySecret = strings.TrimSpace(cfg.LegacySecret)
+	cfg.LegacyIssuedUntil = strings.TrimSpace(cfg.LegacyIssuedUntil)
+	cfg.LegacyAcceptUntil = strings.TrimSpace(cfg.LegacyAcceptUntil)
 	accessTTL, err := time.ParseDuration(cfg.AccessTTL)
-	if err != nil || accessTTL <= 0 {
+	if err != nil || accessTTL <= 0 || accessTTL > maxConsumerAccessTTL {
 		return ErrInvalidJWTConfig
 	}
 	adminTTL, err := time.ParseDuration(cfg.AdminAccessTTL)
 	if err != nil || adminTTL < 5*time.Minute || adminTTL > maxAdminAccessTTL {
 		return ErrInvalidJWTConfig
 	}
+	clockLeeway, err := time.ParseDuration(cfg.ClockLeeway)
+	if err != nil || clockLeeway < 0 || clockLeeway > maxJWTClockLeeway {
+		return ErrInvalidJWTConfig
+	}
+	if len(cfg.Consumer.Keys) == 0 || len(cfg.Admin.Keys) == 0 {
+		if cfg.Secret == "" {
+			return ErrInvalidJWTConfig
+		}
+		cfg.Consumer = JWTKeyRingConfig{
+			ActiveKeyID: "consumer-v1",
+			Keys: []JWTKeyConfig{{
+				ID: "consumer-v1", Secret: deriveJWTSecret(cfg.Secret, "consumer"),
+			}},
+		}
+		cfg.Admin = JWTKeyRingConfig{
+			ActiveKeyID: "admin-v1",
+			Keys: []JWTKeyConfig{{
+				ID: "admin-v1", Secret: deriveJWTSecret(cfg.Secret, "admin"),
+			}},
+		}
+	}
+	if err := validateJWTKeyRing(cfg.Consumer); err != nil {
+		return err
+	}
+	if err := validateJWTKeyRing(cfg.Admin); err != nil {
+		return err
+	}
+	if cfg.Consumer.ActiveKeyID == cfg.Admin.ActiveKeyID {
+		return ErrInvalidJWTConfig
+	}
+	if cfg.LegacySecret != "" {
+		issuedUntil, issuedErr := time.Parse(
+			time.RFC3339, cfg.LegacyIssuedUntil,
+		)
+		deadline, err := time.Parse(time.RFC3339, cfg.LegacyAcceptUntil)
+		if issuedErr != nil || err != nil ||
+			deadline.Before(
+				issuedUntil.Add(maxDuration(accessTTL, adminTTL)+clockLeeway),
+			) {
+			return ErrInvalidJWTConfig
+		}
+	} else if cfg.LegacyIssuedUntil != "" || cfg.LegacyAcceptUntil != "" {
+		return ErrInvalidJWTConfig
+	}
 	return nil
+}
+
+func normalizeAndValidateSecurityConfig(
+	cfg *SecurityConfig,
+	legacyJWTSecret string,
+) error {
+	if cfg == nil {
+		return ErrInvalidSecurityConfig
+	}
+	cfg.HMACSecret = strings.TrimSpace(cfg.HMACSecret)
+	if cfg.HMACSecret == "" && strings.TrimSpace(legacyJWTSecret) != "" {
+		cfg.HMACSecret = deriveJWTSecret(legacyJWTSecret, "application-hmac")
+	}
+	if len(cfg.HMACSecret) < 32 {
+		return ErrInvalidSecurityConfig
+	}
+	return nil
+}
+
+func validateJWTKeyRing(ring JWTKeyRingConfig) error {
+	ring.ActiveKeyID = strings.TrimSpace(ring.ActiveKeyID)
+	if ring.ActiveKeyID == "" || len(ring.Keys) == 0 {
+		return ErrInvalidJWTConfig
+	}
+	seen := make(map[string]struct{}, len(ring.Keys))
+	activeFound := false
+	for _, key := range ring.Keys {
+		id := strings.TrimSpace(key.ID)
+		secret := strings.TrimSpace(key.Secret)
+		if id == "" || len(secret) < 16 {
+			return ErrInvalidJWTConfig
+		}
+		if _, exists := seen[id]; exists {
+			return ErrInvalidJWTConfig
+		}
+		seen[id] = struct{}{}
+		if id == ring.ActiveKeyID {
+			activeFound = true
+		}
+	}
+	if !activeFound {
+		return ErrInvalidJWTConfig
+	}
+	return nil
+}
+
+func deriveJWTSecret(secret, purpose string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(purpose) + ":" + strings.TrimSpace(secret)))
+	return hex.EncodeToString(sum[:])
+}
+
+func maxDuration(left, right time.Duration) time.Duration {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func normalizeAndValidateRateLimitConfig(cfg *RateLimitConfig) error {

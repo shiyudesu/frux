@@ -4,6 +4,7 @@ package infraconfig
 type Config struct {
 	Port       int              `yaml:"port"`
 	JWT        JWTConfig        `yaml:"jwt"`
+	Security   SecurityConfig   `yaml:"security"`
 	Internal   InternalConfig   `yaml:"internal"`
 	Database   DatabaseConfig   `yaml:"database"`
 	Redis      RedisConfig      `yaml:"redis"`
@@ -13,6 +14,10 @@ type Config struct {
 	Playback   PlaybackConfig   `yaml:"playback"`
 	Governance GovernanceConfig `yaml:"governance"`
 	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
+}
+
+type SecurityConfig struct {
+	HMACSecret string `yaml:"hmac_secret"`
 }
 
 type KafkaConfig struct {
@@ -137,11 +142,28 @@ type PlaybackTelemetryConfig struct {
 	MaxBatchesPerMinute int    `yaml:"max_batches_per_minute"`
 }
 
-// JWTConfig 保存 JWT 签名密钥和访问 token 有效期。
+type JWTKeyConfig struct {
+	ID     string `yaml:"id"`
+	Secret string `yaml:"secret"`
+}
+
+type JWTKeyRingConfig struct {
+	ActiveKeyID string         `yaml:"active_key_id"`
+	Keys        []JWTKeyConfig `yaml:"keys"`
+}
+
+// JWTConfig 保存隔离的 JWT 签名密钥环、访问 token 有效期和迁移窗口。
 type JWTConfig struct {
-	Secret         string `yaml:"secret"`
-	AccessTTL      string `yaml:"access_ttl"`
-	AdminAccessTTL string `yaml:"admin_access_ttl"`
+	Secret            string           `yaml:"secret"`
+	Issuer            string           `yaml:"issuer"`
+	AccessTTL         string           `yaml:"access_ttl"`
+	AdminAccessTTL    string           `yaml:"admin_access_ttl"`
+	ClockLeeway       string           `yaml:"clock_leeway"`
+	Consumer          JWTKeyRingConfig `yaml:"consumer"`
+	Admin             JWTKeyRingConfig `yaml:"admin"`
+	LegacySecret      string           `yaml:"legacy_secret"`
+	LegacyIssuedUntil string           `yaml:"legacy_issued_until"`
+	LegacyAcceptUntil string           `yaml:"legacy_accept_until"`
 }
 
 // InternalConfig 保存内部接口服务鉴权配置。

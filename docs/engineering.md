@@ -288,9 +288,11 @@ Hertz Handler 使用 `func(context.Context, *app.RequestContext)` 签名。标�
 
 Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
 
-公开读取需要 viewer 状态时使用 optional-auth middleware：无 Token 或无效 Token 继续匿名读取，有效 access JWT 只把 user/role 写入 `RequestContext.Keys`。根评论、回复和 thread context 使用该模式返回匿名公共数据，并仅在有效 viewer 下补充 `liked`、`can_delete`；创建、点赞和删除仍使用强制鉴权。optional-auth 不得放宽父视频 `published + public + media-ready` 校验。
+公开读取需要 viewer 状态时使用 optional-auth middleware：无 Token 或无效 Token 继续匿名读取，有效 consumer access JWT 只把 user/session/auth-version/expiry 身份写入 `RequestContext.Keys`，不把角色作为授权事实。根评论、回复和 thread context 使用该模式返回匿名公共数据，并仅在有效 viewer 下补充 `liked`、`can_delete`；创建、点赞和删除仍使用强制鉴权。optional-auth 不得放宽父视频 `published + public + media-ready` 校验。
 
-所有 `/api/admin` 路由必须先使用强制 JWT 鉴权建立用户 ID，再通过参数化 Admin Permission Middleware 读取当前 `account.status/role` 并检查路由声明的单项权限。JWT role claim 不能作为后台授权事实；停用、降权、普通和未知角色默认拒绝。权限中间件把 `AdminPrincipal` 写入 `RequestContext.Keys`，后台 Handler 只能通过共享 helper 读取主体用于归因，不得自行比较角色字符串。当前封闭权限集合和角色映射位于 `domain/account`，后续审核、审计、视频运营和治理模块复用该边界，但继续拥有各自数据与事务。
+所有 `/api/admin` 路由必须先使用强制 JWT 鉴权建立用户 ID 和 `auth_version`，再通过参数化 Admin Permission Middleware 读取当前 `account.status/role/auth_version` 并检查路由声明的单项权限。JWT role claim 不能作为后台授权事实；停用、降权、改密、普通和未知角色默认拒绝。权限中间件把 `AdminPrincipal` 写入 `RequestContext.Keys`，后台 Handler 只能通过共享 helper 读取主体用于归因，不得自行比较角色字符串。当前封闭权限集合和角色映射位于 `domain/account`，后续审核、审计、视频运营和治理模块复用该边界，但继续拥有各自数据与事务。
+
+普通用户接口中涉及管理员附加能力时也不得读取 consumer JWT role。评论管理通过 Router 注入的当前账号读取器判断活动 `admin` 角色；改密或降权后立即按数据库事实失效。
 
 Kafka 死信摘要、精确检查和单消息 Replay 均要求 `governance.execute`。Replay 的成功/失败 Audit
 Fact 必须包含 Topic/Partition/Offset、原 Event ID、Replay ID、reason code 和封闭 failure code；
@@ -298,7 +300,7 @@ Fact 必须包含 Topic/Partition/Offset、原 Event ID、Replay ID、reason cod
 
 后台审计查询必须要求 `audit.read`，强制提交不超过 31 天的时间范围，并使用绑定全部过滤条件的 `(created_at, id)` 编码游标。HTTP 响应只返回 Domain 已验证的 action-specific detail；Handler 不接受任意详情结构，也不提供审计更新或删除入口。
 
-本地 `/uploads` 中的视频和封面必须记录不可变认证上传者。发布保护 URL 时验证上传者与作者一致；读取时同时验证不可变所有权、同所有者视频引用、生命周期、可见性与当前身份，再交给标准库文件服务并保留 Range/HEAD 语义。不得仅因“任意公开视频引用该 URL”就授权。浏览器媒体标签通过仅限 `/uploads` 的 HttpOnly 资产 Cookie 携带身份；Cookie 身份还必须同时具备 Web 会话维护的 SameSite=Strict、非 HttpOnly 活跃标记。退出时 Web 先同步删除活跃标记和本地登录态，再尽力请求无 Cookie 副作用的无状态登出接口，因此离线退出立即关闭私有资产访问，旧登出响应也不能清除更新登录的资产 Token；普通鉴权响应不得刷新资产 Cookie。不得把访问 Token 放入媒体 URL。头像和普通文件维持公开兼容。
+本地 `/uploads` 中的视频和封面必须记录不可变认证上传者。发布保护 URL 时验证上传者与作者一致；读取时同时验证不可变所有权、同所有者视频引用、生命周期、可见性与当前身份，再交给标准库文件服务并保留 Range/HEAD 语义。不得仅因“任意公开视频引用该 URL”就授权。浏览器媒体标签通过仅限 `/uploads` 的短期 HttpOnly 资产 Cookie 携带身份；Cookie 身份还必须同时具备 Web 会话维护的 SameSite=Strict、非 HttpOnly 活跃标记。登录、Refresh 和改密随 Access JWT 轮换资产 Cookie，普通鉴权响应不得刷新；退出时 Web 先同步删除活跃标记和内存登录态并广播其他标签页，再尽力撤销服务端 Refresh Session，因此离线退出立即关闭私有资产访问。不得把访问 Token 放入媒体 URL。头像和普通文件维持公开兼容。
 
 生产媒体使用 `domain/media` 中的 `MediaObjectStore` 和 `MediaURLResolver` 窄接口。S3/MinIO、CDN、ffprobe/ffmpeg 和本地文件实现放在 `internal/infra/media`；Domain、Application 和 HTTP DTO 不导入 AWS SDK 类型。直传会话绑定 owner、kind、精确对象键、大小、SHA-256 和过期时间，完成前必须执行 HEAD 校验。公共输出使用不可变内容寻址键，原始/私密资源使用短期签名 URL，访问令牌不得进入对象 URL。
 
@@ -414,7 +416,7 @@ downstream outbox 边界提交后才返回 durable success；注册 terminal 结
 
 评论通知 Outbox 由 Worker 直接调用 message Application 窄接口：互动事务只提交 durable event，消息写入失败后按租约重试，`recipient + event_id` 去重；历史迁移不得合成旧通知。
 
-账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。
+账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。新注册和新密码统一要求至少 8 个 Unicode 字符且 UTF-8 不超过 72 字节，必须在调用 bcrypt 前返回领域校验错误；旧短密码只保留登录与迁移能力。
 
 ## 12. 错误处理
 
@@ -452,6 +454,7 @@ apps/web/src/feedPreloadController.ts # 有界原生媒体资源、代际取消�
 apps/web/src/player/          # 播放状态机、能力选源、MP4/DASH adapters、fallback 与三槽池
 apps/web/src/api/            # apiRequest<T> 客户端与按域 fetch（feed/messages/social/account/creator/library）
 apps/web/src/session.tsx     # SessionContext + useSession/useUnreadCount
+apps/web/src/consumerSessionCoordinator.ts # 内存 Access、Refresh single-flight、跨标签页退出
 apps/web/src/router.tsx      # Route union + normalizeRoute + useRoute/useNavigate
 apps/web/src/pages/          # Login/Feed/Messages/Profile/PublicProfile/Upload
 apps/web/src/components/     # AppShell/导航/Icon/VideoStage/FeedDetailsPanel 等共享组件
@@ -468,11 +471,11 @@ apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 - API 调用集中使用 `api/src/client.ts` 的 `apiRequest<T>`，按域拆分 fetch 函数。
 - 会话与导航通过 `useSession`/`useNavigate` 分发，不做多层 props 透传。
 - 手写路由的 search 参数也必须类型化和验证。视频讨论使用 `NavigationTarget` 构造 `/videos/${number}`，只接受正整数 `comment`/`highlight`，且 `highlight` 不能脱离根 `comment`；不得让页面直接拼接未校验 query。
-- localStorage 读出的 JSON 必须过 `types.ts` 的 type guard 窄化。
+- Access Token 只能保存在模块内存；页面启动删除旧 `frux.accessToken`，通过 HttpOnly Refresh Cookie 恢复登录。localStorage 中缓存的用户 JSON 不是认证事实，读取后仍必须过 `types.ts` 的 type guard。
 - 禁止 `@ts-nocheck`/`@ts-expect-error`/显式 `any`；构建门禁为 `tsc --noEmit && vite build`。
 - `ApiError` 仅保存 HTTP status、稳定 code 和诊断文本；组件不得直接展示服务端 `error`/`message`、`ApiError.message`、浏览器错误或任意 `Error.message`。
 - 用户可见错误统一经过 `apiErrorMessage`：显式 `UserFacingError` 可展示，网络失败使用固定连接提示，已知 code 查中文目录，未知 4xx 使用调用方 fallback，未知 5xx 使用带“请稍后重试”的安全 fallback。
-- 登录凭据错误与登录态失效使用不同 code；前者展示统一的账号或密码错误，后者继续触发清理会话并跳转登录。
+- 登录凭据、当前密码、新密码校验与登录态失效使用不同 code；只有无效/重放 Refresh 或无法恢复的 Access 失效才清理会话，改密表单错误保持当前登录态。
 - 页面状态保持清楚：loading、error、empty、success。
 - 多 Tab 页面为每个 Tab 独立保存 items、cursor、hasMore、loading 和 error；切换 Tab 不得用另一列表覆盖已加载页。
 - 多排序/嵌套列表按资源和排序分区保存状态。评论 controller 按 video+sort 保存根页、按 root 保存回复页，并对 preview/context/page 实体按 ID 去重；草稿、展开、focused target 和各操作 busy/error 不能互相覆盖。

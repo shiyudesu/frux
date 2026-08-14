@@ -1,4 +1,3 @@
-// 根组件：Provider 组装 + 路由分发。
 import { lazy, Suspense, useEffect } from "react";
 import { AppShell } from "./components/AppShell";
 import { FeedPage } from "./pages/FeedPage";
@@ -41,11 +40,12 @@ function AppRoutes() {
   const videoDiscussion = useVideoDiscussionRoute();
   const searchRoute = useSearchRoute();
   const navigate = useNavigate();
-  const { token, user } = useSession();
+  const { token, user, status } = useSession();
+  const bootstrapping = status === "bootstrapping";
+  const sessionKey = user?.id ? `user-${user.id}` : "guest";
 
-  // 路由守卫："/" 重定向到默认场景；需登录页面未登录时重定向。
-  // （"/login"、"/me" 已在 normalizeRoute 归一化为 "/auth"、"/profile"，无需在此判断。）
   useEffect(() => {
+    if (bootstrapping) return;
     if (route === "/") {
       navigate(token ? "/recommend" : "/timeline");
     }
@@ -55,7 +55,7 @@ function AppRoutes() {
     if (route === "/messages" && !(token && user)) {
       navigate("/auth");
     }
-  }, [navigate, route, token, user]);
+  }, [bootstrapping, navigate, route, token, user]);
 
   if (route === "/auth") {
     return <LoginPage />;
@@ -71,15 +71,23 @@ function AppRoutes() {
 
   if (route === "/not-found") {
     return (
-      <AppShell>
+      <AppShell key={sessionKey}>
         <PageMessage icon="alert" title="页面不存在" action="返回首页" onAction={() => navigate("/timeline")} />
+      </AppShell>
+    );
+  }
+
+  if (bootstrapping && (route === "/" || route === "/profile" || route === "/messages")) {
+    return (
+      <AppShell key={sessionKey}>
+        <PageMessage icon="hourglass" title="正在恢复登录状态" />
       </AppShell>
     );
   }
 
   if (route === "/profile") {
     return (
-      <AppShell>
+      <AppShell key={sessionKey}>
         <ProfilePage />
       </AppShell>
     );
@@ -87,7 +95,7 @@ function AppRoutes() {
 
   if (searchRoute) {
     return (
-      <AppShell>
+      <AppShell key={sessionKey}>
         <SearchPage {...searchRoute} />
       </AppShell>
     );
@@ -95,7 +103,7 @@ function AppRoutes() {
 
   if (videoDiscussion) {
     return (
-      <AppShell>
+      <AppShell key={sessionKey}>
         <VideoDetailPage {...videoDiscussion} />
       </AppShell>
     );
@@ -104,7 +112,7 @@ function AppRoutes() {
   const publicUserID = publicUserIDFromRoute(route);
   if (publicUserID > 0) {
     return (
-      <AppShell>
+      <AppShell key={sessionKey}>
         <PublicProfilePage userID={publicUserID} />
       </AppShell>
     );
@@ -112,7 +120,7 @@ function AppRoutes() {
 
   if (route === "/upload") {
     return (
-      <AppShell>
+      <AppShell key={sessionKey}>
         <UploadPage />
       </AppShell>
     );
@@ -120,14 +128,14 @@ function AppRoutes() {
 
   if (route === "/messages") {
     return (
-      <AppShell>
+      <AppShell key={sessionKey}>
         <MessagesPage />
       </AppShell>
     );
   }
 
   return (
-    <AppShell>
+    <AppShell key={sessionKey}>
       <FeedPage feedScene={feedSceneFromRoute(route)} />
     </AppShell>
   );

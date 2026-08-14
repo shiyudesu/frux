@@ -15,14 +15,29 @@ metadata:
 type: Opaque
 stringData:
   postgres-password: "replace-with-postgres-password"
-  jwt-secret: "replace-with-strong-jwt-secret"
+  jwt-consumer-secret: "replace-with-strong-consumer-jwt-secret"
+  jwt-admin-secret: "replace-with-strong-admin-jwt-secret"
+  application-hmac-secret: "replace-with-strong-application-hmac-secret"
   internal-token: "replace-with-strong-internal-token"
   api-config.yaml: |
     port: 8080
     jwt:
-      secret: "${FRUX_JWT_SECRET}"
-      access_ttl: "15m"
+      issuer: "frux"
+      access_ttl: "5m"
       admin_access_ttl: "30m"
+      clock_leeway: "30s"
+      consumer:
+        active_key_id: "consumer-v1"
+        keys:
+          - id: "consumer-v1"
+            secret: "${FRUX_JWT_CONSUMER_SECRET}"
+      admin:
+        active_key_id: "admin-v1"
+        keys:
+          - id: "admin-v1"
+            secret: "${FRUX_JWT_ADMIN_SECRET}"
+    security:
+      hmac_secret: "${FRUX_HMAC_SECRET}"
     internal:
       enabled: true
       token: "${FRUX_INTERNAL_TOKEN}"
@@ -408,11 +423,21 @@ spec:
                 secretKeyRef:
                   name: frux-secret
                   key: postgres-password
-            - name: FRUX_JWT_SECRET
+            - name: FRUX_JWT_CONSUMER_SECRET
               valueFrom:
                 secretKeyRef:
                   name: frux-secret
-                  key: jwt-secret
+                  key: jwt-consumer-secret
+            - name: FRUX_JWT_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: jwt-admin-secret
+            - name: FRUX_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: application-hmac-secret
             - name: FRUX_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -495,11 +520,21 @@ spec:
                 secretKeyRef:
                   name: frux-secret
                   key: postgres-password
-            - name: FRUX_JWT_SECRET
+            - name: FRUX_JWT_CONSUMER_SECRET
               valueFrom:
                 secretKeyRef:
                   name: frux-secret
-                  key: jwt-secret
+                  key: jwt-consumer-secret
+            - name: FRUX_JWT_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: jwt-admin-secret
+            - name: FRUX_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: application-hmac-secret
             - name: FRUX_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:

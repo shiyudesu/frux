@@ -6,7 +6,17 @@ import type {
   UploadSessionRequest,
   UploadSessionResponse
 } from "../types";
-import { ApiError, NetworkError, UserFacingError, apiRequest } from "./client";
+import {
+  ApiError,
+  NetworkError,
+  UserFacingError,
+  apiRequest,
+  currentConsumerAccessToken,
+  currentConsumerSessionEpoch,
+  isInvalidAccessTokenError,
+  requireConsumerSessionEpoch,
+  recoverConsumerAccessToken
+} from "./client";
 
 export type UploadKind = "video" | "cover";
 
@@ -20,7 +30,7 @@ export function fetchProtectedAssetAccess(
 ): Promise<ProtectedAssetAccess> {
   return apiRequest<ProtectedAssetAccess>(
     `/api/media-assets/${encodeURIComponent(String(assetID))}/access`,
-    { token, cache: "no-store" }
+    { token, auth: "consumer", cache: "no-store" }
   );
 }
 
@@ -31,7 +41,9 @@ export async function uploadMediaFile(
   attemptID: string,
   onProgress?: (progress: number) => void
 ): Promise<MediaUploadResult> {
+  const initiatingEpoch = currentConsumerSessionEpoch();
   const checksum = await sha256File(file);
+  requireConsumerSessionEpoch(initiatingEpoch);
   const request: UploadSessionRequest = {
     kind,
     filename: file.name,
@@ -43,13 +55,19 @@ export async function uploadMediaFile(
   const session = await apiRequest<UploadSessionResponse>("/api/upload-sessions", {
     method: "POST",
     token,
+    auth: "consumer",
     headers: { "Idempotency-Key": idempotencyKey },
     body: request
   });
+  requireConsumerSessionEpoch(initiatingEpoch);
   if (session.mode === "multipart") {
-    const uploaded = await uploadMultipart(file, kind, token, onProgress);
+    const uploaded = await uploadMultipartWithAuthRetry(
+      file, kind, token, initiatingEpoch, onProgress
+    );
+    requireConsumerSessionEpoch(initiatingEpoch);
     return { mode: "multipart", url: uploaded.url };
   }
+
   if (session.completed_asset_id) {
     onProgress?.(100);
     return { mode: "direct", assetID: session.completed_asset_id };
@@ -58,11 +76,39 @@ export async function uploadMediaFile(
     throw new UserFacingError("上传服务响应异常，请重试");
   }
   await uploadDirect(file, session.upload.url, session.upload.method, session.upload.headers, onProgress);
+  requireConsumerSessionEpoch(initiatingEpoch);
   const completed = await apiRequest<CompleteUploadSessionResponse>(
     `/api/upload-sessions/${encodeURIComponent(session.id)}/complete`,
-    { method: "POST", token }
+    { method: "POST", token, auth: "consumer" }
   );
+  requireConsumerSessionEpoch(initiatingEpoch);
   return { mode: "direct", assetID: completed.asset.id };
+}
+
+async function uploadMultipartWithAuthRetry(
+  file: File,
+  kind: UploadKind,
+  fallbackToken: string,
+  requestEpoch: number,
+  onProgress?: (progress: number) => void
+): Promise<UploadResponse> {
+  const originalToken = currentConsumerAccessToken(fallbackToken);
+  try {
+    return await uploadMultipart(file, kind, originalToken, onProgress);
+  } catch (error) {
+    if (!isInvalidAccessTokenError(error)) throw error;
+    const refreshed = await recoverConsumerAccessToken(originalToken, requestEpoch);
+    if (!refreshed) {
+      if (currentConsumerSessionEpoch() !== requestEpoch &&
+        currentConsumerAccessToken()) {
+        throw new ApiError(
+          "session identity changed", 409, "AUTH_SESSION_CHANGED"
+        );
+      }
+      throw error;
+    }
+    return uploadMultipart(file, kind, refreshed, onProgress);
+  }
 }
 
 async function sha256File(file: File): Promise<string> {

@@ -34,6 +34,7 @@ type Service struct {
 	actionPublisher  ActionEventPublisher
 	actionObserver   ActionDeliveryObserver
 	messageWriter    MessageWriter
+	commentModerator CommentModeratorReader
 }
 
 // HotScoreRecorder 把互动变化投递到热榜分钟桶。
@@ -47,6 +48,10 @@ type StatCache interface {
 }
 
 type Option func(*Service)
+
+type CommentModeratorReader interface {
+	IsCommentModerator(ctx context.Context, userID int64) (bool, error)
+}
 
 type ActionStateResult struct {
 	UserID                   int64
@@ -204,6 +209,12 @@ func WithMessageWriter(writer MessageWriter) Option {
 	}
 }
 
+func WithCommentModeratorReader(reader CommentModeratorReader) Option {
+	return func(s *Service) {
+		s.commentModerator = reader
+	}
+}
+
 // Like 设置用户对视频的点赞状态为有效。
 func (s *Service) Like(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
 	return s.LikeWithRecommendation(ctx, userID, videoID, idempotencyKey, "")
@@ -310,9 +321,13 @@ func (s *Service) ListCommentRoots(ctx context.Context, videoID int64, viewerID 
 		}
 		return buildRootCommentListResult(items, 0, sortMode, limit), nil
 	}
+	viewer, err := s.resolveCommentViewer(ctx, viewerID, viewerRole)
+	if err != nil {
+		return nil, ErrLoadInteractionFailed
+	}
 	page, err := threaded.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{
 		VideoID:      videoID,
-		Viewer:       domaininteraction.CommentViewer{UserID: viewerID, Role: viewerRole},
+		Viewer:       viewer,
 		Sort:         sortMode,
 		Cursor:       parsedCursor,
 		Limit:        limit + 1,
@@ -338,6 +353,11 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 	if userID <= 0 {
 		return nil, domaininteraction.ErrInvalidUserID
 	}
+	viewer, err := s.resolveCommentViewer(ctx, userID, role)
+	if err != nil {
+		return nil, ErrLoadInteractionFailed
+	}
+	role = viewer.Role
 
 	if threaded, ok := s.repo.(domaininteraction.ThreadedCommentRepository); ok {
 		deletion, err := threaded.DeleteThreadedComment(ctx, commentID, userID, role)
@@ -346,6 +366,7 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 				errors.Is(err, domaininteraction.ErrCommentPermissionDenied) {
 				return nil, err
 			}
+
 			return nil, ErrUpdateInteractionFailed
 		}
 		s.recordHotScore(ctx, deletion.Comment.VideoID, deletion.VideoDelta*hotScoreCommentWeight)
@@ -377,6 +398,26 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 		Status:       comment.Status,
 		CommentCount: count,
 	}, nil
+}
+
+func (s *Service) resolveCommentViewer(
+	ctx context.Context,
+	userID int64,
+	role string,
+) (domaininteraction.CommentViewer, error) {
+	viewer := domaininteraction.CommentViewer{UserID: userID, Role: role}
+	if s.commentModerator == nil || userID <= 0 {
+		return viewer, nil
+	}
+	moderator, err := s.commentModerator.IsCommentModerator(ctx, userID)
+	if err != nil {
+		return domaininteraction.CommentViewer{}, err
+	}
+	viewer.Role = ""
+	if moderator {
+		viewer.Role = "admin"
+	}
+	return viewer, nil
 }
 
 // setAction 统一处理点赞和收藏状态变更，actionType 区分点赞或收藏，active 表示目标状态。

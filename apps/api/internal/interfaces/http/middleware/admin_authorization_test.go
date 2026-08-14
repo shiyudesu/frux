@@ -62,6 +62,9 @@ func TestRequireAdminPermissionUsesCurrentAccountState(t *testing.T) {
 			3: domainaccount.RestoreAdminPrincipal(3, 2, domainaccount.RoleAdmin),
 			4: domainaccount.RestoreAdminPrincipal(4, domainaccount.StatusNormal, "super-admin"),
 			5: domainaccount.RestoreAdminPrincipal(5, domainaccount.StatusNormal, domainaccount.RoleAdmin),
+			7: domainaccount.RestoreAdminPrincipalWithAuthVersion(
+				7, domainaccount.StatusNormal, domainaccount.RoleAdmin, 2,
+			),
 		},
 		errors: map[int64]error{},
 	}
@@ -96,6 +99,7 @@ func TestRequireAdminPermissionUsesCurrentAccountState(t *testing.T) {
 		{name: "unknown current role is denied", userID: 4, claimedRole: domainaccount.RoleAdmin, status: http.StatusForbidden, code: interfaceshttpapierror.CodeAdminPermissionDenied},
 		{name: "compatible admin ignores stale user claim", userID: 5, claimedRole: domainaccount.RoleUser, status: http.StatusNoContent},
 		{name: "missing account is denied", userID: 6, claimedRole: domainaccount.RoleAdmin, status: http.StatusForbidden, code: interfaceshttpapierror.CodeAdminPermissionDenied},
+		{name: "password change invalidates admin token", userID: 7, claimedRole: domainaccount.RoleAdmin, status: http.StatusUnauthorized, code: interfaceshttpapierror.CodeAdminAuthInvalidAccessToken},
 	}
 
 	for _, tt := range tests {

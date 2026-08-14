@@ -1,8 +1,5 @@
-// 统一 HTTP 客户端：apiRequest<T> 泛型封装 + ApiError（含 status）+ uploadFile。
-// 搬运自 LegacyApp.jsx:2637 的 apiRequest 与 :2669 的 uploadFile，行为不变。
 import type { ApiErrorBody, UploadResponse } from "../types";
 
-/** 带 HTTP status/code 的 API 错误；服务端文本只用于诊断，不能直接展示。 */
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -20,7 +17,6 @@ export class ApiError extends Error {
 
 export const ADMIN_AUTH_INVALID_EVENT = "frux:admin-auth-invalid";
 
-/** 只有显式使用该类型创建的前端文案才允许展示给用户。 */
 export class UserFacingError extends Error {
   constructor(message: string) {
     super(message);
@@ -28,7 +24,6 @@ export class UserFacingError extends Error {
   }
 }
 
-/** fetch/XHR 未收到 HTTP 响应时使用，避免展示浏览器原始错误文本。 */
 export class NetworkError extends Error {
   constructor(message = "network request failed") {
     super(message);
@@ -36,18 +31,67 @@ export class NetworkError extends Error {
   }
 }
 
+const INVALID_REFRESH_SESSION_CODES = new Set([
+  "AUTH_REFRESH_INVALID",
+  "AUTH_INVALID_REFRESH_SESSION",
+  "AUTH_REFRESH_SESSION_INVALID"
+]);
+const REFRESH_SESSION_REPLAYED_CODES = new Set([
+  "AUTH_REFRESH_REPLAYED",
+  "AUTH_REFRESH_SESSION_REPLAYED",
+  "AUTH_REFRESH_SESSION_REPLAY"
+]);
+const REFRESH_SESSION_SUPERSEDED_CODES = new Set([
+  "AUTH_REFRESH_SESSION_SUPERSEDED",
+  "AUTH_REFRESH_SUPERSEDED"
+]);
+
+export function isInvalidAccessTokenError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "AUTH_INVALID_ACCESS_TOKEN";
+}
+
+export function isInvalidRefreshSessionError(error: unknown): boolean {
+  return error instanceof ApiError && INVALID_REFRESH_SESSION_CODES.has(error.code);
+}
+
+export function isRefreshSessionReplayedError(error: unknown): boolean {
+  return error instanceof ApiError && REFRESH_SESSION_REPLAYED_CODES.has(error.code);
+}
+
+export function isSupersededRefreshSessionError(error: unknown): boolean {
+  return error instanceof ApiError && REFRESH_SESSION_SUPERSEDED_CODES.has(error.code);
+}
+
 export function isUnauthorized(error: unknown): boolean {
-  return error instanceof ApiError &&
-    error.status === 401 &&
-    error.code !== "AUTH_INVALID_CREDENTIALS";
+  return isInvalidAccessTokenError(error) ||
+    isInvalidRefreshSessionError(error) ||
+    isRefreshSessionReplayedError(error);
 }
 
 const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   AUTH_INVALID_CREDENTIALS: "账号或密码错误，请重新输入",
   AUTH_INVALID_ACCESS_TOKEN: "登录状态已失效，请重新登录",
+  AUTH_REFRESH_INVALID: "登录状态已失效，请重新登录",
+  AUTH_INVALID_REFRESH_SESSION: "登录状态已失效，请重新登录",
+  AUTH_REFRESH_SESSION_INVALID: "登录状态已失效，请重新登录",
+  AUTH_REFRESH_SESSION_REPLAYED: "登录状态存在异常，请重新登录",
+  AUTH_REFRESH_REPLAYED: "登录状态存在异常，请重新登录",
+  AUTH_REFRESH_SESSION_REPLAY: "登录状态存在异常，请重新登录",
+  AUTH_REFRESH_SESSION_SUPERSEDED: "登录状态已更新，请重试刚才的操作",
+  AUTH_REFRESH_SUPERSEDED: "登录状态已更新，请重试刚才的操作",
   AUTHENTICATION_REQUIRED: "请先登录后再继续操作",
+  AUTHENTICATION_UNAVAILABLE: "登录服务暂时不可用，请稍后重试",
+  AUTH_SESSION_CHANGED: "登录账号已变化，请重新执行刚才的操作",
   ACCOUNT_ALREADY_EXISTS: "该账号已注册，请直接登录或更换账号",
   ACCOUNT_VALIDATION_FAILED: "账号信息填写有误，请检查后重试",
+  ACCOUNT_PASSWORD_VALIDATION_FAILED: "密码至少需要 8 个字符，且 UTF-8 编码不能超过 72 字节",
+  ACCOUNT_PASSWORD_INVALID: "密码至少需要 8 个字符，且 UTF-8 编码不能超过 72 字节",
+  AUTH_CURRENT_PASSWORD_INVALID: "当前密码不正确，请重新输入",
+  ACCOUNT_CURRENT_PASSWORD_INCORRECT: "当前密码不正确，请重新输入",
+  AUTH_PASSWORD_UNCHANGED: "新密码不能与当前密码相同",
+  ACCOUNT_PASSWORD_UNCHANGED: "新密码不能与当前密码相同",
+  AUTH_CREDENTIALS_CHANGED: "账号凭证已更新，请重新登录后再试",
+  ACCOUNT_CREDENTIAL_CHANGED: "账号凭证已更新，请重新登录后再试",
   ACCOUNT_NOT_FOUND: "用户不存在或已不可用",
   ACCOUNT_REQUIRED: "请输入账号",
   PASSWORD_REQUIRED: "请输入密码",
@@ -150,64 +194,249 @@ function temporaryFailureMessage(fallback: string): string {
   return `${fallback.replace(/[，。]$/, "")}，请稍后重试`;
 }
 
+export interface ConsumerAuthController {
+  getAccessToken(): string;
+  getAccessExpiresAt(): number;
+  getSessionEpoch(): number;
+  getTokenEpoch(token: string): number | null;
+  refreshAccessToken(): Promise<string | null>;
+}
+
+let consumerAuthController: ConsumerAuthController | null = null;
+
+export function configureConsumerAuthController(controller: ConsumerAuthController | null): void {
+  consumerAuthController = controller;
+}
+
+export function currentConsumerAccessToken(fallback = ""): string {
+  return consumerAuthController?.getAccessToken() || fallback;
+}
+
+export function refreshConsumerAccessToken(): Promise<string | null> {
+  return consumerAuthController?.refreshAccessToken() || Promise.resolve(null);
+}
+
+export function currentConsumerSessionEpoch(): number {
+  return consumerAuthController?.getSessionEpoch() ?? -1;
+}
+
+export function requireConsumerSessionEpoch(expectedEpoch: number): void {
+  if (expectedEpoch >= 0 &&
+    currentConsumerSessionEpoch() !== expectedEpoch) {
+    throw new ApiError(
+      "session identity changed", 409, "AUTH_SESSION_CHANGED"
+    );
+  }
+}
+
+export async function recoverConsumerAccessToken(
+  originalToken: string,
+  expectedEpoch: number
+): Promise<string | null> {
+  if (!consumerAuthController ||
+    consumerAuthController.getSessionEpoch() !== expectedEpoch) {
+    return null;
+  }
+  const currentToken = consumerAuthController.getAccessToken();
+  if (currentToken && currentToken !== originalToken) {
+    return currentToken;
+  }
+  const refreshed = await consumerAuthController.refreshAccessToken();
+  if (consumerAuthController.getSessionEpoch() !== expectedEpoch) {
+    return null;
+  }
+  return refreshed;
+}
+
 export interface ApiRequestOptions {
   method?: string;
   token?: string;
+  auth?: "consumer";
   headers?: Record<string, string>;
   body?: unknown;
   keepalive?: boolean;
   cache?: RequestCache;
+  credentials?: RequestCredentials;
+  retryAuth?: boolean;
 }
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  const requestEpoch = resolveConsumerRequestEpoch(options);
+  assertConsumerResponseEpoch(options, requestEpoch);
+  let token = resolveRequestToken(options);
+  if (options.auth === "consumer" &&
+    options.retryAuth !== false &&
+    consumerAuthController &&
+    consumerAuthController.getAccessExpiresAt() <= Date.now() + 5_000) {
+    const refreshed = await recoverConsumerAccessToken(token, requestEpoch);
+    if (refreshed) {
+      token = refreshed;
+    } else {
+      assertConsumerResponseEpoch(options, requestEpoch);
+      throw new ApiError(
+        "authentication required", 401, "AUTH_INVALID_ACCESS_TOKEN"
+      );
+    }
+  }
+
+  function resolveConsumerRequestEpoch(options: ApiRequestOptions): number {
+    if (options.auth !== "consumer") return -1;
+    const currentEpoch = currentConsumerSessionEpoch();
+    if (!options.token || !consumerAuthController) return currentEpoch;
+    const tokenEpoch = consumerAuthController.getTokenEpoch(options.token);
+    if (tokenEpoch !== null) return tokenEpoch;
+    if (options.token === consumerAuthController.getAccessToken()) {
+      return currentEpoch;
+    }
+    throw new ApiError(
+      "session identity changed", 409, "AUTH_SESSION_CHANGED"
+    );
+  }
+  try {
+    const result = await performRequest<T>(path, options, token);
+    assertConsumerResponseEpoch(options, requestEpoch);
+    return result;
+  } catch (error) {
+    if (
+      options.auth === "consumer" &&
+      options.retryAuth !== false &&
+      isRecoverableConsumerAuthError(error, token) &&
+      consumerAuthController
+    ) {
+      const nextToken = await recoverConsumerAccessToken(token, requestEpoch);
+      if (nextToken) {
+        const result = await performRequest<T>(
+          path, { ...options, retryAuth: false }, nextToken
+        );
+        assertConsumerResponseEpoch(options, requestEpoch);
+        return result;
+      }
+
+      if (consumerAuthController.getSessionEpoch() !== requestEpoch &&
+        consumerAuthController.getAccessToken()) {
+        throw new ApiError(
+          "session identity changed", 409, "AUTH_SESSION_CHANGED"
+        );
+      }
+    }
+    throw error;
+  }
+}
+
+function assertConsumerResponseEpoch(
+  options: ApiRequestOptions,
+  expectedEpoch: number
+): void {
+  if (options.auth === "consumer") {
+    requireConsumerSessionEpoch(expectedEpoch);
+  }
+}
+
+function isRecoverableConsumerAuthError(
+  error: unknown,
+  token: string
+): boolean {
+  return isInvalidAccessTokenError(error) ||
+    (Boolean(token) &&
+      error instanceof ApiError &&
+      error.code === "AUTHENTICATION_REQUIRED");
+}
+
+async function performRequest<T>(
+  path: string,
+  options: ApiRequestOptions,
+  token: string
+): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...(options.headers || {})
   };
-  if (options.body) headers["Content-Type"] = "application/json";
-  if (options.token) headers.Authorization = `Bearer ${options.token}`;
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const body = options.body ? JSON.stringify(options.body) : undefined;
   let response: Response;
   try {
     response = await fetch(path, {
       method: options.method || "GET",
       headers,
-      body,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       keepalive: options.keepalive,
-      cache: options.cache
+      cache: options.cache,
+      credentials: options.credentials
     });
   } catch {
     throw new NetworkError();
   }
 
   if (!response.ok) {
-    let message = "请求失败";
-    let code = "";
-    try {
-      const data = (await response.json()) as ApiErrorBody;
-      if (data.error) message = data.error;
-      if (data.message) message = data.message;
-      if (data.code) code = data.code;
-    } catch {
-      message = response.statusText || message;
-    }
-    if (response.status === 401 &&
+    const error = await createApiError(response);
+    if (
+      response.status === 401 &&
       path.startsWith("/api/admin/") &&
       path !== "/api/admin/auth/login" &&
-      typeof window !== "undefined") {
+      typeof window !== "undefined"
+    ) {
       window.dispatchEvent(new CustomEvent(ADMIN_AUTH_INVALID_EVENT, {
-        detail: { token: options.token || "" }
+        detail: { token }
       }));
     }
-    throw new ApiError(message, response.status, code);
+    throw error;
   }
 
   if (response.status === 204) return null as T;
   return (await response.json()) as T;
 }
 
+function resolveRequestToken(options: ApiRequestOptions): string {
+  if (options.auth === "consumer") {
+    const token = consumerAuthController?.getAccessToken() || options.token || "";
+    if (token) return token;
+    throw new ApiError("authentication required", 401, "AUTHENTICATION_REQUIRED");
+  }
+  return options.token || "";
+}
+
+async function createApiError(response: Response): Promise<ApiError> {
+  let message = "请求失败";
+  let code = "";
+  try {
+    const data = (await response.json()) as ApiErrorBody;
+    if (data.error) message = data.error;
+    if (data.message) message = data.message;
+    if (data.code) code = data.code;
+  } catch {
+    message = response.statusText || message;
+  }
+  return new ApiError(message, response.status, code);
+}
+
 export async function uploadFile(file: File, kind: string, token: string): Promise<UploadResponse> {
+  const requestEpoch = currentConsumerSessionEpoch();
+  let currentToken = currentConsumerAccessToken(token);
+  try {
+    return await performUploadFile(file, kind, currentToken);
+  } catch (error) {
+    if (!isInvalidAccessTokenError(error)) throw error;
+    const refreshed = await recoverConsumerAccessToken(currentToken, requestEpoch);
+    if (!refreshed) {
+      if (currentConsumerSessionEpoch() !== requestEpoch &&
+        currentConsumerAccessToken()) {
+        throw new ApiError(
+          "session identity changed", 409, "AUTH_SESSION_CHANGED"
+        );
+      }
+      throw error;
+    }
+    currentToken = refreshed;
+    return performUploadFile(file, kind, currentToken);
+  }
+}
+
+async function performUploadFile(
+  file: File,
+  kind: string,
+  token: string
+): Promise<UploadResponse> {
   const data = new FormData();
   data.append("file", file);
   data.append("kind", kind);
@@ -227,17 +456,7 @@ export async function uploadFile(file: File, kind: string, token: string): Promi
   }
 
   if (!response.ok) {
-    let message = "上传失败";
-    let code = "";
-    try {
-      const payload = (await response.json()) as ApiErrorBody;
-      if (payload.error) message = payload.error;
-      if (payload.message) message = payload.message;
-      if (payload.code) code = payload.code;
-    } catch {
-      message = response.statusText || message;
-    }
-    throw new ApiError(message, response.status, code);
+    throw await createApiError(response);
   }
 
   return (await response.json()) as UploadResponse;

@@ -42,6 +42,7 @@ func TestLocalLimiterFixedWindowDoesNotRefillMidWindow(t *testing.T) {
 	if !limiter.Allow("telemetry", quota).Allowed || !limiter.Allow("telemetry", quota).Allowed {
 		t.Fatal("expected configured fixed-window capacity")
 	}
+
 	if limiter.Allow("telemetry", quota).Allowed {
 		t.Fatal("expected request above fixed-window capacity to be rejected")
 	}
@@ -52,6 +53,27 @@ func TestLocalLimiterFixedWindowDoesNotRefillMidWindow(t *testing.T) {
 	now = now.Add(30 * time.Second)
 	if !limiter.Allow("telemetry", quota).Allowed {
 		t.Fatal("expected a new fixed window at the exact reset boundary")
+	}
+}
+
+func TestLocalLimiterRetainsFixedWindowLongerThanIdleTTL(t *testing.T) {
+	now := time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC)
+	limiter := NewLocalLimiter(
+		10, 10*time.Minute, WithLocalLimiterClock(func() time.Time { return now }),
+	)
+	quota := Quota{
+		Capacity: 1, Algorithm: AlgorithmFixedWindow, Window: 15 * time.Minute,
+	}
+	if !limiter.Allow("password", quota).Allowed {
+		t.Fatal("expected initial password attempt")
+	}
+	now = now.Add(11 * time.Minute)
+	if limiter.Allow("password", quota).Allowed {
+		t.Fatal("fixed window reset at idle TTL before its 15-minute boundary")
+	}
+	now = now.Add(4 * time.Minute)
+	if !limiter.Allow("password", quota).Allowed {
+		t.Fatal("fixed window did not reset at its boundary")
 	}
 }
 

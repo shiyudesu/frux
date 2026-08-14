@@ -10,10 +10,13 @@
 | `playback_telemetry` | server-derived user ID | local only | local |
 | `public_search` | trusted-proxy normalized IP | Redis | stricter local fallback |
 | `upload_session` | server-derived user ID | Redis | fail closed |
+| `consumer_login` | trusted-proxy normalized IP | Redis | stricter local fallback |
+| `session_refresh` | trusted-proxy normalized IP | Redis | stricter local fallback |
+| `password_change` | server-derived user ID | Redis | fail closed |
 
 策略固定声明 normal/emergency 的 local、distributed、fallback 配额算法，Redis deadline
 和最小 retry metadata。除兼容旧行为的 `playback_telemetry` 固定 60 秒窗口外，其余策略使用
-token bucket。配置只控制有界 entry capacity、idle TTL、Redis timeout 和 trusted proxy
+token bucket；`password_change` 使用 15 分钟固定窗口限制 bcrypt 尝试。配置只控制有界 entry capacity、idle TTL、Redis timeout 和 trusted proxy
 CIDR；所有值在启动时校验。
 
 ## 2. 请求路径
@@ -29,6 +32,9 @@ fallback/fail-closed 路径。
 
 Redis 错误或 deadline 到期时，`local` policy 使用独立且更严格的 fallback bucket；
 `fail_closed` policy 返回稳定 503。任何路径都不会因 Redis 故障变成无限流量。
+
+普通登录和 Refresh 在认证建立前按可信代理归一化 IP 限流；改密先经过 JWT middleware，再以服务端
+user ID 限流，客户端不能通过 body、Cookie session ID 或账号字符串选择 quota identity。
 
 ## 3. 身份与响应
 

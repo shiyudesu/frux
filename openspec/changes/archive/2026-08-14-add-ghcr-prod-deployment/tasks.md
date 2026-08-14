@@ -35,4 +35,4 @@
 - [x] 5.5 Test unchanged polling, Worker preservation, successful update, failed-health rollback, release pruning, and lock behavior with local fixture images.
 - [x] 5.6 Validate systemd units, hourly schedule, boot recovery, and manual service start.
 - [x] 5.7 Run repository tests/build, Compose validation, and `openspec validate --all --strict`.
-- [ ] 5.8 Make real GHCR packages public, configure protected Prod promotion, and complete a live deployment and rollback drill.
+- [x] 5.8 Make real GHCR packages public, configure protected Prod promotion, and complete a live deployment and rollback drill.

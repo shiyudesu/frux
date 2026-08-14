@@ -87,7 +87,8 @@ flowchart LR
   Services["Application Services<br/>账户资料 / 创作者管理 / 个人内容库"]
   Domains["Domain Models<br/>account / video / interaction / exposure / library"]
   Config["Config Loader<br/>configs/config.yaml"]
-  JWT["JWT Manager<br/>签发访问令牌"]
+  JWT["JWT Manager<br/>隔离 key ring / 短期访问令牌"]
+  Session["Refresh Session<br/>旋转 / 撤销 / auth_version"]
   Repo["GORM Repository<br/>仓储实现"]
   SQL["database/sql<br/>PostgreSQL 连接"]
   PostgreSQL[("PostgreSQL")]
@@ -98,6 +99,8 @@ flowchart LR
   Entry -->|"注册 HTTP 路由"| Router
   Router -->|"校验受保护接口"| Auth
   Auth -->|"解析和签名 Token"| JWT
+  Services -->|"登录、刷新、登出、改密"| Session
+  Session -->|"哈希凭证与会话状态"| Repo
   Auth -->|"/api/admin 当前身份"| AdminAuth
   AdminAuth -->|"读取当前主体"| Repo
   AdminAuth -->|"最佳努力记录拒绝"| Audit
@@ -126,6 +129,12 @@ flowchart LR
 随后 registered rate-limit middleware 执行 bounded local bucket；只有声明为 distributed 的
 group 才通过 infrastructure adapter 执行单次 Redis Lua。Redis 失败按 policy 使用更严格
 local fallback 或 fail closed，Handler 不拥有私有限流器。
+
+消费端认证使用 5 分钟默认、最多 15 分钟的内存 Access JWT，以及 PostgreSQL 中只保存 Secret
+SHA-256 的 30 天 Refresh Session。Refresh Cookie 限定 `/api/sessions`、HttpOnly、
+SameSite=Strict；每次刷新旋转 Secret。改密事务递增 `account.auth_version`、撤销全部旧 Refresh
+Session 并为当前设备建立替换会话。普通旧 Access 最多存活到短 TTL；后台权限读取本来就逐请求查询
+当前账号，因此同时比较 `auth_version` 并立即拒绝改密前的 Admin Token。
 
 Kafka 是唯一事件流基础。代码注册 Topic、Partition Key、
 Producer 和 Consumer Group；franz-go Producer 使用 idempotence + `acks=all`，Consumer 禁用自动
@@ -192,7 +201,14 @@ sequenceDiagram
   Repo->>DB: SELECT account
   DB-->>Repo: 返回用户记录
   S-->>H: 返回 Bearer JWT
-  H-->>C: 返回 access_token
+  H-->>C: 返回短期 access_token，并写入 Refresh/资产 Cookie
+
+  C->>R: POST /api/sessions/current/refresh
+  R->>H: 校验同源 Refresh Cookie
+  H->>S: 旋转 Refresh Secret
+  S->>Repo: 锁定会话并更新 hash/previous hash
+  Repo->>DB: UPDATE account_refresh_session
+  H-->>C: 返回新 access_token 并轮换 Cookie
 
   C->>R: POST /api/uploads
   R->>H: Upload.Create
@@ -580,7 +596,7 @@ max staleness 后使用 failure default。请求和消费热路径不访问控�
 ## 6. 说明
 
 - 当前代码以 Go API 承载同步 HTTP，用 Worker 消费互动、发布、曝光预热、嵌入和媒体处理事件；内部按接口层、应用层、领域层、基础设施层组织。
-- 对外接口统一挂载在 `/api/*`；`/uploads/*` 中头像/普通文件公开读取，视频/封面按不可变上传所有权、同作者视频引用、数据库状态和可选 Authorization 或“HttpOnly JWT 资产 Cookie + Web 活跃标记”授权后提供 Range/HEAD；资产 Cookie 只在登录时写入，离线退出也会同步移除活跃标记；健康检查使用 `/health`。
+- 对外接口统一挂载在 `/api/*`；`/uploads/*` 中头像/普通文件公开读取，视频/封面按不可变上传所有权、同作者视频引用、数据库状态和可选 Authorization 或“短期 HttpOnly JWT 资产 Cookie + Web 活跃标记”授权后提供 Range/HEAD；资产 Cookie 在登录、刷新和改密时随 Access JWT 轮换，普通响应不刷新，离线退出同步移除活跃标记；健康检查使用 `/health`。
 - 数据持久化使用 PostgreSQL；API 和 Worker 通过 advisory transaction lock 串行执行完整 GORM 自动迁移。内容统计校正采用快照差量叠加，既修复旧偏差也保留其他在线实例已提交的并发增量；观看历史聚合修复只修正仍存在的投影，不会从原始事件恢复用户已删除的历史。
 - Feed 通过 `scene` 分发策略：`timeline` 按 `published_at DESC, id DESC` 排序，`hot` 按最近 60 分钟互动热度排序，并通过 Base64 游标分页。
 - Web 预加载直接消费活动 Feed 的有序 items，并按网络、save-data、内存和 `buffer_ms` 保留有界上一条/当前条/后续媒体资源；场景、请求、身份或源版本变化会取消旧代际。`/api/preload-videos` 仅保留为按发布时间补充资源的兼容接口。

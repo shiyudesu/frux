@@ -1,24 +1,28 @@
-// 会话分发：SessionContext（token/user/setAuth/clearAuth）+ 未读数 Context。
-// 搬运 LegacyApp.jsx App 组件中 token/user/unreadCount 相关逻辑（:46-114）。
-//
-// 说明：未读数拆为独立 UnreadContext，是为了让 Session 对象保持与迁移前
-// 相同的身份语义（仅在 token/user 变化时重建），避免 unreadCount 变化
-// 导致依赖 session 对象的 effect 额外重跑。
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { isUnauthorized } from "./api/client";
+import { configureConsumerAuthController, isUnauthorized } from "./api/client";
 import { fetchUnreadStat } from "./api/messages";
-import { ASSET_ACTIVE_COOKIE_NAME, TOKEN_KEY, USER_KEY } from "./constants";
+import {
+  ConsumerSessionCoordinator,
+  type ConsumerSessionStatus
+} from "./consumerSessionCoordinator";
 import { useRoute } from "./router";
-import { parseStoredUser } from "./types";
 import type { SessionUser } from "./types";
 
 export interface Session {
   token: string;
   user: SessionUser | null;
-  setAuth: (nextToken: string, nextUser: SessionUser | null) => void;
+  status: ConsumerSessionStatus;
+  setAuth: (nextToken: string, nextUser: SessionUser | null, expiresInSeconds?: number) => void;
   updateUser: (expectedToken: string, nextUser: SessionUser) => void;
   clearAuth: () => void;
+  beginLogout: () => void;
+  completeLogout: () => void;
+  runCredentialMutation: <T>(
+    operation: () => Promise<T>,
+    requireAuthenticated?: boolean
+  ) => Promise<T>;
+  replaceAccessToken: (token: string, expiresInSeconds: number) => void;
 }
 
 export interface UnreadState {
@@ -31,50 +35,65 @@ const UnreadContext = createContext<UnreadState | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const route = useRoute();
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
-  const [user, setUser] = useState<SessionUser | null>(() => parseStoredUser(localStorage.getItem(USER_KEY)));
-  const tokenRef = useRef(token);
+  const coordinatorRef = useRef<ConsumerSessionCoordinator>();
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new ConsumerSessionCoordinator();
+  }
+  const coordinator = coordinatorRef.current;
+  const [snapshot, setSnapshot] = useState(() => coordinator.getSnapshot());
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const setAuth = useCallback((nextToken: string, nextUser: SessionUser | null) => {
-    tokenRef.current = nextToken;
-    setToken(nextToken);
-    setUser(nextUser);
-    if (nextToken) {
-      localStorage.setItem(TOKEN_KEY, nextToken);
-      setAssetAccessActive(true);
-    } else {
-      localStorage.removeItem(TOKEN_KEY);
-      setAssetAccessActive(false);
-    }
-    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
-  }, []);
-
-  const updateUser = useCallback((expectedToken: string, nextUser: SessionUser) => {
-    if (!expectedToken || tokenRef.current !== expectedToken) return;
-    setUser(nextUser);
-    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
-  }, []);
-
-  const clearAuth = useCallback(() => {
-    tokenRef.current = "";
-    setAssetAccessActive(false);
-    setToken("");
-    setUser(null);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-  }, []);
+  useLayoutEffect(() => coordinator.subscribe(setSnapshot), [coordinator]);
 
   useEffect(() => {
-    setAssetAccessActive(Boolean(tokenRef.current && user));
-  }, []);
+    coordinator.start();
+    configureConsumerAuthController(coordinator);
+    void coordinator.bootstrap();
+    return () => {
+      configureConsumerAuthController(null);
+      coordinator.stop();
+    };
+  }, [coordinator]);
+
+  const setAuth = useCallback((nextToken: string, nextUser: SessionUser | null, expiresInSeconds = 0) => {
+    coordinator.setAuth(nextToken, nextUser, expiresInSeconds);
+  }, [coordinator]);
+
+  const updateUser = useCallback((expectedToken: string, nextUser: SessionUser) => {
+    coordinator.updateUser(expectedToken, nextUser);
+  }, [coordinator]);
+
+  const clearAuth = useCallback(() => {
+    coordinator.clearAuth();
+  }, [coordinator]);
+
+  const beginLogout = useCallback(() => {
+    coordinator.beginLogout();
+  }, [coordinator]);
+
+  const completeLogout = useCallback(() => {
+    coordinator.completeLogout();
+  }, [coordinator]);
+
+  const runCredentialMutation = useCallback(
+    <T,>(operation: () => Promise<T>, requireAuthenticated = false) =>
+      coordinator.runCredentialMutation(operation, requireAuthenticated),
+    [coordinator]
+  );
+
+  const replaceAccessToken = useCallback(
+    (token: string, expiresInSeconds: number) => {
+      coordinator.replaceAccessToken(token, expiresInSeconds);
+    },
+    [coordinator]
+  );
 
   const refreshUnreadCount = useCallback((): Promise<number> => {
-    if (!token || !user) {
+    if (!snapshot.token || !snapshot.user) {
       setUnreadCount(0);
       return Promise.resolve(0);
     }
-    return fetchUnreadStat(token)
+    return fetchUnreadStat(snapshot.token)
       .then((data) => {
         const count = Number(data.unread_count || 0);
         setUnreadCount(Number.isFinite(count) ? count : 0);
@@ -86,17 +105,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
         return 0;
       });
-  }, [token, user]);
+  }, [snapshot.token, snapshot.user]);
 
   useEffect(() => {
-    refreshUnreadCount();
+    void refreshUnreadCount();
   }, [refreshUnreadCount, route]);
 
   const session = useMemo<Session>(
     () => ({
-      token, user, setAuth, updateUser, clearAuth
+      token: snapshot.token,
+      user: snapshot.user,
+      status: snapshot.status,
+      setAuth,
+      updateUser,
+      clearAuth,
+      beginLogout,
+      completeLogout,
+      runCredentialMutation,
+      replaceAccessToken
     }),
-    [clearAuth, setAuth, token, updateUser, user]
+    [
+      beginLogout,
+      clearAuth,
+      completeLogout,
+      runCredentialMutation,
+      replaceAccessToken,
+      setAuth,
+      snapshot.status,
+      snapshot.token,
+      snapshot.user,
+      updateUser
+    ]
   );
 
   const unread = useMemo<UnreadState>(() => ({ unreadCount, refreshUnreadCount }), [unreadCount, refreshUnreadCount]);
@@ -124,7 +163,6 @@ export function useUnreadCount(): UnreadState {
   return unread;
 }
 
-/** 关注/取关后同步会话中的关注数（保留 followingCount camelCase 副本的历史行为） */
 export function updateSessionRelationCount(session: Session, followingCount: number): void {
   if (!session.user || !Number.isFinite(Number(followingCount))) return;
   session.updateUser(session.token, {
@@ -132,11 +170,4 @@ export function updateSessionRelationCount(session: Session, followingCount: num
     following_count: Number(followingCount),
     followingCount: Number(followingCount)
   });
-}
-
-function setAssetAccessActive(active: boolean): void {
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = active
-    ? `${ASSET_ACTIVE_COOKIE_NAME}=1; Path=/uploads; SameSite=Strict${secure}`
-    : `${ASSET_ACTIVE_COOKIE_NAME}=; Max-Age=0; Path=/uploads; SameSite=Strict${secure}`;
 }

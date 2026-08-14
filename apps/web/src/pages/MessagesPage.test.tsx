@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchPublicProfile, fetchVideo } from "../api/account";
@@ -10,10 +10,10 @@ import {
   fetchComments,
   fetchCommentThread
 } from "../api/social";
-import { emptyProfile, TOKEN_KEY, USER_KEY } from "../constants";
+import { emptyProfile } from "../constants";
 import { RouterProvider, useRoute, useVideoDiscussionRoute } from "../router";
-import { SessionProvider } from "../session";
-import type { Message } from "../types";
+import { SessionProvider, useSession } from "../session";
+import type { Message, SessionUser } from "../types";
 import { MessagesPage } from "./MessagesPage";
 import { VideoDetailPage } from "./VideoDetailPage";
 
@@ -45,8 +45,13 @@ describe("comment message navigation", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    localStorage.setItem(TOKEN_KEY, "message-token");
-    localStorage.setItem(USER_KEY, JSON.stringify({ ...emptyProfile, id: 2, nickname: "收件人", role: "user" }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "AUTH_INVALID_REFRESH_SESSION",
+      error: "invalid refresh session"
+    }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    })));
     window.history.replaceState({}, "", "/messages");
     vi.mocked(fetchUnreadStat).mockResolvedValue({ unread_count: 1 });
     vi.mocked(markMessagesRead).mockResolvedValue({ updated_count: 1 });
@@ -95,11 +100,11 @@ describe("comment message navigation", () => {
     });
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
+  afterEach(async () => {
+    await act(async () => root.unmount());
     container.remove();
     localStorage.clear();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it("renders a typed reply message, marks it read, and navigates to its discussion", async () => {
@@ -223,7 +228,9 @@ describe("comment message navigation", () => {
       root.render(
         <RouterProvider>
           <SessionProvider>
-            <MessagesRouteHarness renderVideoDetail={renderVideoDetail} />
+            <AuthenticatedSessionGate user={{ ...emptyProfile, id: 2, nickname: "收件人", role: "user" }}>
+              <MessagesRouteHarness renderVideoDetail={renderVideoDetail} />
+            </AuthenticatedSessionGate>
           </SessionProvider>
         </RouterProvider>
       );
@@ -237,6 +244,25 @@ describe("comment message navigation", () => {
     return element;
   }
 });
+
+function AuthenticatedSessionGate({
+  children,
+  user
+}: {
+  children: React.ReactNode;
+  user: SessionUser;
+}) {
+  const session = useSession();
+
+  useEffect(() => {
+    if (!(session.token && session.user)) {
+      session.setAuth("message-token", user, 300);
+    }
+  }, [session, user]);
+
+  if (!(session.token && session.user)) return null;
+  return <>{children}</>;
+}
 
 function MessagesRouteHarness({ renderVideoDetail }: { renderVideoDetail: boolean }) {
   const route = useRoute();

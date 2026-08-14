@@ -107,7 +107,12 @@ sudo editor /opt/frux/.env.prod
 | 配置 | 内容 |
 | --- | --- |
 | `FRUX_DOMAIN` | Frux域名，例如 `frux.example.com` |
-| `FRUX_JWT_SECRET` | 随机字符串 |
+| `FRUX_JWT_CONSUMER_SECRET` | 至少 32 字节的消费端 JWT 随机密钥 |
+| `FRUX_JWT_ADMIN_SECRET` | 与消费端不同的至少 32 字节后台 JWT 随机密钥 |
+| `FRUX_JWT_LEGACY_SECRET` | 可选；升级前旧共享密钥，仅迁移窗口使用 |
+| `FRUX_JWT_LEGACY_ISSUED_UNTIL` | 可选；旧服务停止签发 Token 的 RFC3339 时间 |
+| `FRUX_JWT_LEGACY_ACCEPT_UNTIL` | 可选；旧 Token 接受截止时间，RFC3339 |
+| `FRUX_HMAC_SECRET` | 与 JWT 密钥不同的应用内部签名密钥，用于游标和短期媒体 URL |
 | `FRUX_INTERNAL_TOKEN` | 随机字符串 |
 | `FRUX_POSTGRES_PASSWORD` | PostgreSQL密码 |
 | `FRUX_REDIS_PASSWORD` | Redis密码 |
@@ -119,6 +124,13 @@ sudo editor /opt/frux/.env.prod
 ```bash
 openssl rand -base64 48 | tr -d '\n'
 ```
+
+消费端、后台和应用 HMAC 密钥必须分别生成。首次从旧共享密钥升级时，先把原 `FRUX_JWT_SECRET` 填入
+`FRUX_JWT_LEGACY_SECRET`，把切换时刻写入 `FRUX_JWT_LEGACY_ISSUED_UNTIL`，并将
+`FRUX_JWT_LEGACY_ACCEPT_UNTIL` 设置为该时刻加旧 Token 最大 TTL 与 clock leeway 之后（当前至少
+30 分 30 秒）。截止时间可以自然过期，后续重启只会关闭旧 Token 校验，不会阻止启动；
+确认新 Web 与新 key ring 正常后清空两个 legacy 变量。截止时间后旧无 `kid` Token 会被拒绝，回滚时
+必须同时恢复兼容校验配置，数据库中的 Refresh Session 表可保留。
 
 `FRUX_DOMAIN` 只填域名，不要加协议、引号或末尾斜杠：
 

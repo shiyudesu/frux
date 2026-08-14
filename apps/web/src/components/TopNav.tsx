@@ -7,7 +7,9 @@ import { formatBadgeCount } from "../utils";
 import { Icon } from "./Icon";
 
 export function TopNav() {
-  const { token, user, clearAuth } = useSession();
+  const {
+    token, user, beginLogout, completeLogout, runCredentialMutation, clearAuth
+  } = useSession();
   const { unreadCount } = useUnreadCount();
   const navigate = useNavigate();
   const searchRoute = useSearchRoute();
@@ -22,13 +24,22 @@ export function TopNav() {
   async function handleLogout() {
     if (logoutBusy) return;
     setLogoutBusy(true);
-    const currentToken = token;
-    clearAuth();
+    beginLogout();
     navigate("/timeline");
     try {
-      await logoutSession(currentToken || undefined);
+      await runCredentialMutation(async () => {
+        beginLogout();
+        try {
+          await logoutSession();
+          clearAuth();
+          completeLogout();
+        } catch (error) {
+          beginLogout();
+          throw error;
+        }
+      });
     } catch {
-      // Local logout and private-asset deactivation are authoritative when offline.
+      beginLogout();
     } finally {
       setLogoutBusy(false);
     }

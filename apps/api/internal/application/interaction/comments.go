@@ -79,9 +79,13 @@ func (s *Service) ListCommentReplies(ctx context.Context, rootCommentID int64, v
 	if !ok {
 		return nil, ErrLoadInteractionFailed
 	}
+	viewer, err := s.resolveCommentViewer(ctx, viewerID, viewerRole)
+	if err != nil {
+		return nil, ErrLoadInteractionFailed
+	}
 	page, err := threaded.ListCommentReplies(ctx, domaininteraction.CommentReplyQuery{
 		RootCommentID: rootCommentID,
-		Viewer:        domaininteraction.CommentViewer{UserID: viewerID, Role: viewerRole},
+		Viewer:        viewer,
 		Cursor:        parsedCursor,
 		Limit:         limit + 1,
 	})
@@ -113,10 +117,14 @@ func (s *Service) GetCommentThreadContext(ctx context.Context, targetCommentID i
 	if !ok {
 		return nil, ErrLoadInteractionFailed
 	}
+	viewer, err := s.resolveCommentViewer(ctx, viewerID, viewerRole)
+	if err != nil {
+		return nil, ErrLoadInteractionFailed
+	}
 	contextResult, err := threaded.GetCommentThreadContext(
 		ctx,
 		targetCommentID,
-		domaininteraction.CommentViewer{UserID: viewerID, Role: viewerRole},
+		viewer,
 		replyLimit+1,
 	)
 	if err != nil {

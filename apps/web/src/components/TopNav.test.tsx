@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TOKEN_KEY, USER_KEY, emptyProfile } from "../constants";
+import { emptyProfile } from "../constants";
 import { RouterProvider } from "../router";
-import { SessionProvider } from "../session";
+import { SessionProvider, useSession } from "../session";
+import type { SessionUser } from "../types";
 import { TopNav } from "./TopNav";
 
 describe("top navigation search", () => {
@@ -14,20 +15,27 @@ describe("top navigation search", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     localStorage.clear();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "AUTH_INVALID_REFRESH_SESSION",
+      error: "invalid refresh session"
+    }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    })));
     window.history.replaceState({}, "", "/timeline");
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
+  afterEach(async () => {
+    await act(async () => root.unmount());
     container.remove();
     vi.restoreAllMocks();
   });
 
-  it("submits typed search navigation and follows browser history", () => {
-    render();
+  it("submits typed search navigation and follows browser history", async () => {
+    await render();
     const input = required<HTMLInputElement>('input[aria-label="搜索"]');
     changeInput(input, "猫 视频");
     act(() => {
@@ -43,17 +51,16 @@ describe("top navigation search", () => {
     expect(input.value).toBe("用户");
   });
 
-  it("keeps compact primary actions accessible for guests", () => {
-    render();
+  it("keeps compact primary actions accessible for guests", async () => {
+    await render();
     expect(required<HTMLButtonElement>("button.upload-button").textContent).toContain("投稿");
     expect(required<HTMLButtonElement>('button[aria-label="通知"]')).toBeTruthy();
     expect(required<HTMLButtonElement>('button[aria-label="登录"]')).toBeTruthy();
     expect(required<HTMLInputElement>('input[aria-label="搜索"]')).toBeTruthy();
   });
 
-  it("dismisses the authenticated overflow menu and restores focus on Escape", () => {
-    authenticate();
-    render();
+  it("dismisses the authenticated overflow menu and restores focus on Escape", async () => {
+    await render(true);
     const trigger = required<HTMLButtonElement>('button[aria-label="更多账户操作"]');
     act(() => trigger.click());
     const logout = required<HTMLButtonElement>('[role="menuitem"]');
@@ -64,9 +71,8 @@ describe("top navigation search", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("dismisses the authenticated overflow menu on outside pointer input", () => {
-    authenticate();
-    render();
+  it("dismisses the authenticated overflow menu on outside pointer input", async () => {
+    await render(true);
     const trigger = required<HTMLButtonElement>('button[aria-label="更多账户操作"]');
     act(() => trigger.click());
     expect(required<HTMLElement>('[role="menu"]')).toBeTruthy();
@@ -75,19 +81,18 @@ describe("top navigation search", () => {
     expect(container.querySelector('[role="menu"]')).toBeNull();
   });
 
-  function authenticate() {
-    localStorage.setItem(TOKEN_KEY, "token");
-    localStorage.setItem(USER_KEY, JSON.stringify({ ...emptyProfile, id: 7, account: "owner", nickname: "Owner" }));
-  }
-
-  function render() {
-    act(() => root.render(
-      <RouterProvider>
-        <SessionProvider>
-          <TopNav />
-        </SessionProvider>
-      </RouterProvider>
-    ));
+  async function render(authenticated = false) {
+    await act(async () => {
+      root.render(
+        <RouterProvider>
+          <SessionProvider>
+            {authenticated && <AuthenticatedSessionGate user={{ ...emptyProfile, id: 7, account: "owner", nickname: "Owner" }} />}
+            <TopNav />
+          </SessionProvider>
+        </RouterProvider>
+      );
+      await flushPromises();
+    });
   }
 
   function required<T extends Element>(selector: string): T {
@@ -96,6 +101,19 @@ describe("top navigation search", () => {
     return element;
   }
 });
+
+function AuthenticatedSessionGate({ user }: { user: SessionUser }) {
+  const session = useSession();
+  useEffect(() => {
+    session.setAuth("token", user, 300);
+  }, [session, user]);
+  return null;
+}
+
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 function changeInput(input: HTMLInputElement, value: string) {
   act(() => {

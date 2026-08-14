@@ -24,6 +24,7 @@ type userWithStatModel struct {
 	Gender            int
 	Status            int
 	Role              string
+	AuthVersion       int64
 	FollowingCount    int
 	FollowerCount     int
 	WorkCount         int
@@ -45,14 +46,15 @@ func New(db *gorm.DB) *Repository {
 // Save 将领域用户转换为 GORM 模型并写入 account 表。
 func (r *Repository) Save(ctx context.Context, user *domainaccount.User) error {
 	model := UserModel{
-		Account:   user.Account,
-		Password:  user.Password,
-		Nickname:  user.Nickname,
-		AvatarURL: user.AvatarURL,
-		Bio:       user.Bio,
-		Gender:    user.Gender,
-		Status:    user.Status,
-		Role:      user.Role,
+		Account:     user.Account,
+		Password:    user.Password,
+		Nickname:    user.Nickname,
+		AvatarURL:   user.AvatarURL,
+		Bio:         user.Bio,
+		Gender:      user.Gender,
+		Status:      user.Status,
+		Role:        user.Role,
+		AuthVersion: user.AuthVersion,
 	}
 
 	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -291,7 +293,7 @@ func EnsureProfileSettings(db *gorm.DB) error {
 
 // restoreUser 把数据库模型转换回领域对象，业务逻辑继续操作领域类型。
 func restoreUser(user userWithStatModel) *domainaccount.User {
-	return domainaccount.RestoreUserWithDashboard(
+	return domainaccount.RestoreUserWithDashboardAuthVersion(
 		user.ID,
 		user.Account,
 		user.Password,
@@ -301,6 +303,7 @@ func restoreUser(user userWithStatModel) *domainaccount.User {
 		user.Gender,
 		user.Status,
 		user.Role,
+		user.AuthVersion,
 		user.FollowingCount,
 		user.FollowerCount,
 		user.WorkCount,
@@ -310,5 +313,5 @@ func restoreUser(user userWithStatModel) *domainaccount.User {
 }
 
 func userWithStatSelect() string {
-	return "a.id, a.account, a.password, a.nickname, a.avatar_url, a.bio, a.gender, a.status, a.role, COALESCE(active_following.following_count, rs.following_count, 0) AS following_count, COALESCE(active_followers.follower_count, rs.follower_count, 0) AS follower_count, COALESCE(cs.public_work_count, published_works.work_count, 0) AS work_count, COALESCE(cs.private_work_count, 0) AS private_work_count, COALESCE(cs.received_like_count, 0) AS received_like_count"
+	return "a.id, a.account, a.password, a.nickname, a.avatar_url, a.bio, a.gender, a.status, a.role, a.auth_version, COALESCE(active_following.following_count, rs.following_count, 0) AS following_count, COALESCE(active_followers.follower_count, rs.follower_count, 0) AS follower_count, COALESCE(cs.public_work_count, published_works.work_count, 0) AS work_count, COALESCE(cs.private_work_count, 0) AS private_work_count, COALESCE(cs.received_like_count, 0) AS received_like_count"
 }

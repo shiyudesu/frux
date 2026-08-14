@@ -98,6 +98,7 @@ func newAdminVideoAPIRouter(
 	router := server.New(server.WithDisablePrintRoute(true))
 	auth := func(ctx context.Context, c *app.RequestContext) {
 		c.Set(interfaceshttpmiddleware.ContextUserIDKey, principal.UserID)
+		c.Set(interfaceshttpmiddleware.ContextAuthVersionKey, principal.AuthVersion)
 		c.Next(ctx)
 	}
 	reader := adminVideoPrincipalReader{principal: principal}

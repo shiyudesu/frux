@@ -27,3 +27,11 @@ Worker 保留处理租约续期、过期 lease 回收、重试时间、终态通
 
 media shadow 只读 `(asset_id, profile_version)` durable job；缺失为 propagation pending，
 已存在但 profile 冲突为 mismatch，不会 claim 或 signal job。
+
+## 4. 受保护浏览器访问
+
+本地 `/uploads` 的私密视频、封面和处理中预览继续由不可变 owner、视频引用和生命周期共同授权。
+浏览器 `<video>/<img>` 使用仅限 `/uploads` 的 HttpOnly 资产 JWT，并同时要求 Web 维护的
+SameSite=Strict 活跃标记。资产 JWT 与五分钟消费端 Access Token 同寿命，在登录、Refresh 和改密时
+轮换，普通媒体或 API 响应不延长它；离线退出先删除活跃标记，因此旧 Cookie 不能继续作为浏览器资产
+身份。生产对象存储的短期签名 URL 仍不得包含 Access 或 Refresh Token。

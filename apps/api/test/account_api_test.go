@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -66,9 +67,12 @@ type memoryAccountRepo struct {
 	byID             map[int64]*domainaccount.User
 	byAccount        map[string]int64
 	settings         map[int64]*domainaccount.ProfileSetting
+	sessions         map[string]*domainaccount.RefreshSession
 	failAtomicUpdate bool
 	atomicReady      *sync.WaitGroup
 	atomicRelease    <-chan struct{}
+	passwordReady    *sync.WaitGroup
+	passwordRelease  <-chan struct{}
 }
 
 func newMemoryAccountRepo() *memoryAccountRepo {
@@ -77,7 +81,155 @@ func newMemoryAccountRepo() *memoryAccountRepo {
 		byID:      map[int64]*domainaccount.User{},
 		byAccount: map[string]int64{},
 		settings:  map[int64]*domainaccount.ProfileSetting{},
+		sessions:  map[string]*domainaccount.RefreshSession{},
 	}
+}
+
+func (r *memoryAccountRepo) CreateRefreshSession(
+	_ context.Context,
+	session *domainaccount.RefreshSession,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessions[session.ID] = cloneRefreshSession(session)
+	return nil
+}
+
+func (r *memoryAccountRepo) RotateRefreshSession(
+	_ context.Context,
+	input domainaccount.RotateRefreshSessionInput,
+) (*domainaccount.RotateRefreshSessionResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	session := r.sessions[input.SessionID]
+	if session == nil {
+		return nil, domainaccount.ErrInvalidRefreshSession
+	}
+	if session.RevokedAt != nil {
+		return nil, domainaccount.ErrRefreshSessionRevoked
+	}
+	if !input.RotatedAt.Before(session.ExpiresAt) {
+		revokedAt := input.RotatedAt
+		session.RevokedAt = &revokedAt
+		session.RevocationReason = domainaccount.RefreshRevocationExpired
+		return nil, domainaccount.ErrRefreshSessionExpired
+	}
+	user := r.byID[session.UserID]
+	if user == nil || user.Status != domainaccount.StatusNormal ||
+		user.AuthVersion != session.AuthVersion {
+		return nil, domainaccount.ErrRefreshSessionRevoked
+	}
+	if session.MatchesCurrent(input.SecretHash) {
+		previousValidTo := input.RotatedAt.Add(input.PreviousGrace)
+		session.PreviousSecretHash = session.SecretHash
+		session.PreviousSecretValidTo = &previousValidTo
+		session.SecretHash = input.NewSecretHash
+		session.LastUsedAt = input.RotatedAt
+		return &domainaccount.RotateRefreshSessionResult{
+			Session: cloneRefreshSession(session),
+			Account: cloneUser(user),
+		}, nil
+	}
+	if session.MatchesPreviousWithinGrace(input.SecretHash, input.RotatedAt) {
+		return &domainaccount.RotateRefreshSessionResult{
+			Session: cloneRefreshSession(session), Superseded: true,
+		}, nil
+	}
+	if session.MatchesPrevious(input.SecretHash) {
+		for _, candidate := range r.sessions {
+			if candidate.FamilyID == session.FamilyID && candidate.RevokedAt == nil {
+				revokedAt := input.RotatedAt
+				candidate.RevokedAt = &revokedAt
+				candidate.RevocationReason = domainaccount.RefreshRevocationReplay
+			}
+		}
+		return &domainaccount.RotateRefreshSessionResult{
+			Session: cloneRefreshSession(session), ReplayFound: true,
+		}, nil
+	}
+	for _, candidate := range r.sessions {
+		if candidate.FamilyID == session.FamilyID && candidate.RevokedAt == nil {
+			revokedAt := input.RotatedAt
+			candidate.RevokedAt = &revokedAt
+			candidate.RevocationReason = domainaccount.RefreshRevocationReplay
+		}
+	}
+	return &domainaccount.RotateRefreshSessionResult{
+		Session: cloneRefreshSession(session), ReplayFound: true,
+	}, nil
+}
+
+func (r *memoryAccountRepo) RevokeRefreshSession(
+	_ context.Context,
+	sessionID, secretHash, reason string,
+	revokedAt time.Time,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	session := r.sessions[sessionID]
+	if session == nil || session.RevokedAt != nil {
+		return nil
+	}
+	if !session.MatchesCurrent(secretHash) && !session.MatchesPrevious(secretHash) {
+		return nil
+	}
+	session.RevokedAt = &revokedAt
+	session.RevocationReason = reason
+	return nil
+}
+
+func (r *memoryAccountRepo) ReplacePasswordAndSessions(
+	_ context.Context,
+	input domainaccount.ReplacePasswordAndSessionsInput,
+) error {
+	if r.passwordReady != nil {
+		r.passwordReady.Done()
+		<-r.passwordRelease
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	user := r.byID[input.Change.UserID]
+	if user == nil || user.Password != input.Change.ExpectedPassword ||
+		user.AuthVersion != input.Change.CurrentAuthVersion {
+		return domainaccount.ErrCredentialChanged
+	}
+
+	if r.failAtomicUpdate {
+		return errors.New("forced atomic update failure")
+	}
+	user.Password = input.Change.NewPassword
+	user.AuthVersion = input.Change.NextAuthVersion
+	for _, session := range r.sessions {
+		if session.UserID == user.ID && session.RevokedAt == nil {
+			revokedAt := input.ChangedAt
+			session.RevokedAt = &revokedAt
+			session.RevocationReason = domainaccount.RefreshRevocationPasswordChange
+			session.ReplacedBySessionID = input.ReplacementSession.ID
+		}
+	}
+	r.sessions[input.ReplacementSession.ID] = cloneRefreshSession(input.ReplacementSession)
+	return nil
+}
+
+func (r *memoryAccountRepo) DeleteExpiredRefreshSessions(
+	_ context.Context,
+	now, revokedBefore time.Time,
+	limit int,
+) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var deleted int64
+	for id, session := range r.sessions {
+		if int(deleted) >= limit {
+			break
+		}
+		if !session.ExpiresAt.After(now) ||
+			(session.RevokedAt != nil && !session.RevokedAt.After(revokedBefore)) {
+			delete(r.sessions, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 // Save 模拟 account 表插入逻辑，并在账号重复时返回领域错误。
@@ -119,6 +271,21 @@ func (r *memoryAccountRepo) FindByID(ctx context.Context, id int64) (*domainacco
 		return nil, domainaccount.ErrUserNotFound
 	}
 	return cloneUser(user), nil
+}
+
+func (r *memoryAccountRepo) FindAdminPrincipalByID(
+	_ context.Context,
+	id int64,
+) (*domainaccount.AdminPrincipal, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	user := r.byID[id]
+	if user == nil {
+		return nil, domainaccount.ErrUserNotFound
+	}
+	return domainaccount.RestoreAdminPrincipalWithAuthVersion(
+		user.ID, user.Status, user.Role, user.AuthVersion,
+	), nil
 }
 
 // UpdateProfile 只更新资料字段，与真实仓储保持同样的行为边界。
@@ -234,6 +401,22 @@ func (r *memoryAccountRepo) SetStatsForTest(userID int64, followingCount int, fo
 // cloneUser 返回副本，避免测试代码直接修改仓储中的内部对象。
 func cloneUser(user *domainaccount.User) *domainaccount.User {
 	cloned := *user
+	return &cloned
+}
+
+func cloneRefreshSession(session *domainaccount.RefreshSession) *domainaccount.RefreshSession {
+	if session == nil {
+		return nil
+	}
+	cloned := *session
+	if session.PreviousSecretValidTo != nil {
+		value := *session.PreviousSecretValidTo
+		cloned.PreviousSecretValidTo = &value
+	}
+	if session.RevokedAt != nil {
+		value := *session.RevokedAt
+		cloned.RevokedAt = &value
+	}
 	return &cloned
 }
 
@@ -397,7 +580,20 @@ func TestAccountAPIValidation(t *testing.T) {
 		`{"account":"test","password":"","nickname":"tester"}`,
 		"",
 	)
-	assertAPIError(t, registerResponse, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, domainaccount.ErrEmptyPassword.Error())
+	assertAPIError(t, registerResponse, http.StatusBadRequest, interfaceshttpapierror.CodeAccountPasswordInvalid, domainaccount.ErrEmptyPassword.Error())
+
+	shortPassword := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/users",
+		`{"account":"short","password":"1234567","nickname":"short"}`,
+		"",
+	)
+	assertAPIError(
+		t, shortPassword, http.StatusBadRequest,
+		interfaceshttpapierror.CodeAccountPasswordInvalid,
+		domainaccount.ErrPasswordTooShort.Error(),
+	)
 
 	loginResponse := performJSONRequest(
 		router,
@@ -460,6 +656,529 @@ func TestAccountLoginInvalidCredentialsAreIndistinguishable(t *testing.T) {
 	if unknownAccount.Body.String() != wrongPassword.Body.String() {
 		t.Fatalf("credential failures should be indistinguishable: unknown=%s wrong=%s", unknownAccount.Body.String(), wrongPassword.Body.String())
 	}
+	unknownEmpty := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"missing-user","password":"   "}`,
+		"",
+	)
+	existingEmpty := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"login-user","password":"   "}`,
+		"",
+	)
+	if unknownEmpty.Body.String() != existingEmpty.Body.String() {
+		t.Fatalf(
+			"empty credential failures should be indistinguishable: unknown=%s existing=%s",
+			unknownEmpty.Body.String(), existingEmpty.Body.String(),
+		)
+	}
+}
+
+func TestInactiveAccountCannotCreateSession(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	register := performJSONRequest(
+		router, http.MethodPost, "/api/users",
+		`{"account":"inactive","password":"Password123!","nickname":"Inactive"}`,
+		"",
+	)
+	requireStatus(t, register, http.StatusCreated)
+	repo.mu.Lock()
+	repo.byID[1].Status = 2
+	repo.mu.Unlock()
+	login := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"inactive","password":"Password123!"}`,
+		"",
+	)
+	assertAPIError(
+		t, login, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthInvalidCredentials,
+		"invalid credentials",
+	)
+}
+
+func TestLoginRejectsCrossOriginAndNonJSONRequests(t *testing.T) {
+	router := newAccountRouter(t)
+	register := performJSONRequest(
+		router, http.MethodPost, "/api/users",
+		`{"account":"csrf-user","password":"Password123!","nickname":"CSRF"}`,
+		"",
+	)
+	requireStatus(t, register, http.StatusCreated)
+	crossOrigin := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"csrf-user","password":"Password123!"}`,
+		ut.Header{Key: "Origin", Value: "https://attacker.example"},
+		ut.Header{Key: "Host", Value: "frux.example"},
+	)
+	assertAPIError(
+		t, crossOrigin, http.StatusBadRequest,
+		interfaceshttpapierror.CodeInvalidRequest, "invalid request",
+	)
+	body := `{"account":"csrf-user","password":"Password123!"}`
+	plainText := ut.PerformRequest(
+		router.Engine,
+		http.MethodPost,
+		"/api/sessions",
+		&ut.Body{Body: bytes.NewBufferString(body), Len: len(body)},
+		ut.Header{Key: "Content-Type", Value: "text/plain"},
+	)
+	assertAPIError(
+		t, plainText, http.StatusBadRequest,
+		interfaceshttpapierror.CodeInvalidRequest, "invalid request",
+	)
+}
+
+func TestAccountRefreshLogoutAndPasswordChangeFlow(t *testing.T) {
+	router := newAccountRouter(t)
+	register := performJSONRequest(
+		router, http.MethodPost, "/api/users",
+		`{"account":"session-user","password":"Password123!","nickname":"Session User"}`,
+		"",
+	)
+	requireStatus(t, register, http.StatusCreated)
+
+	login := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"session-user","password":"Password123!"}`,
+		"",
+	)
+	requireStatus(t, login, http.StatusOK)
+	var first accountTokenResponse
+	decodeJSON(t, login, &first)
+	firstRefresh := responseCookieValue(t, login, interfaceshttpmiddleware.RefreshTokenCookieName)
+	if firstRefresh == "" {
+		t.Fatalf("login did not set refresh cookie: %v", login.Header().GetAll("Set-Cookie"))
+	}
+	setCookie := strings.Join(login.Header().GetAll("Set-Cookie"), "\n")
+	for _, expected := range []string{
+		"frux_refresh_token=", "path=/api/sessions", "HttpOnly", "SameSite=Strict",
+		"frux_asset_token=", "path=/uploads",
+	} {
+		if !strings.Contains(setCookie, expected) {
+			t.Fatalf("login cookie header missing %q: %s", expected, setCookie)
+		}
+	}
+
+	crossOrigin := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{Key: "Origin", Value: "https://attacker.example"},
+		ut.Header{Key: "Host", Value: "frux.example"},
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + firstRefresh,
+		},
+	)
+	assertAPIError(
+		t, crossOrigin, http.StatusBadRequest,
+		interfaceshttpapierror.CodeInvalidRequest,
+		"invalid request",
+	)
+
+	refresh := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{Key: "Origin", Value: "http://localhost:5173"},
+		ut.Header{Key: "Host", Value: "127.0.0.1:8080"},
+		ut.Header{Key: "X-Forwarded-Host", Value: "localhost:5173"},
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + firstRefresh,
+		},
+	)
+	requireStatus(t, refresh, http.StatusOK)
+	var refreshed accountTokenResponse
+	decodeJSON(t, refresh, &refreshed)
+	secondRefresh := responseCookieValue(
+		t, refresh, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	if refreshed.AccessToken == "" || secondRefresh == "" || secondRefresh == firstRefresh {
+		t.Fatalf("refresh did not rotate credentials: token=%t cookie=%q", refreshed.AccessToken != "", secondRefresh)
+	}
+
+	superseded := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + firstRefresh,
+		},
+	)
+	assertAPIError(
+		t, superseded, http.StatusConflict,
+		interfaceshttpapierror.CodeAuthRefreshSuperseded,
+		"refresh session superseded",
+	)
+
+	wrongCurrent := performJSONRequest(
+		router, http.MethodPut, "/api/users/me/password",
+		`{"current_password":"wrong","new_password":"Replacement123!"}`,
+		refreshed.AccessToken,
+	)
+	assertAPIError(
+		t, wrongCurrent, http.StatusBadRequest,
+		interfaceshttpapierror.CodeAccountCurrentPasswordIncorrect,
+		"current password is incorrect",
+	)
+
+	changed := performJSONRequest(
+		router, http.MethodPut, "/api/users/me/password",
+		`{"current_password":"Password123!","new_password":"Replacement123!"}`,
+		refreshed.AccessToken,
+	)
+	requireStatus(t, changed, http.StatusOK)
+	var replacement accountTokenResponse
+	decodeJSON(t, changed, &replacement)
+	replacementRefresh := responseCookieValue(
+		t, changed, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	if replacement.AccessToken == "" || replacementRefresh == "" {
+		t.Fatal("password change did not return replacement session")
+	}
+
+	oldAccess := performJSONRequest(
+		router, http.MethodGet, "/api/users/me", "", refreshed.AccessToken,
+	)
+	requireStatus(t, oldAccess, http.StatusOK)
+
+	oldRefresh := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + secondRefresh,
+		},
+	)
+	assertAPIError(
+		t, oldRefresh, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthRefreshInvalid,
+		"refresh session invalid",
+	)
+
+	oldLogin := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"session-user","password":"Password123!"}`,
+		"",
+	)
+	assertAPIError(
+		t, oldLogin, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthInvalidCredentials,
+		"invalid credentials",
+	)
+	newLogin := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"session-user","password":"Replacement123!"}`,
+		"",
+	)
+	requireStatus(t, newLogin, http.StatusOK)
+
+	logout := performJSONRequestWithHeaders(
+		router, http.MethodDelete, "/api/sessions/current", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + replacementRefresh,
+		},
+	)
+	requireStatus(t, logout, http.StatusNoContent)
+	if strings.Contains(
+		strings.Join(logout.Header().GetAll("Set-Cookie"), "\n"),
+		interfaceshttpmiddleware.RefreshTokenCookieName+"=",
+	) {
+		t.Fatalf("logout response cleared or replaced refresh cookie: %v", logout.Header().GetAll("Set-Cookie"))
+	}
+	repeatedLogout := performJSONRequestWithHeaders(
+		router, http.MethodDelete, "/api/sessions/current", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + replacementRefresh,
+		},
+	)
+	requireStatus(t, repeatedLogout, http.StatusNoContent)
+}
+
+func TestRefreshReplayRevokesTokenFamily(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	register := performJSONRequest(
+		router, http.MethodPost, "/api/users",
+		`{"account":"replay-user","password":"Password123!","nickname":"Replay"}`,
+		"",
+	)
+	requireStatus(t, register, http.StatusCreated)
+	login := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"replay-user","password":"Password123!"}`,
+		"",
+	)
+	requireStatus(t, login, http.StatusOK)
+	firstRefresh := responseCookieValue(
+		t, login, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	refresh := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + firstRefresh,
+		},
+	)
+	requireStatus(t, refresh, http.StatusOK)
+	secondRefresh := responseCookieValue(
+		t, refresh, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	sessionID, _, ok := applicationaccount.ParseRefreshCredential(firstRefresh)
+	if !ok {
+		t.Fatal("invalid test refresh credential")
+	}
+	expiredGrace := time.Now().Add(-time.Second)
+	repo.mu.Lock()
+	repo.sessions[sessionID].PreviousSecretValidTo = &expiredGrace
+	repo.mu.Unlock()
+
+	replay := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + firstRefresh,
+		},
+	)
+	assertAPIError(
+		t, replay, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthRefreshReplayed,
+		"refresh session replayed",
+	)
+	familyRevoked := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + secondRefresh,
+		},
+	)
+	assertAPIError(
+		t, familyRevoked, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthRefreshInvalid,
+		"refresh session invalid",
+	)
+}
+
+func TestOlderRefreshReplayRevokesAfterMultipleRotations(t *testing.T) {
+	router := newAccountRouter(t)
+	register := performJSONRequest(
+		router, http.MethodPost, "/api/users",
+		`{"account":"old-replay","password":"Password123!","nickname":"Replay"}`,
+		"",
+	)
+	requireStatus(t, register, http.StatusCreated)
+	login := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"old-replay","password":"Password123!"}`,
+		"",
+	)
+	requireStatus(t, login, http.StatusOK)
+	first := responseCookieValue(
+		t, login, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	secondResponse := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + first,
+		},
+	)
+	requireStatus(t, secondResponse, http.StatusOK)
+	second := responseCookieValue(
+		t, secondResponse, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	thirdResponse := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + second,
+		},
+	)
+	requireStatus(t, thirdResponse, http.StatusOK)
+	third := responseCookieValue(
+		t, thirdResponse, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	replayed := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + first,
+		},
+	)
+	assertAPIError(
+		t, replayed, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthRefreshReplayed,
+		"refresh session replayed",
+	)
+	revoked := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + third,
+		},
+	)
+	assertAPIError(
+		t, revoked, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthRefreshInvalid,
+		"refresh session invalid",
+	)
+}
+
+func TestRefreshRejectsMissingMalformedAndExpiredCredentials(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	for _, cookie := range []string{"", "malformed"} {
+		headers := []ut.Header{}
+		if cookie != "" {
+			headers = append(headers, ut.Header{
+				Key:   "Cookie",
+				Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + cookie,
+			})
+		}
+		response := performJSONRequestWithHeaders(
+			router, http.MethodPost, "/api/sessions/current/refresh", "", headers...,
+		)
+		assertAPIError(
+			t, response, http.StatusUnauthorized,
+			interfaceshttpapierror.CodeAuthRefreshInvalid,
+			"refresh session invalid",
+		)
+	}
+	register := performJSONRequest(
+		router, http.MethodPost, "/api/users",
+		`{"account":"expired-user","password":"Password123!","nickname":"Expired"}`,
+		"",
+	)
+	requireStatus(t, register, http.StatusCreated)
+	login := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"expired-user","password":"Password123!"}`,
+		"",
+	)
+	requireStatus(t, login, http.StatusOK)
+	credential := responseCookieValue(
+		t, login, interfaceshttpmiddleware.RefreshTokenCookieName,
+	)
+	sessionID, _, ok := applicationaccount.ParseRefreshCredential(credential)
+	if !ok {
+		t.Fatal("invalid test refresh credential")
+	}
+	repo.mu.Lock()
+	repo.sessions[sessionID].ExpiresAt = time.Now().Add(-time.Second)
+	repo.mu.Unlock()
+	expired := performJSONRequestWithHeaders(
+		router, http.MethodPost, "/api/sessions/current/refresh", "",
+		ut.Header{
+			Key:   "Cookie",
+			Value: interfaceshttpmiddleware.RefreshTokenCookieName + "=" + credential,
+		},
+	)
+	assertAPIError(
+		t, expired, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthRefreshInvalid,
+		"refresh session invalid",
+	)
+}
+
+func TestConcurrentPasswordChangesCommitOnce(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	token := registerAndLogin(t, router)
+	ready := &sync.WaitGroup{}
+	ready.Add(2)
+	release := make(chan struct{})
+	repo.passwordReady = ready
+	repo.passwordRelease = release
+
+	responses := make(chan *ut.ResponseRecorder, 2)
+	for _, replacement := range []string{"ReplacementOne!", "ReplacementTwo!"} {
+		replacement := replacement
+		go func() {
+			responses <- performJSONRequest(
+				router, http.MethodPut, "/api/users/me/password",
+				fmt.Sprintf(
+					`{"current_password":"12345678","new_password":%q}`,
+					replacement,
+				),
+				token,
+			)
+		}()
+	}
+	ready.Wait()
+	close(release)
+	statuses := map[int]int{}
+	for range 2 {
+		statuses[(<-responses).Code]++
+	}
+	repo.passwordReady = nil
+	repo.passwordRelease = nil
+	if statuses[http.StatusOK] != 1 || statuses[http.StatusConflict] != 1 {
+		t.Fatalf("password change statuses = %+v", statuses)
+	}
+}
+
+func TestPasswordChangeFailurePreservesCredentialAndSessions(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	token := registerAndLogin(t, router)
+	repo.failAtomicUpdate = true
+	failed := performJSONRequest(
+		router, http.MethodPut, "/api/users/me/password",
+		`{"current_password":"12345678","new_password":"Replacement123!"}`,
+		token,
+	)
+	assertAPIError(
+		t, failed, http.StatusServiceUnavailable,
+		interfaceshttpapierror.CodeAuthenticationUnavailable,
+		"authentication unavailable",
+	)
+	repo.failAtomicUpdate = false
+	oldLogin := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"login-user","password":"12345678"}`,
+		"",
+	)
+	requireStatus(t, oldLogin, http.StatusOK)
+}
+
+func TestPasswordChangeImmediatelyInvalidatesAdminCredential(t *testing.T) {
+	router, repo := newAccountRouterWithRepo(t)
+	token := registerAndLogin(t, router)
+	repo.mu.Lock()
+	repo.byID[1].Role = domainaccount.RoleReviewer
+	repo.mu.Unlock()
+	manager, err := infrajwt.NewManager("test-secret", "15m", "30m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminToken, err := manager.SignAdminAccessTokenVersion(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.GET(
+		"/api/admin/session-check",
+		interfaceshttpmiddleware.NewAdminJWTAuth(manager),
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			repo, domainaccount.PermissionReviewRead,
+		),
+		func(_ context.Context, c *app.RequestContext) {
+			c.Status(http.StatusNoContent)
+		},
+	)
+	before := performJSONRequestWithHeaders(
+		router, http.MethodGet, "/api/admin/session-check", "",
+		ut.Header{Key: "Authorization", Value: "Bearer " + adminToken},
+	)
+	requireStatus(t, before, http.StatusNoContent)
+	changed := performJSONRequest(
+		router, http.MethodPut, "/api/users/me/password",
+		`{"current_password":"12345678","new_password":"Replacement123!"}`,
+		token,
+	)
+	requireStatus(t, changed, http.StatusOK)
+	after := performJSONRequestWithHeaders(
+		router, http.MethodGet, "/api/admin/session-check", "",
+		ut.Header{Key: "Authorization", Value: "Bearer " + adminToken},
+	)
+	assertAPIError(
+		t, after, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAdminAuthInvalidAccessToken,
+		"invalid admin access token",
+	)
 }
 
 // TestPublicAccountProfile 覆盖公开用户主页资料中的关注数、粉丝数和作品数。
@@ -689,12 +1408,14 @@ func newAccountRouterWithRepo(t *testing.T) (*server.Hertz, *memoryAccountRepo) 
 	// 测试路由保持和正式 RESTful 路由一致，便于测试覆盖真实接口路径。
 	sessions := api.Group("/sessions")
 	sessions.POST("", handler.Login)
+	sessions.POST("/current/refresh", handler.Refresh)
 	sessions.DELETE("/current", handler.Logout)
 
 	users := api.Group("/users")
 	users.POST("", handler.Register)
 	users.GET("/me", authMiddleware, handler.Me)
 	users.PATCH("/me", authMiddleware, handler.UpdateMe)
+	users.PUT("/me/password", authMiddleware, handler.ChangePassword)
 	users.GET("/me/profile-settings", authMiddleware, handler.GetProfileSettings)
 	users.PATCH("/me/profile-settings", authMiddleware, handler.UpdateProfileSettings)
 	users.GET("/:userId", handler.Get)
@@ -736,4 +1457,25 @@ func requireStatus(t *testing.T, resp *ut.ResponseRecorder, expected int) {
 	if resp.Code != expected {
 		t.Fatalf("expected status %d, got %d body=%s", expected, resp.Code, resp.Body.String())
 	}
+}
+
+func responseCookieValue(
+	t *testing.T,
+	resp *ut.ResponseRecorder,
+	name string,
+) string {
+	t.Helper()
+	marker := name + "="
+	for _, value := range resp.Header().GetAll("Set-Cookie") {
+		index := strings.Index(value, marker)
+		if index < 0 {
+			continue
+		}
+		raw := value[index+len(marker):]
+		if end := strings.IndexByte(raw, ';'); end >= 0 {
+			raw = raw[:end]
+		}
+		return raw
+	}
+	return ""
 }

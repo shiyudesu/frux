@@ -1,9 +1,14 @@
-// 登录/注册页。迁移后通过 useSession/useNavigate 自取会话与导航。
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { fetchMyProfile, login, registerUser } from "../api/account";
-import { ApiError, apiErrorMessage } from "../api/client";
+import {
+  fetchMyProfileWithAccessToken,
+  login,
+  logoutSession,
+  registerUser
+} from "../api/account";
+import { ApiError, UserFacingError, apiErrorMessage } from "../api/client";
 import { image } from "../constants";
+import { validateSelectedPassword, PASSWORD_RULE_MESSAGE } from "../passwordPolicy";
 import { useNavigate } from "../router";
 import { useSession } from "../session";
 import { BrandMark } from "../components/BrandMark";
@@ -31,19 +36,35 @@ export function LoginPage() {
     setMessage("");
     try {
       if (mode === "register") {
+        const passwordMessage = validateSelectedPassword(form.password);
+        if (passwordMessage) throw new UserFacingError(passwordMessage);
         await registerUser({
           account: form.account.trim(),
           password: form.password,
           nickname: form.nickname.trim()
         });
       }
-      const tokenResponse = await login({
-        account: form.account.trim(),
-        password: form.password
+      await session.runCredentialMutation(async () => {
+        const tokenResponse = await login({
+          account: form.account.trim(),
+          password: form.password
+        });
+        try {
+          const accessToken = tokenResponse.access_token;
+          const profile = await fetchMyProfileWithAccessToken(accessToken);
+          session.setAuth(accessToken, profile, tokenResponse.expires_in_seconds);
+        } catch (error) {
+          session.beginLogout();
+          try {
+            await logoutSession();
+            session.clearAuth();
+            session.completeLogout();
+          } catch {
+            session.beginLogout();
+          }
+          throw error;
+        }
       });
-      const accessToken = tokenResponse.access_token;
-      const profile = await fetchMyProfile(accessToken);
-      session.setAuth(accessToken, profile);
       navigate("/recommend");
     } catch (error) {
       const fallback = error instanceof ApiError && error.status >= 500
@@ -51,10 +72,7 @@ export function LoginPage() {
         : mode === "register"
           ? "注册失败，请检查填写内容"
           : "登录失败，请检查账号与密码";
-      setMessage(apiErrorMessage(
-        error,
-        fallback
-      ));
+      setMessage(apiErrorMessage(error, fallback));
     } finally {
       setSubmitting(false);
     }
@@ -120,9 +138,10 @@ export function LoginPage() {
                 onChange={(event) => setForm({ ...form, password: event.target.value })}
                 placeholder="输入密码"
                 type="password"
-                autoComplete="current-password"
+                autoComplete={mode === "register" ? "new-password" : "current-password"}
               />
             </label>
+            {mode === "register" && <p className="auth-input-hint">{PASSWORD_RULE_MESSAGE}</p>}
             {message && <p className="form-message">{message}</p>}
             <button className="primary-button" disabled={submitting}>
               <Icon name="login" size={18} />

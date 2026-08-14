@@ -1,9 +1,26 @@
 # Personal/pre-production prod configuration.
 port: 8080
 jwt:
-  secret: "${FRUX_JWT_SECRET}"
-  access_ttl: "15m"
+  issuer: "frux"
+  access_ttl: "5m"
   admin_access_ttl: "30m"
+  clock_leeway: "30s"
+  consumer:
+    active_key_id: "consumer-v1"
+    keys:
+      - id: "consumer-v1"
+        secret: "${FRUX_JWT_CONSUMER_SECRET}"
+  admin:
+    active_key_id: "admin-v1"
+    keys:
+      - id: "admin-v1"
+        secret: "${FRUX_JWT_ADMIN_SECRET}"
+  legacy_secret: "${FRUX_JWT_LEGACY_SECRET}"
+  legacy_issued_until: "${FRUX_JWT_LEGACY_ISSUED_UNTIL}"
+  legacy_accept_until: "${FRUX_JWT_LEGACY_ACCEPT_UNTIL}"
+
+security:
+  hmac_secret: "${FRUX_HMAC_SECRET}"
 
 internal:
   enabled: true

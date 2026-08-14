@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
@@ -36,6 +37,7 @@ import (
 	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	inframoderation "github.com/shiyudesu/frux/internal/infra/moderation"
+	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
@@ -132,6 +134,21 @@ func startWorkers(
 	kafkaBackbone *infrakafka.Backbone,
 	runtimeFailures chan<- error,
 ) error {
+	accountRepo := infraaccount.New(gormDB)
+	accountService := applicationaccount.New(
+		accountRepo,
+		nil,
+		applicationaccount.WithRefreshSessionRepository(accountRepo),
+	)
+	if err := applicationaccount.NewRefreshSessionCleanupWorker(
+		accountService,
+		applicationaccount.WithRefreshSessionCleanupErrorHandler(func(err error) {
+			log.Printf("refresh session cleanup failed: %v", err)
+		}),
+	).Start(ctx); err != nil {
+		return err
+	}
+
 	redisClient := infracache.NewRedisClient(cfg.Redis)
 	feedCache := infracache.NewFeedCache(redisClient)
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
@@ -759,7 +776,7 @@ func startModerationWorker(
 			}
 		} else if cfg.Media.Backend == domainmedia.StorageBackendLocal {
 			signer, err := inframedia.NewLocalProtectedURLSigner(
-				"/moderation-media", cfg.JWT.Secret, sampleURLTTL,
+				"/moderation-media", cfg.Security.HMACSecret, sampleURLTTL,
 			)
 			if err != nil {
 				return err

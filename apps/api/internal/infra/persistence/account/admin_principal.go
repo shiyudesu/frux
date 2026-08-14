@@ -10,9 +10,10 @@ import (
 )
 
 type adminPrincipalModel struct {
-	ID     int64
-	Status int
-	Role   string
+	ID          int64
+	Status      int
+	Role        string
+	AuthVersion int64
 }
 
 func (r *Repository) FindAdminPrincipalByID(ctx context.Context, userID int64) (*domainaccount.AdminPrincipal, error) {
@@ -23,7 +24,7 @@ func (r *Repository) FindAdminPrincipalByID(ctx context.Context, userID int64) (
 	var model adminPrincipalModel
 	err := r.db.WithContext(ctx).
 		Table("account").
-		Select("id, status, role").
+		Select("id, status, role, auth_version").
 		Where("id = ?", userID).
 		Take(&model).
 		Error
@@ -33,5 +34,7 @@ func (r *Repository) FindAdminPrincipalByID(ctx context.Context, userID int64) (
 	if err != nil {
 		return nil, err
 	}
-	return domainaccount.RestoreAdminPrincipal(model.ID, model.Status, model.Role), nil
+	return domainaccount.RestoreAdminPrincipalWithAuthVersion(
+		model.ID, model.Status, model.Role, model.AuthVersion,
+	), nil
 }

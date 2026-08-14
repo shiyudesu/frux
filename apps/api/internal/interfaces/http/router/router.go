@@ -32,7 +32,6 @@ import (
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
-	infrajwt "github.com/shiyudesu/frux/internal/infra/jwt"
 	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
@@ -115,16 +114,19 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 
 	// JWT Manager 同时被账号服务用于签发 token，也被鉴权中间件用于校验 token。
-	jwtManager, err := infrajwt.NewManager(
-		cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.AdminAccessTTL,
-	)
+	jwtManager, err := newJWTManager(cfg.JWT)
 	if err != nil {
 		return err
 	}
 
 	// 下面按领域模块组装依赖：Repository -> Service -> Handler。
 	accountRepo := infraaccount.New(gormDB)
-	accountService := applicationaccount.New(accountRepo, jwtManager, applicationaccount.WithProfileSettingRepository(accountRepo))
+	accountService := applicationaccount.New(
+		accountRepo,
+		jwtManager,
+		applicationaccount.WithProfileSettingRepository(accountRepo),
+		applicationaccount.WithRefreshSessionRepository(accountRepo),
+	)
 	accountHandler := interfaceshttpaccount.New(accountService)
 	adminAuthService := applicationadminauth.New(accountRepo, jwtManager)
 	adminAuthHandler := interfaceshttpadminauth.New(adminAuthService)
@@ -166,7 +168,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		return err
 	}
 	reviewPreviewSigner, err := inframediastore.NewLocalProtectedURLSigner(
-		"/review-media", cfg.JWT.Secret, applicationreview.DefaultHumanPreviewTTL,
+		"/review-media", cfg.Security.HMACSecret, applicationreview.DefaultHumanPreviewTTL,
 	)
 	if err != nil {
 		return err
@@ -188,7 +190,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			return err
 		}
 		moderationSigner, err := inframediastore.NewLocalProtectedURLSigner(
-			"/moderation-media", cfg.JWT.Secret, sampleURLTTL,
+			"/moderation-media", cfg.Security.HMACSecret, sampleURLTTL,
 		)
 		if err != nil {
 			return err
@@ -235,7 +237,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		distributedRateLimiter = infracache.NewRedisRateLimiter(
 			infracache.NewRateLimitRedisClient(cfg.Redis),
 		)
-		snapshotSigner, signerErr := applicationrecommendation.NewHMACSnapshotCursorSigner(cfg.JWT.Secret)
+		snapshotSigner, signerErr := applicationrecommendation.NewHMACSnapshotCursorSigner(cfg.Security.HMACSecret)
 		if signerErr != nil {
 			return signerErr
 		}
@@ -377,7 +379,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		reviewRepo,
 		applicationreview.WithObserver(reviewObserver),
 		applicationreview.WithHumanRepository(reviewRepo),
-		applicationreview.WithHumanCursorSecret(cfg.JWT.Secret),
+		applicationreview.WithHumanCursorSecret(cfg.Security.HMACSecret),
 		applicationreview.WithHumanObserver(reviewObserver),
 		applicationreview.WithHumanPreviewProvider(reviewPreviewProvider{
 			repository: mediaRepo, resolver: mediaURLResolver, localSigner: reviewPreviewSigner,
@@ -406,11 +408,17 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videoHandler := interfaceshttpvideo.New(videoService, videoManagementService)
 	videoAdminService := applicationvideo.NewAdmin(
 		videoRepo,
-		cfg.JWT.Secret,
+		cfg.Security.HMACSecret,
 	)
 	videoAdminHandler := interfaceshttpvideo.NewAdmin(videoAdminService)
 	searchService := applicationsearch.New(videoRepo, accountRepo)
 	searchHandler := interfaceshttpsearch.New(searchService)
+	interactionOptions = append(
+		interactionOptions,
+		applicationinteraction.WithCommentModeratorReader(
+			accountCommentModeratorReader{reader: accountRepo},
+		),
+	)
 	interactionService := applicationinteraction.New(interactionRepo, interactionOptions...)
 	interactionHandler := interfaceshttpinteraction.New(interactionService)
 	exposureRepo := infraexposure.New(gormDB)
@@ -448,6 +456,24 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 	adminLoginRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
 		rateLimitService, applicationratelimit.PolicyAdminLogin, rateLimitIdentity,
+	)
+	if err != nil {
+		return err
+	}
+	consumerLoginRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService, applicationratelimit.PolicyConsumerLogin, rateLimitIdentity,
+	)
+	if err != nil {
+		return err
+	}
+	sessionRefreshRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService, applicationratelimit.PolicySessionRefresh, rateLimitIdentity,
+	)
+	if err != nil {
+		return err
+	}
+	passwordChangeRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService, applicationratelimit.PolicyPasswordChange, rateLimitIdentity,
 	)
 	if err != nil {
 		return err
@@ -521,7 +547,8 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	// RESTful 路由约定：路径表达资源，HTTP 方法表达动作。
 	// 会话资源用于登录态：创建会话表示登录，删除当前会话表示登出。
 	sessions := api.Group("/sessions")
-	sessions.POST("", accountHandler.Login)
+	sessions.POST("", consumerLoginRateLimit, accountHandler.Login)
+	sessions.POST("/current/refresh", sessionRefreshRateLimit, accountHandler.Refresh)
 	sessions.DELETE("/current", accountHandler.Logout)
 
 	// 用户资源承载注册、当前用户资料和用户作品列表。
@@ -529,6 +556,12 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	users.POST("", accountHandler.Register)
 	users.GET("/me", authMiddleware, accountHandler.Me)
 	users.PATCH("/me", authMiddleware, accountHandler.UpdateMe)
+	users.PUT(
+		"/me/password",
+		authMiddleware,
+		passwordChangeRateLimit,
+		accountHandler.ChangePassword,
+	)
 	users.GET("/me/profile-settings", authMiddleware, accountHandler.GetProfileSettings)
 	users.PATCH("/me/profile-settings", authMiddleware, accountHandler.UpdateProfileSettings)
 	users.GET("/me/videos", authMiddleware, videoHandler.ListMine)

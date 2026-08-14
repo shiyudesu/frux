@@ -35,6 +35,34 @@ describe("safe API error messages", () => {
       new ApiError("unsupported upload file type", 400, "UPLOAD_FILE_TYPE_INVALID"),
       "发布失败"
     )).toBe("文件格式不受支持，请重新选择");
+    expect(apiErrorMessage(
+      new ApiError("current password invalid", 400, "AUTH_CURRENT_PASSWORD_INVALID"),
+      "密码修改失败"
+    )).toBe("当前密码不正确，请重新输入");
+    expect(apiErrorMessage(
+      new ApiError("refresh invalid", 401, "AUTH_INVALID_REFRESH_SESSION"),
+      "加载失败"
+    )).toBe("登录状态已失效，请重新登录");
+    expect(apiErrorMessage(
+      new ApiError("refresh replayed", 401, "AUTH_REFRESH_SESSION_REPLAYED"),
+      "加载失败"
+    )).toBe("登录状态存在异常，请重新登录");
+    expect(apiErrorMessage(
+      new ApiError("current password invalid", 400, "ACCOUNT_CURRENT_PASSWORD_INCORRECT"),
+      "密码修改失败"
+    )).toBe("当前密码不正确，请重新输入");
+    expect(apiErrorMessage(
+      new ApiError("password invalid", 400, "ACCOUNT_PASSWORD_INVALID"),
+      "密码修改失败"
+    )).toBe("密码至少需要 8 个字符，且 UTF-8 编码不能超过 72 字节");
+    expect(apiErrorMessage(
+      new ApiError("refresh invalid", 401, "AUTH_REFRESH_INVALID"),
+      "加载失败"
+    )).toBe("登录状态已失效，请重新登录");
+    expect(apiErrorMessage(
+      new ApiError("refresh replayed", 401, "AUTH_REFRESH_REPLAYED"),
+      "加载失败"
+    )).toBe("登录状态存在异常，请重新登录");
   });
 
   it("uses safe fallbacks for missing and unknown codes", () => {

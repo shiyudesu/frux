@@ -23,7 +23,7 @@ type Repository interface {
 }
 
 type TokenSigner interface {
-	SignAdminAccessToken(userID int64, role string) (string, error)
+	SignAdminAccessTokenVersion(userID int64, authVersion int64) (string, error)
 	AdminAccessTTL() time.Duration
 }
 
@@ -61,13 +61,18 @@ func (s *Service) Login(ctx context.Context, account, password string) (*LoginRe
 		return nil, ErrLoadAccountFailed
 	}
 	if err := user.Authenticate(password); err != nil {
+		if errors.Is(err, domainaccount.ErrEmptyPassword) {
+			consumeDummyPassword(password)
+		}
 		return nil, ErrInvalidCredentials
 	}
-	principal := domainaccount.RestoreAdminPrincipal(user.ID, user.Status, user.Role)
+	principal := domainaccount.RestoreAdminPrincipalWithAuthVersion(
+		user.ID, user.Status, user.Role, user.AuthVersion,
+	)
 	if !principal.Active() || len(principal.Permissions()) == 0 {
 		return nil, ErrInvalidCredentials
 	}
-	token, err := s.signer.SignAdminAccessToken(user.ID, user.Role)
+	token, err := s.signer.SignAdminAccessTokenVersion(user.ID, user.AuthVersion)
 	if err != nil {
 		return nil, ErrSignTokenFailed
 	}

@@ -15,8 +15,12 @@ import (
 
 const ContextUserIDKey = "auth_user_id"
 const ContextRoleKey = "auth_role"
+const ContextSessionIDKey = "auth_session_id"
+const ContextAuthVersionKey = "auth_version"
+const ContextAccessExpiresAtKey = "auth_access_expires_at"
 const AssetTokenCookieName = "frux_asset_token"
 const AssetActiveCookieName = "frux_asset_active"
+const RefreshTokenCookieName = "frux_refresh_token"
 
 // NewJWTAuth validates access tokens and stores identity in the request context.
 func NewJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
@@ -46,6 +50,9 @@ func NewJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 
 		c.Set(ContextUserIDKey, claims.UserID)
 		c.Set(ContextRoleKey, claims.Role)
+		c.Set(ContextSessionIDKey, claims.SessionID)
+		c.Set(ContextAuthVersionKey, claims.AuthVersion)
+		c.Set(ContextAccessExpiresAtKey, claims.ExpiresAt)
 		c.Next(ctx)
 	}
 }
@@ -59,15 +66,15 @@ func NewAdminJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 			return
 		}
 		token := strings.TrimSpace(parts[1])
-		claims, err := jwtManager.ParseAndValidateToken(
-			token, infrajwt.TokenTypeAdminAccess, infrajwt.AudienceAdmin,
-		)
+		claims, err := jwtManager.ParseAndValidateAdminToken(token)
 		if err != nil {
 			interfaceshttpapierror.AbortInvalidAdminAccessToken(c)
 			return
 		}
 		c.Set(ContextUserIDKey, claims.UserID)
 		c.Set(ContextRoleKey, claims.Role)
+		c.Set(ContextAuthVersionKey, claims.AuthVersion)
+		c.Set(ContextAccessExpiresAtKey, claims.ExpiresAt)
 		c.Next(ctx)
 	}
 }
@@ -111,6 +118,9 @@ func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) app.HandlerFunc {
 		if err == nil {
 			c.Set(ContextUserIDKey, claims.UserID)
 			c.Set(ContextRoleKey, claims.Role)
+			c.Set(ContextSessionIDKey, claims.SessionID)
+			c.Set(ContextAuthVersionKey, claims.AuthVersion)
+			c.Set(ContextAccessExpiresAtKey, claims.ExpiresAt)
 		}
 		c.Next(ctx)
 	}
@@ -126,6 +136,36 @@ func SetAssetTokenCookie(c *app.RequestContext, token string, expiresAt time.Tim
 		token,
 		maxAge,
 		"/uploads",
+		"",
+		protocol.CookieSameSiteStrictMode,
+		requestIsHTTPS(c),
+		true,
+	)
+}
+
+func SetRefreshTokenCookie(c *app.RequestContext, credential string, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	c.SetCookie(
+		RefreshTokenCookieName,
+		credential,
+		maxAge,
+		"/api/sessions",
+		"",
+		protocol.CookieSameSiteStrictMode,
+		requestIsHTTPS(c),
+		true,
+	)
+}
+
+func ClearRefreshTokenCookie(c *app.RequestContext) {
+	c.SetCookie(
+		RefreshTokenCookieName,
+		"",
+		-1,
+		"/api/sessions",
 		"",
 		protocol.CookieSameSiteStrictMode,
 		requestIsHTTPS(c),

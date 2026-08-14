@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TOKEN_KEY, USER_KEY, emptyProfile } from "../constants";
+import { emptyProfile } from "../constants";
 import type { ProfileLibraryState } from "../hooks/useProfileLibrary";
 import { RouterProvider } from "../router";
-import { SessionProvider } from "../session";
-import type { LibraryVideoItem } from "../types";
+import { SessionProvider, useSession } from "../session";
+import type { LibraryVideoItem, SessionUser } from "../types";
 import { PROFILE_PRIMARY_TABS } from "../pages/ProfilePage";
 import {
   CollectionQueueViewer,
@@ -23,8 +23,13 @@ describe("collection queue viewer", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     localStorage.clear();
-    localStorage.setItem(TOKEN_KEY, "token");
-    localStorage.setItem(USER_KEY, JSON.stringify({ ...emptyProfile, id: 2, account: "owner", nickname: "Owner" }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "AUTH_INVALID_REFRESH_SESSION",
+      error: "invalid refresh session"
+    }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    })));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -48,8 +53,8 @@ describe("collection queue viewer", () => {
     });
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
+  afterEach(async () => {
+    await act(async () => root.unmount());
     container.remove();
     localStorage.clear();
     vi.useRealTimers();
@@ -91,9 +96,9 @@ describe("collection queue viewer", () => {
     ]);
   });
 
-  it("opens on the selected item, navigates adjacent items, and restores opener focus", () => {
+  it("opens on the selected item, navigates adjacent items, and restores opener focus", async () => {
     vi.useFakeTimers();
-    render(<QueueHarness selectedVideoID={2} />);
+    await render(<QueueHarness selectedVideoID={2} />);
     const opener = required<HTMLButtonElement>('[data-testid="open-queue"]');
     act(() => opener.focus());
     click(opener);
@@ -110,16 +115,16 @@ describe("collection queue viewer", () => {
     expect(container.querySelector(".collection-queue-dialog")).toBeNull();
   });
 
-  it("requests more items when the selected queue position reaches the preload boundary", () => {
+  it("requests more items when the selected queue position reaches the preload boundary", async () => {
     const onLoadMore = vi.fn();
-    render(<QueueHarness selectedVideoID={3} hasMore onLoadMore={onLoadMore} />);
+    await render(<QueueHarness selectedVideoID={3} hasMore onLoadMore={onLoadMore} />);
     click(required<HTMLButtonElement>('[data-testid="open-queue"]'));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 
-  it("does not automatically retry pagination while the source is in an error state", () => {
+  it("does not automatically retry pagination while the source is in an error state", async () => {
     const onLoadMore = vi.fn();
-    render(<QueueHarness selectedVideoID={3} hasMore state="error" onLoadMore={onLoadMore} />);
+    await render(<QueueHarness selectedVideoID={3} hasMore state="error" onLoadMore={onLoadMore} />);
     click(required<HTMLButtonElement>('[data-testid="open-queue"]'));
     expect(onLoadMore).not.toHaveBeenCalled();
     click(buttonByText("加载失败，重试"));
@@ -127,7 +132,7 @@ describe("collection queue viewer", () => {
   });
 
   it("keeps the queue open and restores the final Watch Later item when removal fails", async () => {
-    render(<QueueHarness selectedVideoID={1} source="watchLater" itemCount={1} removeFails />);
+    await render(<QueueHarness selectedVideoID={1} source="watchLater" itemCount={1} removeFails />);
     click(required<HTMLButtonElement>('[data-testid="open-queue"]'));
     click(required<HTMLButtonElement>('button[aria-label="更多操作"]'));
     await act(async () => {
@@ -140,8 +145,12 @@ describe("collection queue viewer", () => {
     expect(container.textContent).toContain("移除稍后再看失败");
   });
 
-  function render(node: React.ReactNode) {
-    act(() => root.render(node));
+  async function render(node: React.ReactNode) {
+    await act(async () => {
+      root.render(node);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   }
 
   function required<T extends Element>(selector: string): T {
@@ -156,6 +165,25 @@ describe("collection queue viewer", () => {
     return button;
   }
 });
+
+function AuthenticatedSessionGate({
+  children,
+  user
+}: {
+  children: React.ReactNode;
+  user: SessionUser;
+}) {
+  const session = useSession();
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    session.setAuth("token", user, 300);
+    setReady(true);
+  }, [session, user]);
+
+  if (!ready) return null;
+  return <>{children}</>;
+}
 
 function QueueHarness({
   selectedVideoID,
@@ -188,33 +216,35 @@ function QueueHarness({
   return (
     <RouterProvider>
       <SessionProvider>
-        <button data-testid="open-queue" type="button" onClick={() => setOpen(true)}>打开</button>
-        {open && (
-          <CollectionQueueViewer
-            source={source}
-            sourceState={sourceState}
-            selectedVideoID={selectedVideoID}
-            onClose={() => setOpen(false)}
-            onLoadMore={onLoadMore}
-            onPatchVideo={(videoID, patch) => {
-              setItems((state) => state.map((item) => item.video.id === videoID
-                ? { ...item, video: { ...item.video, ...patch } }
-                : item));
-            }}
-            onApplyVideoAction={() => {}}
-            onAddWatchLater={() => {}}
-            onRemoveWatchLater={async (videoID) => {
-              const removed = items.find((item) => item.video.id === videoID);
-              setItems((stateItems) => stateItems.filter((item) => item.video.id !== videoID));
-              await Promise.resolve();
-              if (removeFails && removed) {
-                setItems((stateItems) => [removed, ...stateItems]);
-                return false;
-              }
-              return true;
-            }}
-          />
-        )}
+        <AuthenticatedSessionGate user={{ ...emptyProfile, id: 2, account: "owner", nickname: "Owner" }}>
+          <button data-testid="open-queue" type="button" onClick={() => setOpen(true)}>打开</button>
+          {open && (
+            <CollectionQueueViewer
+              source={source}
+              sourceState={sourceState}
+              selectedVideoID={selectedVideoID}
+              onClose={() => setOpen(false)}
+              onLoadMore={onLoadMore}
+              onPatchVideo={(videoID, patch) => {
+                setItems((stateItems) => stateItems.map((item) => item.video.id === videoID
+                  ? { ...item, video: { ...item.video, ...patch } }
+                  : item));
+              }}
+              onApplyVideoAction={() => {}}
+              onAddWatchLater={() => {}}
+              onRemoveWatchLater={async (videoID) => {
+                const removed = items.find((item) => item.video.id === videoID);
+                setItems((stateItems) => stateItems.filter((item) => item.video.id !== videoID));
+                await Promise.resolve();
+                if (removeFails && removed) {
+                  setItems((stateItems) => [removed, ...stateItems]);
+                  return false;
+                }
+                return true;
+              }}
+            />
+          )}
+        </AuthenticatedSessionGate>
       </SessionProvider>
     </RouterProvider>
   );

@@ -20,7 +20,7 @@ import {
   searchAdminVideos,
   takeDownAdminVideo
 } from "../api/videoAdmin";
-import { emptyProfile, TOKEN_KEY, USER_KEY } from "../constants";
+import { emptyProfile, USER_KEY } from "../constants";
 import { RouterProvider } from "../router";
 import { SessionProvider } from "../session";
 import type { ReviewCaseDetail } from "../types";
@@ -57,7 +57,14 @@ describe("admin content operations workspace", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    localStorage.setItem(TOKEN_KEY, "admin-token");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "AUTH_INVALID_REFRESH_SESSION",
+      error: "invalid refresh session"
+    }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    })));
+    localStorage.setItem("consumer-marker", "1");
     localStorage.setItem(USER_KEY, JSON.stringify({
       ...emptyProfile, id: 7, nickname: "Reviewer", role: "reviewer"
     }));
@@ -147,12 +154,12 @@ describe("admin content operations workspace", () => {
       await clickButton("登录后台");
       expect(loginAdmin).toHaveBeenCalledWith("reviewer", "Password123!");
       expect(window.location.pathname).toBe("/admin/reviews");
-      expect(localStorage.getItem(TOKEN_KEY)).toBe("admin-token");
+      expect(localStorage.getItem("consumer-marker")).toBe("1");
       expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toContain("dedicated-admin-token");
       await clickButton("退出后台");
       expect(window.location.pathname).toBe("/admin/login");
       expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toBeNull();
-      expect(localStorage.getItem(TOKEN_KEY)).toBe("admin-token");
+      expect(localStorage.getItem("consumer-marker")).toBe("1");
   });
 
   it("clears only the admin session after an authoritative 401 event", async () => {
@@ -177,7 +184,7 @@ describe("admin content operations workspace", () => {
       });
       expect(window.location.pathname).toBe("/admin/login");
       expect(sessionStorage.getItem(ADMIN_SESSION_KEY)).toBeNull();
-      expect(localStorage.getItem(TOKEN_KEY)).toBe("admin-token");
+      expect(localStorage.getItem("consumer-marker")).toBe("1");
   });
 
   it("renders authorization service failure without exposing admin data", async () => {

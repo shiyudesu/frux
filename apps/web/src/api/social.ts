@@ -35,7 +35,7 @@ export function relationListPath(tab: RelationTab, cursor = "", limit = 20, quer
 }
 
 export function fetchRelationList(tab: RelationTab, token: string, cursor = "", limit = 20, query = ""): Promise<RelationListResponse> {
-  return apiRequest<RelationListResponse>(relationListPath(tab, cursor, limit, query), { token });
+  return apiRequest<RelationListResponse>(relationListPath(tab, cursor, limit, query), { token, auth: "consumer" });
 }
 
 /** 拉取当前用户关注集合（最多翻 20 页），输出 user_id -> true 的映射 */
@@ -59,6 +59,7 @@ export function likeVideo(token: string, videoID: number, nextLiked: boolean, re
   return apiRequest<InteractionActionResponse>(`/api/videos/${videoID}/like`, {
     method: nextLiked ? "PUT" : "DELETE",
     token,
+    auth: "consumer",
     headers: actionHeaders(`web-like-${videoID}-${Date.now()}`, recommendation)
   });
 }
@@ -67,6 +68,7 @@ export function favoriteVideo(token: string, videoID: number, nextFavorited: boo
   return apiRequest<InteractionActionResponse>(`/api/videos/${videoID}/favorite`, {
     method: nextFavorited ? "PUT" : "DELETE",
     token,
+    auth: "consumer",
     headers: actionHeaders(`web-favorite-${videoID}-${Date.now()}`, recommendation)
   });
 }
@@ -85,6 +87,7 @@ export function followUser(
   return apiRequest<FollowResponse>(`/api/users/me/following/${targetUserID}`, {
     method: nextFollowing ? "PUT" : "DELETE",
     token,
+    auth: "consumer",
     headers: actionHeaders(`${keyPrefix}-${targetUserID}-${Date.now()}`, recommendation)
   });
 }
@@ -102,7 +105,7 @@ function actionHeaders(idempotencyKey: string, recommendation?: RecommendationOu
 }
 
 export function fetchFollowState(token: string, targetUserID: number): Promise<FollowStateResponse> {
-  return apiRequest<FollowStateResponse>(`/api/users/me/following/${targetUserID}`, { token });
+  return apiRequest<FollowStateResponse>(`/api/users/me/following/${targetUserID}`, { token, auth: "consumer" });
 }
 
 export function fetchComments(
@@ -114,7 +117,7 @@ export function fetchComments(
 ): Promise<CommentListResponse> {
   const params = new URLSearchParams({ sort, limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
-  return apiRequest<CommentListResponse>(`/api/videos/${videoID}/comments?${params.toString()}`, { token });
+  return apiRequest<CommentListResponse>(`/api/videos/${videoID}/comments?${params.toString()}`, token ? { token, auth: "consumer" } : {});
 }
 
 export function fetchCommentReplies(
@@ -125,7 +128,7 @@ export function fetchCommentReplies(
 ): Promise<CommentReplyListResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
-  return apiRequest<CommentReplyListResponse>(`/api/comments/${rootCommentID}/replies?${params.toString()}`, { token });
+  return apiRequest<CommentReplyListResponse>(`/api/comments/${rootCommentID}/replies?${params.toString()}`, token ? { token, auth: "consumer" } : {});
 }
 
 export function fetchCommentThread(
@@ -134,7 +137,7 @@ export function fetchCommentThread(
   token = ""
 ): Promise<CommentThreadContextResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
-  return apiRequest<CommentThreadContextResponse>(`/api/comments/${commentID}/thread?${params.toString()}`, { token });
+  return apiRequest<CommentThreadContextResponse>(`/api/comments/${commentID}/thread?${params.toString()}`, token ? { token, auth: "consumer" } : {});
 }
 
 export function createComment(
@@ -146,6 +149,7 @@ export function createComment(
   return apiRequest<Comment>(`/api/videos/${videoID}/comments`, {
     method: "POST",
     token,
+    auth: "consumer",
     headers: { "Idempotency-Key": idempotencyKey },
     body: { content }
   });
@@ -161,6 +165,7 @@ export function createCommentReply(
   return apiRequest<Comment>(`/api/videos/${videoID}/comments/${targetCommentID}/replies`, {
     method: "POST",
     token,
+    auth: "consumer",
     headers: { "Idempotency-Key": idempotencyKey },
     body: { content }
   });
@@ -175,6 +180,7 @@ export function setCommentLike(
   return apiRequest<CommentLikeResponse>(`/api/comments/${commentID}/like`, {
     method: liked ? "PUT" : "DELETE",
     token,
+    auth: "consumer",
     headers: { "Idempotency-Key": idempotencyKey }
   });
 }
@@ -187,6 +193,7 @@ export function deleteComment(
   return apiRequest<DeleteCommentResponse>(`/api/comments/${commentID}`, {
     method: "DELETE",
     token,
+    auth: "consumer",
     headers: { "Idempotency-Key": idempotencyKey }
   });
 }

@@ -79,8 +79,51 @@ func TestRedisRateLimiterExecutesMutatingScriptOncePerAllow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allow: %v", err)
 	}
+
 	if !decision.Allowed || evaler.calls.Load() != 1 {
 		t.Fatalf("decision=%+v calls=%d", decision, evaler.calls.Load())
+	}
+}
+
+func TestRedisRateLimiterPreservesFixedWindowBeyondIdleTTL(t *testing.T) {
+	server, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(server.Close)
+	base := time.Date(2026, 8, 13, 4, 0, 0, 0, time.UTC)
+	server.SetTime(base)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	limiter := NewRedisRateLimiter(client)
+	quota := applicationratelimit.Quota{
+		Capacity: 1, Algorithm: applicationratelimit.AlgorithmFixedWindow,
+		Window: 15 * time.Minute,
+	}
+	first, err := limiter.Allow(
+		context.Background(), applicationratelimit.PolicyPasswordChange,
+		"user:1", quota, 10*time.Minute,
+	)
+	if err != nil || !first.Allowed {
+		t.Fatalf("first decision=%+v err=%v", first, err)
+	}
+	server.FastForward(11 * time.Minute)
+	server.SetTime(base.Add(11 * time.Minute))
+	second, err := limiter.Allow(
+		context.Background(), applicationratelimit.PolicyPasswordChange,
+		"user:1", quota, 10*time.Minute,
+	)
+	if err != nil || second.Allowed {
+		t.Fatalf("mid-window decision=%+v err=%v", second, err)
+	}
+	server.FastForward(4 * time.Minute)
+	server.SetTime(base.Add(15 * time.Minute))
+	third, err := limiter.Allow(
+		context.Background(), applicationratelimit.PolicyPasswordChange,
+		"user:1", quota, 10*time.Minute,
+	)
+	if err != nil || !third.Allowed {
+		t.Fatalf("next-window decision=%+v err=%v", third, err)
 	}
 }
 

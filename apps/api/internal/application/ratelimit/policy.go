@@ -23,6 +23,9 @@ const (
 	PolicyPublicSearch      PolicyName = "public_search"
 	PolicyUploadSession     PolicyName = "upload_session"
 	PolicyAdminLogin        PolicyName = "admin_login"
+	PolicyConsumerLogin     PolicyName = "consumer_login"
+	PolicySessionRefresh    PolicyName = "session_refresh"
+	PolicyPasswordChange    PolicyName = "password_change"
 
 	IdentityIP   IdentityDimension = "ip"
 	IdentityUser IdentityDimension = "user"
@@ -160,6 +163,57 @@ func DefaultRegistry(playbackBatchesPerMinute int, distributedTimeout time.Durat
 				Local:       Quota{Capacity: 3, RefillPerSecond: 3.0 / 60},
 				Distributed: Quota{Capacity: 5, RefillPerSecond: 5.0 / 60},
 				Fallback:    Quota{Capacity: 2, RefillPerSecond: 2.0 / 60},
+			},
+		},
+		{
+			Name: PolicyConsumerLogin, EndpointGroup: string(PolicyConsumerLogin),
+			Identity: IdentityIP, Distributed: DistributedRedis, Fallback: FallbackLocal,
+			DistributedTimeout: distributedTimeout, RetryAfterMinimum: time.Second,
+			Normal: Profile{
+				Local:       Quota{Capacity: 10, RefillPerSecond: 10.0 / 60},
+				Distributed: Quota{Capacity: 20, RefillPerSecond: 20.0 / 60},
+				Fallback:    Quota{Capacity: 5, RefillPerSecond: 5.0 / 60},
+			},
+			Emergency: Profile{
+				Local:       Quota{Capacity: 3, RefillPerSecond: 3.0 / 60},
+				Distributed: Quota{Capacity: 5, RefillPerSecond: 5.0 / 60},
+				Fallback:    Quota{Capacity: 2, RefillPerSecond: 2.0 / 60},
+			},
+		},
+		{
+			Name: PolicySessionRefresh, EndpointGroup: string(PolicySessionRefresh),
+			Identity: IdentityIP, Distributed: DistributedRedis, Fallback: FallbackLocal,
+			DistributedTimeout: distributedTimeout, RetryAfterMinimum: time.Second,
+			Normal: Profile{
+				Local:       Quota{Capacity: 30, RefillPerSecond: 0.5},
+				Distributed: Quota{Capacity: 60, RefillPerSecond: 1},
+				Fallback:    Quota{Capacity: 15, RefillPerSecond: 0.25},
+			},
+			Emergency: Profile{
+				Local:       Quota{Capacity: 10, RefillPerSecond: 1.0 / 6},
+				Distributed: Quota{Capacity: 20, RefillPerSecond: 1.0 / 3},
+				Fallback:    Quota{Capacity: 5, RefillPerSecond: 1.0 / 12},
+			},
+		},
+		{
+			Name: PolicyPasswordChange, EndpointGroup: string(PolicyPasswordChange),
+			Identity: IdentityUser, Distributed: DistributedRedis, Fallback: FallbackFailClosed,
+			DistributedTimeout: distributedTimeout, RetryAfterMinimum: time.Second,
+			Normal: Profile{
+				Local: Quota{
+					Capacity: 5, Algorithm: AlgorithmFixedWindow, Window: 15 * time.Minute,
+				},
+				Distributed: Quota{
+					Capacity: 5, Algorithm: AlgorithmFixedWindow, Window: 15 * time.Minute,
+				},
+			},
+			Emergency: Profile{
+				Local: Quota{
+					Capacity: 2, Algorithm: AlgorithmFixedWindow, Window: 15 * time.Minute,
+				},
+				Distributed: Quota{
+					Capacity: 2, Algorithm: AlgorithmFixedWindow, Window: 15 * time.Minute,
+				},
 			},
 		},
 	})

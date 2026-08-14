@@ -38,6 +38,14 @@ func (h *Handler) Register(ctx context.Context, c *app.RequestContext) {
 	// 具体注册规则在应用层和领域层执行，HTTP 层只传递请求字段。
 	profile, err := h.service.Register(ctx, req.Account, req.Password, req.Nickname)
 	if err != nil {
+		if isPasswordPolicyError(err) {
+			interfaceshttpapierror.Write(
+				c, http.StatusBadRequest,
+				interfaceshttpapierror.CodeAccountPasswordInvalid,
+				err.Error(),
+			)
+			return
+		}
 		if isBadRequestError(err) {
 			interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeAccountValidationFailed, err.Error())
 			return
@@ -55,6 +63,10 @@ func (h *Handler) Register(ctx context.Context, c *app.RequestContext) {
 
 // Login 处理账号密码登录，成功后返回 Bearer token。
 func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
+	if !validSessionRequestOrigin(c) || !validJSONRequest(c) {
+		interfaceshttpapierror.WriteInvalidRequest(c)
+		return
+	}
 	var req LoginByPasswordRequest
 	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
 		interfaceshttpapierror.WriteInvalidRequest(c)
@@ -77,6 +89,7 @@ func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 	}
 
 	interfaceshttpmiddleware.SetAssetTokenCookie(c, token.AccessToken, time.Now().Add(time.Duration(token.ExpiresInSeconds)*time.Second))
+	interfaceshttpmiddleware.SetRefreshTokenCookie(c, token.RefreshCredential, token.RefreshExpiresAt)
 	c.JSON(http.StatusOK, tokenResponse{
 		AccessToken:      token.AccessToken,
 		TokenType:        token.TokenType,
@@ -84,9 +97,76 @@ func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// Logout 使用无状态 JWT，不写 Cookie，避免旧响应清除更新登录写入的资产 Token。
-func (h *Handler) Logout(_ context.Context, c *app.RequestContext) {
+func (h *Handler) Refresh(ctx context.Context, c *app.RequestContext) {
+	if !validSessionRequestOrigin(c) {
+		interfaceshttpapierror.WriteInvalidRequest(c)
+		return
+	}
+	token, err := h.service.Refresh(ctx, refreshCredentialFromCookie(c))
+	if err != nil {
+		writeSessionError(c, err)
+		return
+	}
+	interfaceshttpmiddleware.SetAssetTokenCookie(
+		c, token.AccessToken,
+		time.Now().Add(time.Duration(token.ExpiresInSeconds)*time.Second),
+	)
+	interfaceshttpmiddleware.SetRefreshTokenCookie(
+		c, token.RefreshCredential, token.RefreshExpiresAt,
+	)
+	c.JSON(http.StatusOK, tokenResponse{
+		AccessToken:      token.AccessToken,
+		TokenType:        token.TokenType,
+		ExpiresInSeconds: token.ExpiresInSeconds,
+	})
+}
+
+func (h *Handler) Logout(ctx context.Context, c *app.RequestContext) {
+	if !validSessionRequestOrigin(c) {
+		interfaceshttpapierror.WriteInvalidRequest(c)
+		return
+	}
+	if err := h.service.Logout(ctx, refreshCredentialFromCookie(c)); err != nil {
+		interfaceshttpapierror.Write(
+			c, http.StatusServiceUnavailable,
+			interfaceshttpapierror.CodeAuthenticationUnavailable,
+			"authentication unavailable",
+		)
+		return
+	}
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ChangePassword(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
+		return
+	}
+	var req ChangePasswordRequest
+	if err := interfaceshttpbinding.BindJSON(c, &req); err != nil {
+		interfaceshttpapierror.WriteInvalidRequest(c)
+		return
+	}
+	token, err := h.service.ChangePassword(
+		ctx, userID, req.CurrentPassword, req.NewPassword,
+	)
+	if err != nil {
+		writePasswordChangeError(c, err)
+		return
+	}
+	interfaceshttpmiddleware.SetAssetTokenCookie(
+		c, token.AccessToken,
+		time.Now().Add(time.Duration(token.ExpiresInSeconds)*time.Second),
+	)
+	interfaceshttpmiddleware.SetRefreshTokenCookie(
+		c, token.RefreshCredential, token.RefreshExpiresAt,
+	)
+	c.JSON(http.StatusOK, tokenResponse{
+		AccessToken:      token.AccessToken,
+		TokenType:        token.TokenType,
+		ExpiresInSeconds: token.ExpiresInSeconds,
+	})
 }
 
 // Me 读取当前登录用户资料，用户 ID 来自 JWT 中间件写入的上下文。
@@ -273,10 +353,97 @@ func writeProfileError(c *app.RequestContext, err error) {
 func isBadRequestError(err error) bool {
 	return errors.Is(err, domainaccount.ErrEmptyAccount) ||
 		errors.Is(err, domainaccount.ErrEmptyPassword) ||
+		errors.Is(err, domainaccount.ErrPasswordTooShort) ||
+		errors.Is(err, domainaccount.ErrPasswordTooLong) ||
+		errors.Is(err, domainaccount.ErrPasswordInvalidEncoding) ||
 		errors.Is(err, domainaccount.ErrEmptyNickname) ||
 		errors.Is(err, domainaccount.ErrInvalidUserID) ||
 		errors.Is(err, domainaccount.ErrEmptyProfileUpdate) ||
 		errors.Is(err, domainaccount.ErrInvalidGender) ||
 		errors.Is(err, domainaccount.ErrEmptyProfileSettingUpdate) ||
 		errors.Is(err, domainaccount.ErrInvalidProfileVisibility)
+}
+
+func isPasswordPolicyError(err error) bool {
+	return errors.Is(err, domainaccount.ErrEmptyPassword) ||
+		errors.Is(err, domainaccount.ErrPasswordTooShort) ||
+		errors.Is(err, domainaccount.ErrPasswordTooLong) ||
+		errors.Is(err, domainaccount.ErrPasswordInvalidEncoding)
+}
+
+func writePasswordChangeError(c *app.RequestContext, err error) {
+	switch {
+	case errors.Is(err, domainaccount.ErrInvalidCredentials):
+		interfaceshttpapierror.Write(
+			c, http.StatusBadRequest,
+			interfaceshttpapierror.CodeAccountCurrentPasswordIncorrect,
+			"current password is incorrect",
+		)
+	case errors.Is(err, domainaccount.ErrPasswordUnchanged):
+		interfaceshttpapierror.Write(
+			c, http.StatusBadRequest,
+			interfaceshttpapierror.CodeAccountPasswordUnchanged,
+			err.Error(),
+		)
+	case errors.Is(err, domainaccount.ErrEmptyPassword),
+		errors.Is(err, domainaccount.ErrPasswordTooShort),
+		errors.Is(err, domainaccount.ErrPasswordTooLong),
+		errors.Is(err, domainaccount.ErrPasswordInvalidEncoding):
+		interfaceshttpapierror.Write(
+			c, http.StatusBadRequest,
+			interfaceshttpapierror.CodeAccountPasswordInvalid,
+			err.Error(),
+		)
+	case errors.Is(err, domainaccount.ErrCredentialChanged):
+		interfaceshttpapierror.Write(
+			c, http.StatusConflict,
+			interfaceshttpapierror.CodeAccountCredentialChanged,
+			err.Error(),
+		)
+	case errors.Is(err, domainaccount.ErrUserNotFound):
+		interfaceshttpapierror.Write(
+			c, http.StatusNotFound,
+			interfaceshttpapierror.CodeAccountNotFound,
+			"user not found",
+		)
+	default:
+		interfaceshttpapierror.Write(
+			c, http.StatusServiceUnavailable,
+			interfaceshttpapierror.CodeAuthenticationUnavailable,
+			"authentication unavailable",
+		)
+	}
+}
+
+func writeSessionError(c *app.RequestContext, err error) {
+	switch {
+	case errors.Is(err, domainaccount.ErrRefreshSessionSuperseded):
+		interfaceshttpapierror.Write(
+			c, http.StatusConflict,
+			interfaceshttpapierror.CodeAuthRefreshSuperseded,
+			"refresh session superseded",
+		)
+	case errors.Is(err, domainaccount.ErrRefreshSessionReplayed):
+		interfaceshttpmiddleware.ClearRefreshTokenCookie(c)
+		interfaceshttpapierror.Write(
+			c, http.StatusUnauthorized,
+			interfaceshttpapierror.CodeAuthRefreshReplayed,
+			"refresh session replayed",
+		)
+	case errors.Is(err, domainaccount.ErrInvalidRefreshSession),
+		errors.Is(err, domainaccount.ErrRefreshSessionExpired),
+		errors.Is(err, domainaccount.ErrRefreshSessionRevoked):
+		interfaceshttpmiddleware.ClearRefreshTokenCookie(c)
+		interfaceshttpapierror.Write(
+			c, http.StatusUnauthorized,
+			interfaceshttpapierror.CodeAuthRefreshInvalid,
+			"refresh session invalid",
+		)
+	default:
+		interfaceshttpapierror.Write(
+			c, http.StatusServiceUnavailable,
+			interfaceshttpapierror.CodeAuthenticationUnavailable,
+			"authentication unavailable",
+		)
+	}
 }

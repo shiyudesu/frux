@@ -2,6 +2,7 @@ package domainaccount
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -20,19 +21,24 @@ const (
 
 	ProfileVisibilityPrivate = "private"
 	ProfileVisibilityPublic  = "public"
+
+	DefaultAuthVersion = int64(1)
+	MinPasswordRunes   = 8
+	MaxPasswordBytes   = 72
 )
 
 // User 是账号聚合根，保存登录凭证、展示资料和权限角色。
 type User struct {
-	ID        int64
-	Account   string
-	Password  string
-	Nickname  string
-	AvatarURL string
-	Bio       string
-	Gender    int
-	Status    int
-	Role      string
+	ID          int64
+	Account     string
+	Password    string
+	Nickname    string
+	AvatarURL   string
+	Bio         string
+	Gender      int
+	Status      int
+	Role        string
+	AuthVersion int64
 	// FollowingCount 和 FollowerCount 来自关系模块统计表，用于个人页展示。
 	FollowingCount    int
 	FollowerCount     int
@@ -62,31 +68,27 @@ func NormalizeAccount(account string) string {
 // New 创建新用户，负责输入清洗、必填校验和密码哈希。
 func New(account, password, nickname string) (*User, error) {
 	account = NormalizeAccount(account)
-	password = strings.TrimSpace(password)
 	nickname = strings.TrimSpace(nickname)
 
 	if account == "" {
 		return nil, ErrEmptyAccount
 	}
-	if password == "" {
-		return nil, ErrEmptyPassword
-	}
 	if nickname == "" {
 		return nil, ErrEmptyNickname
 	}
 
-	// 密码只保存 bcrypt 哈希，数据库中不会保存明文密码。
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashedPassword, err := HashNewPassword(password)
 	if err != nil {
-		return nil, ErrHashPasswordFailed
+		return nil, err
 	}
 
 	return &User{
-		Account:  account,
-		Password: string(hashedPassword),
-		Nickname: nickname,
-		Status:   StatusNormal,
-		Role:     RoleUser,
+		Account:     account,
+		Password:    hashedPassword,
+		Nickname:    nickname,
+		Status:      StatusNormal,
+		Role:        RoleUser,
+		AuthVersion: DefaultAuthVersion,
 	}, nil
 }
 
@@ -101,6 +103,14 @@ func RestoreUserWithStats(id int64, account, password, nickname, avatarURL, bio 
 }
 
 func RestoreUserWithDashboard(id int64, account, password, nickname, avatarURL, bio string, gender int, status int, role string, followingCount int, followerCount int, publicWorkCount int, privateWorkCount int, receivedLikeCount int) *User {
+	return RestoreUserWithDashboardAuthVersion(
+		id, account, password, nickname, avatarURL, bio, gender, status, role,
+		DefaultAuthVersion, followingCount, followerCount, publicWorkCount, privateWorkCount,
+		receivedLikeCount,
+	)
+}
+
+func RestoreUserWithDashboardAuthVersion(id int64, account, password, nickname, avatarURL, bio string, gender int, status int, role string, authVersion int64, followingCount int, followerCount int, publicWorkCount int, privateWorkCount int, receivedLikeCount int) *User {
 	account = NormalizeAccount(account)
 	password = strings.TrimSpace(password)
 	nickname = strings.TrimSpace(nickname)
@@ -117,6 +127,9 @@ func RestoreUserWithDashboard(id int64, account, password, nickname, avatarURL, 
 	if !ValidGender(gender) {
 		gender = GenderUnspecified
 	}
+	if authVersion <= 0 {
+		authVersion = DefaultAuthVersion
+	}
 
 	return &User{
 		ID:                id,
@@ -128,6 +141,7 @@ func RestoreUserWithDashboard(id int64, account, password, nickname, avatarURL, 
 		Gender:            gender,
 		Status:            status,
 		Role:              role,
+		AuthVersion:       authVersion,
 		FollowingCount:    clampCount(followingCount),
 		FollowerCount:     clampCount(followerCount),
 		WorkCount:         clampCount(publicWorkCount),
@@ -147,7 +161,7 @@ func RestoreAuthorDisplay(userID int64, nickname, avatarURL string) *AuthorDispl
 
 // Authenticate 校验用户输入密码是否匹配已保存的 bcrypt 哈希。
 func (u *User) Authenticate(password string) error {
-	password = strings.TrimSpace(password)
+	password = NormalizePassword(password)
 	if password == "" {
 		return ErrEmptyPassword
 	}
@@ -155,6 +169,81 @@ func (u *User) Authenticate(password string) error {
 		return ErrInvalidCredentials
 	}
 	return nil
+}
+
+type PasswordChange struct {
+	UserID             int64
+	ExpectedPassword   string
+	NewPassword        string
+	CurrentAuthVersion int64
+	NextAuthVersion    int64
+}
+
+func NormalizePassword(password string) string {
+	return strings.TrimSpace(password)
+}
+
+func ValidateNewPassword(password string) (string, error) {
+	password = NormalizePassword(password)
+	if password == "" {
+		return "", ErrEmptyPassword
+	}
+	if !utf8.ValidString(password) {
+		return "", ErrPasswordInvalidEncoding
+	}
+	if utf8.RuneCountInString(password) < MinPasswordRunes {
+		return "", ErrPasswordTooShort
+	}
+	if len([]byte(password)) > MaxPasswordBytes {
+		return "", ErrPasswordTooLong
+	}
+	return password, nil
+}
+
+func HashNewPassword(password string) (string, error) {
+	password, err := ValidateNewPassword(password)
+	if err != nil {
+		return "", err
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", ErrHashPasswordFailed
+	}
+	return string(hashedPassword), nil
+}
+
+func (u *User) PreparePasswordChange(currentPassword, newPassword string) (*PasswordChange, error) {
+	if u == nil || u.ID <= 0 {
+		return nil, ErrInvalidUserID
+	}
+	if err := u.Authenticate(currentPassword); err != nil {
+		if err == ErrEmptyPassword {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, err
+	}
+	normalized, err := ValidateNewPassword(newPassword)
+	if err != nil {
+		return nil, err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(normalized)) == nil {
+		return nil, ErrPasswordUnchanged
+	}
+	hashed, err := bcrypt.GenerateFromPassword([]byte(normalized), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, ErrHashPasswordFailed
+	}
+	currentVersion := u.AuthVersion
+	if currentVersion <= 0 {
+		currentVersion = DefaultAuthVersion
+	}
+	return &PasswordChange{
+		UserID:             u.ID,
+		ExpectedPassword:   u.Password,
+		NewPassword:        string(hashed),
+		CurrentAuthVersion: currentVersion,
+		NextAuthVersion:    currentVersion + 1,
+	}, nil
 }
 
 // UpdateProfile 执行资料部分更新，指针为 nil 表示该字段保持原值。

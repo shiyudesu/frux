@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchMyProfile, updateMyProfile } from "../api/account";
 import { resolveCreatorVideoTarget } from "../api/creator";
-import { apiErrorMessage, isUnauthorized, uploadFile } from "../api/client";
+import {
+  apiErrorMessage,
+  currentConsumerSessionEpoch,
+  isUnauthorized,
+  requireConsumerSessionEpoch,
+  uploadFile
+} from "../api/client";
 import { fetchRelationList, followUser, loadFollowingMap } from "../api/social";
 import type { RelationTab } from "../api/social";
 import {
@@ -13,6 +19,7 @@ import {
 } from "../components/ProfileDashboard";
 import type { ProfileGridItem } from "../components/ProfileDashboard";
 import { ProfileEditor } from "../components/ProfileEditor";
+import { PasswordChangeDialog } from "../components/PasswordChangeDialog";
 import type { ProfileEditorValue } from "../components/ProfileEditor";
 import { RelationModal } from "../components/RelationModal";
 import { WorkViewer } from "../components/WorkViewer";
@@ -80,6 +87,7 @@ export function ProfilePage() {
   const [selectedWork, setSelectedWork] = useState<Video | null>(null);
   const [libraryQueue, setLibraryQueue] = useState<{ source: ProfileLibraryTab; videoID: number } | null>(null);
   const [editing, setEditing] = useState(false);
+  const [securityOpen, setSecurityOpen] = useState(false);
   const [targetWork, setTargetWork] = useState<{
     video: Video;
     tab: "published" | "private";
@@ -299,13 +307,16 @@ export function ProfilePage() {
 
   async function saveProfile(value: ProfileEditorValue, avatarFile: File | null) {
     if (!token) return;
+    const initiatingEpoch = currentConsumerSessionEpoch();
     setEditorBusy(true);
     setEditorMessage("");
     try {
       let avatarURL = value.avatarURL;
       if (avatarFile) {
         avatarURL = (await uploadFile(avatarFile, "avatar", token)).url;
+        requireConsumerSessionEpoch(initiatingEpoch);
       }
+      requireConsumerSessionEpoch(initiatingEpoch);
       const profile = await updateMyProfile(token, {
         nickname: value.nickname,
         avatar_url: avatarURL,
@@ -316,6 +327,7 @@ export function ProfilePage() {
           favorite_visibility: "private"
         }
       });
+      requireConsumerSessionEpoch(initiatingEpoch);
       profileRequest.current += 1;
       updateUser(token, profile);
       setEditing(false);
@@ -447,6 +459,11 @@ export function ProfilePage() {
       <ProfileHero
         owner
         profile={hero}
+        actions={(
+          <button className="profile-secondary-action" type="button" onClick={() => setSecurityOpen(true)}>
+            账号安全
+          </button>
+        )}
         onEdit={() => setEditing(true)}
         onOpenFollowers={() => openRelationModal("followers")}
         onOpenFollowing={() => openRelationModal("following")}
@@ -528,6 +545,7 @@ export function ProfilePage() {
           onSave={saveProfile}
         />
       )}
+      {securityOpen && <PasswordChangeDialog onClose={() => setSecurityOpen(false)} />}
     </main>
   );
 }

@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, NetworkError, apiErrorMessage } from "./client";
+import {
+  ApiError,
+  NetworkError,
+  apiErrorMessage,
+  configureConsumerAuthController
+} from "./client";
 import { uploadMediaFile } from "./upload";
 
 interface XHRResult {
@@ -11,6 +16,8 @@ interface XHRResult {
 
 class FakeXMLHttpRequest {
   static nextResult: XHRResult = {};
+  static results: XHRResult[] = [];
+  static authorizationHeaders: string[] = [];
 
   status = 0;
   responseText = "";
@@ -20,10 +27,14 @@ class FakeXMLHttpRequest {
 
   open() {}
 
-  setRequestHeader() {}
+  setRequestHeader(name: string, value: string) {
+    if (name.toLowerCase() === "authorization") {
+      FakeXMLHttpRequest.authorizationHeaders.push(value);
+    }
+  }
 
   send() {
-    const result = FakeXMLHttpRequest.nextResult;
+    const result = FakeXMLHttpRequest.results.shift() ?? FakeXMLHttpRequest.nextResult;
     queueMicrotask(() => {
       if (result.networkError) {
         this.onerror?.();
@@ -44,10 +55,13 @@ describe("upload API errors", () => {
       }
     });
     vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+    FakeXMLHttpRequest.results = [];
+    FakeXMLHttpRequest.authorizationHeaders = [];
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    configureConsumerAuthController(null);
   });
 
   it("preserves coded multipart upload failures", async () => {
@@ -100,6 +114,76 @@ describe("upload API errors", () => {
     FakeXMLHttpRequest.nextResult = { networkError: true };
 
     await expect(upload()).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it("refreshes an expired multipart upload token and retries once", async () => {
+    stubUploadSession({ mode: "multipart" });
+    configureConsumerAuthController({
+      getAccessToken: () => "expired-token",
+      getAccessExpiresAt: () => Date.now() + 300_000,
+      getSessionEpoch: () => 1,
+      getTokenEpoch: () => 1,
+      refreshAccessToken: () => Promise.resolve("refreshed-token")
+    });
+
+    FakeXMLHttpRequest.results = [
+      {
+        status: 401,
+        responseText: JSON.stringify({
+          code: "AUTH_INVALID_ACCESS_TOKEN",
+          error: "invalid access token"
+        })
+      },
+      {
+        status: 200,
+        responseText: JSON.stringify({
+          url: "/uploads/video/file.mp4",
+          kind: "video",
+          filename: "file.mp4",
+          size: 5
+        })
+      }
+    ];
+
+    await expect(upload()).resolves.toMatchObject({
+      mode: "multipart",
+      url: "/uploads/video/file.mp4"
+    });
+    expect(FakeXMLHttpRequest.authorizationHeaders).toEqual([
+      "Bearer expired-token",
+      "Bearer refreshed-token"
+    ]);
+  });
+
+  it("cancels upload when the initiating account changes during hashing", async () => {
+    let epoch = 1;
+    configureConsumerAuthController({
+      getAccessToken: () => epoch === 1 ? "first-token" : "second-token",
+      getAccessExpiresAt: () => Date.now() + 300_000,
+      getSessionEpoch: () => epoch,
+      getTokenEpoch: (token) => token === "first-token" ? 1 : 2,
+      refreshAccessToken: () => Promise.resolve(null)
+    });
+    let resolveBuffer!: (value: ArrayBuffer) => void;
+    const buffer = new Promise<ArrayBuffer>((resolve) => {
+      resolveBuffer = resolve;
+    });
+    const file = new File(["video"], "video.mp4", { type: "video/mp4" });
+    Object.defineProperty(file, "arrayBuffer", {
+      configurable: true,
+      value: () => buffer
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const uploading = uploadMediaFile(file, "video", "first-token", "attempt");
+    epoch = 2;
+    resolveBuffer(new TextEncoder().encode("video.mp4").buffer);
+
+    await expect(uploading).rejects.toMatchObject({
+      code: "AUTH_SESSION_CHANGED"
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("normalizes direct object-storage HTTP failures", async () => {

@@ -112,7 +112,7 @@ func (l *LocalLimiter) Allow(key string, quota Quota) LocalDecision {
 		}
 		entry = &localEntry{
 			key: key, tokens: float64(quota.Capacity), refilledAt: now,
-			lastSeen: now, expiresAt: now.Add(l.idleTTL), heapIndex: -1,
+			lastSeen: now, expiresAt: now.Add(entryTTL(l.idleTTL, quota)), heapIndex: -1,
 		}
 		l.entries[key] = entry
 		heap.Push(&l.expiries, entry)
@@ -124,7 +124,7 @@ func (l *LocalLimiter) Allow(key string, quota Quota) LocalDecision {
 	} else {
 		decision = allowTokenBucket(entry, quota, now)
 	}
-	l.touch(entry, now)
+	l.touch(entry, quota, now)
 	return decision
 }
 
@@ -162,10 +162,17 @@ func allowFixedWindow(entry *localEntry, quota Quota, now time.Time) LocalDecisi
 	return LocalDecision{Allowed: true, Remaining: quota.Capacity - entry.windowUsed}
 }
 
-func (l *LocalLimiter) touch(entry *localEntry, now time.Time) {
+func (l *LocalLimiter) touch(entry *localEntry, quota Quota, now time.Time) {
 	entry.lastSeen = now
-	entry.expiresAt = now.Add(l.idleTTL)
+	entry.expiresAt = now.Add(entryTTL(l.idleTTL, quota))
 	heap.Fix(&l.expiries, entry.heapIndex)
+}
+
+func entryTTL(idleTTL time.Duration, quota Quota) time.Duration {
+	if quota.Algorithm == AlgorithmFixedWindow && quota.Window > idleTTL {
+		return quota.Window
+	}
+	return idleTTL
 }
 
 func (l *LocalLimiter) reclaimExpired(now time.Time, limit int) {

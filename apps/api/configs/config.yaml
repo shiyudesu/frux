@@ -2,9 +2,23 @@
 # a shared or remote environment.
 port: 8080
 jwt:
-  secret: "replace-with-strong-secret"
-  access_ttl: "15m"
+  issuer: "frux"
+  access_ttl: "5m"
   admin_access_ttl: "30m"
+  clock_leeway: "30s"
+  consumer:
+    active_key_id: "consumer-v1"
+    keys:
+      - id: "consumer-v1"
+        secret: "local-consumer-jwt-secret-replace-me"
+  admin:
+    active_key_id: "admin-v1"
+    keys:
+      - id: "admin-v1"
+        secret: "local-admin-jwt-secret-replace-me-now"
+
+security:
+  hmac_secret: "local-application-hmac-secret-replace-me"
 
 internal:
   enabled: true

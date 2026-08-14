@@ -30,7 +30,7 @@ type adminAuthSignerStub struct {
 	err   error
 }
 
-func (s adminAuthSignerStub) SignAdminAccessToken(int64, string) (string, error) {
+func (s adminAuthSignerStub) SignAdminAccessTokenVersion(int64, int64) (string, error) {
 	return s.token, s.err
 }
 
@@ -57,6 +57,7 @@ func TestAdminAuthenticationEligibilityAndGenericFailure(t *testing.T) {
 	}{
 		{"missing", "Password123!"},
 		{"reviewer", "wrong"},
+		{"reviewer", "   "},
 		{"user", "Password123!"},
 		{"disabled", "Password123!"},
 		{"", "Password123!"},

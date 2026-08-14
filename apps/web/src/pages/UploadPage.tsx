@@ -2,7 +2,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createVideo } from "../api/account";
-import { UserFacingError, apiErrorMessage } from "../api/client";
+import {
+  UserFacingError,
+  apiErrorMessage,
+  currentConsumerSessionEpoch,
+  requireConsumerSessionEpoch
+} from "../api/client";
 import { uploadMediaFile } from "../api/upload";
 import type { MediaUploadResult, UploadKind } from "../api/upload";
 import { useNavigate } from "../router";
@@ -18,6 +23,8 @@ interface SelectedUpload {
   file: File;
   attemptID: string;
   result: MediaUploadResult | null;
+  resultEpoch: number;
+  resultUserID: number;
 }
 
 export function UploadPage() {
@@ -68,6 +75,11 @@ export function UploadPage() {
     setVideoProgress(0);
     setCoverProgress(0);
     try {
+      const initiatingEpoch = currentConsumerSessionEpoch();
+      const initiatingUserID = session.user?.id ?? 0;
+      if (initiatingUserID <= 0) {
+        throw new UserFacingError("请先登录后再发布");
+      }
       const title = form.title.trim();
       if (!title) {
         throw new UserFacingError("请输入视频标题");
@@ -89,8 +101,14 @@ export function UploadPage() {
       validateMediaFile(coverFile, "cover");
       setStatus("正在计算校验和并上传");
       const [videoUploadResult, coverUploadResult] = await Promise.allSettled([
-        uploadSelectedFile(videoUploadRef, videoFile, "video", session.token, setVideoProgress),
-        uploadSelectedFile(coverUploadRef, coverFile, "cover", session.token, setCoverProgress)
+        uploadSelectedFile(
+          videoUploadRef, videoFile, "video", session.token,
+          initiatingEpoch, initiatingUserID, setVideoProgress
+        ),
+        uploadSelectedFile(
+          coverUploadRef, coverFile, "cover", session.token,
+          initiatingEpoch, initiatingUserID, setCoverProgress
+        )
       ]);
       if (videoUploadResult.status === "rejected") {
         throw videoUploadResult.reason;
@@ -100,6 +118,7 @@ export function UploadPage() {
       }
       const videoUpload = videoUploadResult.value;
       const coverUpload = coverUploadResult.value;
+      requireConsumerSessionEpoch(initiatingEpoch);
       const uploadReferences =
         videoUpload.mode === "direct" && coverUpload.mode === "direct"
           ? { media_asset_id: videoUpload.assetID, cover_asset_id: coverUpload.assetID }
@@ -114,11 +133,13 @@ export function UploadPage() {
       }
       const creationKey = `web-video-${creationAttemptRef.current}`;
       setStatus("正在创建作品");
+      requireConsumerSessionEpoch(initiatingEpoch);
       const video = await createVideo(session.token, {
         title,
         description,
         ...uploadReferences
       }, creationKey);
+      requireConsumerSessionEpoch(initiatingEpoch);
       setStatus(video.media_status === "processing"
         ? "上传完成，视频处理中并等待审核"
         : "上传成功，等待审核");
@@ -290,7 +311,9 @@ function newSelectedUpload(file: File): SelectedUpload {
   return {
     file,
     attemptID: crypto.randomUUID(),
-    result: null
+    result: null,
+    resultEpoch: -1,
+    resultUserID: 0
   };
 }
 
@@ -299,6 +322,8 @@ async function uploadSelectedFile(
   file: File,
   kind: UploadKind,
   token: string,
+  sessionEpoch: number,
+  userID: number,
   onProgress: (progress: number) => void
 ): Promise<MediaUploadResult> {
   const selection = selectionRef.current;
@@ -306,12 +331,21 @@ async function uploadSelectedFile(
     throw new UserFacingError("文件选择已变化，请重新发布");
   }
   if (selection.result) {
-    onProgress(100);
-    return selection.result;
+    if (selection.resultEpoch === sessionEpoch &&
+      selection.resultUserID === userID) {
+      onProgress(100);
+      return selection.result;
+    }
+    selection.result = null;
+    selection.resultEpoch = -1;
+    selection.resultUserID = 0;
+    selection.attemptID = crypto.randomUUID();
   }
   const result = await uploadMediaFile(file, kind, token, selection.attemptID, onProgress);
   if (selectionRef.current === selection) {
     selection.result = result;
+    selection.resultEpoch = sessionEpoch;
+    selection.resultUserID = userID;
   }
   return result;
 }

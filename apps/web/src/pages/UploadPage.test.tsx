@@ -22,7 +22,7 @@ vi.mock("../router", () => ({
 }));
 
 vi.mock("../session", () => ({
-  useSession: () => ({ token: "upload-token" })
+  useSession: () => ({ token: "upload-token", user: { id: 7 } })
 }));
 
 describe("upload page validation", () => {

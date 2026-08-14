@@ -66,6 +66,18 @@ type commentHotScoreRecorder struct {
 	deltas []int
 }
 
+type commentModeratorReaderStub struct {
+	moderator bool
+	err       error
+}
+
+func (r commentModeratorReaderStub) IsCommentModerator(
+	context.Context,
+	int64,
+) (bool, error) {
+	return r.moderator, r.err
+}
+
 func (r *commentHotScoreRecorder) AddHotScore(_ context.Context, _ int64, delta int, _ time.Time) error {
 	r.deltas = append(r.deltas, delta)
 	return nil
@@ -209,6 +221,69 @@ func TestApplicationMapsAllThreadedDeletionModesAndHotScoreDeltas(t *testing.T) 
 				t.Fatalf("deletion hot-score deltas = %v, want [%d]", recorder.deltas, test.wantDelta)
 			}
 		})
+	}
+}
+
+func TestDeleteCommentUsesCurrentModeratorReaderInsteadOfJWTClaim(t *testing.T) {
+	var receivedRole string
+	repo := &threadedCommentRepositoryStub{
+		deleteThreadedComment: func(
+			_ int64, _ int64, role string,
+		) (*domaininteraction.CommentDeletionResult, error) {
+			receivedRole = role
+			return deletionResult(
+				9, 0, domaininteraction.CommentStatusModerated,
+				0, 0, -1, 1, false, false, time.Now().UTC(),
+			), nil
+		},
+	}
+	service := New(
+		repo,
+		WithCommentModeratorReader(commentModeratorReaderStub{moderator: false}),
+	)
+	if _, err := service.DeleteComment(
+		context.Background(), 9, 7, "admin",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if receivedRole != "" {
+		t.Fatalf("stale JWT role was trusted: %q", receivedRole)
+	}
+
+	service = New(
+		repo,
+		WithCommentModeratorReader(commentModeratorReaderStub{moderator: true}),
+	)
+	if _, err := service.DeleteComment(
+		context.Background(), 9, 7, "",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if receivedRole != "admin" {
+		t.Fatalf("current moderator role = %q", receivedRole)
+	}
+}
+
+func TestCommentProjectionUsesCurrentModeratorReader(t *testing.T) {
+	repo := &threadedCommentRepositoryStub{
+		listCommentRoots: func(
+			query domaininteraction.CommentRootQuery,
+		) (*domaininteraction.CommentPage, error) {
+			if query.Viewer.Role != "admin" {
+				t.Fatalf("viewer role = %q", query.Viewer.Role)
+			}
+			return &domaininteraction.CommentPage{}, nil
+		},
+	}
+	service := New(
+		repo,
+		WithCommentModeratorReader(commentModeratorReaderStub{moderator: true}),
+	)
+	if _, err := service.ListCommentRoots(
+		context.Background(), 9, 7, "", domaininteraction.CommentSortLatest,
+		"", 20,
+	); err != nil {
+		t.Fatal(err)
 	}
 }
 

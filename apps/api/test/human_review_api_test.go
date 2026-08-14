@@ -309,6 +309,7 @@ func newHumanReviewAPIRouter(repo *humanReviewAPIMemoryRepo, principal *domainac
 	router := server.Default()
 	auth := func(ctx context.Context, c *app.RequestContext) {
 		c.Set(interfaceshttpmiddleware.ContextUserIDKey, principal.UserID)
+		c.Set(interfaceshttpmiddleware.ContextAuthVersionKey, principal.AuthVersion)
 		c.Next(ctx)
 	}
 	reader := humanReviewPrincipalReader{principal: principal}

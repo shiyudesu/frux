@@ -11,25 +11,37 @@ var ErrLoadAccountFailed = errors.New("failed to load account")
 var ErrSaveAccountFailed = errors.New("failed to save account")
 var ErrUpdateAccountFailed = errors.New("failed to update account")
 var ErrSignAccessTokenFailed = errors.New("failed to sign access token")
+var ErrCreateRefreshSessionFailed = errors.New("failed to create refresh session")
+var ErrRotateRefreshSessionFailed = errors.New("failed to rotate refresh session")
+var ErrRevokeRefreshSessionFailed = errors.New("failed to revoke refresh session")
+var ErrChangePasswordFailed = errors.New("failed to change password")
+var ErrCleanupRefreshSessionsFailed = errors.New("failed to clean refresh sessions")
 
 // TokenSigner 是应用层依赖的最小 JWT 能力，账号服务只关心“签发 token”和“过期时间”。
 type TokenSigner interface {
-	SignAccessToken(userID int64, role string) (string, error)
+	SignConsumerAccessToken(userID int64, sessionID string, authVersion int64) (string, error)
 	AccessTTL() time.Duration
 }
 
 // Service 编排账号用例：注册、登录、读取资料、更新资料。
 type Service struct {
-	repo     domainaccount.Repository
-	signer   TokenSigner
-	settings domainaccount.ProfileSettingRepository
+	repo          domainaccount.Repository
+	signer        TokenSigner
+	settings      domainaccount.ProfileSettingRepository
+	sessions      domainaccount.RefreshSessionRepository
+	tokens        SessionTokenGenerator
+	now           func() time.Time
+	refreshTTL    time.Duration
+	previousGrace time.Duration
 }
 
 // LoginResult 是登录成功后返回给 HTTP 层的 token 数据。
 type LoginResult struct {
-	AccessToken      string
-	TokenType        string
-	ExpiresInSeconds int64
+	AccessToken       string
+	TokenType         string
+	ExpiresInSeconds  int64
+	RefreshCredential string
+	RefreshExpiresAt  time.Time
 }
 
 // Profile 是应用层对外暴露的用户资料视图，屏蔽密码等敏感字段。
@@ -62,10 +74,37 @@ func WithProfileSettingRepository(repo domainaccount.ProfileSettingRepository) O
 	return func(service *Service) { service.settings = repo }
 }
 
+func WithRefreshSessionRepository(repo domainaccount.RefreshSessionRepository) Option {
+	return func(service *Service) { service.sessions = repo }
+}
+
+func WithSessionTokenGenerator(generator SessionTokenGenerator) Option {
+	return func(service *Service) {
+		if generator != nil {
+			service.tokens = generator
+		}
+	}
+}
+
+func WithClock(now func() time.Time) Option {
+	return func(service *Service) {
+		if now != nil {
+			service.now = now
+		}
+	}
+}
+
 func New(repo domainaccount.Repository, signer TokenSigner, options ...Option) *Service {
 	service := &Service{
-		repo:   repo,
-		signer: signer,
+		repo:          repo,
+		signer:        signer,
+		tokens:        CryptoSessionTokenGenerator{},
+		now:           time.Now,
+		refreshTTL:    30 * 24 * time.Hour,
+		previousGrace: 10 * time.Second,
+	}
+	if sessions, ok := repo.(domainaccount.RefreshSessionRepository); ok {
+		service.sessions = sessions
 	}
 	for _, option := range options {
 		option(service)
@@ -108,25 +147,21 @@ func (s *Service) Login(ctx context.Context, account, password string) (*LoginRe
 	user, err := s.repo.FindByAccount(ctx, account)
 	if err != nil {
 		if errors.Is(err, domainaccount.ErrUserNotFound) {
+			consumeDummyPassword(password)
 			return nil, domainaccount.ErrInvalidCredentials
 		}
 		return nil, ErrLoadAccountFailed
 	}
 	if err := user.Authenticate(password); err != nil {
-		return nil, err
+		if errors.Is(err, domainaccount.ErrEmptyPassword) {
+			consumeDummyPassword(password)
+		}
+		return nil, domainaccount.ErrInvalidCredentials
 	}
-
-	// token 内写入用户 ID 和角色，后续鉴权中间件会解析并放入请求上下文。
-	accessToken, err := s.signer.SignAccessToken(user.ID, user.Role)
-	if err != nil {
-		return nil, ErrSignAccessTokenFailed
+	if user.Status != domainaccount.StatusNormal {
+		return nil, domainaccount.ErrInvalidCredentials
 	}
-
-	return &LoginResult{
-		AccessToken:      accessToken,
-		TokenType:        "Bearer",
-		ExpiresInSeconds: int64(s.signer.AccessTTL().Seconds()),
-	}, nil
+	return s.createLoginSession(ctx, user)
 }
 
 // GetProfile 根据登录态中的用户 ID 读取当前用户资料。

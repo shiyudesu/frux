@@ -7,7 +7,7 @@ export function fetchMessages(token: string, cursor = ""): Promise<MessageListRe
   if (cursor) {
     params.set("cursor", cursor);
   }
-  return apiRequest<MessageListResponse>(`/api/messages?${params.toString()}`, { token });
+  return apiRequest<MessageListResponse>(`/api/messages?${params.toString()}`, { token, auth: "consumer" });
 }
 
 /** messageIDs 为空数组表示全部已读 */
@@ -15,6 +15,7 @@ export function markMessagesRead(token: string, messageIDs: number[] = []): Prom
   return apiRequest<MarkReadResponse>("/api/messages", {
     method: "PATCH",
     token,
+    auth: "consumer",
     body: {
       message_ids: messageIDs
     }
@@ -22,5 +23,5 @@ export function markMessagesRead(token: string, messageIDs: number[] = []): Prom
 }
 
 export function fetchUnreadStat(token: string): Promise<UnreadStatResponse> {
-  return apiRequest<UnreadStatResponse>("/api/message-stats/unread", { token });
+  return apiRequest<UnreadStatResponse>("/api/message-stats/unread", { token, auth: "consumer" });
 }

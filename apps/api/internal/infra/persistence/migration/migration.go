@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
@@ -58,6 +59,7 @@ func AutoMigrate(db *gorm.DB) error {
 		if err := tx.AutoMigrate(
 			&infraaccount.UserModel{},
 			&infraaccount.ProfileSettingModel{},
+			&infraaccount.RefreshSessionModel{},
 			&infraadminaudit.EventModel{},
 			&infrakafkafailure.ReplayAttemptModel{},
 			&infrakafkafailure.RetryGroupInitializationModel{},
@@ -143,6 +145,11 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := infraaccount.EnsureProfileSettings(tx); err != nil {
+			return err
+		}
+		if err := tx.Model(&infraaccount.UserModel{}).
+			Where("auth_version IS NULL OR auth_version <= 0").
+			Update("auth_version", domainaccount.DefaultAuthVersion).Error; err != nil {
 			return err
 		}
 		if err := infrainteraction.BackfillActionEventOrder(tx); err != nil {

@@ -29,7 +29,11 @@ func TestJWTAuthPropagatesIdentityAndAbortsUnauthorized(t *testing.T) {
 	h.GET("/protected", NewJWTAuth(jwtManager), func(_ context.Context, c *app.RequestContext) {
 		userID, userExists := c.Get(ContextUserIDKey)
 		role, roleExists := c.Get(ContextRoleKey)
-		if !userExists || !roleExists || userID != int64(42) || role != "admin" {
+		sessionID, sessionExists := c.Get(ContextSessionIDKey)
+		authVersion, versionExists := c.Get(ContextAuthVersionKey)
+		if !userExists || !roleExists || !sessionExists || !versionExists ||
+			userID != int64(42) || role != "" || sessionID == "" ||
+			authVersion != int64(1) {
 			c.Status(http.StatusInternalServerError)
 			return
 		}

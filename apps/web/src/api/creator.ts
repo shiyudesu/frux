@@ -14,6 +14,7 @@ export function queryCreatorVideos(
   return apiRequest<CreatorVideoPage>("/api/users/me/video-queries", {
     method: "POST",
     token,
+    auth: "consumer",
     body
   });
 }
@@ -56,6 +57,7 @@ export function applyVideoBatchAction(
   return apiRequest<BatchVideoActionResponse>("/api/users/me/video-batch-actions", {
     method: "POST",
     token,
+    auth: "consumer",
     headers: { "Idempotency-Key": idempotencyKey },
     body: { video_ids: videoIDs, action }
   });

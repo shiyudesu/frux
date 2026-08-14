@@ -17,6 +17,6 @@
 - [x] 3.2 Render the production Compose configuration with non-secret validation placeholders and confirm tracked output contains no credential values or local MinIO dependency.
 - [x] 3.3 Implement and test S3 public-media routing, router wiring, stable public base URL, authorization denial, MPD/HEAD serving, Range-preserving GET redirects, and no-store signed responses.
 - [x] 3.4 Route `/media/*` through the existing host Caddy to API and verify direct anonymous Rainyun object access remains denied.
-- [ ] 3.5 After operator-supplied secrets exist, verify Rainyun presigned PUT accepts checksum/metadata headers and upload completion validates through `HeadObject`.
-- [ ] 3.6 Verify a real Prod video reaches a ready baseline and public playback follows Frux authorization to a signed Rainyun GET with Range, HEAD, and ETag.
+- [x] 3.5 After operator-supplied secrets exist, verify Rainyun presigned PUT accepts checksum/metadata headers and upload completion validates through `HeadObject`.
+- [x] 3.6 Verify a real Prod video reaches a ready baseline and public playback follows Frux authorization to a signed Rainyun GET with Range, HEAD, and ETag.
 - [x] 3.7 Run the relevant Go tests, frontend upload tests/build, Compose validations, and `openspec validate --all --strict`.

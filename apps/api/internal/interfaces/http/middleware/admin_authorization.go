@@ -127,6 +127,12 @@ func NewRequireAdminPermission(
 			)
 			return
 		}
+		authVersion, ok := authenticationVersion(c)
+		if !ok || authVersion != principal.AuthVersion {
+			recordDeniedAttempt(c, config, userID, required, "credential_version_changed")
+			interfaceshttpapierror.AbortInvalidAdminAccessToken(c)
+			return
+		}
 		if !principal.HasPermission(required) {
 			reasonCode := "permission_denied"
 			if !principal.Active() {
@@ -140,6 +146,15 @@ func NewRequireAdminPermission(
 		c.Set(ContextAdminPrincipalKey, principal)
 		c.Next(ctx)
 	}
+}
+
+func authenticationVersion(c *app.RequestContext) (int64, bool) {
+	value, exists := c.Get(ContextAuthVersionKey)
+	if !exists {
+		return 0, false
+	}
+	version, ok := value.(int64)
+	return version, ok && version > 0
 }
 
 func recordDeniedAttempt(

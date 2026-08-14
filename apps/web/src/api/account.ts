@@ -1,7 +1,7 @@
-// 账号域 API：注册/登录/登出、个人资料、作品列表、发布视频、公开资料。
 import type {
   CreateVideoRequest,
   LoginRequest,
+  PasswordChangeRequest,
   ProfileSettings,
   PublicUserProfile,
   RegisterRequest,
@@ -24,31 +24,64 @@ export function registerUser(body: RegisterRequest): Promise<unknown> {
 export function login(body: LoginRequest): Promise<TokenResponse> {
   return apiRequest<TokenResponse>("/api/sessions", {
     method: "POST",
-    body
+    body,
+    credentials: "same-origin"
   });
 }
 
-export function logoutSession(token?: string): Promise<void> {
+export function refreshSession(): Promise<TokenResponse> {
+  return apiRequest<TokenResponse>("/api/sessions/current/refresh", {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store"
+  });
+}
+
+export function logoutSession(): Promise<void> {
   return apiRequest<void>("/api/sessions/current", {
     method: "DELETE",
-    token
+    credentials: "same-origin",
+    keepalive: true
+  });
+}
+
+export function changeMyPassword(
+  body: PasswordChangeRequest,
+  token?: string
+): Promise<TokenResponse> {
+  return apiRequest<TokenResponse>("/api/users/me/password", {
+    method: "PUT",
+    token,
+    auth: "consumer",
+    retryAuth: false,
+    body,
+    credentials: "same-origin"
   });
 }
 
 export function fetchMyProfile(token: string): Promise<UserProfile> {
-  return apiRequest<UserProfile>("/api/users/me", { token });
+  return apiRequest<UserProfile>("/api/users/me", { token, auth: "consumer" });
+}
+
+export function fetchMyProfileWithAccessToken(token: string): Promise<UserProfile> {
+  return apiRequest<UserProfile>("/api/users/me", {
+    token,
+    retryAuth: false,
+    cache: "no-store"
+  });
 }
 
 export function updateMyProfile(token: string, body: UpdateProfileRequest): Promise<UserProfile> {
   return apiRequest<UserProfile>("/api/users/me", {
     method: "PATCH",
     token,
+    auth: "consumer",
     body
   });
 }
 
 export function fetchProfileSettings(token: string): Promise<ProfileSettings> {
-  return apiRequest<ProfileSettings>("/api/users/me/profile-settings", { token });
+  return apiRequest<ProfileSettings>("/api/users/me/profile-settings", { token, auth: "consumer" });
 }
 
 export function updateProfileSettings(
@@ -58,12 +91,16 @@ export function updateProfileSettings(
   return apiRequest<ProfileSettings>("/api/users/me/profile-settings", {
     method: "PATCH",
     token,
+    auth: "consumer",
     body
   });
 }
 
 export function fetchMyVideos(token: string, limit = 12): Promise<VideoListResponse> {
-  return apiRequest<VideoListResponse>(`/api/users/me/videos?limit=${limit}`, { token });
+  return apiRequest<VideoListResponse>(`/api/users/me/videos?limit=${limit}`, {
+    token,
+    auth: "consumer"
+  });
 }
 
 export function fetchPublicProfile(userID: number): Promise<PublicUserProfile> {
@@ -84,6 +121,7 @@ export function createVideo(token: string, body: CreateVideoRequest, idempotency
   return apiRequest<Video>("/api/videos", {
     method: "POST",
     token,
+    auth: "consumer",
     headers: {
       "Idempotency-Key": idempotencyKey
     },

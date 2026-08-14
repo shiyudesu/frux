@@ -44,6 +44,7 @@ export function fetchFeedPage(
     return apiRequest<FeedItemsResponse>("/api/feed-queries", {
       method: "POST",
       token,
+      ...(token ? { auth: "consumer" as const } : {}),
       body
     });
   }
@@ -52,7 +53,7 @@ export function fetchFeedPage(
   if (cursor) {
     params.set("cursor", cursor);
   }
-  return apiRequest<FeedItemsResponse>(`/api/feed-items?${params.toString()}`, { token });
+  return apiRequest<FeedItemsResponse>(`/api/feed-items?${params.toString()}`, token ? { token, auth: "consumer" } : {});
 }
 
 export function buildRecommendationContext(
@@ -81,7 +82,7 @@ export function fetchPlaybackConfig(token: string): Promise<Partial<PlaybackConf
     platform: "Web",
     network_type: detectNetworkType()
   });
-  return apiRequest<Partial<PlaybackConfig>>(`/api/playback-config?${params.toString()}`, { token });
+  return apiRequest<Partial<PlaybackConfig>>(`/api/playback-config?${params.toString()}`, { token, auth: "consumer" });
 }
 
 export function fetchPreloadVideos(token: string, currentVideoID: number, limit: number): Promise<PreloadVideosResponse> {
@@ -89,13 +90,14 @@ export function fetchPreloadVideos(token: string, currentVideoID: number, limit:
     current_video_id: String(currentVideoID || 0),
     limit: String(limit || DEFAULT_PLAYBACK_CONFIG.preload_count)
   });
-  return apiRequest<PreloadVideosResponse>(`/api/preload-videos?${params.toString()}`, { token });
+  return apiRequest<PreloadVideosResponse>(`/api/preload-videos?${params.toString()}`, { token, auth: "consumer" });
 }
 
 export function reportVideoViewEvent(token: string, body: CreateViewEventRequest, keepalive = false): Promise<unknown> {
   return apiRequest("/api/video-view-events", {
     method: "POST",
     token,
+    auth: "consumer",
     body,
     keepalive
   });
@@ -109,6 +111,7 @@ export function createRecommendationFeedback(
   return apiRequest<RecommendationFeedbackResponse>("/api/recommendation-feedback", {
     method: "POST",
     token,
+    auth: "consumer",
     headers: { "Idempotency-Key": idempotencyKey },
     body
   });
@@ -123,6 +126,7 @@ export function reportPlaybackQoS(
   return apiRequest("/api/playback-qos-reports", {
     method: "POST",
     token,
+    auth: "consumer",
     headers: {
       "Idempotency-Key": idempotencyKey
     },
@@ -141,6 +145,7 @@ export function reportPlaybackTelemetryBatch(
   return apiRequest("/api/playback-telemetry-batches", {
     method: "POST",
     token,
+    auth: "consumer",
     body,
     keepalive
   });

@@ -30,6 +30,11 @@ export interface RegisterRequest {
   nickname: string;
 }
 
+export interface PasswordChangeRequest {
+  current_password: string;
+  new_password: string;
+}
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;

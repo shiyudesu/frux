@@ -22,4 +22,4 @@
 - [x] 4.1 Render and inspect Prod Compose to confirm Rainyun is used, MinIO is absent, only loopback API/Web ports are published, and local Compose remains unchanged.
 - [x] 4.2 Start an isolated simple `prod` validation stack through API/Worker health using non-secret test values.
 - [x] 4.3 Run backend tests/build, frontend tests/build, local/`prod` Compose validation, and `openspec validate --all --strict`.
-- [ ] 4.4 With the real domain and Rainyun credentials, deploy and verify HTTPS, upload, processing, playback, and backup.
+- [x] 4.4 With the real domain and Rainyun credentials, deploy and verify HTTPS, upload, processing, playback, and backup.

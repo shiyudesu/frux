@@ -38,16 +38,25 @@ var adminPermissionsByRole = map[string][]AdminPermission{
 }
 
 type AdminPrincipal struct {
-	UserID int64
-	Status int
-	Role   string
+	UserID      int64
+	Status      int
+	Role        string
+	AuthVersion int64
 }
 
 func RestoreAdminPrincipal(userID int64, status int, role string) *AdminPrincipal {
+	return RestoreAdminPrincipalWithAuthVersion(userID, status, role, DefaultAuthVersion)
+}
+
+func RestoreAdminPrincipalWithAuthVersion(userID int64, status int, role string, authVersion int64) *AdminPrincipal {
+	if authVersion <= 0 {
+		authVersion = DefaultAuthVersion
+	}
 	return &AdminPrincipal{
-		UserID: userID,
-		Status: status,
-		Role:   strings.TrimSpace(role),
+		UserID:      userID,
+		Status:      status,
+		Role:        strings.TrimSpace(role),
+		AuthVersion: authVersion,
 	}
 }
 

@@ -30,7 +30,8 @@ func TestManagerSeparatesConsumerAndAdminCredentials(t *testing.T) {
 	adminClaims, err := manager.ParseAndValidateToken(
 		admin, TokenTypeAdminAccess, AudienceAdmin,
 	)
-	if err != nil || adminClaims.Audience != AudienceAdmin || adminClaims.Role != "user" {
+	if err != nil || adminClaims.Audience != AudienceAdmin || adminClaims.Role != "" ||
+		adminClaims.KeyID != "admin-v1" || adminClaims.AuthVersion != 1 {
 		t.Fatalf("admin claims = %#v err=%v", adminClaims, err)
 	}
 	if _, err := manager.ParseAndValidateToken(
@@ -54,10 +55,10 @@ func TestManagerSeparatesConsumerAndAdminCredentials(t *testing.T) {
 	if err != nil || legacyClaims.Audience != "" {
 		t.Fatalf("legacy claims = %#v err=%v", legacyClaims, err)
 	}
-	if _, err := manager.ParseAndValidateToken(
+	if claims, err := manager.ParseAndValidateToken(
 		legacy, TokenTypeAccess, AudienceConsumer,
-	); !errors.Is(err, ErrParseJWTToken) {
-		t.Fatalf("strict legacy error = %v", err)
+	); err != nil || !claims.Legacy {
+		t.Fatalf("legacy migration claims = %#v err=%v", claims, err)
 	}
 }
 
@@ -71,6 +72,7 @@ func TestAdminTokenExpiryAndTTLBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.adminAccessTTL = time.Millisecond
+	manager.clockLeeway = 0
 	token, err := manager.SignAdminAccessToken(9, "reviewer")
 	if err != nil {
 		t.Fatal(err)

@@ -13,6 +13,11 @@ type LoginByPasswordRequest struct {
 	Password string `json:"password"`
 }
 
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 // 用户资料更新请求
 type UpdateProfileRequest struct {
 	Nickname       *string                      `json:"nickname"`
