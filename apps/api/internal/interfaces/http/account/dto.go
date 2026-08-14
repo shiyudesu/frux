@@ -72,7 +72,6 @@ type publicUserProfileResponse struct {
 	FollowingCount    int    `json:"following_count"`
 	FollowerCount     int    `json:"follower_count"`
 	WorkCount         int    `json:"work_count"`
-	Account           string `json:"account"`
 	Gender            int    `json:"gender"`
 	PublicWorkCount   int    `json:"public_work_count"`
 	ReceivedLikeCount int    `json:"received_like_count"`

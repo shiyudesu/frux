@@ -49,7 +49,6 @@ func (r *memoryInteractionRepo) CreateThreadedComment(_ context.Context, input *
 	r.nextCommentID++
 	comment.RootCommentID = rootID
 	comment.RequestFingerprint = fingerprint
-	comment.UserAccount = memoryInteractionAccount(comment.UserID)
 	comment.UserNickname = memoryInteractionNickname(comment.UserID)
 	comment.UserAvatarURL = memoryInteractionAvatar(comment.UserID)
 	comment.IsVideoAuthor = comment.UserID == r.videos[comment.VideoID].AuthorID
@@ -59,7 +58,6 @@ func (r *memoryInteractionRepo) CreateThreadedComment(_ context.Context, input *
 	if comment.ReplyToCommentID > 0 {
 		target := r.comments[comment.ReplyToCommentID]
 		comment.ReplyToUserID = target.UserID
-		comment.ReplyToUserAccount = target.UserAccount
 		comment.ReplyToUserNickname = target.UserNickname
 		comment.ReplyToUserAvatarURL = target.UserAvatarURL
 	}

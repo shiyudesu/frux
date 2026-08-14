@@ -1284,7 +1284,7 @@ func TestPostgreSQLRepositorySemantics(t *testing.T) {
 		t.Fatalf("expected account conflict, got %v", err)
 	}
 
-	bob, err := domainaccount.New("Bob", "CaseSensitivePassword", "Bob")
+	bob, err := domainaccount.New("bob-private", "CaseSensitivePassword", "Public Bob")
 	if err != nil {
 		t.Fatalf("new Bob: %v", err)
 	}
@@ -1303,12 +1303,20 @@ func TestPostgreSQLRepositorySemantics(t *testing.T) {
 	} else if userStat.FollowingCount != 1 || targetStat.FollowerCount != 1 {
 		t.Fatalf("repeated follow changed stats: user=%+v target=%+v", userStat, targetStat)
 	}
-	followingMatches, err := relationRepo.ListFollowing(ctx, alice.ID, "bo", nil, 10)
+	followingMatches, err := relationRepo.ListFollowing(ctx, alice.ID, "public", nil, 10)
 	if err != nil {
-		t.Fatalf("search following by account: %v", err)
+		t.Fatalf("search following by nickname: %v", err)
 	}
-	if len(followingMatches) != 1 || followingMatches[0].UserID != bob.ID || followingMatches[0].Account != "bob" {
+	if len(followingMatches) != 1 || followingMatches[0].UserID != bob.ID ||
+		followingMatches[0].Nickname != "Public Bob" {
 		t.Fatalf("unexpected following search results: %+v", followingMatches)
+	}
+	accountOnlyMatches, err := relationRepo.ListFollowing(ctx, alice.ID, "bob-private", nil, 10)
+	if err != nil {
+		t.Fatalf("search following by account-only value: %v", err)
+	}
+	if len(accountOnlyMatches) != 0 {
+		t.Fatalf("account-only following search returned users: %+v", accountOnlyMatches)
 	}
 	noFollowingMatches, err := relationRepo.ListFollowing(ctx, alice.ID, "missing", nil, 10)
 	if err != nil {
@@ -1705,11 +1713,10 @@ func TestPostgreSQLThreadedCommentPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load tombstone thread: %v", err)
 	}
-	if tombstoneThread.Root.UserID != 0 || tombstoneThread.Root.UserAccount != "" ||
-		tombstoneThread.Root.Content != "" || tombstoneThread.Root.IsVideoAuthor ||
+	if tombstoneThread.Root.UserID != 0 || tombstoneThread.Root.Content != "" ||
+		tombstoneThread.Root.IsVideoAuthor ||
 		tombstoneThread.Root.LikedByVideoAuthor ||
 		tombstoneThread.Target.ReplyToUserID != 0 ||
-		tombstoneThread.Target.ReplyToUserAccount != "" ||
 		tombstoneThread.Target.ReplyToUserNickname != "" ||
 		tombstoneThread.Target.ReplyToUserAvatarURL != "" {
 		t.Fatalf("tombstone identity leaked through thread metadata: %+v", tombstoneThread)
@@ -2043,12 +2050,15 @@ func TestPostgreSQLThreadedCommentOrderingHydrationAndCascadeModeration(t *testi
 		hot.Items[0].ReplyPreviews[2].Content != "reply-0-2" {
 		t.Fatalf("reply previews were not capped and ordered: %+v", hot.Items[0].ReplyPreviews)
 	}
-	if hot.Items[0].UserAccount != users[1].Account ||
+	if hot.Items[0].UserID != users[1].ID ||
+		hot.Items[0].UserNickname != users[1].Nickname ||
+		hot.Items[0].UserAvatarURL != users[1].AvatarURL ||
 		hot.Items[0].IsVideoAuthor ||
 		!hot.Items[0].LikedByVideoAuthor ||
 		!hot.Items[0].ReplyPreviews[1].IsVideoAuthor ||
-		hot.Items[0].ReplyPreviews[1].UserAccount != users[0].Account ||
-		hot.Items[0].ReplyPreviews[1].ReplyToUserAccount == "" {
+		hot.Items[0].ReplyPreviews[1].UserID != users[0].ID ||
+		hot.Items[0].ReplyPreviews[1].ReplyToUserID <= 0 ||
+		hot.Items[0].ReplyPreviews[1].ReplyToUserNickname == "" {
 		t.Fatalf("canonical identity or author markers missing: %+v", hot.Items[0])
 	}
 	hotNext, err := repo.ListCommentRoots(ctx, domaininteraction.CommentRootQuery{

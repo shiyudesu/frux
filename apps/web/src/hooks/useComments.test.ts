@@ -235,12 +235,10 @@ describe("threaded comment state", () => {
       root_comment_id: 1,
       reply_to_comment_id: 1,
       reply_to_user_id: 7,
-      reply_to_user_account: "deleted-author",
       reply_to_user_nickname: "被删除作者",
       reply_to_user_avatar_url: "/deleted.jpg"
     });
     const root = comment(1, {
-      user_account: "deleted-author",
       is_video_author: true,
       liked_by_video_author: true,
       reply_count: 1,
@@ -267,19 +265,16 @@ describe("threaded comment state", () => {
     );
     expect(updated.entities[1]).toMatchObject({
       user_id: 0,
-      user_account: "",
       is_video_author: false,
       liked_by_video_author: false
     });
     expect(updated.entities[1]?.reply_previews[0]).toMatchObject({
       reply_to_user_id: 0,
-      reply_to_user_account: "",
       reply_to_user_nickname: "",
       reply_to_user_avatar_url: ""
     });
     expect(updated.entities[2]).toMatchObject({
       reply_to_user_id: 0,
-      reply_to_user_account: "",
       reply_to_user_nickname: "",
       reply_to_user_avatar_url: ""
     });
@@ -292,7 +287,6 @@ describe("threaded comment state", () => {
       root_comment_id: 1,
       reply_to_comment_id: 2,
       reply_to_user_id: 8,
-      reply_to_user_account: "deleted-reply",
       reply_to_user_nickname: "被删回复者",
       reply_to_user_avatar_url: "/deleted-reply.jpg"
     });
@@ -321,13 +315,11 @@ describe("threaded comment state", () => {
     expect(updated.entities[2]).toBeUndefined();
     expect(updated.entities[3]).toMatchObject({
       reply_to_user_id: 0,
-      reply_to_user_account: "",
       reply_to_user_nickname: "",
       reply_to_user_avatar_url: ""
     });
     expect(updated.entities[1]?.reply_previews.find((item) => item.id === 3)).toMatchObject({
       reply_to_user_id: 0,
-      reply_to_user_account: "",
       reply_to_user_nickname: "",
       reply_to_user_avatar_url: ""
     });
@@ -343,13 +335,11 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     id,
     video_id: 8,
     user_id: 2,
-    user_account: "user",
     user_nickname: "用户",
     user_avatar_url: "",
     root_comment_id: 0,
     reply_to_comment_id: 0,
     reply_to_user_id: 0,
-    reply_to_user_account: "",
     reply_to_user_nickname: "",
     reply_to_user_avatar_url: "",
     content: "内容",

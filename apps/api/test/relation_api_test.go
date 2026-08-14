@@ -47,7 +47,6 @@ type relationListAPIResponse struct {
 
 type relationUserAPIResponse struct {
 	UserID     int64     `json:"user_id"`
-	Account    string    `json:"account"`
 	Nickname   string    `json:"nickname"`
 	AvatarURL  string    `json:"avatar_url"`
 	Bio        string    `json:"bio"`
@@ -215,11 +214,10 @@ func (r *memoryRelationRepo) ListFollowing(ctx context.Context, userID int64, qu
 		}
 		user := r.users[follow.TargetUserID]
 		if !user.Active || (query != "" &&
-			!strings.Contains(strings.ToLower(user.Account), query) &&
 			!strings.Contains(strings.ToLower(user.Nickname), query)) {
 			continue
 		}
-		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Account, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
+		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
 	}
 	sortRelationItems(items)
 	return limitRelationItems(items, limit), nil
@@ -239,7 +237,7 @@ func (r *memoryRelationRepo) ListFollowers(ctx context.Context, userID int64, cu
 			continue
 		}
 		user := r.users[follow.UserID]
-		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Account, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
+		items = append(items, domainrelation.RestoreUserItem(user.ID, user.Nickname, user.AvatarURL, user.Bio, follow.UpdatedAt))
 	}
 	sortRelationItems(items)
 	return limitRelationItems(items, limit), nil
@@ -410,10 +408,13 @@ func TestRelationListFlow(t *testing.T) {
 	decodeJSON(t, firstFollowingResponse, &firstFollowing)
 	if len(firstFollowing.Items) != 1 ||
 		firstFollowing.Items[0].UserID != 88 ||
-		firstFollowing.Items[0].Account != "maker88" ||
+		firstFollowing.Items[0].Nickname != "maker" ||
 		!firstFollowing.HasMore ||
 		firstFollowing.NextCursor == "" {
 		t.Fatalf("unexpected first following page: %+v", firstFollowing)
+	}
+	if strings.Contains(firstFollowingResponse.Body.String(), `"account"`) {
+		t.Fatalf("following response leaked account field: %s", firstFollowingResponse.Body.String())
 	}
 
 	secondFollowingResponse := performJSONRequest(router, http.MethodGet, "/api/users/me/following?limit=1&cursor="+firstFollowing.NextCursor, "", viewerToken)
@@ -471,6 +472,9 @@ func TestRelationFollowingSearchAndCursorBinding(t *testing.T) {
 	if len(firstPage.Items) != 1 || firstPage.Items[0].UserID != 88 || firstPage.NextCursor == "" || !firstPage.HasMore {
 		t.Fatalf("unexpected searched first page: %+v", firstPage)
 	}
+	if strings.Contains(first.Body.String(), `"account"`) {
+		t.Fatalf("searched following response leaked account field: %s", first.Body.String())
+	}
 
 	second := performJSONRequest(
 		router,
@@ -490,8 +494,8 @@ func TestRelationFollowingSearchAndCursorBinding(t *testing.T) {
 	requireStatus(t, byAccount, http.StatusOK)
 	var accountPage relationListAPIResponse
 	decodeJSON(t, byAccount, &accountPage)
-	if len(accountPage.Items) != 1 || accountPage.Items[0].UserID != 77 {
-		t.Fatalf("account search mismatch: %+v", accountPage)
+	if len(accountPage.Items) != 0 {
+		t.Fatalf("account-only search returned users: %+v", accountPage)
 	}
 
 	crossQuery := performJSONRequest(
@@ -532,6 +536,38 @@ func TestRelationFollowingSearchAndCursorBinding(t *testing.T) {
 		token,
 	)
 	requireStatus(t, legacyResponse, http.StatusOK)
+
+	legacyVersioned := versionedRelationCursor(1, domainrelation.ListKindFollowing, "", firstPage.Items[0].FollowedAt, firstPage.Items[0].UserID)
+	legacyVersionedResponse := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/following?limit=1&cursor="+url.QueryEscape(legacyVersioned),
+		"",
+		token,
+	)
+	requireStatus(t, legacyVersionedResponse, http.StatusOK)
+
+	prePrivacyQueryCursor := versionedRelationCursor(
+		1,
+		domainrelation.ListKindFollowing,
+		"e",
+		firstPage.Items[0].FollowedAt,
+		firstPage.Items[0].UserID,
+	)
+	prePrivacyQueryResponse := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/users/me/following?q=e&cursor="+url.QueryEscape(prePrivacyQueryCursor),
+		"",
+		token,
+	)
+	assertAPIError(
+		t,
+		prePrivacyQueryResponse,
+		http.StatusBadRequest,
+		interfaceshttpapierror.CodeRelationValidationFailed,
+		domainrelation.ErrInvalidCursor.Error(),
+	)
 
 	longQuery := performJSONRequest(
 		router,
@@ -577,6 +613,17 @@ func TestRelationValidation(t *testing.T) {
 
 func legacyRelationCursor(followedAt time.Time, userID int64) string {
 	content, _ := json.Marshal(map[string]any{
+		"followed_at": followedAt.UTC().Format(time.RFC3339Nano),
+		"user_id":     userID,
+	})
+	return base64.RawURLEncoding.EncodeToString(content)
+}
+
+func versionedRelationCursor(version int, kind domainrelation.ListKind, query string, followedAt time.Time, userID int64) string {
+	content, _ := json.Marshal(map[string]any{
+		"v":           version,
+		"kind":        kind,
+		"query":       query,
 		"followed_at": followedAt.UTC().Format(time.RFC3339Nano),
 		"user_id":     userID,
 	})

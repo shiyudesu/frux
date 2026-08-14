@@ -20,7 +20,7 @@
 | PATCH | `/api/users/me/profile-settings` | 部分更新主页隐私设置 | 登录 | 无 |
 | GET | `/api/users/{userId}` | 获取公开用户聚合资料 | 可匿名 | 无 |
 
-`GET /api/users/me` 返回登录账号、角色、状态、性别、关系计数、公开/私密作品计数、获赞数和完整 `profile_settings`。`GET /api/users/{userId}` 返回公开展示字段、公开账号标识、性别、关系与内容统计，以及派生布尔值 `liked_videos_public`；不返回角色、账号状态、私密作品数或完整设置对象。
+`GET /api/users/me` 返回登录账号、角色、状态、性别、关系计数、公开/私密作品计数、获赞数和完整 `profile_settings`。`GET /api/users/{userId}` 只返回昵称、头像、简介、性别、关系与内容统计，以及派生布尔值 `liked_videos_public`；不返回登录账号、角色、账号状态、私密作品数或完整设置对象。
 
 `PATCH /api/users/me` 继续兼容原有资料字段，并可附带嵌套的 `profile_settings`：
 
@@ -65,7 +65,7 @@
 | 字段 | 类型 | 约束 | 说明 |
 | --- | --- | --- | --- |
 | `id` | BIGINT | PK | 用户 ID |
-| `account` | VARCHAR(64) | UNIQUE, NOT NULL | 规范化登录账号和公开主页标识 |
+| `account` | VARCHAR(64) | UNIQUE, NOT NULL | 规范化私有登录账号，不作为公开主页标识 |
 | `password` | VARCHAR(255) | NOT NULL | bcrypt 密码哈希 |
 | `nickname` | VARCHAR(128) | NOT NULL | 昵称 |
 | `avatar_url` | VARCHAR(512) | NULLABLE | 头像 |
@@ -130,8 +130,9 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | Web Access 只存内存 | `localStorage` 不保存 Bearer Token；刷新页面通过 HttpOnly Refresh Cookie 恢复，缓存用户资料不是认证事实 |
 | 离线退出立即生效 | Web 先清空内存态和 `/uploads` 活跃标记并广播到其他标签页，再尽力撤销服务端 Refresh Session |
 | Cookie 响应顺序安全 | 登录、刷新和改密轮换 Refresh/资产 Cookie；普通鉴权和登出成功响应不清 Cookie，避免旧慢响应破坏新登录；当前刷新确认旧 Cookie 无效时才清理 |
-| 公开资料裁剪 | 公开接口返回作为主页标识的 `account`，但不返回密码、角色、账号状态、私密作品数或完整隐私设置 |
-| 跨模块公开身份 | Feed 作者、评论作者、直接回复目标和公开主页均以同一 `account.id/account/nickname/avatar_url` 为事实源；评论模块不维护另一套账号 |
+| 登录账号私有 | `account` 只在注册、登录、本人资料、后台授权和可信内部边界使用；任何描述其他用户的公开响应都不返回该字段 |
+| 公开资料裁剪 | 公开接口只返回用户 ID、昵称、头像、简介、性别和允许公开的统计/能力，不返回登录账号、密码、角色、账号状态、私密作品数或完整隐私设置 |
+| 跨模块公开身份 | Feed 作者、评论作者、直接回复目标和公开主页均以 `account` 表中的 `id/nickname/avatar_url` 为公开事实源；登录 `account` 字段不参与跨用户展示 |
 | 无头像占位一致 | Web 对视频作者、评论作者、回复目标和公开资料缓存使用同一个用户头像 fallback，不因作者/评论者角色显示成不同身份 |
 | 资料字段校验 | 昵称、头像、简介和性别由 Domain 层校验 |
 | 资料与隐私原子保存 | Web 编辑器通过一次 `PATCH /api/users/me` 在同一事务中保存资料和喜欢可见性；持久化只更新请求实际提供的列，并发部分更新不会覆盖无关资料或设置 |
@@ -157,7 +158,7 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 并发部分保存 | 分别更新昵称、简介或不同隐私字段时，所有已提交字段保留且互不覆盖 |
 | 新用户读取隐私设置 | 喜欢和收藏均为 `private` |
 | 更新喜欢可见性 | 当前用户设置更新，公开资料的 `liked_videos_public` 同步变化 |
-| 公开资料裁剪 | 不出现角色、状态、私密作品数和完整设置 |
+| 公开资料裁剪 | 不出现登录账号、角色、状态、私密作品数和完整设置 |
 | 刷新旋转 | 新 Secret 可用，旧 Secret 在竞争窗口返回冲突，窗口外重放撤销 family |
 | 改密成功 | 旧密码不能登录、当前设备获得新会话、其他 Refresh Session 被撤销 |
 | 并发改密 | 使用同一旧哈希的请求最多一个成功，另一个返回 credential conflict |
@@ -171,7 +172,7 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 后台登录页 | `/admin/login` 只提供管理员账号和密码登录，不提供注册；Admin Session 独立保存在当前标签页 `sessionStorage` |
 | 顶部用户区 | 展示当前用户资料和耐久登出 |
 | 个人主页 | 展示资料与内容，并通过独立“账号安全”弹窗修改密码，不把凭证混入资料编辑请求 |
-| 作者主页 | 展示公开用户资料，并根据 `liked_videos_public` 决定是否显示喜欢 Tab |
+| 作者主页 | 以用户 ID、昵称和头像展示公开资料，不显示登录账号，并根据 `liked_videos_public` 决定是否显示喜欢 Tab |
 
 ## 7. 错误码
 

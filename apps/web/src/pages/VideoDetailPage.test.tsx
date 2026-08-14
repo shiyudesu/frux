@@ -85,7 +85,6 @@ describe("video discussion deep links", () => {
     });
     vi.mocked(fetchPublicProfile).mockResolvedValue({
       id: 2,
-      account: "author",
       nickname: "作者",
       avatar_url: "",
       bio: "",
@@ -213,13 +212,11 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     id,
     video_id: 3,
     user_id: 2,
-    user_account: "author",
     user_nickname: "作者",
     user_avatar_url: "",
     root_comment_id: 0,
     reply_to_comment_id: 0,
     reply_to_user_id: 0,
-    reply_to_user_account: "",
     reply_to_user_nickname: "",
     reply_to_user_avatar_url: "",
     content: "根评论",

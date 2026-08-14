@@ -277,6 +277,7 @@ export function ProfilePage() {
   }
 
   const hero = {
+    id: baseUser.id,
     account: baseUser.account,
     nickname: baseUser.nickname,
     avatarURL: baseUser.avatar_url,

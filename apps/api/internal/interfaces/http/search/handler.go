@@ -56,7 +56,7 @@ func (h *Handler) Users(ctx context.Context, c *app.RequestContext) {
 	items := make([]userResultResponse, 0, len(page.Items))
 	for _, item := range page.Items {
 		items = append(items, userResultResponse{
-			ID: item.ID, Account: item.Account, Nickname: item.Nickname,
+			ID: item.ID, Nickname: item.Nickname,
 			AvatarURL: item.AvatarURL, Bio: item.Bio,
 		})
 	}

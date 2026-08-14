@@ -190,7 +190,7 @@ function video(id: number): Video {
 }
 
 function user(id: number) {
-  return { id, account: `user${id}`, nickname: `用户 ${id}`, avatar_url: "", bio: "" };
+  return { id, nickname: `用户 ${id}`, avatar_url: "", bio: "" };
 }
 
 function deferred<T>() {

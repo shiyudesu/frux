@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	searchCursorVersion   = 1
+	videoCursorVersion    = 1
+	userCursorVersion     = 2
 	maxSearchCursorLength = 2048
 )
 
@@ -32,7 +33,7 @@ func EncodeVideoCursor(query string, cursor *domainsearch.VideoCursor) string {
 		return ""
 	}
 	return encodeCursor(cursorPayload{
-		Version: searchCursorVersion, Category: domainsearch.CategoryVideos, Query: query,
+		Version: videoCursorVersion, Category: domainsearch.CategoryVideos, Query: query,
 		Relevance: cursor.Relevance, Time: cursor.PublishedAt.UTC().Format(time.RFC3339Nano), ID: cursor.VideoID,
 	})
 }
@@ -45,7 +46,7 @@ func DecodeVideoCursor(value, query string) (*domainsearch.VideoCursor, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload, parsedTime, err := decodeCursor(value, domainsearch.CategoryVideos, query)
+	payload, parsedTime, err := decodeCursor(value, videoCursorVersion, domainsearch.CategoryVideos, query)
 	if err != nil || !domainsearch.ValidVideoRelevance(payload.Relevance) {
 		return nil, domainsearch.ErrInvalidCursor
 	}
@@ -64,7 +65,7 @@ func EncodeUserCursor(query string, cursor *domainsearch.UserCursor) string {
 		return ""
 	}
 	return encodeCursor(cursorPayload{
-		Version: searchCursorVersion, Category: domainsearch.CategoryUsers, Query: query,
+		Version: userCursorVersion, Category: domainsearch.CategoryUsers, Query: query,
 		Relevance: cursor.Relevance, Time: cursor.UpdatedAt.UTC().Format(time.RFC3339Nano), ID: cursor.UserID,
 	})
 }
@@ -77,7 +78,7 @@ func DecodeUserCursor(value, query string) (*domainsearch.UserCursor, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload, parsedTime, err := decodeCursor(value, domainsearch.CategoryUsers, query)
+	payload, parsedTime, err := decodeCursor(value, userCursorVersion, domainsearch.CategoryUsers, query)
 	if err != nil || !domainsearch.ValidUserRelevance(payload.Relevance) {
 		return nil, domainsearch.ErrInvalidCursor
 	}
@@ -94,7 +95,7 @@ func encodeCursor(payload cursorPayload) string {
 	return base64.RawURLEncoding.EncodeToString(content)
 }
 
-func decodeCursor(value, category, query string) (cursorPayload, time.Time, error) {
+func decodeCursor(value string, version int, category, query string) (cursorPayload, time.Time, error) {
 	var payload cursorPayload
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > maxSearchCursorLength {
@@ -108,7 +109,7 @@ func decodeCursor(value, category, query string) (cursorPayload, time.Time, erro
 		return payload, time.Time{}, domainsearch.ErrInvalidCursor
 	}
 	parsedTime, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.Time))
-	if err != nil || payload.Version != searchCursorVersion || payload.Category != category ||
+	if err != nil || payload.Version != version || payload.Category != category ||
 		payload.Query != query || payload.ID <= 0 {
 		return payload, time.Time{}, domainsearch.ErrInvalidCursor
 	}

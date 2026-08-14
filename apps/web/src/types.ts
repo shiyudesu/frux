@@ -84,7 +84,6 @@ export interface SessionUser extends UserProfile {
 /** GET /api/users/{id} 公开用户结构 */
 export interface PublicUserProfile {
   id: number;
-  account: string;
   nickname: string;
   avatar_url: string;
   bio: string;
@@ -108,7 +107,6 @@ export interface UpdateProfileRequest {
 /** localStorage 中缓存的公开资料（normalizePublicProfile 的输出形状） */
 export interface StoredPublicProfile {
   id: number;
-  account?: string;
   nickname: string;
   avatar_url: string;
   bio: string;
@@ -217,7 +215,6 @@ export type SearchVideoPage = CursorPage<Video>;
 
 export interface SearchUser {
   id: number;
-  account: string;
   nickname: string;
   avatar_url: string;
   bio: string;
@@ -624,13 +621,11 @@ export interface Comment {
   id: number;
   video_id: number;
   user_id: number;
-  user_account: string;
   user_nickname: string;
   user_avatar_url: string;
   root_comment_id: number;
   reply_to_comment_id: number;
   reply_to_user_id: number;
-  reply_to_user_account: string;
   reply_to_user_nickname: string;
   reply_to_user_avatar_url: string;
   content: string;
@@ -704,7 +699,6 @@ export interface FollowStateResponse {
 
 export interface RelationUser {
   user_id: number;
-  account: string;
   nickname: string;
   avatar_url: string;
   bio: string;
@@ -925,12 +919,35 @@ export function isSessionUser(value: unknown): value is SessionUser {
 }
 
 export function isStoredPublicProfile(value: unknown): value is StoredPublicProfile {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "number" &&
-    typeof value.nickname === "string" &&
-    typeof value.avatar_url === "string"
-  );
+  return sanitizeStoredPublicProfile(value) !== null;
+}
+
+export function sanitizeStoredPublicProfile(value: unknown): StoredPublicProfile | null {
+  if (
+    !isRecord(value)
+    || typeof value.id !== "number"
+    || !Number.isFinite(value.id)
+    || value.id <= 0
+    || typeof value.nickname !== "string"
+    || typeof value.avatar_url !== "string"
+  ) {
+    return null;
+  }
+  return {
+    id: value.id,
+    nickname: value.nickname,
+    avatar_url: value.avatar_url,
+    bio: typeof value.bio === "string" ? value.bio : "",
+    ...optionalStoredNumber("work_count", value.work_count),
+    ...optionalStoredNumber("following_count", value.following_count),
+    ...optionalStoredNumber("follower_count", value.follower_count),
+    ...(isGender(value.gender) ? { gender: value.gender } : {}),
+    ...optionalStoredNumber("public_work_count", value.public_work_count),
+    ...optionalStoredNumber("received_like_count", value.received_like_count),
+    ...(typeof value.liked_videos_public === "boolean"
+      ? { liked_videos_public: value.liked_videos_public }
+      : {})
+  };
 }
 
 export function parseStoredPublicProfiles(raw: string | null): Record<string, StoredPublicProfile> {
@@ -940,14 +957,26 @@ export function parseStoredPublicProfiles(raw: string | null): Record<string, St
     if (!isRecord(parsed)) return {};
     const result: Record<string, StoredPublicProfile> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      if (isStoredPublicProfile(value)) {
-        result[key] = value;
-      }
+      const profile = sanitizeStoredPublicProfile(value);
+      if (profile) result[key] = profile;
     }
     return result;
   } catch {
     return {};
   }
+}
+
+function optionalStoredNumber<K extends keyof StoredPublicProfile>(
+  key: K,
+  value: unknown
+): Partial<Pick<StoredPublicProfile, K>> {
+  return typeof value === "number" && Number.isFinite(value)
+    ? { [key]: value } as Pick<StoredPublicProfile, K>
+    : {};
+}
+
+function isGender(value: unknown): value is Gender {
+  return value === 0 || value === 1 || value === 2 || value === 3;
 }
 
 export function parseStoredUser(raw: string | null): SessionUser | null {

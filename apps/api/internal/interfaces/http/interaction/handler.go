@@ -405,10 +405,9 @@ func commentResponseFromDomain(comment *domaininteraction.Comment) commentRespon
 	}
 	return commentResponse{
 		ID: comment.ID, VideoID: comment.VideoID, UserID: comment.UserID,
-		UserAccount:  comment.UserAccount,
 		UserNickname: comment.UserNickname, UserAvatarURL: comment.UserAvatarURL,
 		RootCommentID: comment.RootCommentID, ReplyToCommentID: comment.ReplyToCommentID,
-		ReplyToUserID: comment.ReplyToUserID, ReplyToUserAccount: comment.ReplyToUserAccount,
+		ReplyToUserID:        comment.ReplyToUserID,
 		ReplyToUserNickname:  comment.ReplyToUserNickname,
 		ReplyToUserAvatarURL: comment.ReplyToUserAvatarURL,
 		Content:              comment.Content, Status: comment.Status, Deleted: comment.Deleted(),

@@ -44,8 +44,8 @@ func TestHandlersReturnTypedPagesAndMapErrors(t *testing.T) {
 			Relevance:   domainsearch.VideoRelevanceExactTitle,
 		}}},
 		handlerUserIndexStub{items: []*domainsearch.UserIndexItem{{
-			ID: 7, Account: "creator", Nickname: "Creator", UpdatedAt: now,
-			Relevance: domainsearch.UserRelevanceExactAccount,
+			ID: 7, Nickname: "Creator", UpdatedAt: now,
+			Relevance: domainsearch.UserRelevanceExactNickname,
 		}}},
 	)
 	handler := New(service)
@@ -77,8 +77,11 @@ func TestHandlersReturnTypedPagesAndMapErrors(t *testing.T) {
 	if err := json.Unmarshal(userResponse.Body.Bytes(), &userPage); err != nil {
 		t.Fatal(err)
 	}
-	if len(userPage.Items) != 1 || userPage.Items[0].ID != 7 || userPage.Items[0].Account != "creator" {
+	if len(userPage.Items) != 1 || userPage.Items[0].ID != 7 || userPage.Items[0].Nickname != "Creator" {
 		t.Fatalf("unexpected user response: %+v", userPage)
+	}
+	if strings.Contains(userResponse.Body.String(), `"account"`) {
+		t.Fatalf("user response leaked account field: %s", userResponse.Body.String())
 	}
 
 	badLimit := ut.PerformRequest(router.Engine, http.MethodGet, "/api/search/videos?q=cat&limit=invalid", nil)

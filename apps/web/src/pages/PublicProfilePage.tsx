@@ -224,8 +224,7 @@ function PublicProfileContent({ userID }: { userID: number }) {
 
   const display = profile || {
     id: userID,
-    account: cached?.account || String(userID),
-    nickname: cached?.nickname || "",
+    nickname: cached?.nickname || `用户_${userID}`,
     avatar_url: cached?.avatar_url || image.currentUser,
     bio: cached?.bio || "",
     following_count: cached?.following_count || 0,
@@ -246,7 +245,7 @@ function PublicProfileContent({ userID }: { userID: number }) {
     <main className="profile-page" data-ui="profile-page">
       <ProfileHero
         profile={{
-          account: display.account,
+          id: display.id,
           nickname: display.nickname,
           avatarURL: display.avatar_url,
           bio: display.bio,

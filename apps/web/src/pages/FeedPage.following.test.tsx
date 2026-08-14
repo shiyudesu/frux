@@ -178,7 +178,6 @@ function directory() {
   return {
     items: [{
       user_id: 7,
-      account: "creator",
       nickname: "Creator",
       avatar_url: "",
       bio: "",

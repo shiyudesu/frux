@@ -117,13 +117,11 @@ type Comment struct {
 	ID                   int64
 	VideoID              int64
 	UserID               int64
-	UserAccount          string
 	UserNickname         string
 	UserAvatarURL        string
 	RootCommentID        int64
 	ReplyToCommentID     int64
 	ReplyToUserID        int64
-	ReplyToUserAccount   string
 	ReplyToUserNickname  string
 	ReplyToUserAvatarURL string
 	Content              string
@@ -529,7 +527,6 @@ func (c *Comment) ApplyPublicProjection() {
 		return
 	}
 	c.UserID = 0
-	c.UserAccount = ""
 	c.UserNickname = ""
 	c.UserAvatarURL = ""
 	c.Content = ""

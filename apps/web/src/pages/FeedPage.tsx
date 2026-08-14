@@ -591,7 +591,6 @@ function feedSwipeTransitionTarget(item: FeedVideo | undefined) {
 function relationUserFromFeedItem(item: FeedVideo): RelationUser {
   return {
     user_id: item.author_id,
-    account: "",
     nickname: item.author,
     avatar_url: item.avatar_url,
     bio: "",

@@ -21,13 +21,11 @@ type commentResponse struct {
 	ID                   int64             `json:"id"`
 	VideoID              int64             `json:"video_id"`
 	UserID               int64             `json:"user_id,omitempty"`
-	UserAccount          string            `json:"user_account,omitempty"`
 	UserNickname         string            `json:"user_nickname"`
 	UserAvatarURL        string            `json:"user_avatar_url"`
 	RootCommentID        int64             `json:"root_comment_id"`
 	ReplyToCommentID     int64             `json:"reply_to_comment_id"`
 	ReplyToUserID        int64             `json:"reply_to_user_id"`
-	ReplyToUserAccount   string            `json:"reply_to_user_account,omitempty"`
 	ReplyToUserNickname  string            `json:"reply_to_user_nickname,omitempty"`
 	ReplyToUserAvatarURL string            `json:"reply_to_user_avatar_url,omitempty"`
 	Content              string            `json:"content"`

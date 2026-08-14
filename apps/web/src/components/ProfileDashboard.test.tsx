@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchProtectedAssetAccess } from "../api/upload";
 import type { Video } from "../types";
-import { ProfileVideoGrid } from "./ProfileDashboard";
+import { ProfileHero, ProfileVideoGrid } from "./ProfileDashboard";
 
 vi.mock("../api/upload", () => ({
   fetchProtectedAssetAccess: vi.fn()
@@ -47,6 +47,30 @@ describe("ProfileVideoGrid protected covers", () => {
     expect(fetchProtectedAssetAccess).toHaveBeenCalledWith("owner-token", 12);
     expect(container.querySelector<HTMLImageElement>(".profile-video-cover img")?.src)
       .toBe("https://protected.example/cover.jpg");
+  });
+
+  it("shows account only for owners and preserves public gender and neutral fallback", () => {
+    const shared = {
+      id: 7,
+      nickname: "Owner",
+      avatarURL: "",
+      bio: "",
+      gender: 1 as const,
+      followingCount: 0,
+      followerCount: 0,
+      workCount: 0,
+      receivedLikeCount: 0
+    };
+    act(() => root.render(<ProfileHero owner profile={{ ...shared, account: "owner-login" }} />));
+    expect(container.textContent).toContain("账号：owner-login");
+
+    act(() => root.render(
+      <ProfileHero profile={{ ...shared, id: 9, nickname: "", gender: 2 }} />
+    ));
+    expect(container.textContent).toContain("用户_9");
+    expect(container.textContent).toContain("女");
+    expect(container.textContent).not.toContain("账号：");
+    expect(container.textContent).not.toContain("owner-login");
   });
 
   it("does not request protected access for public grids", async () => {

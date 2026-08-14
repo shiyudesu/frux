@@ -2,6 +2,8 @@ package test
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
@@ -23,8 +25,9 @@ type searchVideoFixture struct {
 }
 
 type searchUserFixture struct {
-	item   domainsearch.UserIndexItem
-	active bool
+	item           domainsearch.UserIndexItem
+	privateAccount string
+	active         bool
 }
 
 type memorySearchIndex struct {
@@ -106,7 +109,6 @@ type searchVideoAPIResponse struct {
 
 type searchUserAPIResponse struct {
 	ID        int64  `json:"id"`
-	Account   string `json:"account"`
 	Nickname  string `json:"nickname"`
 	AvatarURL string `json:"avatar_url"`
 }
@@ -165,9 +167,45 @@ func TestSearchAPIFlow(t *testing.T) {
 		!users.HasMore || users.NextCursor == "" {
 		t.Fatalf("unexpected anonymous user page: %+v", users)
 	}
-	if users.Items[0].ID <= 0 || users.Items[0].Account == "" || users.Items[0].Nickname == "" {
+	if users.Items[0].ID <= 0 || users.Items[0].Nickname == "" {
 		t.Fatalf("user result lacks public navigation fields: %+v", users.Items[0])
 	}
+	if strings.Contains(userResponse.Body.String(), `"account"`) {
+		t.Fatalf("user search leaked account field: %s", userResponse.Body.String())
+	}
+
+	secondUserResponse := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/search/users?q=ALICE&limit=2&cursor="+url.QueryEscape(users.NextCursor),
+		"",
+		"",
+	)
+	requireStatus(t, secondUserResponse, http.StatusOK)
+	var secondUsers searchUserPageAPIResponse
+	decodeJSON(t, secondUserResponse, &secondUsers)
+	if got := searchUserResponseIDs(secondUsers.Items); len(got) != 1 || got[0] != 203 ||
+		secondUsers.HasMore || secondUsers.NextCursor != "" {
+		t.Fatalf("unexpected user second page: %+v", secondUsers)
+	}
+
+	accountOnlyResponse := performJSONRequest(router, http.MethodGet, "/api/search/users?q=secret-205", "", "")
+	requireStatus(t, accountOnlyResponse, http.StatusOK)
+	var accountOnly searchUserPageAPIResponse
+	decodeJSON(t, accountOnlyResponse, &accountOnly)
+	if len(accountOnly.Items) != 0 {
+		t.Fatalf("account-only query returned users: %+v", accountOnly)
+	}
+
+	oldUserCursor := rewriteSearchCursorVersion(t, users.NextCursor, 1)
+	oldUserResponse := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/search/users?q=ALICE&cursor="+url.QueryEscape(oldUserCursor),
+		"",
+		"",
+	)
+	assertAPIError(t, oldUserResponse, http.StatusBadRequest, interfaceshttpapierror.CodeSearchParametersInvalid, "搜索参数已失效，请重新搜索")
 
 	for _, tc := range []struct {
 		path   string
@@ -232,10 +270,10 @@ func newSearchRouter() *server.Hertz {
 			{item: searchVideoItem(998, "cat ready later", "processing", now.Add(time.Hour)), readable: false},
 		},
 		users: []searchUserFixture{
-			{item: searchUserItem(205, "alice", "Exact", now), active: true},
-			{item: searchUserItem(204, "alice-two", "Prefix", now), active: true},
-			{item: searchUserItem(203, "other", "Alice Nick", now), active: true},
-			{item: searchUserItem(999, "alice-frozen", "Inactive", now.Add(time.Hour)), active: false},
+			{item: searchUserItem(205, "alice", now), privateAccount: "secret-205", active: true},
+			{item: searchUserItem(204, "Alice Prefix", now), privateAccount: "secret-204", active: true},
+			{item: searchUserItem(203, "The Alice Nick", now), privateAccount: "secret-203", active: true},
+			{item: searchUserItem(999, "Alice Inactive", now.Add(time.Hour)), privateAccount: "secret-999", active: false},
 		},
 	}
 	service := applicationsearch.New(index, index)
@@ -257,9 +295,9 @@ func searchVideoItem(id int64, title, description string, publishedAt time.Time)
 	}
 }
 
-func searchUserItem(id int64, account, nickname string, updatedAt time.Time) domainsearch.UserIndexItem {
+func searchUserItem(id int64, nickname string, updatedAt time.Time) domainsearch.UserIndexItem {
 	return domainsearch.UserIndexItem{
-		ID: id, Account: account, Nickname: nickname, AvatarURL: "/avatar.jpg", UpdatedAt: updatedAt,
+		ID: id, Nickname: nickname, AvatarURL: "/avatar.jpg", UpdatedAt: updatedAt,
 	}
 }
 
@@ -280,16 +318,12 @@ func videoFixtureRelevance(item domainsearch.VideoIndexItem, query string) int {
 }
 
 func userFixtureRelevance(item domainsearch.UserIndexItem, query string) int {
-	account, nickname, query := strings.ToLower(item.Account), strings.ToLower(item.Nickname), strings.ToLower(query)
+	nickname, query := strings.ToLower(item.Nickname), strings.ToLower(query)
 	switch {
-	case account == query:
-		return domainsearch.UserRelevanceExactAccount
-	case strings.HasPrefix(account, query):
-		return domainsearch.UserRelevanceAccountPrefix
+	case nickname == query:
+		return domainsearch.UserRelevanceExactNickname
 	case strings.HasPrefix(nickname, query):
 		return domainsearch.UserRelevanceNicknamePrefix
-	case strings.Contains(account, query):
-		return domainsearch.UserRelevanceAccountContains
 	case strings.Contains(nickname, query):
 		return domainsearch.UserRelevanceNicknameContains
 	default:
@@ -337,4 +371,22 @@ func searchUserResponseIDs(items []searchUserAPIResponse) []int64 {
 		ids = append(ids, item.ID)
 	}
 	return ids
+}
+
+func rewriteSearchCursorVersion(t *testing.T, cursor string, version int) string {
+	t.Helper()
+	content, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(content, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["v"] = version
+	content, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(content)
 }

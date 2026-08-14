@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RouterProvider } from "../router";
+import type { SearchUser } from "../types";
 import { SearchPage } from "./SearchPage";
 
 const searchAPI = vi.hoisted(() => ({
@@ -74,6 +75,21 @@ describe("search page navigation", () => {
     expect([...container.querySelectorAll("button")].some((item) => item.textContent === "加载更多用户")).toBe(false);
   });
 
+  it("renders and describes nickname-only user identity", async () => {
+    searchAPI.searchUsers.mockResolvedValue({
+      items: [legacyUser(2)],
+      next_cursor: "",
+      has_more: false
+    });
+    window.history.replaceState({}, "", "/search?q=test&tab=users");
+
+    await render(<SearchPage query="test" tab="users" />);
+
+    expect(container.textContent).toContain("用户按昵称匹配");
+    expect(container.textContent).toContain("用户 2");
+    expect(container.textContent).not.toContain("private-login-2");
+  });
+
   async function render(node: React.ReactNode) {
     await act(async () => {
       root.render(<RouterProvider>{node}</RouterProvider>);
@@ -125,6 +141,10 @@ function video(id: number) {
   };
 }
 
-function user(id: number) {
-  return { id, account: `user${id}`, nickname: `用户 ${id}`, avatar_url: "", bio: "" };
+function user(id: number): SearchUser {
+  return { id, nickname: `用户 ${id}`, avatar_url: "", bio: "" };
+}
+
+function legacyUser(id: number): SearchUser & { account: string } {
+  return { ...user(id), account: `private-login-${id}` };
 }

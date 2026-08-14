@@ -52,7 +52,7 @@ apps/api/
 
 跨模块聚合仍遵守领域所有权。以个人内容库为例，`application/library.Service` 只依赖 `ActionIndex`、`HistoryIndex`、`WatchLaterRepository`、`VideoCatalog`、`PrivacyReader` 等窄接口；`interfaces/http/router/library_adapters.go` 把 interaction、exposure、video、account 的接口适配为 library 需要的形状。不要让聚合 Handler 直接查询多个 GORM Repository，也不要让一个 Domain 包导入另一个模块的 Infrastructure。
 
-全局搜索使用相同模式：`application/search.Service` 只依赖视频与账户搜索索引，游标、query 绑定和输入限制由 search Domain/Application 拥有；PostgreSQL `ILIKE`、公开视频/正常账户过滤和 DTO 映射留在 Infrastructure/Interfaces。搜索 Handler 不得直接拼 SQL 或跨仓储聚合。
+全局搜索使用相同模式：`application/search.Service` 只依赖视频与账户搜索索引，游标、query 绑定和输入限制由 search Domain/Application 拥有；PostgreSQL `ILIKE`、公开视频/正常账户过滤和 DTO 映射留在 Infrastructure/Interfaces。公开用户搜索只匹配昵称且不选择登录账号；搜索 Handler 不得直接拼 SQL 或跨仓储聚合。
 
 评论通知同样遵守所有权：`interaction` 拥有根/回复/评论点赞事实、计数和 `interaction_comment_notification_outbox`；Worker 通过 Application 层的窄 `CommentNotificationMessageWriter` 调用 `message.Service`。message 只持久化消息和结构化目标，不反查互动表；interaction Domain/Application 不导入 message Infrastructure。
 
@@ -416,7 +416,7 @@ downstream outbox 边界提交后才返回 durable success；注册 terminal 结
 
 评论通知 Outbox 由 Worker 直接调用 message Application 窄接口：互动事务只提交 durable event，消息写入失败后按租约重试，`recipient + event_id` 去重；历史迁移不得合成旧通知。
 
-账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。新注册和新密码统一要求至少 8 个 Unicode 字符且 UTF-8 不超过 72 字节，必须在调用 bcrypt 前返回领域校验错误；旧短密码只保留登录与迁移能力。
+账号标识在 Domain 层统一去除首尾空白并转为小写；昵称、密码和非账号幂等键保持各自原有的大小写语义。登录账号属于私有凭证标识，只能出现在注册、登录、本人资料、后台授权和可信内部边界；描述其他用户的公开资料、搜索、关系和评论响应只投影用户 ID、昵称、头像等公开字段。新注册和新密码统一要求至少 8 个 Unicode 字符且 UTF-8 不超过 72 字节，必须在调用 bcrypt 前返回领域校验错误；旧短密码只保留登录与迁移能力。
 
 ## 12. 错误处理
 

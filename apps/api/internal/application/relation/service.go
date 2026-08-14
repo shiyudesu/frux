@@ -336,13 +336,22 @@ func parseListCursor(raw string, expectedKind domainrelation.ListKind, expectedQ
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, domainrelation.ErrInvalidCursor
 	}
-	if payload.Version == 0 {
+	switch payload.Version {
+	case 0:
 		if expectedQuery != "" || payload.Kind != "" || payload.Query != "" {
 			return nil, domainrelation.ErrInvalidCursor
 		}
-	} else if payload.Version != domainrelation.ListCursorVersion ||
-		domainrelation.ListKind(payload.Kind) != expectedKind ||
-		payload.Query != expectedQuery {
+	case 1:
+		if expectedQuery != "" || payload.Query != "" ||
+			domainrelation.ListKind(payload.Kind) != expectedKind {
+			return nil, domainrelation.ErrInvalidCursor
+		}
+	case domainrelation.ListCursorVersion:
+		if domainrelation.ListKind(payload.Kind) != expectedKind ||
+			payload.Query != expectedQuery {
+			return nil, domainrelation.ErrInvalidCursor
+		}
+	default:
 		return nil, domainrelation.ErrInvalidCursor
 	}
 

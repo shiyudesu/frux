@@ -21,13 +21,11 @@ type threadedCommentRow struct {
 	ID                   int64
 	VideoID              int64
 	UserID               int64
-	UserAccount          string
 	UserNickname         string
 	UserAvatarURL        string
 	RootCommentID        *int64
 	ReplyToCommentID     *int64
 	ReplyToUserID        *int64
-	ReplyToUserAccount   string
 	ReplyToUserNickname  string
 	ReplyToUserAvatarURL string
 	Content              string
@@ -822,11 +820,9 @@ func (r *Repository) commentRows(db *gorm.DB) *gorm.DB {
 
 func threadedCommentSelect() string {
 	return `c.id, c.video_id, c.user_id,
-		author.account AS user_account,
 		author.nickname AS user_nickname, author.avatar_url AS user_avatar_url,
 		c.root_comment_id, c.reply_to_comment_id,
 		CASE WHEN target.status = 1 THEN target.user_id END AS reply_to_user_id,
-		CASE WHEN target.status = 1 THEN target_author.account ELSE '' END AS reply_to_user_account,
 		CASE WHEN target.status = 1 THEN target_author.nickname ELSE '' END AS reply_to_user_nickname,
 		CASE WHEN target.status = 1 THEN target_author.avatar_url ELSE '' END AS reply_to_user_avatar_url,
 		c.content, c.status, c.reply_count, c.like_count, c.hot_score,
@@ -948,8 +944,6 @@ func restoreThreadedComment(row threadedCommentRow) *domaininteraction.Comment {
 		row.RequestFingerprint, idempotencyKeyValue(row.IdempotencyKey), false, false,
 		row.CreatedAt, row.UpdatedAt,
 	)
-	comment.UserAccount = strings.TrimSpace(row.UserAccount)
-	comment.ReplyToUserAccount = strings.TrimSpace(row.ReplyToUserAccount)
 	comment.IsVideoAuthor = row.IsVideoAuthor
 	comment.LikedByVideoAuthor = row.LikedByVideoAuthor
 	return comment

@@ -68,10 +68,35 @@ func TestCursorCodecBindsVersionQueryAndCategory(t *testing.T) {
 	if err := json.Unmarshal(content, &payload); err != nil {
 		t.Fatal(err)
 	}
+	if payload.Version != videoCursorVersion {
+		t.Fatalf("video cursor version = %d, want %d", payload.Version, videoCursorVersion)
+	}
 	payload.Version++
 	content, _ = json.Marshal(payload)
 	if _, err := DecodeVideoCursor(base64.RawURLEncoding.EncodeToString(content), "Cat"); !errors.Is(err, domainsearch.ErrInvalidCursor) {
 		t.Fatalf("unsupported cursor version error = %v, want ErrInvalidCursor", err)
+	}
+
+	userCursor := EncodeUserCursor("Cat", &domainsearch.UserCursor{
+		Relevance: domainsearch.UserRelevanceExactNickname, UpdatedAt: now, UserID: 8,
+	})
+	content, err = base64.RawURLEncoding.DecodeString(userCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(content, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Version != userCursorVersion || payload.Version == videoCursorVersion {
+		t.Fatalf("user cursor version = %d, video version = %d", payload.Version, videoCursorVersion)
+	}
+	payload.Version = videoCursorVersion
+	content, _ = json.Marshal(payload)
+	if _, err := DecodeUserCursor(base64.RawURLEncoding.EncodeToString(content), "Cat"); !errors.Is(err, domainsearch.ErrInvalidCursor) {
+		t.Fatalf("legacy user cursor error = %v, want ErrInvalidCursor", err)
+	}
+	if decoded, err := DecodeVideoCursor(videoCursor, "Cat"); err != nil || decoded.VideoID != 9 {
+		t.Fatalf("video v1 cursor stopped working: cursor=%+v err=%v", decoded, err)
 	}
 }
 
@@ -113,8 +138,8 @@ func TestSearchVideosUsesStableBoundaryTuple(t *testing.T) {
 func TestSearchUsersHasIndependentCursorAndLimitBounds(t *testing.T) {
 	updatedAt := time.Date(2026, 8, 4, 3, 0, 0, 0, time.UTC)
 	userIndex := &userIndexStub{items: []*domainsearch.UserIndexItem{
-		{ID: 7, Account: "cat", UpdatedAt: updatedAt, Relevance: domainsearch.UserRelevanceExactAccount},
-		{ID: 6, Account: "cat-two", UpdatedAt: updatedAt, Relevance: domainsearch.UserRelevanceAccountPrefix},
+		{ID: 7, Nickname: "cat", UpdatedAt: updatedAt, Relevance: domainsearch.UserRelevanceExactNickname},
+		{ID: 6, Nickname: "cat-two", UpdatedAt: updatedAt, Relevance: domainsearch.UserRelevanceNicknamePrefix},
 	}}
 	service := New(&videoIndexStub{}, userIndex)
 	page, err := service.SearchUsers(context.Background(), Request{Query: "cat", Limit: 1})

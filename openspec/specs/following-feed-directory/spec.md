@@ -22,23 +22,31 @@ The authenticated Following Feed SHALL render a people directory beside the inde
 - **THEN** the existing authentication state is shown and no relationship data request is exposed
 
 ### Requirement: Searchable relationship pagination
-`GET /api/users/me/following` SHALL support optional normalized account-or-nickname search while preserving cursor pagination. The response SHALL add the followed account identifier and SHALL continue returning only active relationships to normal target accounts.
+`GET /api/users/me/following` SHALL support optional normalized nickname search while preserving cursor pagination. Following and follower responses SHALL omit account identifiers and SHALL continue returning only active relationships to normal target accounts.
 
 #### Scenario: Empty query lists recent follows
 - **WHEN** the request omits `q` or supplies only whitespace
-- **THEN** active follows are returned in the existing stable recent-follow order
+- **THEN** active follows are returned in the existing stable recent-follow order without account identifiers
 
-#### Scenario: Query matches account or nickname
+#### Scenario: Query matches nickname
 - **WHEN** a valid `q` is supplied
-- **THEN** only active followed users whose account or nickname contains the normalized query are returned
+- **THEN** only active followed users whose nickname contains the normalized query are returned
+
+#### Scenario: Query matches only account identifier
+- **WHEN** a query matches a followed user's account identifier but not their nickname
+- **THEN** that user is not returned because account identifiers are not a relationship discovery key
 
 #### Scenario: Search cursor is reused with another query
 - **WHEN** a cursor produced for one normalized query or list kind is supplied with another
 - **THEN** the API rejects it as an invalid relation cursor
 
+#### Scenario: Pre-privacy query cursor is used
+- **WHEN** a versioned cursor produced under account-or-nickname search rules is supplied with a non-empty query
+- **THEN** the API rejects it rather than continuing with incompatible matching semantics
+
 #### Scenario: Legacy cursor is used without search
-- **WHEN** an existing unversioned cursor is supplied with an empty query
-- **THEN** the API continues the unfiltered list without changing ordering
+- **WHEN** an existing compatible cursor is supplied with an empty query
+- **THEN** the API may continue the unfiltered list without changing ordering
 
 #### Scenario: Invalid search query is supplied
 - **WHEN** `q` exceeds the supported Unicode length or otherwise fails validation
@@ -64,15 +72,19 @@ The Web client SHALL maintain directory items, query, cursor, loading, loading-m
 - **THEN** the directory shows a truthful empty state while the Following Feed shows its existing empty behavior
 
 ### Requirement: Truthful people rows
-Directory rows SHALL display only available relationship and profile facts: avatar fallback, nickname, account, and optional bio. The directory MUST NOT display live state, unread-work counts, or activity badges without corresponding durable Frux data.
+Directory rows SHALL display only available relationship and public profile facts: avatar fallback, nickname, and optional bio. The directory MUST NOT display account identifiers, live state, unread-work counts, or activity badges without corresponding public Frux data.
 
-#### Scenario: Followed user has complete profile data
-- **WHEN** a directory row has nickname, account, avatar, and bio
-- **THEN** those values are displayed using the shared identity and avatar rules
+#### Scenario: Followed user has complete public profile data
+- **WHEN** a directory row has nickname, avatar, and bio
+- **THEN** those values are displayed using the shared public identity and avatar rules without an account identifier
 
 #### Scenario: Followed user lacks optional profile data
 - **WHEN** avatar or bio is empty
 - **THEN** the shared default avatar or a neutral empty secondary presentation is used without invented text or counts
+
+#### Scenario: Relationship response contains user identity
+- **WHEN** the Web receives a following or follower row
+- **THEN** the row contains no account identifier to render, cache, or use for local filtering
 
 ### Requirement: Profile navigation without Feed filtering
 Activating a directory row SHALL open the existing typed public-profile destination. It SHALL NOT replace the Following Feed with an undeclared author-only Feed or mutate the active relationship.

@@ -26,7 +26,6 @@ type videoResultResponse struct {
 
 type userResultResponse struct {
 	ID        int64  `json:"id"`
-	Account   string `json:"account"`
 	Nickname  string `json:"nickname"`
 	AvatarURL string `json:"avatar_url"`
 	Bio       string `json:"bio"`

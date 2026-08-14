@@ -11,18 +11,15 @@ import (
 
 const userSearchRelevanceSQL = `
 	CASE
-		WHEN LOWER(a.account) = LOWER(?) THEN 1
-		WHEN a.account ILIKE ? ESCAPE '\' THEN 2
+		WHEN LOWER(a.nickname) = LOWER(?) THEN 1
+		WHEN a.nickname ILIKE ? ESCAPE '\' THEN 2
 		WHEN a.nickname ILIKE ? ESCAPE '\' THEN 3
-		WHEN a.account ILIKE ? ESCAPE '\' THEN 4
-		WHEN a.nickname ILIKE ? ESCAPE '\' THEN 5
-		ELSE 5
+		ELSE 3
 	END
 `
 
 type userSearchModel struct {
 	ID        int64
-	Account   string
 	Nickname  string
 	AvatarURL string
 	Bio       string
@@ -38,7 +35,7 @@ func (r *Repository) SearchUsers(ctx context.Context, query string, cursor *doma
 	items := make([]*domainsearch.UserIndexItem, 0, len(models))
 	for _, model := range models {
 		items = append(items, &domainsearch.UserIndexItem{
-			ID: model.ID, Account: model.Account, Nickname: model.Nickname,
+			ID: model.ID, Nickname: model.Nickname,
 			AvatarURL: model.AvatarURL, Bio: model.Bio,
 			UpdatedAt: model.UpdatedAt, Relevance: model.Relevance,
 		})
@@ -53,20 +50,14 @@ func buildUserSearchQuery(db *gorm.DB, query string, cursor *domainsearch.UserCu
 	base := db.
 		Table("account AS a").
 		Select(
-			`a.id, a.account, a.nickname, a.avatar_url, a.bio, a.updated_at, `+
+			`a.id, a.nickname, a.avatar_url, a.bio, a.updated_at, `+
 				userSearchRelevanceSQL+` AS relevance`,
 			query,
 			prefixPattern,
-			prefixPattern,
-			containsPattern,
 			containsPattern,
 		).
 		Where("a.status = ?", domainaccount.StatusNormal).
-		Where(
-			"(a.account ILIKE ? ESCAPE '\\' OR a.nickname ILIKE ? ESCAPE '\\')",
-			containsPattern,
-			containsPattern,
-		)
+		Where("a.nickname ILIKE ? ESCAPE '\\'", containsPattern)
 
 	ranked := db.Table("(?) AS ranked_users", base)
 	if cursor != nil {

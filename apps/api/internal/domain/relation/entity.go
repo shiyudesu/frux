@@ -14,7 +14,7 @@ const (
 	MaxRecommendationRequestIDLength = 64
 	MaxLimit                         = 100
 	MaxListQueryLength               = 64
-	ListCursorVersion                = 1
+	ListCursorVersion                = 2
 )
 
 type ListKind string
@@ -52,7 +52,6 @@ type RelationStat struct {
 // UserItem 是关注列表或粉丝列表中的用户展示数据。
 type UserItem struct {
 	UserID     int64
-	Account    string
 	Nickname   string
 	AvatarURL  string
 	Bio        string
@@ -148,10 +147,9 @@ func RestoreRelationStat(userID int64, followingCount int, followerCount int, cr
 }
 
 // RestoreUserItem 从查询结果恢复列表展示用户。
-func RestoreUserItem(userID int64, account string, nickname string, avatarURL string, bio string, followedAt time.Time) *UserItem {
+func RestoreUserItem(userID int64, nickname string, avatarURL string, bio string, followedAt time.Time) *UserItem {
 	return &UserItem{
 		UserID:     userID,
-		Account:    strings.TrimSpace(account),
 		Nickname:   strings.TrimSpace(nickname),
 		AvatarURL:  strings.TrimSpace(avatarURL),
 		Bio:        strings.TrimSpace(bio),

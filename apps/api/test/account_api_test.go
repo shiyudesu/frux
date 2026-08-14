@@ -441,6 +441,9 @@ func TestAccountAPIFlow(t *testing.T) {
 	if created.Account != "alice" || created.Nickname != "Alice Nickname" || created.Status != domainaccount.StatusNormal || created.Role != domainaccount.RoleUser {
 		t.Fatalf("unexpected register response: %+v", created)
 	}
+	if !strings.Contains(registerResponse.Body.String(), `"account":"alice"`) {
+		t.Fatalf("registration response omitted owner account: %s", registerResponse.Body.String())
+	}
 
 	duplicateResponse := performJSONRequest(
 		router,
@@ -475,6 +478,9 @@ func TestAccountAPIFlow(t *testing.T) {
 	decodeJSON(t, meResponse, &profile)
 	if profile.ID != created.ID || profile.Account != "alice" || profile.Nickname != "Alice Nickname" {
 		t.Fatalf("unexpected profile response: %+v", profile)
+	}
+	if !strings.Contains(meResponse.Body.String(), `"account":"alice"`) {
+		t.Fatalf("authenticated profile omitted owner account: %s", meResponse.Body.String())
 	}
 
 	updateResponse := performJSONRequest(
@@ -1206,7 +1212,9 @@ func TestPublicAccountProfile(t *testing.T) {
 	if profile.ID != created.ID || profile.Nickname != "creator name" || profile.FollowingCount != 7 || profile.FollowerCount != 11 || profile.WorkCount != 3 {
 		t.Fatalf("unexpected public profile response: %+v", profile)
 	}
-
+	if strings.Contains(response.Body.String(), `"account"`) {
+		t.Fatalf("public profile leaked account field: %s", response.Body.String())
+	}
 }
 
 func TestProfileGenderAndSettings(t *testing.T) {

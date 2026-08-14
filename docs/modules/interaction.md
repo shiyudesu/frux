@@ -190,9 +190,9 @@ view Group ready，之后才启动 action Group。Source Group 在加入前通�
 | 字段 | 说明 |
 | --- | --- |
 | `id`, `video_id` | 评论和父视频 ID |
-| `user_id`, `user_account`, `user_nickname`, `user_avatar_url` | 来自统一 account 事实源的作者公开身份；根评论墓碑中清空 |
+| `user_id`, `user_nickname`, `user_avatar_url` | 来自统一 account 事实源的作者公开身份；不含私有登录账号，根评论墓碑中清空 |
 | `root_comment_id` | 根评论为 `0`/省略，回复为所属根 ID |
-| `reply_to_comment_id`, `reply_to_user_id/account/nickname/avatar_url` | 仍可见的直接回复目标身份 |
+| `reply_to_comment_id`, `reply_to_user_id/nickname/avatar_url` | 仍可见的直接回复目标公开身份 |
 | `content`, `created_at` | 正文和创建时间 |
 | `status`, `deleted` | 软状态和删除投影 |
 | `reply_count`, `reply_previews` | 活跃回复总数和最多 3 条预览 |
@@ -239,7 +239,7 @@ view Group ready，之后才启动 action Group。Source Group 在加入前通�
 | `cursor` | 空 | 上一页 opaque 游标 |
 | `limit` | 20 | 最大 100 |
 
-响应包含 `items`、`next_cursor`、`has_more`、视频 `comment_count` 和实际 `sort`。根列表只返回正常根评论，以及仍有活跃回复的作者自删根墓碑。每个根最多批量水合 3 条按时间正序的活跃回复预览；canonical account、直接目标、视频作者身份、作者点赞、viewer 点赞和权限均采用共享 set-based 查询，不随根数量产生 N+1。
+响应包含 `items`、`next_cursor`、`has_more`、视频 `comment_count` 和实际 `sort`。根列表只返回正常根评论，以及仍有活跃回复的作者自删根墓碑。每个根最多批量水合 3 条按时间正序的活跃回复预览；规范用户身份、直接目标、视频作者身份、作者点赞、viewer 点赞和权限均采用共享 set-based 查询，不随根数量产生 N+1。
 
 | 模式 | 排序元组 | 游标内容 |
 | --- | --- | --- |
@@ -428,7 +428,7 @@ view Group ready，之后才启动 action Group。Source Group 在加入前通�
 6. 回复点赞可见但不向上影响根热度。
 7. 应用层同时同步评论数缓存，并按实际视频评论增量更新现有视频热榜分数。
 8. `is_video_author` 由不可变 `video.author_id` 与评论 `user_id` 比较；`liked_by_video_author` 由视频作者的 active comment-like 事实派生，不写入评论表。
-9. 评论身份始终从当前 account 行投影公开 account、昵称和头像；评论模块不维护独立账号或头像副本。
+9. 评论身份始终从当前 account 行投影用户 ID、昵称和头像；私有登录账号不进入评论 DTO，评论模块也不维护独立账号或头像副本。
 
 ### 6.3 可见性和删除
 
@@ -436,7 +436,7 @@ view Group ready，之后才启动 action Group。Source Group 在加入前通�
 - 不可读视频统一按 404 处理，缓存或消息深链不能绕过数据库可见性校验。
 - viewer 的 `liked` 和 `can_delete` 由服务端计算；匿名值为 false。
 - 已有评论的授权删除不依赖父视频仍公开，便于作者和治理人员处理私密、下架或删除视频上的历史评论。
-- 根作者墓碑公开投影会清除作者 ID/account/昵称/头像、正文、点赞状态、删除权限、两种作者标识和公开点赞数，但保留活跃回复。
+- 根作者墓碑公开投影会清除作者 ID、昵称、头像、正文、点赞状态、删除权限、两种作者标识和公开点赞数，但保留活跃回复。
 
 ### 6.4 耐久通知 Outbox
 
@@ -483,7 +483,7 @@ view Group ready，之后才启动 action Group。Source Group 在加入前通�
 | 范围 | 已覆盖行为 |
 | --- | --- |
 | Domain/Application | Unicode 1000 code-point 边界、payload 指纹、回复根解析、回复回复扁平化、sort 游标、热度增量和所有删除模式 |
-| API flow | 兼容根创建、热门/最新页、跨 sort 拒绝、回复页、3 条预览、canonical account、作者/作者赞过、可选 viewer、评论点赞、权限、幂等冲突、隐藏视频 |
+| API flow | 兼容根创建、热门/最新页、跨 sort 拒绝、回复页、3 条预览、无账号标识的规范公开身份、作者/作者赞过、可选 viewer、评论点赞、权限、幂等冲突、隐藏视频 |
 | PostgreSQL | schema/backfill/index、稳定排序、有界身份/标识水合查询数、作者点赞/取消点赞、点赞/回复/视频计数、并发差量 reconciliation、治理级联、重复迁移 |
 | Message/Outbox | 根/回复/评论点赞事件、自通知抑制、瞬时重试、稳定去重、结构化目标、terminal 错误和 legacy 消息 |
 | Frontend state/API | 分页合并去重、sort 切换、展开、草稿隔离、创建重放、乐观点赞回滚、删除、登录态切换和直接 thread context |

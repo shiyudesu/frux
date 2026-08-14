@@ -24,9 +24,12 @@ describe("FollowingFeedDirectory", () => {
 
   it("renders truthful followed-user rows and opens profiles", () => {
     const onOpenUser = vi.fn();
-    render(directory({ items: [user(7)] }), false, vi.fn(), onOpenUser);
+    const followed = legacyUser(7);
+    render(directory({ items: [followed] }), false, vi.fn(), onOpenUser);
     click(requiredButton("Creator"));
-    expect(onOpenUser).toHaveBeenCalledWith(user(7));
+    expect(onOpenUser).toHaveBeenCalledWith(followed);
+    expect(required<HTMLInputElement>('input[type="search"]').placeholder).toBe("搜索昵称");
+    expect(container.textContent).not.toContain("private-login");
     expect(container.textContent).not.toContain("正在直播");
     expect(container.textContent).not.toContain("未看");
   });
@@ -88,12 +91,15 @@ describe("FollowingFeedDirectory", () => {
 function user(id: number): RelationUser {
   return {
     user_id: id,
-    account: "creator",
     nickname: "Creator",
     avatar_url: "",
     bio: "bio",
     followed_at: "2026-08-08T00:00:00Z"
   };
+}
+
+function legacyUser(id: number): RelationUser & { account: string } {
+  return { ...user(id), account: "private-login" };
 }
 
 function directory(

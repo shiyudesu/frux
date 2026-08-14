@@ -25,7 +25,7 @@ func TestBuildUserSearchQueryIsParameterizedActiveAndStable(t *testing.T) {
 		Statement
 	sql := statement.SQL.String()
 	for _, fragment := range []string{
-		"a.status =", "a.account ILIKE", "a.nickname ILIKE", "relevance >",
+		"a.status =", "a.nickname ILIKE", "relevance >",
 		"ORDER BY relevance ASC,updated_at DESC,id DESC", "LIMIT",
 	} {
 		if !strings.Contains(sql, fragment) {
@@ -35,7 +35,7 @@ func TestBuildUserSearchQueryIsParameterizedActiveAndStable(t *testing.T) {
 	if strings.Contains(sql, query) {
 		t.Fatalf("user search interpolated query into SQL:\n%s", sql)
 	}
-	if strings.Contains(sql, "password") || strings.Contains(sql, "role") {
+	if strings.Contains(sql, "a.account") || strings.Contains(sql, "password") || strings.Contains(sql, "role") {
 		t.Fatalf("user search projected private account fields:\n%s", sql)
 	}
 	if !containsUserSearchVar(statement.Vars, `name\%\_\\part%`) ||

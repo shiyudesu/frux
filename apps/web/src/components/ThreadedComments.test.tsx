@@ -195,15 +195,13 @@ describe("threaded comment components", () => {
     expect(onOpenUser).toHaveBeenCalledWith({
       id: 7,
       nickname: "目标用户",
-      avatar_url: "/target-avatar.png",
-      bio: ""
+      avatar_url: "/target-avatar.png"
     });
   });
 
   it("renders video-author and author-liked markers with canonical identity", () => {
     const onOpenUser = vi.fn();
     const author = comment(1, {
-      user_account: "creator_account",
       user_nickname: "视频作者",
       is_video_author: true,
       liked_by_video_author: true
@@ -222,7 +220,6 @@ describe("threaded comment components", () => {
     click(buttonByText("视频作者"));
     expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({
       id: 2,
-      account: "creator_account",
       nickname: "视频作者"
     }));
   });
@@ -230,7 +227,6 @@ describe("threaded comment components", () => {
   it("uses one avatar fallback for the same video and comment author", () => {
     const authorComment = comment(1, {
       user_id: 2,
-      user_account: "creator",
       user_avatar_url: "",
       is_video_author: true
     });
@@ -560,13 +556,11 @@ function comment(id: number, patch: Partial<Comment> = {}): Comment {
     id,
     video_id: 3,
     user_id: 2,
-    user_account: "user",
     user_nickname: "用户",
     user_avatar_url: "",
     root_comment_id: 0,
     reply_to_comment_id: 0,
     reply_to_user_id: 0,
-    reply_to_user_account: "",
     reply_to_user_nickname: "",
     reply_to_user_avatar_url: "",
     content: "评论内容",

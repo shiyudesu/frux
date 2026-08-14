@@ -13,8 +13,8 @@ import { creatorVideoStatusLabel, formatMetric } from "../utils";
 import { Icon } from "./Icon";
 import { ProtectedVideoCover } from "./ProtectedVideoCover";
 
-export interface ProfileHeroData {
-  account: string;
+interface ProfileHeroData {
+  id: number;
   nickname: string;
   avatarURL: string;
   bio: string;
@@ -25,14 +25,24 @@ export interface ProfileHeroData {
   receivedLikeCount: number;
 }
 
-interface ProfileHeroProps {
-  profile: ProfileHeroData;
-  owner?: boolean;
+interface ProfileHeroCommonProps {
   actions?: ReactNode;
   onEdit?: () => void;
   onOpenFollowing?: () => void;
   onOpenFollowers?: () => void;
 }
+
+interface OwnerProfileHeroProps extends ProfileHeroCommonProps {
+  owner: true;
+  profile: ProfileHeroData & { account: string };
+}
+
+interface PublicProfileHeroProps extends ProfileHeroCommonProps {
+  owner?: false;
+  profile: ProfileHeroData & { account?: never };
+}
+
+type ProfileHeroProps = OwnerProfileHeroProps | PublicProfileHeroProps;
 
 function genderLabel(gender: Gender): string {
   if (gender === 1) return "男";
@@ -41,26 +51,28 @@ function genderLabel(gender: Gender): string {
   return "";
 }
 
-export function ProfileHero({
-  profile,
-  owner = false,
-  actions,
-  onEdit,
-  onOpenFollowing,
-  onOpenFollowers
-}: ProfileHeroProps) {
+export function ProfileHero(props: ProfileHeroProps) {
+  const {
+    profile,
+    actions,
+    onEdit,
+    onOpenFollowing,
+    onOpenFollowers
+  } = props;
+  const owner = props.owner === true;
   const label = genderLabel(profile.gender);
+  const displayName = profile.nickname || (owner ? props.profile.account : `用户_${profile.id}`);
   return (
     <section className="profile-hero" data-ui="profile-hero">
       <div className="profile-summary">
         <img
           className="profile-avatar"
           src={profile.avatarURL || image.currentUser}
-          alt={`${profile.nickname || profile.account}的头像`}
+          alt={`${displayName}的头像`}
         />
         <div className="profile-identity">
           <div className="profile-name-row">
-            <h1>{profile.nickname || profile.account}</h1>
+            <h1>{displayName}</h1>
             {owner && onEdit && (
               <button className="profile-inline-edit" type="button" onClick={onEdit} aria-label="编辑资料">
                 <Icon name="user-edit" size={18} />
@@ -99,10 +111,12 @@ export function ProfileHero({
               获赞
             </span>
           </div>
-          <p className="profile-account-row">
-            账号：{profile.account}
-            {label && <span className="profile-gender">{label}</span>}
-          </p>
+          {(owner || label) && (
+            <p className="profile-account-row">
+              {owner && <>账号：{props.profile.account}</>}
+              {label && <span className="profile-gender">{label}</span>}
+            </p>
+          )}
           <p className="profile-bio">{profile.bio || "暂未填写简介"}</p>
         </div>
         {actions && <div className="profile-hero-actions">{actions}</div>}

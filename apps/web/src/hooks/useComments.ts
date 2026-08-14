@@ -716,11 +716,9 @@ export type CommentsController = ReturnType<typeof useComments>;
 function normalizeComment(comment: Comment): Comment {
   return {
     ...comment,
-    user_account: comment.user_account || "",
     root_comment_id: Number(comment.root_comment_id || 0),
     reply_to_comment_id: Number(comment.reply_to_comment_id || 0),
     reply_to_user_id: Number(comment.reply_to_user_id || 0),
-    reply_to_user_account: comment.reply_to_user_account || "",
     reply_to_user_nickname: comment.reply_to_user_nickname || "",
     reply_to_user_avatar_url: comment.reply_to_user_avatar_url || "",
     reply_count: Number(comment.reply_count || 0),
@@ -834,7 +832,6 @@ export function applyDeletedComment(
     ? {
         ...item,
         reply_to_user_id: 0,
-        reply_to_user_account: "",
         reply_to_user_nickname: "",
         reply_to_user_avatar_url: ""
       }
@@ -844,11 +841,9 @@ export function applyDeletedComment(
     entities[rootID] = {
       ...currentRoot,
       user_id: 0,
-      user_account: "",
       user_nickname: "",
       user_avatar_url: "",
       reply_to_user_id: 0,
-      reply_to_user_account: "",
       reply_to_user_nickname: "",
       reply_to_user_avatar_url: "",
       content: "",

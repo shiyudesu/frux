@@ -7,6 +7,7 @@ import { playbackNetworkType, readFeedPreloadEnvironment } from "./feedPreload";
 import type { NavigationTarget, Route, VideoDiscussionNavigation } from "./router";
 import {
   parseStoredPublicProfiles,
+  sanitizeStoredPublicProfile,
   type Comment,
   type CreateQoSReportRequest,
   type FeedItem,
@@ -203,7 +204,6 @@ export interface PublicProfileInput {
   followingCount?: number;
   follower_count?: number;
   followerCount?: number;
-  account?: string;
   gender?: 0 | 1 | 2 | 3;
   public_work_count?: number;
   received_like_count?: number;
@@ -225,7 +225,6 @@ export function normalizePublicProfile(profile: PublicProfileInput | null | unde
   const followerCount = valueOrUndefined(profile.follower_count ?? profile.followerCount);
   return {
     id,
-    account: profile.account,
     nickname: profile.nickname || profile.author || profile.user_nickname || `用户_${id}`,
     avatar_url: publicUserAvatar(
       profile.avatar_url || profile.user_avatar_url || profile.author_avatar_url
@@ -260,25 +259,27 @@ export function profileFromFeedItem(item: FeedVideo): PublicProfileInput {
 export function profileFromComment(comment: Comment): PublicProfileInput {
   return {
     id: comment.user_id,
-    ...(comment.user_account ? { account: comment.user_account } : {}),
     nickname: comment.user_nickname || `用户_${comment.user_id}`,
-    avatar_url: publicUserAvatar(comment.user_avatar_url),
-    bio: ""
+    avatar_url: publicUserAvatar(comment.user_avatar_url)
   };
 }
 
 export function profileFromReplyTarget(comment: Comment): PublicProfileInput {
   return {
     id: comment.reply_to_user_id,
-    ...(comment.reply_to_user_account ? { account: comment.reply_to_user_account } : {}),
     nickname: comment.reply_to_user_nickname || `用户_${comment.reply_to_user_id}`,
-    avatar_url: publicUserAvatar(comment.reply_to_user_avatar_url),
-    bio: ""
+    avatar_url: publicUserAvatar(comment.reply_to_user_avatar_url)
   };
 }
 
 export function readPublicProfiles(): Record<string, StoredPublicProfile> {
-  return parseStoredPublicProfiles(localStorage.getItem(PUBLIC_PROFILE_KEY));
+  const raw = localStorage.getItem(PUBLIC_PROFILE_KEY);
+  const profiles = parseStoredPublicProfiles(raw);
+  if (raw !== null) {
+    const sanitized = JSON.stringify(profiles);
+    if (sanitized !== raw) localStorage.setItem(PUBLIC_PROFILE_KEY, sanitized);
+  }
+  return profiles;
 }
 
 export function readPublicProfile(userID: number): StoredPublicProfile | null {
@@ -286,8 +287,10 @@ export function readPublicProfile(userID: number): StoredPublicProfile | null {
 }
 
 export function savePublicProfile(profile: StoredPublicProfile): void {
+  const sanitized = sanitizeStoredPublicProfile(profile);
+  if (!sanitized) return;
   const profiles = readPublicProfiles();
-  profiles[String(profile.id)] = profile;
+  profiles[String(sanitized.id)] = sanitized;
   localStorage.setItem(PUBLIC_PROFILE_KEY, JSON.stringify(profiles));
 }
 

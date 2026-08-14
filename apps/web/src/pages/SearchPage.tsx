@@ -44,7 +44,7 @@ export function SearchPage({ query, tab }: SearchRoute) {
         <div>
           <span>全局搜索</span>
           <h1>{query ? `“${query}” 的搜索结果` : "搜索视频和用户"}</h1>
-          <p>视频按标题和简介匹配，用户按账号和昵称匹配。</p>
+          <p>视频按标题和简介匹配，用户按昵称匹配。</p>
         </div>
       </header>
       <div className="search-tabs" role="tablist" aria-label="搜索类型">
@@ -158,8 +158,7 @@ function SearchUserResults({
           <button className="search-user-card" type="button" key={user.id} onClick={() => onOpen(user.id)}>
             <img src={user.avatar_url || image.currentUser} alt="" />
             <span>
-              <strong>{user.nickname || user.account}</strong>
-              <small>@{user.account}</small>
+              <strong>{user.nickname || `用户_${user.id}`}</strong>
               <p>{user.bio || "暂未填写简介"}</p>
             </span>
             <Icon className="search-user-arrow" name="chevron-down" size={18} />

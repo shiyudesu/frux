@@ -57,14 +57,14 @@ func TestPostgresPublicSearchRankingVisibilityAndLiteralWildcards(t *testing.T) 
 	now := time.Date(2026, 8, 4, 5, 0, 0, 0, time.UTC)
 	users := []infraaccount.UserModel{
 		{ID: 1, Account: "author", Password: "hash", Nickname: "Author", Status: 1, Role: "user", UpdatedAt: now},
-		{ID: 2, Account: "alice", Password: "hash", Nickname: "Exact", Status: 1, Role: "user", UpdatedAt: now},
-		{ID: 3, Account: "alice-two", Password: "hash", Nickname: "Account prefix", Status: 1, Role: "user", UpdatedAt: now.Add(-time.Minute)},
-		{ID: 4, Account: "other-one", Password: "hash", Nickname: "Alice Nick", Status: 1, Role: "user", UpdatedAt: now.Add(-2 * time.Minute)},
-		{ID: 5, Account: "xxalicexx", Password: "hash", Nickname: "Account contains", Status: 1, Role: "user", UpdatedAt: now.Add(-3 * time.Minute)},
-		{ID: 6, Account: "other-two", Password: "hash", Nickname: "The Alice Person", Status: 1, Role: "user", UpdatedAt: now.Add(-4 * time.Minute)},
-		{ID: 7, Account: "literal%_\\user", Password: "hash", Nickname: "Literal", Status: 1, Role: "user", UpdatedAt: now},
-		{ID: 8, Account: "literalxxzuser", Password: "hash", Nickname: "Wildcard decoy", Status: 1, Role: "user", UpdatedAt: now},
-		{ID: 9, Account: "alice-frozen", Password: "hash", Nickname: "Alice Frozen", Status: 2, Role: "user", UpdatedAt: now.Add(time.Hour)},
+		{ID: 2, Account: "private-exact", Password: "hash", Nickname: "alice", Status: 1, Role: "user", UpdatedAt: now},
+		{ID: 3, Account: "private-prefix", Password: "hash", Nickname: "Alice Prefix", Status: 1, Role: "user", UpdatedAt: now.Add(-time.Minute)},
+		{ID: 4, Account: "private-contains-newer", Password: "hash", Nickname: "The Alice Nick", Status: 1, Role: "user", UpdatedAt: now.Add(-2 * time.Minute)},
+		{ID: 5, Account: "alice-account-only", Password: "hash", Nickname: "No public match", Status: 1, Role: "user", UpdatedAt: now.Add(time.Hour)},
+		{ID: 6, Account: "private-contains-older", Password: "hash", Nickname: "Another Alice Person", Status: 1, Role: "user", UpdatedAt: now.Add(-4 * time.Minute)},
+		{ID: 7, Account: "private-literal", Password: "hash", Nickname: "literal%_\\user", Status: 1, Role: "user", UpdatedAt: now},
+		{ID: 8, Account: "private-decoy", Password: "hash", Nickname: "literalxxzuser", Status: 1, Role: "user", UpdatedAt: now},
+		{ID: 9, Account: "private-frozen", Password: "hash", Nickname: "Alice Frozen", Status: 2, Role: "user", UpdatedAt: now.Add(time.Hour)},
 	}
 	if err := db.Create(&users).Error; err != nil {
 		t.Fatalf("seed accounts: %v", err)
@@ -112,13 +112,20 @@ func TestPostgresPublicSearchRankingVisibilityAndLiteralWildcards(t *testing.T) 
 	if err != nil {
 		t.Fatalf("search users: %v", err)
 	}
-	if got := userSearchIDs(userItems); fmt.Sprint(got) != "[2 3 4 5 6]" {
-		t.Fatalf("user relevance/status order = %v, want [2 3 4 5 6]", got)
+	if got := userSearchIDs(userItems); fmt.Sprint(got) != "[2 3 4 6]" {
+		t.Fatalf("user relevance/status order = %v, want [2 3 4 6]", got)
 	}
-	for index, want := range []int{1, 2, 3, 4, 5} {
+	for index, want := range []int{1, 2, 3, 3} {
 		if userItems[index].Relevance != want {
 			t.Fatalf("user %d relevance = %d, want %d", userItems[index].ID, userItems[index].Relevance, want)
 		}
+	}
+	accountOnlyUsers, err := userRepo.SearchUsers(context.Background(), "alice-account-only", nil, 20)
+	if err != nil {
+		t.Fatalf("search users by account-only value: %v", err)
+	}
+	if len(accountOnlyUsers) != 0 {
+		t.Fatalf("account-only user search returned private identity: %+v", accountOnlyUsers)
 	}
 	literalUsers, err := userRepo.SearchUsers(context.Background(), `literal%_\user`, nil, 20)
 	if err != nil {

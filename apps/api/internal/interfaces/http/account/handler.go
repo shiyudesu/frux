@@ -282,7 +282,6 @@ func publicProfileResponse(profile *applicationaccount.Profile) publicUserProfil
 		FollowingCount:    profile.FollowingCount,
 		FollowerCount:     profile.FollowerCount,
 		WorkCount:         profile.WorkCount,
-		Account:           profile.Account,
 		Gender:            profile.Gender,
 		PublicWorkCount:   profile.PublicWorkCount,
 		ReceivedLikeCount: profile.ReceivedLikeCount,

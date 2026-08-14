@@ -50,14 +50,13 @@ describe("public profile playback", () => {
     accountAPI.fetchUserVideos.mockReset();
     accountAPI.fetchPublicProfile.mockResolvedValue({
       id: 2,
-      account: "author",
       nickname: "作者",
       avatar_url: "",
       bio: "",
       following_count: 0,
       follower_count: 0,
       work_count: 2,
-      gender: 0,
+      gender: 2,
       public_work_count: 2,
       received_like_count: 0,
       liked_videos_public: false
@@ -91,6 +90,9 @@ describe("public profile playback", () => {
     });
 
     expect(accountAPI.fetchUserVideos).toHaveBeenCalledWith(2, 24, 0);
+    expect(container.textContent).toContain("作者");
+    expect(container.textContent).toContain("女");
+    expect(container.textContent).not.toContain("账号：");
     click(required<HTMLButtonElement>('button[aria-label="打开作品：作品 1"]'));
 
     const queue = required<HTMLElement>(".collection-queue-dialog");

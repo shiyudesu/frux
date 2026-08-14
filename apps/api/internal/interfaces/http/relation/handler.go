@@ -190,7 +190,6 @@ func relationListResponseFromResult(result *applicationrelation.ListResult) rela
 	for _, item := range result.Items {
 		items = append(items, relationUserResponse{
 			UserID:     item.UserID,
-			Account:    item.Account,
 			Nickname:   item.Nickname,
 			AvatarURL:  item.AvatarURL,
 			Bio:        item.Bio,

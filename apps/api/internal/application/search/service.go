@@ -42,7 +42,6 @@ type VideoResult struct {
 
 type UserResult struct {
 	ID        int64
-	Account   string
 	Nickname  string
 	AvatarURL string
 	Bio       string
@@ -128,7 +127,7 @@ func (s *Service) SearchUsers(ctx context.Context, request Request) (*UserPage, 
 			return nil, ErrSearchFailed
 		}
 		results = append(results, UserResult{
-			ID: item.ID, Account: item.Account, Nickname: item.Nickname,
+			ID: item.ID, Nickname: item.Nickname,
 			AvatarURL: item.AvatarURL, Bio: item.Bio,
 		})
 	}

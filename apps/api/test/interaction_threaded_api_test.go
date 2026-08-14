@@ -36,8 +36,12 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 	if reply2.RootCommentID != root.ID || reply2.ReplyToCommentID != reply1.ID || reply2.ReplyToUserID != reply1.UserID {
 		t.Fatalf("reply-to-reply was not flattened with its direct target: %+v", reply2)
 	}
-	if !reply2.IsVideoAuthor || reply2.UserAccount != memoryInteractionAccount(42) ||
-		reply2.ReplyToUserAccount != memoryInteractionAccount(reply1.UserID) {
+	if !reply2.IsVideoAuthor || reply2.UserID != 42 ||
+		reply2.UserNickname != memoryInteractionNickname(42) ||
+		reply2.UserAvatarURL != memoryInteractionAvatar(42) ||
+		reply2.ReplyToUserID != reply1.UserID ||
+		reply2.ReplyToUserNickname != reply1.UserNickname ||
+		reply2.ReplyToUserAvatarURL != reply1.UserAvatarURL {
 		t.Fatalf("video author reply identity markers are incorrect: %+v", reply2)
 	}
 
@@ -63,11 +67,14 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 		len(hotPage.Items[0].ReplyPreviews) != domaininteraction.ReplyPreviewLimit ||
 		hotPage.Items[0].ReplyPreviews[0].ID != reply1.ID ||
 		hotPage.Items[0].HotScore != 23 || !hotPage.Items[0].Liked || !hotPage.Items[0].CanDelete ||
-		hotPage.Items[0].UserAccount != memoryInteractionAccount(root.UserID) ||
+		hotPage.Items[0].UserID != root.UserID ||
+		hotPage.Items[0].UserNickname != memoryInteractionNickname(root.UserID) ||
+		hotPage.Items[0].UserAvatarURL != memoryInteractionAvatar(root.UserID) ||
 		!hotPage.Items[0].LikedByVideoAuthor ||
 		!hotPage.HasMore || hotPage.NextCursor == "" {
 		t.Fatalf("unexpected hydrated hot page: %+v", hotPage)
 	}
+	assertCommentAccountsOmitted(t, hotResponse.Body.String())
 	hotNextResponse := performJSONRequest(
 		router, http.MethodGet, "/api/videos/1001/comments?sort=hot&limit=1&cursor="+hotPage.NextCursor, "", "",
 	)
@@ -198,8 +205,7 @@ func TestThreadedCommentAPIFlow(t *testing.T) {
 	var tombstonePage interactionCommentListAPIResponse
 	decodeJSON(t, tombstoneResponse, &tombstonePage)
 	for _, item := range tombstonePage.Items {
-		if item.ID == root.ID && (item.UserID != 0 || item.UserAccount != "" ||
-			item.IsVideoAuthor || item.LikedByVideoAuthor) {
+		if item.ID == root.ID && (item.UserID != 0 || item.IsVideoAuthor || item.LikedByVideoAuthor) {
 			t.Fatalf("tombstone leaked identity markers: %+v", item)
 		}
 	}
@@ -334,6 +340,7 @@ func createThreadedCommentForTest(t *testing.T, router *server.Hertz, path strin
 	t.Helper()
 	response := performVideoJSONRequest(router, http.MethodPost, path, body, token, key)
 	requireStatus(t, response, http.StatusCreated)
+	assertCommentAccountsOmitted(t, response.Body.String())
 	var comment interactionCommentAPIResponse
 	decodeJSON(t, response, &comment)
 	return comment

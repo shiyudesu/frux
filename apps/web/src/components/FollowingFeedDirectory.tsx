@@ -43,11 +43,11 @@ export function FollowingFeedDirectory({
       </header>
       <label className="following-directory-search">
         <Icon name="search" size={18} />
-        <span className="sr-only">搜索关注用户</span>
+        <span className="sr-only">按昵称搜索关注用户</span>
         <input
           type="search"
           value={directory.query}
-          placeholder="搜索账号或昵称"
+          placeholder="搜索昵称"
           onChange={(event) => directory.setQuery(event.target.value)}
         />
       </label>
@@ -79,8 +79,8 @@ export function FollowingFeedDirectory({
             >
               <img src={user.avatar_url || image.currentUser} alt="" />
               <span>
-                <strong>{user.nickname || user.account || `用户_${user.user_id}`}</strong>
-                {(user.account || user.bio) && <small>{directoryUserSummary(user)}</small>}
+                <strong>{user.nickname || `用户_${user.user_id}`}</strong>
+                {user.bio && <small>{user.bio}</small>}
               </span>
             </button>
           ))}
@@ -104,10 +104,4 @@ export function FollowingFeedDirectory({
       </div>
     </aside>
   );
-}
-
-function directoryUserSummary(user: RelationUser): string {
-  const account = user.account ? `@${user.account}` : "";
-  if (!user.bio) return account;
-  return account ? `${account} · ${user.bio}` : user.bio;
 }

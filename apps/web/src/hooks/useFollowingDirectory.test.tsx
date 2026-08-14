@@ -95,6 +95,24 @@ describe("following directory state", () => {
     expect(current.items).toEqual([]);
   });
 
+  it("locally matches newly activated users by nickname only", async () => {
+    render(true);
+    await flush();
+    act(() => current.setQuery("private-login"));
+    await flush();
+    await flush();
+
+    const legacyUser: RelationUser & { account: string } = {
+      ...user(3, "Other"),
+      account: "private-login"
+    };
+    act(() => current.setUserActive(legacyUser, true));
+    expect(current.items).toEqual([]);
+
+    act(() => current.setUserActive(user(4, "Private-Login Creator"), true));
+    expect(current.items.map((item) => item.user_id)).toEqual([4]);
+  });
+
   function render(enabled: boolean) {
     act(() => root.render(
       <Harness enabled={enabled} onValue={(value) => { current = value; }} />
@@ -114,11 +132,10 @@ function Harness({
   return null;
 }
 
-function user(id: number, account: string): RelationUser {
+function user(id: number, nickname: string): RelationUser {
   return {
     user_id: id,
-    account,
-    nickname: `用户 ${id}`,
+    nickname,
     avatar_url: "",
     bio: "",
     followed_at: "2026-08-08T00:00:00Z"

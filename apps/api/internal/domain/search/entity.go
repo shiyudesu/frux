@@ -19,11 +19,9 @@ const (
 	VideoRelevanceTitleContains   = 3
 	VideoRelevanceDescriptionOnly = 4
 
-	UserRelevanceExactAccount     = 1
-	UserRelevanceAccountPrefix    = 2
-	UserRelevanceNicknamePrefix   = 3
-	UserRelevanceAccountContains  = 4
-	UserRelevanceNicknameContains = 5
+	UserRelevanceExactNickname    = 1
+	UserRelevanceNicknamePrefix   = 2
+	UserRelevanceNicknameContains = 3
 )
 
 type VideoCursor struct {
@@ -60,7 +58,6 @@ type VideoIndexItem struct {
 
 type UserIndexItem struct {
 	ID        int64
-	Account   string
 	Nickname  string
 	AvatarURL string
 	Bio       string
@@ -91,5 +88,5 @@ func ValidVideoRelevance(value int) bool {
 }
 
 func ValidUserRelevance(value int) bool {
-	return value >= UserRelevanceExactAccount && value <= UserRelevanceNicknameContains
+	return value >= UserRelevanceExactNickname && value <= UserRelevanceNicknameContains
 }

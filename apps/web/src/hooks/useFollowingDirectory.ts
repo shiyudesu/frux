@@ -159,8 +159,7 @@ export type ReturnTypeOfUseFollowingDirectory = ReturnType<typeof useFollowingDi
 
 function matchesQuery(user: RelationUser, query: string): boolean {
   if (!query) return true;
-  return user.account.toLocaleLowerCase().includes(query)
-    || user.nickname.toLocaleLowerCase().includes(query);
+  return user.nickname.toLocaleLowerCase().includes(query);
 }
 
 function deduplicateUsers(items: RelationUser[]): RelationUser[] {

@@ -72,7 +72,6 @@ describe("comment message navigation", () => {
     });
     vi.mocked(fetchPublicProfile).mockResolvedValue({
       id: 4,
-      account: "author",
       nickname: "视频作者",
       avatar_url: "",
       bio: "",

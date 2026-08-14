@@ -145,7 +145,7 @@ apps/api/internal/interfaces/http/relation/
 | --- | --- | --- | --- | --- | --- |
 | `cursor` | query | string | 否 | - | 上一页返回的游标 |
 | `limit` | query | int | 否 | 20 | 返回数量，最大 100 |
-| `q` | query | string | 否 | - | trim 后最多 64 个 Unicode code point，按账号或昵称忽略大小写包含匹配 |
+| `q` | query | string | 否 | - | trim 后最多 64 个 Unicode code point，按昵称忽略大小写包含匹配 |
 
 响应：
 
@@ -154,7 +154,6 @@ apps/api/internal/interfaces/http/relation/
   "items": [
     {
       "user_id": 1002,
-      "account": "creator_1002",
       "nickname": "creator",
       "avatar_url": "https://example.com/avatar.png",
       "bio": "daily maker",
@@ -180,7 +179,7 @@ apps/api/internal/interfaces/http/relation/
 | `followed_at` | 当前页最后一条关注关系的更新时间 |
 | `user_id` | 当前页最后一个被关注用户ID |
 
-关注列表 cursor 使用版本、列表类型、规范化 query、`followed_at` 和 `user_id` 绑定分页上下文。旧版仅含时间与用户 ID 的 cursor 只允许继续用于空 query；跨 query 或将 following cursor 用于 followers 均返回 `RELATION_VALIDATION_FAILED`。
+关注列表 cursor 使用版本、列表类型、规范化 query、`followed_at` 和 `user_id` 绑定分页上下文。账号/昵称混合搜索时期生成的非空 query cursor 不兼容昵称搜索并返回 `RELATION_VALIDATION_FAILED`；旧版仅含时间与用户 ID 的 cursor 仍只允许继续用于空 query。
 
 ### 3.5 我的粉丝列表
 
@@ -281,7 +280,7 @@ apps/api/internal/interfaces/http/relation/
 | 写操作支持幂等 | 相同幂等键重复提交返回同一业务结果 |
 | 单目标读取为直接查询 | 使用唯一关系键判断状态，不通过最多若干页列表推断 |
 | 列表只返回有效关系 | 关注列表和粉丝列表查询 `status=1` 的记录 |
-| 关注搜索 | 只在当前用户的有效关注关系内匹配状态正常账号的 account/nickname，通配符按字面值转义 |
+| 关注搜索 | 只在当前用户的有效关注关系内匹配状态正常用户的 nickname，通配符按字面值转义；登录账号不参与发现 |
 | 列表使用游标分页 | 按 `updated_at DESC, user_id DESC` 或 `updated_at DESC, target_user_id DESC` 稳定翻页 |
 
 ## 6. 错误码
@@ -330,7 +329,8 @@ apps/api/internal/interfaces/http/relation/
 | 关注当前用户 | 返回 `400 FOLLOW_SELF_FORBIDDEN` |
 | 关注异常目标用户 | 返回 `404 TARGET_USER_NOT_FOUND` |
 | 查询关注列表 | 按最近关注时间倒序返回 |
-| 搜索关注账号或昵称 | 大小写不敏感，只返回当前有效关注用户 |
+| 搜索关注昵称 | 大小写不敏感，只返回当前有效关注用户；仅匹配登录账号时不返回 |
+| 旧搜索 cursor | 非空 query 的账号/昵称混合搜索 cursor 返回非法游标 |
 | 搜索 cursor 跨 query/type 复用 | 返回非法游标，不追加错误页面 |
 | 查询粉丝列表 | 按最近成为粉丝时间倒序返回 |
 | 游标翻页 | 多页结果稳定且无重复 |

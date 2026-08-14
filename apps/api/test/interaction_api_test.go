@@ -33,30 +33,36 @@ type interactionActionAPIResponse struct {
 }
 
 type interactionCommentAPIResponse struct {
-	ID                  int64                           `json:"id"`
-	VideoID             int64                           `json:"video_id"`
-	UserID              int64                           `json:"user_id"`
-	UserAccount         string                          `json:"user_account"`
-	UserNickname        string                          `json:"user_nickname"`
-	UserAvatarURL       string                          `json:"user_avatar_url"`
-	RootCommentID       int64                           `json:"root_comment_id"`
-	ReplyToCommentID    int64                           `json:"reply_to_comment_id"`
-	ReplyToUserID       int64                           `json:"reply_to_user_id"`
-	ReplyToUserAccount  string                          `json:"reply_to_user_account"`
-	ReplyToUserNickname string                          `json:"reply_to_user_nickname"`
-	Content             string                          `json:"content"`
-	Status              int                             `json:"status"`
-	Deleted             bool                            `json:"deleted"`
-	ReplyCount          int                             `json:"reply_count"`
-	ReplyPreviews       []interactionCommentAPIResponse `json:"reply_previews"`
-	LikeCount           int                             `json:"like_count"`
-	Liked               bool                            `json:"liked"`
-	CanDelete           bool                            `json:"can_delete"`
-	IsVideoAuthor       bool                            `json:"is_video_author"`
-	LikedByVideoAuthor  bool                            `json:"liked_by_video_author"`
-	HotScore            int64                           `json:"hot_score"`
-	CreatedAt           time.Time                       `json:"created_at"`
-	CommentCount        int                             `json:"comment_count"`
+	ID                   int64                           `json:"id"`
+	VideoID              int64                           `json:"video_id"`
+	UserID               int64                           `json:"user_id"`
+	UserNickname         string                          `json:"user_nickname"`
+	UserAvatarURL        string                          `json:"user_avatar_url"`
+	RootCommentID        int64                           `json:"root_comment_id"`
+	ReplyToCommentID     int64                           `json:"reply_to_comment_id"`
+	ReplyToUserID        int64                           `json:"reply_to_user_id"`
+	ReplyToUserNickname  string                          `json:"reply_to_user_nickname"`
+	ReplyToUserAvatarURL string                          `json:"reply_to_user_avatar_url"`
+	Content              string                          `json:"content"`
+	Status               int                             `json:"status"`
+	Deleted              bool                            `json:"deleted"`
+	ReplyCount           int                             `json:"reply_count"`
+	ReplyPreviews        []interactionCommentAPIResponse `json:"reply_previews"`
+	LikeCount            int                             `json:"like_count"`
+	Liked                bool                            `json:"liked"`
+	CanDelete            bool                            `json:"can_delete"`
+	IsVideoAuthor        bool                            `json:"is_video_author"`
+	LikedByVideoAuthor   bool                            `json:"liked_by_video_author"`
+	HotScore             int64                           `json:"hot_score"`
+	CreatedAt            time.Time                       `json:"created_at"`
+	CommentCount         int                             `json:"comment_count"`
+}
+
+func assertCommentAccountsOmitted(t *testing.T, body string) {
+	t.Helper()
+	if strings.Contains(body, `"user_account"`) || strings.Contains(body, `"reply_to_user_account"`) {
+		t.Fatalf("comment response leaked account fields: %s", body)
+	}
 }
 
 type interactionCommentListAPIResponse struct {
