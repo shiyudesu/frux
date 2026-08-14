@@ -45,6 +45,35 @@ describe("search page navigation", () => {
     expect(window.location.pathname).toBe("/users/2");
   });
 
+  it("keeps a tall user page and loads the next cursor page", async () => {
+    searchAPI.searchUsers
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 20 }, (_, index) => user(index + 1)),
+        next_cursor: "users-next",
+        has_more: true
+      })
+      .mockResolvedValueOnce({
+        items: [user(21)],
+        next_cursor: "",
+        has_more: false
+      });
+
+    window.history.replaceState({}, "", "/search?q=test&tab=users");
+    await render(<SearchPage query="test" tab="users" />);
+
+    expect(container.querySelectorAll(".search-user-card")).toHaveLength(20);
+    expect(required<HTMLElement>(".search-page").contains(buttonByText("加载更多用户"))).toBe(true);
+
+    await clickAndFlush(buttonByText("加载更多用户"));
+
+    expect(searchAPI.searchUsers).toHaveBeenNthCalledWith(1, "test", "");
+    expect(searchAPI.searchUsers).toHaveBeenNthCalledWith(2, "test", "users-next");
+    expect(container.querySelectorAll(".search-user-card")).toHaveLength(21);
+    expect(buttonByText("用户 1")).toBeTruthy();
+    expect(buttonByText("用户 21")).toBeTruthy();
+    expect([...container.querySelectorAll("button")].some((item) => item.textContent === "加载更多用户")).toBe(false);
+  });
+
   async function render(node: React.ReactNode) {
     await act(async () => {
       root.render(<RouterProvider>{node}</RouterProvider>);
@@ -67,6 +96,13 @@ describe("search page navigation", () => {
 
 function click(element: HTMLElement) {
   act(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+async function clickAndFlush(element: HTMLElement) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
 }
 
 function video(id: number) {

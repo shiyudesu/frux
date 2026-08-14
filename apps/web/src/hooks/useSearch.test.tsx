@@ -55,6 +55,75 @@ describe("global search state", () => {
     expect(current.users.items.map((item) => item.id)).toEqual([2]);
   });
 
+  it("continues video search with the returned cursor and appends unique results", async () => {
+    render("猫");
+    searchAPI.searchVideos
+      .mockResolvedValueOnce({
+        items: [video(1), video(2)],
+        next_cursor: "video-next",
+        has_more: true
+      } satisfies SearchVideoPage)
+      .mockResolvedValueOnce({
+        items: [video(2), video(3)],
+        next_cursor: "",
+        has_more: false
+      } satisfies SearchVideoPage);
+
+    await act(async () => {
+      await current.load("videos", true);
+    });
+    expect(current.videos).toMatchObject({
+      nextCursor: "video-next",
+      hasMore: true,
+      state: "ready"
+    });
+
+    await act(async () => {
+      await current.load("videos");
+    });
+    expect(searchAPI.searchVideos).toHaveBeenNthCalledWith(1, "猫", "");
+    expect(searchAPI.searchVideos).toHaveBeenNthCalledWith(2, "猫", "video-next");
+    expect(current.videos.items.map((item) => item.id)).toEqual([1, 2, 3]);
+    expect(current.videos.nextCursor).toBe("");
+    expect(current.videos.hasMore).toBe(false);
+  });
+
+  it("continues user search without changing the independently loaded video page", async () => {
+    render("猫");
+    searchAPI.searchVideos.mockResolvedValueOnce({
+      items: [video(1)],
+      next_cursor: "video-next",
+      has_more: true
+    } satisfies SearchVideoPage);
+    searchAPI.searchUsers
+      .mockResolvedValueOnce({
+        items: [user(10), user(11)],
+        next_cursor: "user-next",
+        has_more: true
+      } satisfies SearchUserPage)
+      .mockResolvedValueOnce({
+        items: [user(11), user(12)],
+        next_cursor: "",
+        has_more: false
+      } satisfies SearchUserPage);
+
+    await act(async () => {
+      await current.load("videos", true);
+      await current.load("users", true);
+    });
+    await act(async () => {
+      await current.load("users");
+    });
+
+    expect(searchAPI.searchUsers).toHaveBeenNthCalledWith(1, "猫", "");
+    expect(searchAPI.searchUsers).toHaveBeenNthCalledWith(2, "猫", "user-next");
+    expect(current.users.items.map((item) => item.id)).toEqual([10, 11, 12]);
+    expect(current.users.hasMore).toBe(false);
+    expect(current.videos.items.map((item) => item.id)).toEqual([1]);
+    expect(current.videos.nextCursor).toBe("video-next");
+    expect(current.videos.hasMore).toBe(true);
+  });
+
   it("ignores a stale response after the route query changes", async () => {
     const oldRequest = deferred<SearchVideoPage>();
     const newRequest = deferred<SearchVideoPage>();

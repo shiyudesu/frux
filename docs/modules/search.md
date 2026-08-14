@@ -81,6 +81,8 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 - URL 的 `q` 与 `tab=videos|users` 是页面状态真相，浏览器前进/后退会同步输入框。
 - 页面明确说明视频匹配标题/简介、用户匹配账号/昵称，避免把视频和用户 Tab 的范围混淆。
 - 视频和用户 Tab 保留独立 items、cursor、has-more、loading 和 error 状态。
+- 搜索页在固定应用壳层内拥有独立纵向滚动；结果超过视口时，全部首屏结果、错误提示和显式“加载更多”入口都可滚动到达。
+- “加载更多”使用当前分类的 `next_cursor` 请求下一页，去重追加结果，并以新的 `has_more` 和 `next_cursor` 决定后续入口。
 - 视频结果进入现有 `/videos/{videoId}`，用户结果进入 `/users/{userId}`。
 - 空 query 不发起宽泛请求；页面展示输入提示。
 - 参数错误返回可操作中文提示；数据库或搜索基础设施异常统一显示“搜索服务暂时不可用，请稍后重试”，网络失败提示检查连接，不向用户暴露内部错误文案。
