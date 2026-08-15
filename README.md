@@ -4,7 +4,6 @@
 
 **面向短视频场景的完整 Feed 系统工程**
 
-[![CI](https://github.com/shiyudesu/frux/actions/workflows/ci.yml/badge.svg)](https://github.com/shiyudesu/frux/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.26.1-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18.3-61DAFB?style=flat-square&logo=react&logoColor=111827)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?style=flat-square&logo=typescript&logoColor=white)
@@ -16,19 +15,31 @@
 Frux 使用 Go、React、PostgreSQL、Redis、Kafka 和 S3 兼容对象存储，
 实现短视频从上传、审核、分发到播放互动的完整链路。
 
-[功能概览](#功能概览) · [快速启动](#快速启动) · [开发与验证](#开发与验证) · [文档](#文档)
+[在线体验](https://frux.shiyudesu.com) · [功能概览](#功能概览) · [快速启动](#快速启动) · [开发与验证](#开发与验证) · [文档](#文档)
 
 </div>
+
+## 在线体验
+
+[https://frux.shiyudesu.com](https://frux.shiyudesu.com)
+
+**郑重说明：**
+
+线上实例中的部分视频素材整理或转载自公开网络，仅用于展示 Frux 的上传、审核、Feed、播放与
+互动等功能，不作商业用途。本人不主张相关素材的著作权，相关权利归原作者及其他合法权利人所有。
+若展示内容侵犯了您的著作权、肖像权或其他合法权益，请通过
+[GitHub Issues](https://github.com/shiyudesu/frux/issues/new) 联系并注明具体内容；收到通知后，
+我会第一时间下架并删除相关素材。
 
 ## 功能概览
 
 | 能力 | 说明 |
 | --- | --- |
-| 视频供给 | 预签名直传、异步转码、MP4/DASH 多码率、封面处理和保护媒体访问 |
-| 内容治理 | 自动审核、人工复审、版本化策略、下架/恢复、后台权限与不可变审计 |
+| 视频供给 | 预签名直传、异步处理、原分辨率 MP4、封面处理和保护媒体访问 |
+| 内容治理 | 自动审核、人工复审、版本化策略、下架/恢复、普通用户账号管理、后台权限与不可变审计 |
 | Feed 分发 | 最新、热门、关注和推荐流，稳定游标、缓存校验、预加载与播放反馈 |
 | 用户互动 | 点赞、收藏、关注、两级评论、消息通知、观看历史和稍后再看 |
-| 播放体验 | 全屏连续播放、清晰度/倍速偏好、QoS 指标和版本化播放遥测 |
+| 播放体验 | 全屏连续播放、倍速与连播偏好、历史多源兼容、QoS 指标和版本化播放遥测 |
 | 稳定性 | PostgreSQL 耐久任务、Kafka 重试/DLQ、Redis 协调限流、Prometheus 与 Grafana |
 
 ## 技术栈
@@ -36,10 +47,10 @@ Frux 使用 Go、React、PostgreSQL、Redis、Kafka 和 S3 兼容对象存储，
 | 层次 | 技术 |
 | --- | --- |
 | API / Worker | Go、CloudWeGo Hertz、GORM |
-| Web | React、TypeScript、Vite、dash.js |
+| Web | React、TypeScript、Vite、原生 HTMLVideoElement、dash.js |
 | 数据 | PostgreSQL、Redis |
 | 事件 | Apache Kafka（KRaft） |
-| 媒体 | MinIO / S3、FFmpeg、MP4、MPEG-DASH |
+| 媒体 | MinIO / S3、FFmpeg、原分辨率 MP4 |
 | 可观测性 | Prometheus、Grafana |
 | 本地编排 | Docker Compose |
 
