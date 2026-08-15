@@ -24,7 +24,7 @@ their acceptance criteria. It is not part of the Kafka message migration.
 **Non-Goals:**
 
 - Calling the service from Go or changing any Go API, worker, feed, or recommendation policy.
-- RabbitMQ producers/consumers, PostgreSQL/Redis access, video embedding storage, backfill, pgvector/ANN, or similarity retrieval.
+- Kafka producers/consumers, PostgreSQL/Redis access, video embedding storage, backfill, pgvector/ANN, or similarity retrieval.
 - Dynamic model selection, model administration, GPU support, online downloads, fine-tuning, or recommendation-model training.
 - Public/browser endpoints, Web integration, user authentication, or storage of request content.
 
@@ -54,7 +54,7 @@ Alternative considered: a general-purpose model server. Rejected because model s
 Before implementation, the four preceding recommendation changes must be archived and their
 measurement/learning acceptance gates satisfied. When this change is eventually applied, Compose may
 build and run the standalone service, but API and Worker do not depend on, wait for, or call it.
-This change adds no Kafka topic, RabbitMQ queue, PostgreSQL table, Redis key, Go client, or
+This change adds no Kafka topic or consumer group, PostgreSQL table, Redis key, Go client, or
 recommendation behavior.
 
 ### 2. Pin one multilingual MiniLM contract
@@ -255,7 +255,7 @@ through the bounded startup or worker-unavailable category.
 
 The multi-stage image resolves locked Python dependencies and downloads the model revision during build. The runtime stage copies only the virtual environment, app, fixtures, and model snapshot. It runs as a numeric non-root user, sets the root filesystem read-only in Compose, sets `TMPDIR=/run/frux-tmp`, mounts only that path as a small `tmpfs` with size/noexec/nosuid/nodev options, drops all Linux capabilities, and uses `no-new-privileges`.
 
-The Compose service is named `semantic-embedding`, has no dependency on PostgreSQL, Redis, RabbitMQ, API, worker, or Web, and publishes no host port. Its readiness healthcheck uses Python's standard library against `127.0.0.1:8081/health/ready`, avoiding an extra curl dependency. Health timing allows up to the 180-second preload window. The model directory remains read-only.
+The Compose service is named `semantic-embedding`, has no dependency on PostgreSQL, Redis, Kafka, API, worker, or Web, and publishes no host port. Its readiness healthcheck uses Python's standard library against `127.0.0.1:8081/health/ready`, avoiding an extra curl dependency. Health timing allows up to the 180-second preload window. The model directory remains read-only.
 
 Service documentation will be `docs/modules/semantic-embedding.md`; `docs/modules/README.md`, `docs/engineering.md`, `docs/architecture.md`, `docs/deployment.md`, and the relevant README/configuration examples will be updated during implementation because this adds a new deployable module. Those documentation updates describe the standalone boundary and must not claim Go integration.
 
@@ -301,7 +301,7 @@ Container contract tests will start the built image with network disabled after 
 6. Validate the locked test suite, image contract tests, `docker compose config`, and strict
    OpenSpec validation.
 7. Rollback by removing/stopping only the semantic embedding container. Existing API, worker, Web,
-   PostgreSQL, Redis, RabbitMQ, Kafka, and recommendation behavior require no data or code rollback.
+   PostgreSQL, Redis, Kafka, and recommendation behavior require no data or code rollback.
 
 ## Open Questions
 

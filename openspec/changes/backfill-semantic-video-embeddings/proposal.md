@@ -27,4 +27,4 @@ None. The existing `semantic-video-embeddings` change already defines the reusab
 
 - Adds a Go operator command/composition entrypoint, backfill application orchestration, persistence scan/checkpoint support, configuration, metrics, tests, container wiring, and operational documentation.
 - Depends explicitly on `add-semantic-embedding-service` for the fixed authenticated batch API and on the narrowed `integrate-semantic-video-embeddings` change for model identity `semantic-minilm-l12-v2@e8f8c211226b894f`, canonical source hashing, validated client behavior, conditional `(video_id, model)` persistence, and coverage interfaces.
-- Reads historical video and embedding facts from PostgreSQL and calls the existing internal semantic service; it adds no public API, Web behavior, RabbitMQ consumer, Redis state, schema for vector search, recommendation consumption, or main-spec edits.
+- Reads historical video and embedding facts from PostgreSQL and calls the existing internal semantic service; it adds no public API, Web behavior, Kafka consumer, Redis state, schema for vector search, recommendation consumption, or main-spec edits.

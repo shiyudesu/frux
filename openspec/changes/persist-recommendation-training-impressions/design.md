@@ -52,7 +52,7 @@ If evidence or outbox insertion fails, the transaction rolls back and Feed keeps
 
 Alternative considered: write the final training row synchronously. Rejected because long-retention analytics persistence and indexes would remain on the Feed critical path and would not provide an explicit replay backlog.
 
-Alternative considered: publish directly to RabbitMQ. Rejected because broker availability must not become a precondition for recording trusted delivery, and the database transaction cannot atomically commit with RabbitMQ.
+Alternative considered: publish directly to Kafka. Rejected because broker availability must not become a precondition for recording trusted delivery, and the database transaction cannot atomically commit with Kafka.
 
 ### 3. Use compact typed outbox and fact tables
 
@@ -77,7 +77,7 @@ The worker will claim a bounded ordered batch using `FOR UPDATE SKIP LOCKED`, se
 
 Failures retain the outbox row, cap `last_error`, clear/expire the lease, and set a capped exponential-backoff `available_at`. Runs are limited by batch count and wall-clock duration so a poison row or backlog cannot monopolize the worker. Pending rows are not age-deleted.
 
-The worker will run in `cmd/worker` without RabbitMQ because the durable source is PostgreSQL. Defaults will be small and operationally configurable under a `recommendation.training_impressions` config block: dispatch interval/batch/lease/run bound, retention, cleanup interval/batch/run bound, and completed-outbox replay retention. The initial fact retention will default to 180 days with validated bounds; completed handoffs will remain for a short replay/diagnostic period such as 7 days.
+The worker will run in `cmd/worker` without Kafka because the durable source is PostgreSQL. Defaults will be small and operationally configurable under a `recommendation.training_impressions` config block: dispatch interval/batch/lease/run bound, retention, cleanup interval/batch/run bound, and completed-outbox replay retention. The initial fact retention will default to 180 days with validated bounds; completed handoffs will remain for a short replay/diagnostic period such as 7 days.
 
 ### 5. Keep training retention independent from security and sampled-log retention
 
@@ -114,7 +114,7 @@ No metric label will include user ID, request ID, video ID, policy version, raw 
 ## Risks / Trade-offs
 
 - [The atomic outbox adds writes to the Feed delivery transaction] → Keep each row compact, batch inserts, index only claim/idempotency/join/cleanup paths, and measure delivery failures and transaction latency.
-- [A worker outage grows the outbox] → Retain pending rows, expose count/oldest-age gauges, use bounded catch-up batches, and never make RabbitMQ part of recovery.
+- [A worker outage grows the outbox] → Retain pending rows, expose count/oldest-age gauges, use bounded catch-up batches, and never make Kafka part of recovery.
 - [Long retention increases storage and privacy exposure] → Default to 180 days with validated bounds, retain only enumerated server-derived fields, and use bounded cleanup.
 - [Absolute rank can be assigned incorrectly on cursor paths] → Assign it before all slicing/filtering, persist it in snapshots, and test first, later, filtered, replayed, and degraded pages with intentional rank gaps.
 - [Schema evolution can mix incompatible feature meanings] → Store record and feature-schema versions on every row and require later dataset export to select supported versions explicitly.

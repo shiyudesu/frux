@@ -27,13 +27,13 @@ Historical reconstruction must tolerate interruption, late and out-of-order sour
 - Generating or refreshing video embeddings; operators use `backfill-semantic-video-embeddings` for that prerequisite.
 - Adding pgvector, ANN indexes or queries, semantic recall, ranking or policy inputs, request-path reads, training, or recommendation behavior changes.
 - Projecting follow, unfollow, `reduce_author`, author catalogs, or synthetic author-affinity vectors.
-- Adding a public/admin HTTP API, Web UI, scheduler, recurring worker, RabbitMQ flow, or Redis state.
+- Adding a public/admin HTTP API, Web UI, scheduler, recurring worker, Kafka flow, or Redis state.
 
 ## Decisions
 
 ### 1. Add a dedicated one-shot Go command with fixed model descriptors
 
-Add `cmd/rebuild-semantic-user-interest`. It loads PostgreSQL and recommendation configuration, validates that the selected descriptor is a statically registered model/profile pair, composes the rebuild runner, optionally exposes an internal metrics listener, emits one final summary, and exits. It does not initialize Redis, RabbitMQ, the Python embedding service, or live workers and does not run migrations.
+Add `cmd/rebuild-semantic-user-interest`. It loads PostgreSQL and recommendation configuration, validates that the selected descriptor is a statically registered model/profile pair, composes the rebuild runner, optionally exposes an internal metrics listener, emits one final summary, and exits. It does not initialize Redis, Kafka, the Python embedding service, or live workers and does not run migrations.
 
 The initial accepted pair is model `semantic-minilm-l12-v2@e8f8c211226b894f`, profile schema `semantic-interest-v1`, dimension 384. The command accepts an exact model key but never an arbitrary model, revision, dimension, schema, or dynamic rule set. Implementation is gated until all three named dependency changes are implemented and strictly valid.
 

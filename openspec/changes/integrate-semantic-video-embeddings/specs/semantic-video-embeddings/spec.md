@@ -4,7 +4,7 @@
 Implementation of this capability SHALL begin only after recommendation-roadmap steps 1-5 and
 `migrate-video-workflows-to-kafka` are completed and archived. The implementation SHALL consume the
 fixed semantic-service contract and the retained `frux.video.published.v1` Kafka contract supplied
-by those prerequisites rather than implementing them early or preserving a RabbitMQ publication
+by those prerequisites rather than implementing them early or preserving a retired broker publication
 path.
 
 #### Scenario: A recommendation prerequisite is still active
@@ -181,7 +181,7 @@ text, URLs, tokens, vectors, raw errors, retry numbers, or arbitrary model strin
 This capability SHALL process semantic embeddings only through normal new-video publication
 delivery. It SHALL NOT add a historical scan, backfill command or job, cursor, checkpoint, dry-run,
 re-embedding mode, semantic user profile, pgvector/ANN query, recall provider, ranking feature,
-policy change, online request-path inference, media lifecycle behavior, or RabbitMQ semantic route.
+policy change, online request-path inference, media lifecycle behavior, or retired broker semantic route.
 
 #### Scenario: Historical videos lack semantic rows
 - **WHEN** existing videos emit no new accepted publication event
@@ -208,4 +208,4 @@ metrics, failure modes, rollout, rollback, and future boundaries.
 
 #### Scenario: Strict validation runs
 - **WHEN** the corrected planning and implementation artifacts are validated
-- **THEN** `openspec validate --all --strict` succeeds without adding RabbitMQ semantic behavior or recommendation consumption
+- **THEN** `openspec validate --all --strict` succeeds without adding an extra broker semantic route or recommendation consumption

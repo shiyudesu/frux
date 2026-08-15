@@ -23,7 +23,7 @@
 - [ ] 4.2 Implement the training-impression worker with bounded batch count/runtime, stale-lease recovery, graceful shutdown, replay success, and retained pending work after failures; add focused worker tests for crashes, retries, duplicates, and poison/backlog isolation.
 - [ ] 4.3 Implement stable batched cleanup for expired facts by `(served_at, id)` and for old dispatched outbox rows, while never deleting pending rows; test cutoffs, batch bounds, and independence from evidence, request-log, outcome, and behavior retention.
 - [ ] 4.4 Add and validate `recommendation.training_impressions` configuration for dispatch/lease/run bounds, 180-day default fact retention, cleanup bounds, and completed-outbox replay retention.
-- [ ] 4.5 Wire persistence and cleanup workers into `cmd/worker` using PostgreSQL only, and verify startup does not add a RabbitMQ dependency to this capability.
+- [ ] 4.5 Wire persistence and cleanup workers into `cmd/worker` using PostgreSQL only, and verify startup does not add a Kafka dependency to this capability.
 
 ## 5. Security and Compatibility Verification
 

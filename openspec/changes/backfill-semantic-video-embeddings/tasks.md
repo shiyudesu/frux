@@ -26,17 +26,17 @@
 
 ## 5. Command Composition and Observability
 
-- [ ] 5.1 Add `cmd/backfill-semantic-video-embeddings` to load existing database/semantic configuration, validate service metadata before scanning, compose the runner without Redis/RabbitMQ or migrations, and return bounded completion/error exit classes.
+- [ ] 5.1 Add `cmd/backfill-semantic-video-embeddings` to load existing database/semantic configuration, validate service metadata before scanning, compose the runner without Redis/Kafka or migrations, and return bounded completion/error exit classes.
 - [ ] 5.2 Add bounded Prometheus collectors and an optional internal health/metrics listener for row outcomes, batch count/duration/results, in-flight work, checkpoint writes, and last progress time with fixed label allowlists.
 - [ ] 5.3 Add periodic structured progress and exactly one final summary with safe counts, elapsed time, pages, attempts, last publication time, stop reason, and redaction tests for IDs, text, vectors, hashes, tokens, URLs, paths, cursors, and raw errors.
 
 ## 6. Container and Operations
 
-- [ ] 6.1 Build and copy the backfill binary in `apps/api/Dockerfile`, then add a manual Compose profile/service with PostgreSQL and semantic-service dependencies, internal-only metrics, no Redis/RabbitMQ dependency, and a persistent checkpoint mount.
+- [ ] 6.1 Build and copy the backfill binary in `apps/api/Dockerfile`, then add a manual Compose profile/service with PostgreSQL and semantic-service dependencies, internal-only metrics, no Redis/Kafka dependency, and a persistent checkpoint mount.
 - [ ] 6.2 Add the semantic embedding backfill operator runbook and update relevant embedding/video, monitoring, engineering, architecture, deployment, module-index, and setup/configuration docs for prerequisites, dry-run, bounded rollout, refresh confirmation, progress/metrics, cancellation/restart, verification, and rollback.
 
 ## 7. Integration and Final Validation
 
 - [ ] 7.1 Add live semantic-service and command integration tests covering missing, stale, force, dry-run, transient retry, contract failure, source changes during inference, cancellation, atomic checkpoint replacement, and restart.
 - [ ] 7.2 Build all three Go entrypoints, run targeted embedding/backfill/config/metrics/PostgreSQL tests, run the complete Go suite, build the container, and validate the manual Compose entrypoint with a strong internal token.
-- [ ] 7.3 Confirm no main specs, live event/RabbitMQ behavior, pgvector/ANN artifacts, profile rebuild, recommendation provider/policy, public API/Web behavior, or training code changed, then run `openspec validate --all --strict`.
+- [ ] 7.3 Confirm no main specs, live Kafka event behavior, pgvector/ANN artifacts, profile rebuild, recommendation provider/policy, public API/Web behavior, or training code changed, then run `openspec validate --all --strict`.

@@ -4,7 +4,7 @@ After Frux completes the trusted-impression, dataset-export, offline-evaluation,
 learning stages, it needs a reproducible semantic representation of Chinese video titles and
 descriptions before later recommendation work can safely depend on learned text embeddings. This
 roadmap step isolates the Python/model runtime and fixes a standalone bounded contract without
-coupling it to the Go worker, persistence, Kafka, RabbitMQ, or recommendation policy.
+coupling it to the Go worker, persistence, Kafka, or recommendation policy.
 
 ## What Changes
 

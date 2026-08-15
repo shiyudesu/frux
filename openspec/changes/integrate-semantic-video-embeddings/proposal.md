@@ -20,7 +20,7 @@ this roadmap step adds a durable, failure-isolated semantic projection on top of
   video embedding store.
 - Add bounded configuration, observability, Compose wiring, tests, rollout, and rollback behavior
   that isolate semantic-service outages from hash generation and unrelated workers.
-- Explicitly exclude RabbitMQ queues or retry headers, historical backfill, semantic user profiles,
+- Explicitly exclude additional Kafka retry topics or compatibility headers, historical backfill, semantic user profiles,
   pgvector/ANN recall, recommendation ranking changes, and media lifecycle work.
 
 ## Capabilities

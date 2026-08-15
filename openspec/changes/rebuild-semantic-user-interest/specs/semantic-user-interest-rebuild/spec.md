@@ -234,7 +234,7 @@ Rebuild SHALL expose bounded-cardinality metrics for users and facts scanned, co
 - **THEN** those values do not appear in metric labels or normal periodic/final summaries
 
 ### Requirement: Dedicated Operator Composition and Model Isolation
-Frux SHALL provide `cmd/rebuild-semantic-user-interest` as a one-shot operator command and a manual container/Compose entrypoint. It SHALL use PostgreSQL and the existing static semantic contracts only, SHALL NOT call the embedding service, and SHALL NOT require Redis or RabbitMQ. Every scan and mutation SHALL be constrained to the selected exact model and profile schema.
+Frux SHALL provide `cmd/rebuild-semantic-user-interest` as a one-shot operator command and a manual container/Compose entrypoint. It SHALL use PostgreSQL and the existing static semantic contracts only, SHALL NOT call the embedding service, and SHALL NOT require Redis or Kafka. Every scan and mutation SHALL be constrained to the selected exact model and profile schema.
 
 #### Scenario: Command runs with the semantic service stopped
 - **WHEN** all required exact-model vectors already exist in PostgreSQL

@@ -2,7 +2,7 @@
 
 The active `add-semantic-embedding-service` change defines the fixed authenticated semantic API. The narrowed `integrate-semantic-video-embeddings` change defines the Go-side model identity, canonical title/description hashing, bounded validated client, finite 384-component vector construction, conditional `(video_id, model)` persistence, and live-event coverage metrics. It intentionally excludes historical scans and names this change as their future owner.
 
-Historical catalog repair has different failure and safety requirements from live RabbitMQ delivery. It must operate on PostgreSQL source-of-truth facts, tolerate interruption and replay, avoid unbounded service/database load, and never rewrite `hash-ngram-v1` or another model. The operator entrypoint must also handle videos whose title, description, visibility, lifecycle, or media readiness changes between candidate selection and persistence.
+Historical catalog repair has different failure and safety requirements from live Kafka delivery. It must operate on PostgreSQL source-of-truth facts, tolerate interruption and replay, avoid unbounded service/database load, and never rewrite `hash-ngram-v1` or another model. The operator entrypoint must also handle videos whose title, description, visibility, lifecycle, or media readiness changes between candidate selection and persistence.
 
 This proposal depends explicitly on both predecessor changes. Implementation must not begin until their fixed service and narrowed integration contracts are available and strictly validated.
 
@@ -18,7 +18,7 @@ This proposal depends explicitly on both predecessor changes. Implementation mus
 
 **Non-Goals:**
 
-- Changing live video-published event handling, RabbitMQ topology, or live retry behavior.
+- Changing live video-published event handling, Kafka consumer groups, or live retry behavior.
 - Adding pgvector, ANN indexes, vector retrieval, profile rebuilds, recommendation providers, ranking/policy fields, or training.
 - Selecting arbitrary models, refreshing all models, deleting embeddings, or replacing `hash-ngram-v1`.
 - Adding a public/admin HTTP API, scheduler, recurring job, Web UI, or distributed work queue.
@@ -29,11 +29,11 @@ This proposal depends explicitly on both predecessor changes. Implementation mus
 
 Add `cmd/backfill-semantic-video-embeddings` as a separate binary. It loads the existing database and semantic integration configuration, opens PostgreSQL, validates the exact service metadata once, composes an application-owned backfill runner, optionally starts a bounded metrics endpoint, runs until a configured stop condition, writes a final summary, and exits.
 
-The command does not initialize Redis or RabbitMQ and does not run schema migration. It requires the schema and semantic integration delivered by its dependencies. This keeps an operator repair tool isolated from continuously running workers and prevents a backfill failure from affecting live consumers.
+The command does not initialize Redis or Kafka and does not run schema migration. It requires the schema and semantic integration delivered by its dependencies. This keeps an operator repair tool isolated from continuously running workers and prevents a backfill failure from affecting live consumers.
 
 The API image will build and copy the binary. Compose will add a manually invoked profile/service entrypoint with PostgreSQL and `semantic-embedding` dependencies, no public port, and a mounted checkpoint directory. Operators may also run the binary directly from `apps/api`.
 
-Alternative considered: add a mode to `cmd/worker`. Rejected because a one-shot catalog mutation should not share lifecycle, cancellation, required Redis/RabbitMQ dependencies, or automatic startup with live workers.
+Alternative considered: add a mode to `cmd/worker`. Rejected because a one-shot catalog mutation should not share lifecycle, cancellation, required Redis/Kafka dependencies, or automatic startup with live workers.
 
 ### 2. Use fixed bounded options with no unlimited mode
 
@@ -88,7 +88,7 @@ Retryable `timeout`, `over_capacity`, and `unavailable` results receive at most 
 
 Cancellation stops new scheduling, cancels in-flight requests and retry waits, waits for goroutines to exit, and emits a final canceled summary. Partial successful writes from an uncheckpointed page are safe: replay uses missing/same-hash checks and conditional persistence.
 
-Alternative considered: enqueue historical work into RabbitMQ. Rejected because it would change live event processing, weaken operator row/runtime controls, and require a second resumability protocol.
+Alternative considered: enqueue historical work into Kafka. Rejected because it would change live event processing, weaken operator row/runtime controls, and require a second resumability protocol.
 
 ### 6. Revalidate source hash and eligibility inside the persistence transaction
 
@@ -145,7 +145,7 @@ Periodic structured progress and the final summary include only run ID, mode, el
 
 Unit tests cover option bounds, confirmation, cursor round trips/corruption, deterministic ordering, classification, retry delays, page-prefix checkpointing, cancellation, summaries, and metric label allowlists. PostgreSQL tests cover eligibility, tuple pagination/horizon behavior, concurrent inserts and visibility/lifecycle/source changes, exact-model compare-and-set outcomes, coexistence with hash/other models, and idempotent replay.
 
-Contract tests use the semantic service from `add-semantic-embedding-service` and the client/vector/repository code from `integrate-semantic-video-embeddings`. End-to-end tests interrupt and restart the command, exercise missing/stale/force and dry-run modes, enforce row/runtime limits, and verify atomic checkpoint replacement. Container tests build the binary into the API image and run the manual Compose entrypoint with a checkpoint mount and no Redis/RabbitMQ dependency.
+Contract tests use the semantic service from `add-semantic-embedding-service` and the client/vector/repository code from `integrate-semantic-video-embeddings`. End-to-end tests interrupt and restart the command, exercise missing/stale/force and dry-run modes, enforce row/runtime limits, and verify atomic checkpoint replacement. Container tests build the binary into the API image and run the manual Compose entrypoint with a checkpoint mount and no Redis/Kafka dependency.
 
 Documentation will add an operator runbook covering prerequisites, exact command examples, dry-run, bounded rollout, refresh confirmation, checkpoint backup/mounting, progress/metrics, cancellation/restart, failure classes, verification queries, and rollback. Rollback stops the command; already persisted exact-model facts remain valid and side-by-side with all other models.
 

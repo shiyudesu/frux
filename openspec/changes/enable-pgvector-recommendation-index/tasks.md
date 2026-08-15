@@ -18,7 +18,7 @@
 - [ ] 3.1 Implement infrastructure-local JSON-to-vector conversion that defensively parses exactly 384 finite values, enforces norm tolerance, normalizes once, and keeps pgvector driver/value types inside infrastructure.
 - [ ] 3.2 Implement stable bounded queries for missing/changed eligible sources and stale/ineligible projection rows, conditional exact-model upsert, and model-isolated deletion for source-missing, private, unpublished, deleted, or media-unready videos.
 - [ ] 3.3 Implement the bounded reconciler with projection-specific advisory locking, per-batch transactions, configured interval/batch/row/deadline limits, idempotent replay, cancellation, invalid-source isolation, and skipped-lock behavior.
-- [ ] 3.4 Compose and supervise reconciliation only in the enabled worker, with clean shutdown and no Redis, RabbitMQ, semantic-service, API, or existing worker-consumer behavior changes.
+- [ ] 3.4 Compose and supervise reconciliation only in the enabled worker, with clean shutdown and no Redis, Kafka, semantic-service, API, or existing worker-consumer behavior changes.
 - [ ] 3.5 Add bounded coverage, reconciliation outcome, cycle result, and duration metrics plus safe logging tests that reject model/video/vector/SQL/raw-error label or field leakage.
 
 ## 4. Guarded Operator Projection Management

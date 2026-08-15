@@ -28,7 +28,7 @@
 ## 5. Bounded Runner, Command, and Observability
 
 - [ ] 5.1 Implement the cancellation-aware runner with user/event/runtime accounting, stable primary and deferred passes, resumable stop reasons, lease renewal, complete-page checkpointing, and dry-run execution with no database mutation.
-- [ ] 5.2 Add `cmd/rebuild-semantic-user-interest` to compose PostgreSQL-only dependencies, validate exact model/schema and resume state, avoid migrations/Redis/RabbitMQ/embedding-service calls, handle OS signals, and return bounded success, cancellation, configuration, conflict, and infrastructure exit classes.
+- [ ] 5.2 Add `cmd/rebuild-semantic-user-interest` to compose PostgreSQL-only dependencies, validate exact model/schema and resume state, avoid migrations/Redis/Kafka/embedding-service calls, handle OS signals, and return bounded success, cancellation, configuration, conflict, and infrastructure exit classes.
 - [ ] 5.3 Add bounded Prometheus metrics plus periodic and exactly one final safe summary for scan progress, baseline/catch-up work, committed/current/deferred/conflicted users, available/missing/invalid vectors, checkpoints, lease state, and coverage completeness.
 - [ ] 5.4 Add runner and command tests for every configured limit, dry-run, guarded force, cancellation during scans and transactions, deferred retry passes, lease loss, checkpoint replay, stop/exit classes, metric label allowlists, and summary redaction.
 

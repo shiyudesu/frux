@@ -38,11 +38,11 @@
 - [ ] 6.1 Add bounded metrics for semantic requests, local gate readiness, intake outcomes, job count/oldest age, leases, retries, and fixed-model coverage without high-cardinality labels.
 - [ ] 6.2 Configure Compose to enable bounded semantic execution against the internal-only service with the shared strong token and a `service_started` dependency.
 - [ ] 6.3 Update embedding, semantic-service, video, engineering, architecture, deployment, setup, and metrics documentation for prerequisites, Kafka intake, PostgreSQL retries, failure isolation, rollout, and rollback.
-- [ ] 6.4 Document the live-only boundary and prove this change adds no historical scan, semantic profile, pgvector/ANN, recommendation consumption, media lifecycle behavior, or RabbitMQ semantic route.
+- [ ] 6.4 Document the live-only boundary and prove this change adds no historical scan, semantic profile, pgvector/ANN, recommendation consumption, media lifecycle behavior, or extra broker semantic route.
 
 ## 7. Validation
 
 - [ ] 7.1 Run targeted Go tests for embedding domain/application/client/config/metrics, Kafka intake, PostgreSQL embedding persistence, and semantic jobs.
 - [ ] 7.2 Run the semantic-service contract suite, outage/recovery integration coverage, and rendered Compose assertions with a strong test token.
 - [ ] 7.3 Build `./cmd/feed` and `./cmd/worker`, then run the complete Go test suite and existing semantic-service tests.
-- [ ] 7.4 Run `openspec validate --all --strict` and inspect the final diff for prerequisite, scope, task-state, RabbitMQ, media-lifecycle, and recommendation-boundary violations.
+- [ ] 7.4 Run `openspec validate --all --strict` and inspect the final diff for prerequisite, scope, task-state, broker, media-lifecycle, and recommendation-boundary violations.

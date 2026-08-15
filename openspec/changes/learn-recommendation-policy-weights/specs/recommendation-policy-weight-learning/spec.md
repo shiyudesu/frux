@@ -5,7 +5,7 @@ Frux SHALL provide a standalone offline operator tool that learns only the exist
 
 #### Scenario: Operator runs weight learning
 - **WHEN** valid local dataset, manifest, and baseline policy files are supplied
-- **THEN** the tool performs all validation, optimization, and evaluation locally without connecting to PostgreSQL, Redis, RabbitMQ, HTTP services, embedding services, or a model server
+- **THEN** the tool performs all validation, optimization, and evaluation locally without connecting to PostgreSQL, Redis, Kafka, HTTP services, embedding services, or a model server
 
 #### Scenario: Learning completes
 - **WHEN** the tool produces a candidate

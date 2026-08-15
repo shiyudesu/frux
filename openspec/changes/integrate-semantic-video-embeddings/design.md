@@ -7,7 +7,7 @@ and standalone semantic-service changes are complete and archived.
 Separately, `migrate-video-workflows-to-kafka` moves video publication to the retained
 `frux.video.published.v1` Kafka topic. Feed and `hash-ngram-v1` processing use independent consumer
 groups, while PostgreSQL remains authoritative for long-running media work. This change builds on
-that completed transport design rather than preserving the former RabbitMQ delivery topology.
+that completed transport design rather than preserving the superseded dual-broker topology.
 
 The semantic HTTP service is deterministic but remote and comparatively expensive. A Kafka
 publication offset therefore cannot remain uncommitted while inference retries occur. The intake
@@ -34,7 +34,7 @@ PostgreSQL.
 - Semantic user-interest projection or rebuild.
 - pgvector, ANN indexes, recall providers, ranking features, policy changes, or online request-path
   inference.
-- RabbitMQ publication, retry, delay, dead-letter, or compatibility queues.
+- Additional Kafka publication, retry, delay, dead-letter, or compatibility streams.
 - Media processing, media lifecycle revocation, or object-store cleanup changes.
 - Mutable model selection, training, or automatic model upgrades.
 
@@ -164,7 +164,7 @@ Rollout order is:
 
 Rollback disables semantic job claims first. Kafka hash intake, durable job rows, and existing
 semantic facts remain intact. The worker can then be rolled back only to a version whose Kafka
-consumer contract is compatible; no RabbitMQ semantic route is restored. Recommendation behavior
+consumer contract is compatible; no retired broker semantic route is restored. Recommendation behavior
 is unaffected because no current provider consumes the semantic rows.
 
 ## Risks / Trade-offs

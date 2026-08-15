@@ -32,7 +32,7 @@
 
 ## 6. Operator Command
 
-- [ ] 6.1 Add `apps/api/cmd/recommendation-dataset-export` with build-injected tool version, existing config/PostgreSQL setup, read-only connection/session safeguards, signal cancellation, bounded identity-safe progress, and no HTTP, Redis, RabbitMQ, worker, or source-write wiring.
+- [ ] 6.1 Add `apps/api/cmd/recommendation-dataset-export` with build-injected tool version, existing config/PostgreSQL setup, read-only connection/session safeguards, signal cancellation, bounded identity-safe progress, and no HTTP, Redis, Kafka, worker, or source-write wiring.
 - [ ] 6.2 Add strict CLI parsing and preflight for required UTC window, `as-of`, label horizon, output, permission-restricted HMAC key file, dataset schema, page size, exactly one split strategy, resume, and safe overwrite, ensuring preflight finishes before final output creation.
 - [ ] 6.3 Add command and end-to-end PostgreSQL tests covering help/usage, malformed flags, insecure or short key files, dependency/version failures, split validation, existing outputs, signals and exit codes, identity-safe stderr, and a repeatable mixed-user/request/video export whose decompressed rows, labels, splits, privacy bounds, ordering, checksum, and manifest are verified.
 

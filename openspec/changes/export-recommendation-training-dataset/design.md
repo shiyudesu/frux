@@ -30,7 +30,7 @@ The output is intended to become the input contract for the later `evaluate-reco
 
 ### 1. Add a standalone operator binary with strict preflight
 
-Add `apps/api/cmd/recommendation-dataset-export` using the existing config/database construction but no HTTP server, worker, Redis, or RabbitMQ. Its required inputs are:
+Add `apps/api/cmd/recommendation-dataset-export` using the existing config/database construction but no HTTP server, worker, Redis, or Kafka. Its required inputs are:
 
 - `--from`, `--to`, and `--as-of` UTC timestamps;
 - `--label-horizon` with a documented default of 24 hours and maximum of 7 days;

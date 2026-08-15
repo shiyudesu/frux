@@ -258,7 +258,7 @@ treated as a substitute for these prerequisites.
 - **THEN** the semantic service remains gated until the measurement and learning prerequisites complete
 
 ### Requirement: No Recommendation or Persistence Integration
-This change SHALL NOT call or modify the Go API or recommendation worker, consume or publish RabbitMQ messages, access PostgreSQL or Redis, persist or backfill video embeddings, add vector columns or ANN indexes, change recommendation policies, or train a recommendation model. A later `integrate-semantic-video-embeddings` change SHALL own consumption and persistence integration.
+This change SHALL NOT call or modify the Go API or recommendation worker, consume or publish Kafka messages, access PostgreSQL or Redis, persist or backfill video embeddings, add vector columns or ANN indexes, change recommendation policies, or train a recommendation model. A later `integrate-semantic-video-embeddings` change SHALL own consumption and persistence integration.
 
 #### Scenario: Standalone service is deployed
 - **WHEN** the semantic embedding container runs

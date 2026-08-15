@@ -86,18 +86,11 @@ The queue-head preview and destructive acknowledgement API is retired. Operators
 Replay is non-destructive, coordinates are exact, and historical pre-retirement admin audit facts
 remain queryable through `GET /api/admin/audit-events`.
 
-## Rollback window
+## Rollback status
 
-The bounded rollback window is seven days after deployment. The previous source artifact is Git
-commit `fb29a27`, and the preserved deployment manifest is under
-`ops/rollback/rabbitmq-retirement/`.
+The bounded legacy-broker rollback package has been retired and removed. The supported production
+runtime is Kafka-only and has no broker toggle or repository-hosted legacy deployment manifest.
 
-Rollback requires deploying the previous API and Worker artifact together with the preserved broker
-manifest and previous configuration. There is no runtime broker toggle in the Kafka-only release.
-Before switching the previous release to RabbitMQ, operators SHALL freeze action, view, publication,
-and media-command ingress; wait for every source and retry Kafka Group to reach zero lag; verify
-action/view/publication outboxes have no pending rows; and record the drain evidence. If Kafka lag
-cannot be proven zero, deploy the previous release with Kafka-active consumers and do not switch to
-RabbitMQ.
-After the seven-day window and a clean observation period, external RabbitMQ infrastructure and its
-volume may be deleted.
+Rollback now means restoring a previously approved Kafka-compatible release while preserving
+PostgreSQL, Kafka, Redis, and object-storage state. Operators must not recreate the retired broker
+topology from historical artifacts or switch current traffic away from the registered Kafka Groups.

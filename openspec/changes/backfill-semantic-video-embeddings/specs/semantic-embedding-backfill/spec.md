@@ -12,7 +12,7 @@ The historical backfill SHALL depend on the completed `add-semantic-embedding-se
 - **THEN** the command fails before scanning or persisting and reports only a bounded dependency error class
 
 ### Requirement: Dedicated Bounded Operator Command
-Frux SHALL provide a one-shot operator command separate from the API and worker. The command SHALL require positive bounded page size, service batch size, concurrency, maximum rows, and maximum runtime; SHALL reject unlimited values; and SHALL initialize PostgreSQL and the semantic client without requiring Redis or RabbitMQ.
+Frux SHALL provide a one-shot operator command separate from the API and worker. The command SHALL require positive bounded page size, service batch size, concurrency, maximum rows, and maximum runtime; SHALL reject unlimited values; and SHALL initialize PostgreSQL and the semantic client without requiring Redis or Kafka.
 
 #### Scenario: Valid bounded command starts
 - **WHEN** an operator supplies valid configuration and options
@@ -22,8 +22,8 @@ Frux SHALL provide a one-shot operator command separate from the API and worker.
 - **WHEN** an option is zero, negative, above its maximum, or requests an unlimited run
 - **THEN** the command exits before opening a scan or calling the semantic service
 
-#### Scenario: Redis or RabbitMQ is absent
-- **WHEN** PostgreSQL and the semantic service are available but Redis or RabbitMQ is not
+#### Scenario: Redis or Kafka is absent
+- **WHEN** PostgreSQL and the semantic service are available but Redis or Kafka is not
 - **THEN** the backfill can run because it does not initialize or use those dependencies
 
 ### Requirement: Eligible Stable Historical Selection
@@ -163,7 +163,7 @@ The command SHALL expose bounded-cardinality metrics for row outcomes, batch res
 - **THEN** it exposes only health and Prometheus metrics, has no public Compose port, and shuts down with the command
 
 ### Requirement: Container Entry Point and Operator Documentation
-The API container build SHALL include the backfill binary. Compose SHALL provide a manually invoked backfill profile/service with PostgreSQL and semantic-service dependencies, no Redis or RabbitMQ dependency, no public port, and a persistent checkpoint mount. Operational documentation SHALL cover prerequisites, exact bounded commands, dry-run, refresh confirmation, metrics, progress, checkpoint durability, cancellation/restart, failure classes, verification, and rollback.
+The API container build SHALL include the backfill binary. Compose SHALL provide a manually invoked backfill profile/service with PostgreSQL and semantic-service dependencies, no Redis or Kafka dependency, no public port, and a persistent checkpoint mount. Operational documentation SHALL cover prerequisites, exact bounded commands, dry-run, refresh confirmation, metrics, progress, checkpoint durability, cancellation/restart, failure classes, verification, and rollback.
 
 #### Scenario: Container image is built
 - **WHEN** the API image build completes
@@ -171,7 +171,7 @@ The API container build SHALL include the backfill binary. Compose SHALL provide
 
 #### Scenario: Manual Compose backfill runs
 - **WHEN** an operator invokes the backfill profile with a mounted checkpoint directory
-- **THEN** the one-shot command can reach PostgreSQL and the internal semantic service without starting a public endpoint or requiring Redis/RabbitMQ
+- **THEN** the one-shot command can reach PostgreSQL and the internal semantic service without starting a public endpoint or requiring Redis/Kafka
 
 #### Scenario: Operator follows rollback procedure
 - **WHEN** a run must be stopped or rolled back
@@ -193,7 +193,7 @@ The implementation SHALL include unit tests for options, confirmation, cursor in
 - **THEN** `openspec validate --all --strict` succeeds without modifying main specifications
 
 ### Requirement: No Live, Retrieval, Profile, Policy, or Training Changes
-This capability SHALL NOT change live event processing, RabbitMQ queues or acknowledgements, pgvector or ANN schema, semantic retrieval, user-interest profile construction, recommendation providers, ranking or policy behavior, online request-path inference, or model training. It SHALL add no public API or Web behavior.
+This capability SHALL NOT change live Kafka event processing, consumer groups or acknowledgements, pgvector or ANN schema, semantic retrieval, user-interest profile construction, recommendation providers, ranking or policy behavior, online request-path inference, or model training. It SHALL add no public API or Web behavior.
 
 #### Scenario: Backfill is deployed
 - **WHEN** the operator command and container entrypoint are available

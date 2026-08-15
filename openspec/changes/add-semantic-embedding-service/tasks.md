@@ -50,5 +50,5 @@
 - [ ] 7.1 Add semantic-service module documentation and update architecture, engineering, deployment, module index, and setup docs.
 - [ ] 7.2 Explicitly document that the capability is roadmap step 5, is not part of Kafka migration, and has no Go caller until `integrate-semantic-video-embeddings`.
 - [ ] 7.3 Run the frozen Python suites, live pinned-model fixtures, image build/offline contract, Compose service health/contract, and security/resource tests.
-- [ ] 7.4 Confirm no Go API/Worker/Web, PostgreSQL, Redis, RabbitMQ, Kafka, persisted embedding, backfill, profile, pgvector, ANN, policy, or training changes are introduced.
+- [ ] 7.4 Confirm no Go API/Worker/Web, PostgreSQL, Redis, Kafka, persisted embedding, backfill, profile, pgvector, ANN, policy, or training changes are introduced.
 - [ ] 7.5 Run `docker compose config` and `openspec validate --all --strict`.

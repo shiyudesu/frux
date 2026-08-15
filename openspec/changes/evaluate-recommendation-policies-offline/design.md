@@ -43,7 +43,7 @@ Add `apps/api/cmd/recommendation-policy-evaluate`. It accepts:
 - `--max-rows`, default 250,000 and bounded through 1,000,000;
 - explicit safe overwrite behavior.
 
-The command uses only standard-library JSON, gzip, hashing, statistics, and filesystem facilities plus Frux domain packages. It does not load application config or connect to PostgreSQL, Redis, RabbitMQ, HTTP, or model services. Manifest row count is checked against `--max-rows` before decompression; the implementation may hold the bounded dataset grouped by request in memory and fails rather than silently sampling an oversized input.
+The command uses only standard-library JSON, gzip, hashing, statistics, and filesystem facilities plus Frux domain packages. It does not load application config or connect to PostgreSQL, Redis, Kafka, HTTP, or model services. Manifest row count is checked against `--max-rows` before decompression; the implementation may hold the bounded dataset grouped by request in memory and fails rather than silently sampling an oversized input.
 
 Alternative considered: Python/pandas. Rejected because the metrics do not require an external numerical stack, adding a second dependency/runtime would weaken reproducibility, and shared Go validation/replay logic is central to compatibility.
 
