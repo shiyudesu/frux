@@ -179,7 +179,7 @@ func (r *Repository) UpsertVariants(ctx context.Context, variants []*domainmedia
 		DoUpdates: clause.AssignmentColumns([]string{
 			"asset_id", "video_id", "profile_version", "source_type", "format", "codec", "audio_codec",
 			"width", "height", "bitrate", "quality", "role", "sort_order", "state",
-			"checksum_sha256", "size_bytes", "public", "updated_at",
+			"checksum_sha256", "size_bytes", "public", "exposure_generation", "updated_at",
 		}),
 	}).Create(&models).Error
 }
@@ -242,9 +242,41 @@ func (r *Repository) UpdateVariantPromotion(
 	objectKey string,
 	public bool,
 ) (bool, error) {
+	updates := map[string]any{
+		"object_key": objectKey,
+		"public":     public,
+		"updated_at": time.Now().UTC(),
+	}
+	if !public {
+		updates["exposure_generation"] = nil
+	}
 	result := r.db.WithContext(ctx).Model(&VariantModel{}).
 		Where("id = ? AND object_key = ? AND public = ?", variantID, expectedObjectKey, expectedPublic).
-		Updates(map[string]any{"object_key": objectKey, "public": public, "updated_at": time.Now().UTC()})
+		Updates(updates)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+func (r *Repository) UpdateVariantExposure(
+	ctx context.Context,
+	variantID int64,
+	expectedObjectKey string,
+	expectedPublic bool,
+	expectedGeneration string,
+	public bool,
+	generation string,
+) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&VariantModel{}).
+		Where(
+			"id = ? AND object_key = ? AND public = ? AND COALESCE(exposure_generation, '') = ?",
+			variantID, expectedObjectKey, expectedPublic, expectedGeneration,
+		).
+		Updates(map[string]any{
+			"public": public, "exposure_generation": nullableString(strings.TrimSpace(generation)),
+			"updated_at": time.Now().UTC(),
+		})
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -519,7 +551,7 @@ func upsertVariants(tx *gorm.DB, variants []*domainmedia.MediaVariant) error {
 		DoUpdates: clause.AssignmentColumns([]string{
 			"asset_id", "video_id", "profile_version", "source_type", "format", "codec", "audio_codec",
 			"width", "height", "bitrate", "quality", "role", "sort_order", "state",
-			"checksum_sha256", "size_bytes", "public", "updated_at",
+			"checksum_sha256", "size_bytes", "public", "exposure_generation", "updated_at",
 		}),
 	}).Create(&models).Error
 }
@@ -532,12 +564,7 @@ func createCleanupTasks(
 	if len(tasks) == 0 {
 		return nil
 	}
-	models := make([]CleanupTaskModel, 0, len(tasks))
-	for _, task := range tasks {
-		if task != nil {
-			models = append(models, cleanupTaskModelFromDomain(task))
-		}
-	}
+	models := cleanupTaskModelsFromDomain(tasks)
 	if len(models) == 0 {
 		return nil
 	}
@@ -889,12 +916,7 @@ func (r *Repository) CreateCleanupTasks(ctx context.Context, tasks []*domainmedi
 	if len(tasks) == 0 {
 		return nil
 	}
-	models := make([]CleanupTaskModel, 0, len(tasks))
-	for _, task := range tasks {
-		if task != nil {
-			models = append(models, cleanupTaskModelFromDomain(task))
-		}
-	}
+	models := cleanupTaskModelsFromDomain(tasks)
 	if len(models) == 0 {
 		return nil
 	}
@@ -1049,10 +1071,11 @@ func (r *Repository) ListIncompletePublicCleanupTasks(
 	var models []CleanupTaskModel
 	if err := r.db.WithContext(ctx).
 		Where(
-			"asset_id IN ? AND object_key LIKE ? AND state <> ?",
+			"asset_id IN ? AND object_key LIKE ? AND state <> ? AND not_before <= ?",
 			assetIDs,
 			"media/%",
 			domainmedia.CleanupStateCompleted,
+			time.Now().UTC(),
 		).
 		Order("id ASC").
 		Find(&models).Error; err != nil {
@@ -1112,7 +1135,8 @@ func variantModelFromDomain(variant *domainmedia.MediaVariant) VariantModel {
 		ID: variant.ID, AssetID: variant.AssetID, VideoID: videoID, ProfileVersion: variant.ProfileVersion,
 		SourceType: variant.SourceType, Format: variant.Format, Codec: variant.Codec, AudioCodec: variant.AudioCodec,
 		Width: variant.Width, Height: variant.Height, Bitrate: variant.Bitrate, Quality: variant.Quality,
-		ObjectKey: variant.ObjectKey, Role: variant.Role, SortOrder: variant.SortOrder, State: variant.State,
+		ObjectKey: variant.ObjectKey, ExposureGeneration: nullableString(variant.ExposureGeneration),
+		Role: variant.Role, SortOrder: variant.SortOrder, State: variant.State,
 		ChecksumSHA256: variant.ChecksumSHA256, SizeBytes: variant.SizeBytes, Public: variant.Public,
 	}
 }
@@ -1126,7 +1150,8 @@ func variantFromModel(model VariantModel) *domainmedia.MediaVariant {
 		ID: model.ID, AssetID: model.AssetID, VideoID: videoID, ProfileVersion: model.ProfileVersion,
 		SourceType: model.SourceType, Format: model.Format, Codec: model.Codec, AudioCodec: model.AudioCodec,
 		Width: model.Width, Height: model.Height, Bitrate: model.Bitrate, Quality: model.Quality,
-		ObjectKey: model.ObjectKey, Role: model.Role, SortOrder: model.SortOrder, State: model.State,
+		ObjectKey: model.ObjectKey, ExposureGeneration: stringValue(model.ExposureGeneration),
+		Role: model.Role, SortOrder: model.SortOrder, State: model.State,
 		ChecksumSHA256: model.ChecksumSHA256, SizeBytes: model.SizeBytes, Public: model.Public,
 		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}
@@ -1216,6 +1241,37 @@ func cleanupTaskModelFromDomain(task *domainmedia.CleanupTask) CleanupTaskModel 
 		ErrorMessage: task.ErrorMessage, NotBefore: task.NotBefore,
 		LeaseOwner: task.LeaseOwner, LeaseUntil: task.LeaseUntil, CompletedAt: task.CompletedAt,
 	}
+}
+
+func cleanupTaskModelsFromDomain(tasks []*domainmedia.CleanupTask) []CleanupTaskModel {
+	type cleanupObject struct {
+		backend string
+		key     string
+	}
+	models := make([]CleanupTaskModel, 0, len(tasks))
+	indexes := make(map[cleanupObject]int, len(tasks))
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		object := cleanupObject{backend: task.StorageBackend, key: task.ObjectKey}
+		if index, ok := indexes[object]; ok {
+			existing := &models[index]
+			if task.NotBefore.Before(existing.NotBefore) {
+				existing.NotBefore = task.NotBefore
+			}
+			if task.MaxAttempts > existing.MaxAttempts {
+				existing.MaxAttempts = task.MaxAttempts
+			}
+			if existing.AssetID == 0 && task.AssetID > 0 {
+				existing.AssetID = task.AssetID
+			}
+			continue
+		}
+		indexes[object] = len(models)
+		models = append(models, cleanupTaskModelFromDomain(task))
+	}
+	return models
 }
 
 func cleanupTaskFromModel(model CleanupTaskModel) *domainmedia.CleanupTask {

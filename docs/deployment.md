@@ -5,7 +5,7 @@ Frux 有两套现成的 Docker Compose：
 | 环境 | Compose | 对象存储 | 用途 |
 | --- | --- | --- | --- |
 | 本地开发 | `apps/docker-compose.yml` | MinIO | 开发、测试、调试 |
-| 当前 Prod | `apps/docker-compose.prod.yml` | 雨云 `frux1` | 个人项目、小流量试运行 |
+| 当前 Prod | `apps/docker-compose.prod.yml` | 雨云 `FRUX_S3_BUCKET` | 个人项目、小流量试运行 |
 
 当前 Prod 是单服务器方案。PostgreSQL、Redis 和 Kafka 都只有一个实例，不具备高可用，也没有
 生产级 Kafka TLS、认证和复制。需要严格生产架构时，再迁移到托管数据库、托管 Kafka 或多机环境。
@@ -60,7 +60,7 @@ Docker Compose
     ├─ 单节点 Kafka
     └─ PostgreSQL backup
 
-API / Worker → 雨云 frux1
+API / Worker → 雨云 FRUX_S3_BUCKET
 ```
 
 只有Web和API绑定宿主机回环地址。PostgreSQL、Redis、Kafka和Worker都没有宿主机端口，公网无法直接
@@ -85,7 +85,7 @@ README、`docs/**`、Issue模板和普通OpenSpec修改仍运行CI，但不会�
 
 ## 雨云媒体流程
 
-`frux1` 始终保持私有。雨云只提供整桶匿名访问开关，没有目录级公共读，所以不要开启公共访问。
+`FRUX_S3_BUCKET` 对应实例始终保持私有。雨云只提供整桶匿名访问开关，没有目录级公共读，所以不要开启公共访问。
 
 上传流程：
 
@@ -98,7 +98,7 @@ API返回短期签名PUT
     ↓
 API用HeadObject校验大小、类型和SHA-256
     ↓
-Worker转码并写回雨云
+Worker下载一次源文件，转码后直接写确定性最终键
 ```
 
 Worker 是 Prod 必需服务，部署与回滚都和 API、Web 一起启动并通过健康检查。当前单机策略保持一个
@@ -114,20 +114,21 @@ durable job 继续负责排队、租约、重试和失败原因。
 ```text
 浏览器请求 Frux /media/*
     ↓
-API确认对象仍属于当前可公开视频
-    ├─ 新视频MP4：307到最长60秒的雨云签名GET
-    └─ 历史MPD/分片：继续按原授权路径交付
+API校验v3 generation、variant和视频当前公开资格
+    ├─ 新视频MP4：可缓存25分钟的307，目标为30分钟雨云签名GET
+    └─ 历史v2/MPD/分片：兼容读取并逐步迁移
 ```
 
 视频字节由雨云提供，VPS只处理授权、小型MPD清单和重定向。原视频、私密视频、审核样本和未知对象
-不会获得签名地址。
+不会获得公开签名地址。发布、下架和恢复只修改PostgreSQL exposure，不复制雨云对象；旧v2对象迁移后
+至少保留30分钟再清理。
 
 雨云网关默认允许跨域预检，因此面板中不需要配置CORS。详细验证方法见
 [雨云对象存储](operations/rainyun-object-storage.md)。
 
 ## 数据和迁移
 
-PostgreSQL是业务数据和媒体元数据的权威来源。一个 `frux1` 只能对应一套Frux PostgreSQL。
+PostgreSQL是业务数据和媒体元数据的权威来源。一个 Bucket 只能对应一套Frux PostgreSQL。
 
 换服务器时：
 
@@ -136,7 +137,7 @@ PostgreSQL是业务数据和媒体元数据的权威来源。一个 `frux1` 只�
 3. 确认媒体表和视频表已经恢复。
 4. 启动包含API和Worker的完整Compose。
 
-不要让空数据库直接连接已有数据的 `frux1` 后启动Worker。当前Prod已关闭未知对象自动清理，避免误删
+不要让空数据库直接连接已有数据的 Bucket 后启动Worker。当前Prod已关闭未知对象自动清理，避免误删
 旧对象，但数据库不知道的旧视频仍然无法使用。
 
 Redis可以重建。Kafka包含事件、重试记录和Consumer Offset；当前单节点方案不提供Kafka灾备，不能

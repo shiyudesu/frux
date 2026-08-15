@@ -11,17 +11,19 @@
 
 | 资产 | 访问方式 | 缓存 |
 | --- | --- | --- |
-| 已就绪公开 MP4/segment/cover | CDN 或公开 `media/` 前缀 | 60 秒并 `must-revalidate`，支持审核撤销 |
-| DASH manifest | CDN 或公开 `media/` 前缀 | 短缓存 |
+| 已就绪公开 MP4/segment/cover | v3 虚拟 URL 校验后签名 protected 对象 | 307 为 25 分钟，媒体响应为 30 分钟并 `must-revalidate` |
+| DASH manifest | v3 虚拟 URL 校验后由 Frux 返回 | 30 分钟并 `must-revalidate` |
 | 原始上传、处理中资产 | owner 获取短期签名 URL | `private, no-store` |
 | 私密作品 | API 不返回公共播放源；owner 按当前引用状态获取签名访问 | `private, no-store` |
 | 删除作品 | 立即移除 API 发现并拒绝 owner 访问，物理对象延迟清理 | 不新增缓存 |
 
-生产对象存储 bucket 默认保持私有；CDN 使用受控 origin 访问。Compose MinIO 仅开放 `media/` 前缀匿名下载，`uploads/` 原始对象不公开。签名 URL 不包含 JWT、Cookie 或长期凭据。
+生产对象存储 bucket 始终保持私有，公开播放也只使用短期签名 GET。签名 URL 不包含 JWT、Cookie 或
+长期凭据。下架立即拒绝新签名，但已缓存 307 或已签发 URL 最多可继续使用 30 分钟。
 
 ## 处理与清理
 
-- Worker 先写临时键，校验大小和 SHA-256 后发布到受保护的 `processed/` 键；只有已挂载且公开可读的视频才提升到匿名/CDN 可读的 `media/` 键。
+- Worker 对输出计算 SHA-256，直接写确定性的 `processed/*` 最终键并 HEAD 校验；匹配对象复用，冲突
+  不覆盖。公开状态由 PostgreSQL `public/exposure_generation` 控制，不复制或移动正文。
 - 处理任务按资产和 profile 版本幂等，租约过期后可重试。
 - 删除请求只写清理任务，不同步批量删除对象。
 - Reconciler 检查缺失源、缺失变体、过期租约和孤儿对象。

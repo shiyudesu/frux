@@ -1010,6 +1010,7 @@ func openSearchPostgres(t *testing.T) *gorm.DB {
 		&infravideo.NotificationOutboxModel{},
 		&infravideo.PublicationEventFactModel{},
 		&infravideo.PublicationEventOutboxModel{},
+		&inframedia.VariantModel{},
 		&inframedia.VideoLifecycleTaskModel{},
 	); err != nil {
 		t.Fatalf("migrate search tables: %v", err)

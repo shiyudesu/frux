@@ -67,6 +67,15 @@ func TestProductionMediaDeliveryEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete cover upload: %v", err)
 	}
+	coverVariants := repo.variants[coverAsset.Asset.ID]
+	if len(coverVariants) != 1 ||
+		coverVariants[0].ObjectKey != coverSession.Session.ObjectKey ||
+		store.puts != 0 || store.opens != 0 {
+		t.Fatalf(
+			"cover completion copied data: variants=%+v puts=%d opens=%d",
+			coverVariants, store.puts, store.opens,
+		)
+	}
 
 	videoRepo := newMemoryVideoRepo()
 	publisher := &memoryVideoPublisher{}
@@ -116,17 +125,17 @@ func TestProductionMediaDeliveryEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load approved video: %v", err)
 	}
-	if !strings.HasPrefix(ready.MediaURL, "https://cdn.example.test/media/v2/") ||
-		!strings.HasSuffix(ready.MediaURL, "/"+protectedMediaVariantSuffix(videoAsset.Asset.ID)) ||
+	if !strings.HasPrefix(ready.MediaURL, "https://cdn.example.test/media/v3/") ||
+		!strings.HasSuffix(ready.MediaURL, "/baseline.mp4") ||
 		len(ready.PlaybackSources) != 1 || publisher.EventCount() != 1 {
 		t.Fatalf("approval did not release ready media: %+v events=%d", ready, publisher.EventCount())
 	}
+	firstPublicURL := ready.MediaURL
 	if err := videoService.SetOffline(ctx, ready.ID); err != nil {
 		t.Fatalf("take production video offline: %v", err)
 	}
-	publicKey := strings.TrimPrefix(ready.MediaURL, "https://cdn.example.test/")
-	if _, err := store.Head(ctx, publicKey); err == nil {
-		t.Fatal("offline video retained public object")
+	if variant := repo.variants[videoAsset.Asset.ID][0]; variant.Public || variant.ExposureGeneration != "" {
+		t.Fatalf("offline video retained public exposure: %+v", variant)
 	}
 	protectedKey := "processed/" + protectedMediaVariantSuffix(videoAsset.Asset.ID)
 	if _, err := store.Head(ctx, protectedKey); err != nil {
@@ -139,7 +148,7 @@ func TestProductionMediaDeliveryEndToEnd(t *testing.T) {
 		t.Fatalf("restore production video: %v", err)
 	}
 	ready, err = videoRepo.FindByID(ctx, ready.ID)
-	if err != nil || ready.MediaURL == "" {
+	if err != nil || ready.MediaURL == "" || ready.MediaURL == firstPublicURL {
 		t.Fatalf("restored video did not republish media: video=%+v err=%v", ready, err)
 	}
 
@@ -427,6 +436,10 @@ func (r *e2eMediaRepo) UpdateAsset(_ context.Context, asset *domainmedia.MediaAs
 
 func (r *e2eMediaRepo) UpsertVariants(_ context.Context, variants []*domainmedia.MediaVariant) error {
 	for _, variant := range variants {
+		if variant.ID == 0 {
+			r.nextID++
+			variant.ID = r.nextID
+		}
 		r.variants[variant.AssetID] = append(r.variants[variant.AssetID], variant)
 	}
 	return nil
@@ -507,6 +520,10 @@ func (r *e2eMediaRepo) FinalizeProcessingJob(
 		r.assets[finalization.Asset.ID] = finalization.Asset
 	}
 	for _, variant := range finalization.Variants {
+		if variant.ID == 0 {
+			r.nextID++
+			variant.ID = r.nextID
+		}
 		r.variants[variant.AssetID] = append(r.variants[variant.AssetID], variant)
 	}
 	r.job = finalization.Job
@@ -548,6 +565,33 @@ func (r *e2eMediaRepo) UpdateVariantPromotion(
 			if variant.ID == variantID && variant.ObjectKey == expectedObjectKey && variant.Public == expectedPublic {
 				variant.ObjectKey = objectKey
 				variant.Public = public
+				if !public {
+					variant.ExposureGeneration = ""
+				}
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (r *e2eMediaRepo) UpdateVariantExposure(
+	_ context.Context,
+	variantID int64,
+	expectedObjectKey string,
+	expectedPublic bool,
+	expectedGeneration string,
+	public bool,
+	generation string,
+) (bool, error) {
+	for _, variants := range r.variants {
+		for _, variant := range variants {
+			if variant.ID == variantID &&
+				variant.ObjectKey == expectedObjectKey &&
+				variant.Public == expectedPublic &&
+				variant.ExposureGeneration == expectedGeneration {
+				variant.Public = public
+				variant.ExposureGeneration = generation
 				return true, nil
 			}
 		}
@@ -605,9 +649,11 @@ func (r *e2eMediaRepo) ListIncompletePublicCleanupTasks(_ context.Context, asset
 		allowed[assetID] = struct{}{}
 	}
 	var tasks []*domainmedia.CleanupTask
+	now := time.Now().UTC()
 	for _, task := range r.cleanupTasks {
 		if _, ok := allowed[task.AssetID]; ok &&
 			strings.HasPrefix(task.ObjectKey, "media/") &&
+			!task.NotBefore.After(now) &&
 			task.State != domainmedia.CleanupStateCompleted {
 			tasks = append(tasks, task)
 		}
@@ -621,15 +667,19 @@ func (*e2eMediaRepo) ReleaseExpiredCleanupLeases(context.Context, time.Time) (in
 
 type e2eObjectStore struct {
 	objects map[string]domainmedia.ObjectMetadata
+	puts    int
+	opens   int
 }
 
 func (s *e2eObjectStore) Put(_ context.Context, key string, _ io.Reader, size int64, contentType, checksum string) (*domainmedia.ObjectMetadata, error) {
+	s.puts++
 	metadata := domainmedia.ObjectMetadata{Key: key, SizeBytes: size, ContentType: contentType, ChecksumSHA256: checksum, LastModified: time.Now().UTC()}
 	s.objects[key] = metadata
 	return &metadata, nil
 }
 
 func (s *e2eObjectStore) Open(_ context.Context, key string) (io.ReadCloser, *domainmedia.ObjectMetadata, error) {
+	s.opens++
 	metadata, ok := s.objects[key]
 	if !ok {
 		return nil, nil, domainmedia.ErrObjectNotFound

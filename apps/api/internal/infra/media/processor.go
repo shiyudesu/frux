@@ -92,7 +92,7 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 	defer os.RemoveAll(workDir)
 
 	sourcePath := filepath.Join(workDir, "source"+sourceExtension(asset.ContentType, asset.ObjectKey))
-	if err := p.downloadSource(ctx, asset, sourcePath); err != nil {
+	if err := p.downloadSource(ctx, asset, sourcePath, "processing_source"); err != nil {
 		return nil, &applicationmedia.ProcessError{Code: "source_download", Err: err}
 	}
 	applicationmedia.ReportProgress(ctx, domainmedia.ProcessingStepInspecting, nil)
@@ -129,7 +129,7 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 	completed := domainmedia.MaxProcessingProgressBPS
 	applicationmedia.ReportProgress(ctx, step, &completed)
 	objectKey, checksum, size, err := p.publishFile(
-		ctx, asset.ID, job.ID, job.ProfileVersion, outputPath, "video/mp4",
+		ctx, asset.ID, job.ProfileVersion, outputPath, "video/mp4",
 	)
 	if err != nil {
 		return nil, err
@@ -316,50 +316,51 @@ func (p *FFmpegProcessor) writeBaselineMP4(
 	return width, height, audioCodec, nil
 }
 
-func (p *FFmpegProcessor) publishFile(ctx context.Context, assetID, jobID int64, profileVersion, path, contentType string) (string, string, int64, error) {
+func (p *FFmpegProcessor) publishFile(
+	ctx context.Context,
+	assetID int64,
+	profileVersion, path, contentType string,
+) (string, string, int64, error) {
 	checksum, size, err := fileChecksum(path)
 	if err != nil {
 		return "", "", 0, &applicationmedia.ProcessError{Code: "checksum_failed", Err: err}
 	}
 	filename := filepath.Base(path)
-	tempKey := fmt.Sprintf("tmp/media/%d/%d/%s", assetID, jobID, filename)
+	finalKey := fmt.Sprintf("processed/%d/%s/%s/%s", assetID, profileVersion, checksum, filename)
+	metadata, err := p.store.Head(ctx, finalKey)
+	if err == nil {
+		if metadata == nil ||
+			metadata.SizeBytes != size ||
+			!strings.EqualFold(metadata.ChecksumSHA256, checksum) {
+			return "", "", 0, &applicationmedia.ProcessError{
+				Code: "output_conflict", Terminal: true,
+				Err: domainmedia.ErrObjectChecksumMismatch,
+			}
+		}
+		completed := domainmedia.MaxProcessingProgressBPS
+		applicationmedia.ReportProgress(
+			ctx, domainmedia.ProcessingStepUploading, &completed,
+		)
+		return finalKey, checksum, size, nil
+	}
+	if !errors.Is(err, domainmedia.ErrObjectNotFound) {
+		return "", "", 0, &applicationmedia.ProcessError{Code: "output_head_failed", Err: err}
+	}
 	zero := 0
 	applicationmedia.ReportProgress(ctx, domainmedia.ProcessingStepUploading, &zero)
-	if err := p.putFile(ctx, tempKey, path, size, contentType, checksum, 0, 5000); err != nil {
+	if err := p.putFile(
+		ctx, finalKey, path, size, contentType, checksum,
+		0, domainmedia.MaxProcessingProgressBPS,
+	); err != nil {
 		return "", "", 0, err
 	}
-	tempMetadata, err := p.store.Head(ctx, tempKey)
-	if err != nil || tempMetadata.SizeBytes != size || !strings.EqualFold(tempMetadata.ChecksumSHA256, checksum) {
-		if err == nil {
-			err = domainmedia.ErrObjectChecksumMismatch
-		}
-		return "", "", 0, &applicationmedia.ProcessError{Code: "temp_verify_failed", Err: err}
-	}
-	finalKey := fmt.Sprintf("processed/%d/%s/%s/%s", assetID, profileVersion, checksum, filename)
-	reader, _, err := p.store.Open(ctx, tempKey)
-	if err != nil {
-		return "", "", 0, &applicationmedia.ProcessError{Code: "temp_open_failed", Err: err}
-	}
-	progressReader := newProgressReader(
-		ctx, reader, size, domainmedia.ProcessingStepUploading, 5000, 5000,
-	)
-	_, putErr := p.store.Put(ctx, finalKey, progressReader, size, contentType, checksum)
-	closeErr := reader.Close()
-	if putErr != nil {
-		return "", "", 0, &applicationmedia.ProcessError{Code: "publish_failed", Err: putErr}
-	}
-	if closeErr != nil {
-		return "", "", 0, &applicationmedia.ProcessError{Code: "publish_close_failed", Err: closeErr}
-	}
 	finalMetadata, err := p.store.Head(ctx, finalKey)
-	if err != nil || finalMetadata.SizeBytes != size || !strings.EqualFold(finalMetadata.ChecksumSHA256, checksum) {
+	if err != nil || finalMetadata == nil || finalMetadata.SizeBytes != size ||
+		!strings.EqualFold(finalMetadata.ChecksumSHA256, checksum) {
 		if err == nil {
 			err = domainmedia.ErrObjectChecksumMismatch
 		}
 		return "", "", 0, &applicationmedia.ProcessError{Code: "publish_verify_failed", Err: err}
-	}
-	if err := p.store.Delete(ctx, tempKey); err != nil {
-		return "", "", 0, &applicationmedia.ProcessError{Code: "temp_cleanup_failed", Err: err}
 	}
 	completed := domainmedia.MaxProcessingProgressBPS
 	applicationmedia.ReportProgress(
@@ -390,7 +391,12 @@ func (p *FFmpegProcessor) putFile(
 	return nil
 }
 
-func (p *FFmpegProcessor) downloadSource(ctx context.Context, asset *domainmedia.MediaAsset, path string) error {
+func (p *FFmpegProcessor) downloadSource(
+	ctx context.Context,
+	asset *domainmedia.MediaAsset,
+	path string,
+	metricSource string,
+) error {
 	reader, metadata, err := p.store.Open(ctx, asset.ObjectKey)
 	if err != nil {
 		return err
@@ -408,6 +414,7 @@ func (p *FFmpegProcessor) downloadSource(ctx context.Context, asset *domainmedia
 		domainmedia.MaxProcessingProgressBPS,
 	)
 	written, copyErr := io.Copy(io.MultiWriter(file, hash), progressReader)
+	inframetrics.ObserveMediaObjectOutboundBytes(metricSource, written)
 	closeErr := file.Close()
 	if copyErr != nil {
 		return copyErr

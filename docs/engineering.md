@@ -258,6 +258,11 @@ GORM Repository 规则：
   command timeout 不得小于最大允许时长。ffmpeg timeout、普通退出和父 context 取消必须区分，
   durable error 保留有界 stderr 尾部。过期处理租约回到 retryable 时记录 `lease_expired`，不得留下
   无原因的重试状态。
+- 新媒体输出直接写确定性的 protected 最终键，必须先 HEAD 并验证大小与 SHA-256；匹配时复用，冲突
+  时失败且不得覆盖。封面 variant 直接引用已验证上传键。公开发布只更新
+  `media_variant.public/exposure_generation`，不得复制正文；v3 resolver 必须同时验证 generation、
+  variant 状态和视频当前公开资格。公开缓存上限为 30 分钟，owner/review/moderation 保持
+  `private, no-store`。历史 v2 修复完成后旧对象至少延迟 30 分钟清理。
 - 活动媒体 profile 只生成一个源分辨率 baseline MP4。H.264/AAC 或无音频源优先 stream copy；
   H.264 加其他受支持音频只复制视频并规范为 AAC；其他视频 codec 只转码一次。新处理不得生成
   rendition、manifest 或 segment；旧 ready variants 继续兼容读取。播放器只有在至少两个可选源时
@@ -425,7 +430,7 @@ protected baseline/cover variant，无匹配 variant 时才回退 original；授
 视频引用。签名 URL JSON 必须返回 `Cache-Control: private, no-store`，Web 请求使用 no-store，
 凭据只保存在组件内存。审核 cover 解析失败不得使有效 video preview 一并失败。
 
-视频 `status` 表达审核生命周期：1 草稿、2 已发布、3 下架、4 删除、5 待审核、6 已拒绝；`visibility` 表达公开/私密，`media_status` 表达媒体处理，三者不得复用。新建视频固定为待审核且 `published_at` 为空；批准首次设置微秒精度发布时间，恢复下架内容不重写。批准、拒绝、下架和恢复必须在数据库行锁内执行操作型转换，不能用通用目标状态覆盖并发决定。所有匿名或跨用户内容读取必须同时验证 `status=published AND visibility=public AND media_status IN (legacy_ready, ready)`；媒体提升在投影事务内重新确认当前资格，失效变体降回保护前缀，任意状态 hydration、`/media` 直读和缓存命中都不能跳过审核门。公共提升使用 CAS 和新 exposure generation，保护副本不删除；公共媒体缓存最长 60 秒并要求重验证。撤销失败返回错误且幂等重试继续执行，过期并发副作用必须按当前数据库资格补偿。发布事件 ID 绑定 `video_id + published_at`，允许失败后安全重试。
+视频 `status` 表达审核生命周期：1 草稿、2 已发布、3 下架、4 删除、5 待审核、6 已拒绝；`visibility` 表达公开/私密，`media_status` 表达媒体处理，三者不得复用。新建视频固定为待审核且 `published_at` 为空；批准首次设置微秒精度发布时间，恢复下架内容不重写。批准、拒绝、下架和恢复必须在数据库行锁内执行操作型转换，不能用通用目标状态覆盖并发决定。所有匿名或跨用户内容读取必须同时验证 `status=published AND visibility=public AND media_status IN (legacy_ready, ready)`；媒体投影在事务内重新确认当前资格，任意状态 hydration、`/media` 直读和缓存命中都不能跳过审核门。公开切换使用 CAS 和新 exposure generation，protected 对象键保持不变；307 缓存最多 25 分钟、签名媒体响应最多 30 分钟并要求重验证。撤销失败返回错误且幂等重试继续执行，过期并发副作用必须按当前数据库资格补偿。发布事件 ID 绑定 `video_id + published_at`，允许失败后安全重试。
 
 最新状态投影与原始流水分表保存。例如 `video_view_events` 是不可变观看流水，`video_view_history` 是可删除的用户历史投影；清空投影不得级联删除原始事实。
 

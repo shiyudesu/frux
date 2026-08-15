@@ -118,6 +118,7 @@ sudo editor /opt/frux/.env.prod
 | `FRUX_REDIS_PASSWORD` | Redis密码 |
 | `FRUX_S3_ACCESS_KEY` | 雨云AccessKey |
 | `FRUX_S3_SECRET_KEY` | 雨云SecretKey |
+| `FRUX_S3_BUCKET` | 雨云对象存储实例的Bucket名 |
 
 生成随机值：
 
@@ -262,11 +263,14 @@ Docker镜像和Volumes
 
 ## Worker
 
-Worker是生产核心服务，会随API和Web一起启动。首次部署前必须确认 `frux1` 是空Bucket，或者已经恢复
+Worker是生产核心服务，会随API和Web一起启动。首次部署前必须确认 `FRUX_S3_BUCKET` 指向空Bucket，或者已经恢复
 与对象存储匹配的PostgreSQL；不要让空数据库连接已有数据的Bucket后启动完整Compose。
 
 当前媒体策略是单并发、最大源时长 180 分钟、单次 ffmpeg 命令超时 360 分钟和 `veryfast` preset。
 `processing` 表示正在执行；`pending`、`retryable` 表示排队；`completed`、`failed` 表示终态。
+Worker下载一次源文件并把输出直接写入确定性的 `processed/*` 最终键。公开发布、下架和恢复只切换
+PostgreSQL exposure generation，不再复制雨云对象。公开307缓存25分钟、签名媒体响应缓存30分钟；
+下架立即停止新授权，但已缓存播放最多延迟30分钟结束。
 
 查看当前任务和失败原因：
 

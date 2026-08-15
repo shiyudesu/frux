@@ -97,7 +97,7 @@ media:
     endpoint: "https://cn-zj1.rains3.com"
     presign_endpoint: "https://cn-zj1.rains3.com"
     region: "us-east-1"
-    bucket: "frux1"
+    bucket: "${FRUX_S3_BUCKET}"
     access_key: "${FRUX_S3_ACCESS_KEY}"
     secret_key: "${FRUX_S3_SECRET_KEY}"
     use_path_style: true

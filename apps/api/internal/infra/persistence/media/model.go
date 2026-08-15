@@ -28,27 +28,28 @@ func (AssetModel) TableName() string {
 }
 
 type VariantModel struct {
-	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	AssetID        int64     `gorm:"column:asset_id;not null;index:idx_media_variant_asset_order,priority:1"`
-	VideoID        *int64    `gorm:"column:video_id;index:idx_media_variant_video_order,priority:1"`
-	ProfileVersion string    `gorm:"column:profile_version;size:64;not null"`
-	SourceType     string    `gorm:"column:source_type;size:16;not null"`
-	Format         string    `gorm:"column:format;size:32;not null"`
-	Codec          string    `gorm:"column:codec;size:64;not null;default:''"`
-	AudioCodec     string    `gorm:"column:audio_codec;size:64;not null;default:''"`
-	Width          int       `gorm:"column:width;not null;default:0"`
-	Height         int       `gorm:"column:height;not null;default:0"`
-	Bitrate        int       `gorm:"column:bitrate;not null;default:0"`
-	Quality        string    `gorm:"column:quality;size:32;not null;default:''"`
-	ObjectKey      string    `gorm:"column:object_key;size:1024;not null;uniqueIndex:uk_media_variant_object_key"`
-	Role           string    `gorm:"column:role;size:24;not null"`
-	SortOrder      int       `gorm:"column:sort_order;not null;default:0;index:idx_media_variant_asset_order,priority:2;index:idx_media_variant_video_order,priority:2"`
-	State          string    `gorm:"column:state;size:24;not null;index:idx_media_variant_state"`
-	ChecksumSHA256 string    `gorm:"column:checksum_sha256;size:64;not null"`
-	SizeBytes      int64     `gorm:"column:size_bytes;not null"`
-	Public         bool      `gorm:"column:public;not null;default:false"`
-	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	ID                 int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	AssetID            int64     `gorm:"column:asset_id;not null;index:idx_media_variant_asset_order,priority:1"`
+	VideoID            *int64    `gorm:"column:video_id;index:idx_media_variant_video_order,priority:1"`
+	ProfileVersion     string    `gorm:"column:profile_version;size:64;not null"`
+	SourceType         string    `gorm:"column:source_type;size:16;not null"`
+	Format             string    `gorm:"column:format;size:32;not null"`
+	Codec              string    `gorm:"column:codec;size:64;not null;default:''"`
+	AudioCodec         string    `gorm:"column:audio_codec;size:64;not null;default:''"`
+	Width              int       `gorm:"column:width;not null;default:0"`
+	Height             int       `gorm:"column:height;not null;default:0"`
+	Bitrate            int       `gorm:"column:bitrate;not null;default:0"`
+	Quality            string    `gorm:"column:quality;size:32;not null;default:''"`
+	ObjectKey          string    `gorm:"column:object_key;size:1024;not null;uniqueIndex:uk_media_variant_object_key"`
+	ExposureGeneration *string   `gorm:"column:exposure_generation;size:32;index:idx_media_variant_exposure,priority:1"`
+	Role               string    `gorm:"column:role;size:24;not null"`
+	SortOrder          int       `gorm:"column:sort_order;not null;default:0;index:idx_media_variant_asset_order,priority:2;index:idx_media_variant_video_order,priority:2"`
+	State              string    `gorm:"column:state;size:24;not null;index:idx_media_variant_state"`
+	ChecksumSHA256     string    `gorm:"column:checksum_sha256;size:64;not null"`
+	SizeBytes          int64     `gorm:"column:size_bytes;not null"`
+	Public             bool      `gorm:"column:public;not null;default:false;index:idx_media_variant_exposure,priority:2"`
+	CreatedAt          time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt          time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (VariantModel) TableName() string {

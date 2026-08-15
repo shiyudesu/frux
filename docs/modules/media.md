@@ -52,7 +52,36 @@ H.264/AAC 源走 stream copy，只有音频不兼容时只转 AAC，其他已接
 H.264 转码。未完成的 `v1` retryable 任务使用相同单输出恢复路径，已完成的历史多源对象不改动。
 Prod 保持单个媒体执行 slot，避免同一 VPS 上多个 x264 进程竞争 CPU 和内存。
 
-## 5. 受保护浏览器访问
+## 5. 对象存储流量与公开交付
+
+新处理结果计算校验和后直接写入确定性的 `processed/{asset}/{profile}/{checksum}/...` 最终键：
+已存在且大小、校验和一致时直接复用；冲突时明确失败，不覆盖已有对象。封面完成后直接把已校验的
+上传键登记为 ready variant，不再下载并重新上传相同文件。
+
+公开状态只保存在 PostgreSQL。发布为同一受保护对象生成
+`/media/media/v3/{generation}/{variant_id}/{filename}` 虚拟地址；公开 resolver 每次签名之前校验
+generation、variant 公开状态以及视频当前仍为已发布、公开且媒体就绪。下架清空 generation，恢复时
+生成新 generation，均不复制或移动媒体正文。
+
+历史 `media/v2/*` 变体先验证对应 `processed/*` 对象；缺失时仅做一次兼容修复读取，再切换为 v3。
+旧对象至少保留 30 分钟并进入延迟清理，迁移窗口内旧 v2 地址仍可读。
+
+```text
+旧流程：源文件 GET -> 临时输出 PUT -> 临时输出 GET -> 最终输出 PUT
+        -> 发布时最终输出 GET -> public copy PUT
+
+新流程：源文件 GET -> 确定性最终输出 PUT
+        -> 发布/下架/恢复只更新 PostgreSQL exposure
+```
+
+公开 307 缓存 25 分钟，雨云签名 GET 和媒体响应缓存 30 分钟；Range、HEAD、ETag 和历史 DASH 相对
+分片继续兼容。下架立即拒绝新签名，但已经缓存的 307 或签名地址最多可继续使用 30 分钟。私密、owner、
+reviewer 和 moderation 访问保持 `private, no-store`。
+
+`frux_media_object_outbound_bytes_total{source}` 记录处理源读取、历史修复读取及公开 full/range 请求
+估算；标签仅使用封闭低基数来源，不包含用户、视频、资产、URL 或对象键。
+
+## 6. 受保护浏览器访问
 
 本地 `/uploads` 的私密视频、封面和处理中预览继续由不可变 owner、视频引用和生命周期共同授权。
 浏览器 `<video>/<img>` 使用仅限 `/uploads` 的 HttpOnly 资产 JWT，并同时要求 Web 维护的

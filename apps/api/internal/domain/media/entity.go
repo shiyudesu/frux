@@ -89,27 +89,28 @@ type MediaAsset struct {
 }
 
 type MediaVariant struct {
-	ID             int64
-	AssetID        int64
-	VideoID        int64
-	ProfileVersion string
-	SourceType     string
-	Format         string
-	Codec          string
-	AudioCodec     string
-	Width          int
-	Height         int
-	Bitrate        int
-	Quality        string
-	ObjectKey      string
-	Role           string
-	SortOrder      int
-	State          string
-	ChecksumSHA256 string
-	SizeBytes      int64
-	Public         bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                 int64
+	AssetID            int64
+	VideoID            int64
+	ProfileVersion     string
+	SourceType         string
+	Format             string
+	Codec              string
+	AudioCodec         string
+	Width              int
+	Height             int
+	Bitrate            int
+	Quality            string
+	ObjectKey          string
+	ExposureGeneration string
+	Role               string
+	SortOrder          int
+	State              string
+	ChecksumSHA256     string
+	SizeBytes          int64
+	Public             bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type ProcessingProfile struct {

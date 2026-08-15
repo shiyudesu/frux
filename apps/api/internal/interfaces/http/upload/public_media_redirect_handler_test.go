@@ -28,7 +28,7 @@ type publicMediaRedirectStore struct {
 	body     string
 }
 
-func (s *publicMediaRedirectStore) PresignGet(
+func (s *publicMediaRedirectStore) PresignPublicGet(
 	_ context.Context,
 	key string,
 	expiry time.Duration,
@@ -62,17 +62,25 @@ func (s *publicMediaRedirectStore) Head(
 }
 
 type publicMediaRedirectAuthorizer struct {
-	allowed bool
-	err     error
-	key     string
+	allowed    bool
+	err        error
+	key        string
+	storageKey string
 }
 
-func (a *publicMediaRedirectAuthorizer) AuthorizePublicMediaObject(
+func (a *publicMediaRedirectAuthorizer) ResolvePublicMediaObject(
 	_ context.Context,
 	key string,
-) (bool, error) {
+) (*domainmedia.PublicMediaObject, error) {
 	a.key = key
-	return a.allowed, a.err
+	if a.err != nil || !a.allowed {
+		return nil, a.err
+	}
+	storageKey := a.storageKey
+	if storageKey == "" {
+		storageKey = key
+	}
+	return &domainmedia.PublicMediaObject{StorageKey: storageKey}, nil
 }
 
 func TestPublicMediaRedirectHandlerRedirectsGetAndServesHead(t *testing.T) {
@@ -87,7 +95,7 @@ func TestPublicMediaRedirectHandlerRedirectsGetAndServesHead(t *testing.T) {
 		},
 	}
 	authorizer := &publicMediaRedirectAuthorizer{allowed: true}
-	handler, err := NewPublicMediaRedirectHandler(store, authorizer, time.Minute)
+	handler, err := NewPublicMediaRedirectHandler(store, authorizer, 30*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +110,7 @@ func TestPublicMediaRedirectHandlerRedirectsGetAndServesHead(t *testing.T) {
 	if location := get.Header().Get("Location"); location != signedURL {
 		t.Fatalf("GET location = %q", location)
 	}
-	if cache := get.Header().Get("Cache-Control"); cache != "private, no-store" {
+	if cache := get.Header().Get("Cache-Control"); cache != "public, max-age=1500, must-revalidate" {
 		t.Fatalf("GET cache control = %q", cache)
 	}
 
@@ -118,7 +126,7 @@ func TestPublicMediaRedirectHandlerRedirectsGetAndServesHead(t *testing.T) {
 		head.Header().Get("Accept-Ranges") != "bytes" {
 		t.Fatalf("HEAD headers = %+v", head.Header())
 	}
-	if store.calls != 1 || store.key != key || store.ttl != time.Minute || authorizer.key != key {
+	if store.calls != 1 || store.key != key || store.ttl != 30*time.Minute || authorizer.key != key {
 		t.Fatalf(
 			"inputs calls=%d key=%q ttl=%s authorized=%q",
 			store.calls, store.key, store.ttl, authorizer.key,
@@ -139,7 +147,7 @@ func TestPublicMediaRedirectHandlerServesStableDASHManifest(t *testing.T) {
 	handler, err := NewPublicMediaRedirectHandler(
 		store,
 		&publicMediaRedirectAuthorizer{allowed: true},
-		time.Minute,
+		30*time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +160,7 @@ func TestPublicMediaRedirectHandlerServesStableDASHManifest(t *testing.T) {
 		t.Fatalf("manifest response status=%d body=%q", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Location") != "" ||
-		response.Header().Get("Cache-Control") != "public, max-age=60, must-revalidate" {
+		response.Header().Get("Cache-Control") != "public, max-age=1800, must-revalidate" {
 		t.Fatalf("manifest headers = %+v", response.Header())
 	}
 	if store.calls != 0 {
@@ -167,7 +175,7 @@ func TestPublicMediaRedirectHandlerRejectsUnauthorizedAndInvalidKeys(t *testing.
 	handler, err := NewPublicMediaRedirectHandler(
 		store,
 		&publicMediaRedirectAuthorizer{},
-		time.Minute,
+		30*time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +202,7 @@ func TestPublicMediaRedirectHandlerReportsStorageFailure(t *testing.T) {
 	handler, err := NewPublicMediaRedirectHandler(
 		store,
 		&publicMediaRedirectAuthorizer{allowed: true},
-		time.Minute,
+		30*time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +233,7 @@ func TestPublicMediaRedirectHandlerDoesNotCacheInvalidManifest(t *testing.T) {
 			},
 		},
 		&publicMediaRedirectAuthorizer{allowed: true},
-		time.Minute,
+		30*time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -247,14 +255,70 @@ func TestPublicMediaRedirectHandlerDoesNotCacheInvalidManifest(t *testing.T) {
 	}
 }
 
-func TestPublicMediaRedirectHandlerRejectsUnsafeTTL(t *testing.T) {
+func TestPublicMediaRedirectHandlerRejectsShortTTL(t *testing.T) {
 	_, err := NewPublicMediaRedirectHandler(
 		&publicMediaRedirectStore{},
 		&publicMediaRedirectAuthorizer{},
-		time.Minute+time.Second,
+		29*time.Minute,
 	)
 	if !errors.Is(err, errInvalidPublicMediaRedirectHandler) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPublicMediaRedirectHandlerReusesSignedURLPerExposureGeneration(t *testing.T) {
+	store := &publicMediaRedirectStore{
+		request: &domainmedia.PresignedRequest{
+			URL:       "https://signed.example.test/processed.mp4",
+			ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+		},
+		metadata: &domainmedia.ObjectMetadata{
+			Key: "processed/7/v1/source.mp4", SizeBytes: 100,
+		},
+	}
+	authorizer := &publicMediaRedirectAuthorizer{
+		allowed: true, storageKey: "processed/7/v1/source.mp4",
+	}
+	handler, err := NewPublicMediaRedirectHandler(store, authorizer, 30*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := server.Default()
+	router.GET("/media/*filepath", handler.Get)
+
+	for _, key := range []string{
+		"media/v3/generation-a/71/source.mp4",
+		"media/v3/generation-a/71/source.mp4",
+		"media/v3/generation-b/71/source.mp4",
+	} {
+		response := ut.PerformRequest(
+			router.Engine,
+			http.MethodGet,
+			"/media/"+key,
+			nil,
+		)
+		if response.Code != http.StatusTemporaryRedirect {
+			t.Fatalf("%s status = %d", key, response.Code)
+		}
+	}
+	if store.calls != 2 {
+		t.Fatalf("presign calls = %d, want 2", store.calls)
+	}
+}
+
+func TestEstimatedRangeBytes(t *testing.T) {
+	tests := map[string]int64{
+		"":              1000,
+		"bytes=0-99":    100,
+		"bytes=900-":    100,
+		"bytes=-50":     50,
+		"bytes=0-2000":  1000,
+		"bytes=1-2,4-5": 1000,
+	}
+	for header, want := range tests {
+		if got := estimatedRangeBytes(header, 1000); got != want {
+			t.Fatalf("range %q = %d, want %d", header, got, want)
+		}
 	}
 }
 
@@ -271,9 +335,12 @@ func TestPublicMediaRedirectPreservesRangeOnFollow(t *testing.T) {
 	handler, err := NewPublicMediaRedirectHandler(
 		&publicMediaRedirectStore{
 			request: &domainmedia.PresignedRequest{URL: signedURL},
+			metadata: &domainmedia.ObjectMetadata{
+				Key: "media/v2/generation/file.mp4", SizeBytes: 1024,
+			},
 		},
 		&publicMediaRedirectAuthorizer{allowed: true},
-		time.Minute,
+		30*time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -87,6 +87,9 @@ func TestReconcilerResetsIncompleteVariantsAndQueuesOrphans(t *testing.T) {
 	store := &operationsStore{objects: map[string]domainmedia.ObjectMetadata{
 		"uploads/2/source.mp4": {Key: "uploads/2/source.mp4", LastModified: now.Add(-time.Hour)},
 		"media/orphan.mp4":     {Key: "media/orphan.mp4", LastModified: now.Add(-time.Hour)},
+		"processed/2/v1/orphan/source.mp4": {
+			Key: "processed/2/v1/orphan/source.mp4", LastModified: now.Add(-time.Hour),
+		},
 	}}
 	notifier := &mediaStateNotifierStub{}
 	reconciler := NewReconciler(repo, store, notifier, domainmedia.StorageBackendS3, "v1", 5, time.Minute)
@@ -104,12 +107,16 @@ func TestReconcilerResetsIncompleteVariantsAndQueuesOrphans(t *testing.T) {
 		)
 	}
 	foundOrphan := false
+	foundProcessedOrphan := false
 	for _, task := range repo.cleanupTasks {
 		if task.ObjectKey == "media/orphan.mp4" && task.AssetID == 0 {
 			foundOrphan = true
 		}
+		if task.ObjectKey == "processed/2/v1/orphan/source.mp4" && task.AssetID == 0 {
+			foundProcessedOrphan = true
+		}
 	}
-	if !foundOrphan {
+	if !foundOrphan || !foundProcessedOrphan {
 		t.Fatalf("expected orphan cleanup task: %+v", repo.cleanupTasks)
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -334,29 +333,9 @@ func (s *Service) publishCover(ctx context.Context, asset *domainmedia.MediaAsse
 	if extension == "" || len(extension) > 8 {
 		extension = ".jpg"
 	}
-	finalKey := "processed/" + strconv.FormatInt(asset.ID, 10) + "/cover/" + asset.ChecksumSHA256 + "/cover" + extension
-	reader, _, err := s.store.Open(ctx, asset.ObjectKey)
-	if err != nil {
-		return err
-	}
-	_, putErr := s.store.Put(ctx, finalKey, reader, asset.SizeBytes, asset.ContentType, asset.ChecksumSHA256)
-	closeErr := reader.Close()
-	if putErr != nil {
-		return putErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	metadata, err := s.store.Head(ctx, finalKey)
-	if err != nil || metadata.SizeBytes != asset.SizeBytes || !strings.EqualFold(metadata.ChecksumSHA256, asset.ChecksumSHA256) {
-		if err == nil {
-			err = domainmedia.ErrObjectChecksumMismatch
-		}
-		return err
-	}
 	if err := s.repo.UpsertVariants(ctx, []*domainmedia.MediaVariant{{
 		AssetID: asset.ID, ProfileVersion: s.profileVersion, SourceType: domainmedia.SourceTypeImage,
-		Format: strings.TrimPrefix(extension, "."), ObjectKey: finalKey, Role: domainmedia.VariantRoleCover,
+		Format: strings.TrimPrefix(extension, "."), ObjectKey: asset.ObjectKey, Role: domainmedia.VariantRoleCover,
 		SortOrder: 5, State: domainmedia.VariantStateReady, ChecksumSHA256: asset.ChecksumSHA256,
 		SizeBytes: asset.SizeBytes, Public: false,
 	}}); err != nil {

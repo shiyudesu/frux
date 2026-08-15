@@ -26,6 +26,15 @@ type VariantRepository interface {
 		objectKey string,
 		public bool,
 	) (bool, error)
+	UpdateVariantExposure(
+		ctx context.Context,
+		variantID int64,
+		expectedObjectKey string,
+		expectedPublic bool,
+		expectedGeneration string,
+		public bool,
+		generation string,
+	) (bool, error)
 }
 
 type ProcessingRepository interface {
