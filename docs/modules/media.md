@@ -49,7 +49,7 @@ Worker 将当前步骤和可计算的步骤内进度写回同一任务。下载�
 当前本地、Docker 和 Prod 默认分别为 180 分钟、360 分钟和 `veryfast`。活动
 `profile_version=v2` 只生成一个源分辨率 H.264/AAC faststart MP4，不再生成多清晰度或 DASH。
 H.264/AAC 源走 stream copy，只有音频不兼容时只转 AAC，其他已接受视频 codec 只执行一次原分辨率
-H.264 转码。未完成的 `v1` retryable 任务使用相同单输出恢复路径，已完成的历史多源对象不改动。
+H.264 转码，x264 使用 CRF 25。未完成的 `v1` retryable 任务使用相同单输出恢复路径，已完成的历史多源对象不改动。
 Prod 保持单个媒体执行 slot，避免同一 VPS 上多个 x264 进程竞争 CPU 和内存。
 
 ## 5. 对象存储流量与公开交付

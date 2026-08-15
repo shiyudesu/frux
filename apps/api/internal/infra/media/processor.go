@@ -291,7 +291,7 @@ func (p *FFmpegProcessor) writeBaselineMP4(
 		}
 		args = append(args,
 			"-c:v", "libx264", "-preset", p.ffmpegPreset,
-			"-crf", "23", "-pix_fmt", "yuv420p",
+			"-crf", "25", "-pix_fmt", "yuv420p",
 			"-c:a", "aac", "-b:a", "128k",
 		)
 	}
