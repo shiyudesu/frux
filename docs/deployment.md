@@ -5,7 +5,7 @@ Frux 有两套现成的 Docker Compose：
 | 环境 | Compose | 对象存储 | 用途 |
 | --- | --- | --- | --- |
 | 本地开发 | `apps/docker-compose.yml` | MinIO | 开发、测试、调试 |
-| 当前 Prod | `apps/docker-compose.prod.yml` | 雨云 `frux1` | 个人项目、小流量试运行 |
+| 当前 Prod | `apps/docker-compose.prod.yml` | 雨云 `FRUX_S3_BUCKET` | 个人项目、小流量试运行 |
 
 当前 Prod 是单服务器方案。PostgreSQL、Redis 和 Kafka 都只有一个实例，不具备高可用，也没有
 生产级 Kafka TLS、认证和复制。需要严格生产架构时，再迁移到托管数据库、托管 Kafka 或多机环境。
@@ -60,7 +60,7 @@ Docker Compose
     ├─ 单节点 Kafka
     └─ PostgreSQL backup
 
-API / Worker → 雨云 frux1
+API / Worker → 雨云 FRUX_S3_BUCKET
 ```
 
 只有Web和API绑定宿主机回环地址。PostgreSQL、Redis、Kafka和Worker都没有宿主机端口，公网无法直接
@@ -85,7 +85,7 @@ README、`docs/**`、Issue模板和普通OpenSpec修改仍运行CI，但不会�
 
 ## 雨云媒体流程
 
-`frux1` 始终保持私有。雨云只提供整桶匿名访问开关，没有目录级公共读，所以不要开启公共访问。
+`FRUX_S3_BUCKET` 对应实例始终保持私有。雨云只提供整桶匿名访问开关，没有目录级公共读，所以不要开启公共访问。
 
 上传流程：
 
@@ -128,7 +128,7 @@ API校验v3 generation、variant和视频当前公开资格
 
 ## 数据和迁移
 
-PostgreSQL是业务数据和媒体元数据的权威来源。一个 `frux1` 只能对应一套Frux PostgreSQL。
+PostgreSQL是业务数据和媒体元数据的权威来源。一个 Bucket 只能对应一套Frux PostgreSQL。
 
 换服务器时：
 
@@ -137,7 +137,7 @@ PostgreSQL是业务数据和媒体元数据的权威来源。一个 `frux1` 只�
 3. 确认媒体表和视频表已经恢复。
 4. 启动包含API和Worker的完整Compose。
 
-不要让空数据库直接连接已有数据的 `frux1` 后启动Worker。当前Prod已关闭未知对象自动清理，避免误删
+不要让空数据库直接连接已有数据的 Bucket 后启动Worker。当前Prod已关闭未知对象自动清理，避免误删
 旧对象，但数据库不知道的旧视频仍然无法使用。
 
 Redis可以重建。Kafka包含事件、重试记录和Consumer Offset；当前单节点方案不提供Kafka灾备，不能

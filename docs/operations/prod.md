@@ -118,6 +118,7 @@ sudo editor /opt/frux/.env.prod
 | `FRUX_REDIS_PASSWORD` | Redis密码 |
 | `FRUX_S3_ACCESS_KEY` | 雨云AccessKey |
 | `FRUX_S3_SECRET_KEY` | 雨云SecretKey |
+| `FRUX_S3_BUCKET` | 雨云对象存储实例的Bucket名 |
 
 生成随机值：
 
@@ -262,7 +263,7 @@ Docker镜像和Volumes
 
 ## Worker
 
-Worker是生产核心服务，会随API和Web一起启动。首次部署前必须确认 `frux1` 是空Bucket，或者已经恢复
+Worker是生产核心服务，会随API和Web一起启动。首次部署前必须确认 `FRUX_S3_BUCKET` 指向空Bucket，或者已经恢复
 与对象存储匹配的PostgreSQL；不要让空数据库连接已有数据的Bucket后启动完整Compose。
 
 当前媒体策略是单并发、最大源时长 180 分钟、单次 ffmpeg 命令超时 360 分钟和 `veryfast` preset。

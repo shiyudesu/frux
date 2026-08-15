@@ -85,6 +85,7 @@ services:
       FRUX_REDIS_PASSWORD: ${FRUX_REDIS_PASSWORD:?set FRUX_REDIS_PASSWORD}
       FRUX_S3_ACCESS_KEY: ${FRUX_S3_ACCESS_KEY:?set FRUX_S3_ACCESS_KEY}
       FRUX_S3_SECRET_KEY: ${FRUX_S3_SECRET_KEY:?set FRUX_S3_SECRET_KEY}
+      FRUX_S3_BUCKET: ${FRUX_S3_BUCKET:?set FRUX_S3_BUCKET}
     depends_on:
       postgres:
         condition: service_healthy

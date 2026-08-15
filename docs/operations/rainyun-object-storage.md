@@ -1,18 +1,18 @@
 # 雨云对象存储
 
-Frux Prod 固定使用：
+Frux Prod 当前固定使用雨云浙江 Endpoint，Bucket 名由服务器环境变量配置：
 
 ```text
 Endpoint  https://cn-zj1.rains3.com
-Bucket    frux1
+Bucket    FRUX_S3_BUCKET
 Region    us-east-1
 ```
 
 你在雨云只需要做两件事：保持Bucket私有，把AccessKey和SecretKey填进服务器。
 
-## 保持 frux1 私有
+## 保持当前 Bucket 私有
 
-雨云控制台中，`frux1` 的匿名访问必须关闭。
+雨云控制台中，`FRUX_S3_BUCKET` 对应实例的匿名访问必须关闭。
 
 不要开启整桶公共读或公共写。这个Bucket同时保存：
 
@@ -32,6 +32,7 @@ media/v2/*     迁移期保留的历史公开副本；新发布不再创建
 ```dotenv
 FRUX_S3_ACCESS_KEY=你的AccessKey
 FRUX_S3_SECRET_KEY=你的SecretKey
+FRUX_S3_BUCKET=你的Bucket名
 ```
 
 不要把真实Key提交到Git、发到聊天或放进截图。
@@ -56,7 +57,7 @@ Access-Control-Expose-Headers: *
 
 ```bash
 curl -i -X OPTIONS \
-  "https://cn-zj1.rains3.com/frux1/uploads/cors-test" \
+  "https://cn-zj1.rains3.com/你的Bucket名/uploads/cors-test" \
   -H "Origin: https://你的Frux域名" \
   -H "Access-Control-Request-Method: PUT" \
   -H "Access-Control-Request-Headers: content-type,cache-control,x-amz-checksum-sha256,x-amz-meta-sha256"
@@ -100,4 +101,4 @@ Frux校验v3 generation、variant和视频当前公开资格
 - 同一v3地址重复请求可复用307/签名地址；恢复发布后URL generation发生变化。
 - 直接匿名访问雨云中的 `uploads/*`、`processed/*` 和 `media/*` 均返回无权限。
 
-一个 `frux1` 只能对应一套Frux PostgreSQL。换服务器时先恢复数据库，再启动Worker。
+一个 Bucket 只能对应一套Frux PostgreSQL。换服务器时先恢复数据库，再启动Worker。

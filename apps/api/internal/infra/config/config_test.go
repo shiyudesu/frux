@@ -362,6 +362,7 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 		"FRUX_REDIS_PASSWORD":      "redis-secret",
 		"FRUX_S3_ACCESS_KEY":       "rainyun-access-key",
 		"FRUX_S3_SECRET_KEY":       "rainyun-secret-key",
+		"FRUX_S3_BUCKET":           "rainyun-switch-bucket",
 	}
 	for name, value := range environment {
 		t.Setenv(name, value)
@@ -372,7 +373,7 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	if cfg.Media.S3.Endpoint != "https://cn-zj1.rains3.com" ||
-		cfg.Media.S3.Bucket != "frux1" ||
+		cfg.Media.S3.Bucket != "rainyun-switch-bucket" ||
 		!cfg.Media.S3.UsePathStyle ||
 		cfg.Media.S3.AutoCreateBucket ||
 		cfg.Media.Processing.ProfileVersion != "v2" ||
