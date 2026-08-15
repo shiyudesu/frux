@@ -72,6 +72,8 @@ func AutoMigrate(db *gorm.DB) error {
 			&inframedia.VariantModel{},
 			&inframedia.ProcessingProfileModel{},
 			&inframedia.ProcessingJobModel{},
+			&inframedia.ProcessingRetryReceiptModel{},
+			&inframedia.ProcessingRetryOutboxModel{},
 			&inframedia.UploadSessionModel{},
 			&inframedia.CleanupTaskModel{},
 			&inframedia.VideoLifecycleTaskModel{},
@@ -132,6 +134,9 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := infravideo.EnsureStats(tx); err != nil {
+			return err
+		}
+		if err := inframedia.EnsureAdminProcessingIndexes(tx); err != nil {
 			return err
 		}
 		if err := tx.Model(&infravideo.VideoModel{}).Where("visibility IS NULL OR visibility = ''").Update("visibility", "public").Error; err != nil {

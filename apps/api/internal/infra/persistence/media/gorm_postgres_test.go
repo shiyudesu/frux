@@ -12,6 +12,8 @@ import (
 	"time"
 
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -120,6 +122,188 @@ func TestExpiredProcessingLeaseRecordsReasonAndCanBeReclaimed(t *testing.T) {
 		claimed[0].State != domainmedia.JobStateProcessing ||
 		claimed[0].Attempts != 2 {
 		t.Fatalf("claimed=%+v err=%v", claimed, err)
+	}
+}
+
+func TestAdminProcessingOverviewRetryAndReplay(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set")
+	}
+	db := openMediaPostgres(t, dsn)
+	repository := New(db, WithAdminAuditWriter(mediaAuditWriterStub{}))
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	asset := AssetModel{
+		OwnerID: 4, Kind: domainmedia.AssetKindVideo,
+		StorageBackend: domainmedia.StorageBackendS3,
+		ObjectKey:      "uploads/4/source.mp4", ContentType: "video/mp4",
+		SizeBytes: 10, ChecksumSHA256: strings.Repeat("a", 64),
+		State: domainmedia.AssetStateFailed, ErrorCode: "transcode_failed",
+	}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	completedAt := now.Add(-time.Minute)
+	job := ProcessingJobModel{
+		AssetID: asset.ID, ProfileVersion: "v2",
+		State: domainmedia.JobStateFailed, Attempts: 5, MaxAttempts: 5,
+		ErrorCode: "transcode_failed", ErrorMessage: "failed",
+		ProcessingStep: domainmedia.ProcessingStepFailed,
+		NextAttemptAt:  now.Add(-time.Hour), CompletedAt: &completedAt,
+	}
+	if err := db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	video := mediaAdminVideoTestModel{
+		AuthorID: 4, Title: "Failed video",
+		MediaAssetID: int64Pointer(asset.ID),
+	}
+	if err := db.Create(&video).Error; err != nil {
+		t.Fatal(err)
+	}
+	summary, err := repository.SummarizeAdminProcessing(context.Background())
+	if err != nil || summary.Failed != 1 {
+		t.Fatalf("summary=%+v err=%v", summary, err)
+	}
+	history, err := repository.ListAdminProcessingHistory(
+		context.Background(),
+		domainmedia.AdminProcessingHistoryQuery{State: domainmedia.JobStateFailed, Limit: 10},
+	)
+	if err != nil || len(history) != 1 || history[0].ID != job.ID {
+		t.Fatalf("history=%+v err=%v", history, err)
+	}
+	command := domainmedia.AdminProcessingRetryCommand{
+		ActorID: 7, JobID: job.ID, VideoID: video.ID,
+		ReasonCode:     domainmedia.ProcessingRetryReasonTemporaryFailure,
+		Route:          "/api/admin/media-processing/jobs/:jobId/retry",
+		IdempotencyKey: "retry-key", OccurredAt: now,
+	}
+	buildAudit := func(
+		input domainmedia.ProcessingRetryAuditInput,
+	) (*domainadminaudit.Fact, error) {
+		digest, err := domainadminaudit.DigestIdempotencyKey(command.IdempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		return domainadminaudit.NewFact(domainadminaudit.FactInput{
+			ActorID: command.ActorID, Permission: domainaccount.PermissionContentEnforce,
+			Action:     domainadminaudit.ActionMediaProcessingRetry,
+			TargetType: domainadminaudit.TargetMediaProcessingJob,
+			TargetID:   fmt.Sprint(command.JobID), Outcome: domainadminaudit.OutcomeSuccess,
+			RequestID: domainadminaudit.NewRequestID(), IdempotencyKeyHash: digest,
+			CreatedAt: command.OccurredAt,
+			Detail: map[string]string{
+				"http_method": "POST", "route": command.Route,
+				"reason_code": command.ReasonCode, "video_id": fmt.Sprint(input.VideoID),
+				"previous_state": input.PreviousState, "new_state": input.NewState,
+				"previous_attempts": fmt.Sprint(input.PreviousAttempts),
+			},
+		})
+	}
+	result, err := repository.CommitAdminProcessingRetry(
+		context.Background(), command, buildAudit,
+	)
+	if err != nil || result.Job.State != domainmedia.JobStateRetryable ||
+		result.Job.Attempts != 0 {
+		t.Fatalf("retry result=%+v err=%v", result, err)
+	}
+	replayed, err := repository.CommitAdminProcessingRetry(
+		context.Background(), command, buildAudit,
+	)
+	if err != nil || !replayed.Replayed {
+		t.Fatalf("replay=%+v err=%v", replayed, err)
+	}
+	backlog, err := repository.CountPendingProcessingRetryNotifications(context.Background())
+	if err != nil || backlog != 1 {
+		t.Fatalf("outbox backlog=%d err=%v", backlog, err)
+	}
+}
+
+func TestAdminProcessingRetryRollsBackWhenAuditFails(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set")
+	}
+	db := openMediaPostgres(t, dsn)
+	repository := New(db, WithAdminAuditWriter(failingMediaAuditWriterStub{}))
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	asset := AssetModel{
+		OwnerID: 4, Kind: domainmedia.AssetKindVideo,
+		StorageBackend: domainmedia.StorageBackendS3,
+		ObjectKey:      "uploads/4/rollback.mp4", ContentType: "video/mp4",
+		SizeBytes: 10, ChecksumSHA256: strings.Repeat("b", 64),
+		State: domainmedia.AssetStateFailed, ErrorCode: "transcode_failed",
+	}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	completedAt := now.Add(-time.Minute)
+	job := ProcessingJobModel{
+		AssetID: asset.ID, ProfileVersion: "v2",
+		State: domainmedia.JobStateFailed, Attempts: 5, MaxAttempts: 5,
+		ErrorCode: "transcode_failed", ProcessingStep: domainmedia.ProcessingStepFailed,
+		NextAttemptAt: now.Add(-time.Hour), CompletedAt: &completedAt,
+	}
+	if err := db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	video := mediaAdminVideoTestModel{
+		AuthorID: 4, Title: "Rollback",
+		MediaAssetID: int64Pointer(asset.ID),
+	}
+	if err := db.Create(&video).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := repository.CommitAdminProcessingRetry(
+		context.Background(),
+		domainmedia.AdminProcessingRetryCommand{
+			ActorID: 7, JobID: job.ID, VideoID: video.ID,
+			ReasonCode:     domainmedia.ProcessingRetryReasonTemporaryFailure,
+			Route:          "/api/admin/media-processing/jobs/:jobId/retry",
+			IdempotencyKey: "rollback-key", OccurredAt: now,
+		},
+		func(input domainmedia.ProcessingRetryAuditInput) (*domainadminaudit.Fact, error) {
+			digest, digestErr := domainadminaudit.DigestIdempotencyKey("rollback-key")
+			if digestErr != nil {
+				return nil, digestErr
+			}
+			return domainadminaudit.NewFact(domainadminaudit.FactInput{
+				ActorID: 7, Permission: domainaccount.PermissionContentEnforce,
+				Action:     domainadminaudit.ActionMediaProcessingRetry,
+				TargetType: domainadminaudit.TargetMediaProcessingJob,
+				TargetID:   fmt.Sprint(job.ID), Outcome: domainadminaudit.OutcomeSuccess,
+				RequestID: domainadminaudit.NewRequestID(), IdempotencyKeyHash: digest,
+				CreatedAt: now,
+				Detail: map[string]string{
+					"http_method":    "POST",
+					"route":          "/api/admin/media-processing/jobs/:jobId/retry",
+					"reason_code":    domainmedia.ProcessingRetryReasonTemporaryFailure,
+					"video_id":       fmt.Sprint(input.VideoID),
+					"previous_state": input.PreviousState, "new_state": input.NewState,
+					"previous_attempts": fmt.Sprint(input.PreviousAttempts),
+				},
+			})
+		},
+	)
+	if err == nil {
+		t.Fatal("expected audit failure")
+	}
+	var current ProcessingJobModel
+	if err := db.First(&current, job.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if current.State != domainmedia.JobStateFailed || current.Attempts != 5 {
+		t.Fatalf("job changed despite rollback: %+v", current)
+	}
+	var receiptCount, outboxCount int64
+	if err := db.Model(&ProcessingRetryReceiptModel{}).Count(&receiptCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&ProcessingRetryOutboxModel{}).Count(&outboxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if receiptCount != 0 || outboxCount != 0 {
+		t.Fatalf("receipt=%d outbox=%d", receiptCount, outboxCount)
 	}
 }
 
@@ -334,8 +518,49 @@ func openMediaPostgres(t *testing.T, dsn string) *gorm.DB {
 	if err := db.AutoMigrate(
 		&CleanupTaskModel{}, &VideoLifecycleTaskModel{},
 		&UploadSessionModel{}, &AssetModel{}, &VariantModel{}, &ProcessingJobModel{},
+		&ProcessingRetryReceiptModel{}, &ProcessingRetryOutboxModel{},
+		&mediaAdminVideoTestModel{},
 	); err != nil {
 		t.Fatal(err)
 	}
 	return db
+}
+
+type mediaAuditWriterStub struct{}
+
+func (mediaAuditWriterStub) AppendInTransaction(
+	context.Context,
+	*gorm.DB,
+	*domainadminaudit.Fact,
+) error {
+	return nil
+}
+
+func (mediaAuditWriterStub) RecordCommittedWrite(*domainadminaudit.Fact) {}
+
+type failingMediaAuditWriterStub struct{}
+
+func (failingMediaAuditWriterStub) AppendInTransaction(
+	context.Context,
+	*gorm.DB,
+	*domainadminaudit.Fact,
+) error {
+	return errors.New("audit unavailable")
+}
+
+func (failingMediaAuditWriterStub) RecordCommittedWrite(*domainadminaudit.Fact) {}
+
+func int64Pointer(value int64) *int64 {
+	return &value
+}
+
+type mediaAdminVideoTestModel struct {
+	ID           int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	AuthorID     int64  `gorm:"column:author_id;not null"`
+	Title        string `gorm:"column:title;size:128;not null"`
+	MediaAssetID *int64 `gorm:"column:media_asset_id;uniqueIndex"`
+}
+
+func (mediaAdminVideoTestModel) TableName() string {
+	return "video"
 }

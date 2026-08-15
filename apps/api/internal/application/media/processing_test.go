@@ -78,6 +78,25 @@ func TestTruncateProcessingErrorKeepsDiagnosticTail(t *testing.T) {
 	}
 }
 
+func TestWorkerProgressReporterThrottlesAndFlushesStepChanges(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &processingRepositoryStub{}
+	worker := NewMediaProcessingWorker(repo, &processorStub{}, nil, time.Minute, 1)
+	worker.now = func() time.Time { return now }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reporter := newWorkerProgressReporter(worker, ctx, cancel, 7, "owner")
+	first, small, changed := 100, 150, 200
+	reporter.Report(domainmedia.ProcessingStepDownloading, &first)
+	reporter.Report(domainmedia.ProcessingStepDownloading, &small)
+	reporter.Report(domainmedia.ProcessingStepUploading, &changed)
+	if len(repo.progress) != 2 ||
+		repo.progress[0].Step != domainmedia.ProcessingStepDownloading ||
+		repo.progress[1].Step != domainmedia.ProcessingStepUploading {
+		t.Fatalf("progress updates=%+v", repo.progress)
+	}
+}
+
 func TestMediaProcessingWorkerDoesNotResurrectDeletedAsset(t *testing.T) {
 	now := time.Date(2026, 7, 26, 7, 0, 0, 0, time.UTC)
 	repo := &processingRepositoryStub{
@@ -350,6 +369,7 @@ type concurrentProcessingRepository struct {
 	blockHeartbeat bool
 	extendCalls    int
 	variants       []*domainmedia.MediaVariant
+	progress       []domainmedia.ProcessingProgress
 }
 
 func newConcurrentProcessingRepository(
@@ -542,6 +562,22 @@ func (r *concurrentProcessingRepository) ExtendProcessingLease(
 	return nil
 }
 
+func (r *concurrentProcessingRepository) ExtendProcessingLeaseWithProgress(
+	ctx context.Context,
+	_ int64,
+	_ string,
+	_ time.Duration,
+	progress domainmedia.ProcessingProgress,
+) error {
+	if err := r.ExtendProcessingLease(ctx, 0, "", 0); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.progress = append(r.progress, progress)
+	r.mu.Unlock()
+	return nil
+}
+
 func (*concurrentProcessingRepository) CreateCleanupTasks(
 	context.Context,
 	[]*domainmedia.CleanupTask,
@@ -558,6 +594,7 @@ type processingRepositoryStub struct {
 	asset    *domainmedia.MediaAsset
 	job      *domainmedia.MediaProcessingJob
 	variants []*domainmedia.MediaVariant
+	progress []domainmedia.ProcessingProgress
 }
 
 func (r *processingRepositoryStub) FindAssetByID(context.Context, int64) (*domainmedia.MediaAsset, error) {
@@ -635,6 +672,17 @@ func (r *processingRepositoryStub) FinalizeProcessingJob(
 }
 
 func (*processingRepositoryStub) ExtendProcessingLease(context.Context, int64, string, time.Duration) error {
+	return nil
+}
+
+func (r *processingRepositoryStub) ExtendProcessingLeaseWithProgress(
+	_ context.Context,
+	_ int64,
+	_ string,
+	_ time.Duration,
+	progress domainmedia.ProcessingProgress,
+) error {
+	r.progress = append(r.progress, progress)
 	return nil
 }
 

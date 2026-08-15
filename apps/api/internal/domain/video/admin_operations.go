@@ -26,6 +26,13 @@ type AdminVideoCursor struct {
 	VideoID   int64
 }
 
+type AdminMediaRef struct {
+	VideoID  int64
+	AssetID  int64
+	AuthorID int64
+	Title    string
+}
+
 type AdminVideoQuery struct {
 	Status      int
 	AuthorID    int64

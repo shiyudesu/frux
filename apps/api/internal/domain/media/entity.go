@@ -122,20 +122,23 @@ type ProcessingProfile struct {
 }
 
 type MediaProcessingJob struct {
-	ID             int64
-	AssetID        int64
-	ProfileVersion string
-	State          string
-	Attempts       int
-	MaxAttempts    int
-	ErrorCode      string
-	ErrorMessage   string
-	LeaseOwner     string
-	LeaseUntil     *time.Time
-	NextAttemptAt  time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	CompletedAt    *time.Time
+	ID                int64
+	AssetID           int64
+	ProfileVersion    string
+	State             string
+	Attempts          int
+	MaxAttempts       int
+	ErrorCode         string
+	ErrorMessage      string
+	LeaseOwner        string
+	LeaseUntil        *time.Time
+	ProcessingStep    string
+	ProgressBPS       *int
+	ProgressUpdatedAt *time.Time
+	NextAttemptAt     time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	CompletedAt       *time.Time
 }
 
 type UploadSession struct {
@@ -293,7 +296,8 @@ func NewProcessingJob(assetID int64, profileVersion string, maxAttempts int, now
 	}
 	return &MediaProcessingJob{
 		AssetID: assetID, ProfileVersion: profileVersion, State: JobStatePending,
-		MaxAttempts: maxAttempts, NextAttemptAt: now,
+		MaxAttempts: maxAttempts, ProcessingStep: ProcessingStepWaiting,
+		NextAttemptAt: now,
 	}, nil
 }
 

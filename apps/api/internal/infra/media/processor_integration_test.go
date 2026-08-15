@@ -67,6 +67,39 @@ func TestFFmpegProcessorNormalizesVP9OnceAtSourceResolution(t *testing.T) {
 	}
 }
 
+func TestFFmpegProcessorReportsPlainProcessingSteps(t *testing.T) {
+	store, asset, job := ffmpegProcessorFixture(
+		t,
+		fixtureOptions{
+			dimensions: "640x360", duration: "1", profileVersion: "v2",
+			videoCodec: "libx264", audioCodec: "aac",
+			extension: ".mp4", contentType: "video/mp4",
+		},
+	)
+	steps := make([]string, 0, 8)
+	ctx := applicationmedia.WithProgressReporter(
+		context.Background(),
+		func(step string, _ *int) {
+			if len(steps) == 0 || steps[len(steps)-1] != step {
+				steps = append(steps, step)
+			}
+		},
+	)
+	if _, err := NewFFmpegProcessor(store).Process(ctx, asset, job); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		domainmedia.ProcessingStepDownloading,
+		domainmedia.ProcessingStepInspecting,
+		domainmedia.ProcessingStepRemuxing,
+		domainmedia.ProcessingStepUploading,
+	} {
+		if !containsStep(steps, expected) {
+			t.Fatalf("steps=%v missing %q", steps, expected)
+		}
+	}
+}
+
 func TestFFmpegProcessorHonorsConfiguredDurationLimit(t *testing.T) {
 	store, asset, job := ffmpegProcessorFixture(
 		t,
@@ -161,4 +194,13 @@ func ffmpegProcessorFixture(
 		}, &domainmedia.MediaProcessingJob{
 			ID: 1, AssetID: 1, ProfileVersion: options.profileVersion, MaxAttempts: 3,
 		}
+}
+
+func containsStep(steps []string, target string) bool {
+	for _, step := range steps {
+		if step == target {
+			return true
+		}
+	}
+	return false
 }

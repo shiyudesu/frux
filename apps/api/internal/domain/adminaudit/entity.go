@@ -42,6 +42,7 @@ const (
 	ActionAccountFreeze         Action = "account.freeze"
 	ActionAccountUnfreeze       Action = "account.unfreeze"
 	ActionAccountSessionsRevoke Action = "account.sessions_revoke"
+	ActionMediaProcessingRetry  Action = "media_processing.retry"
 )
 
 type TargetType string
@@ -55,6 +56,7 @@ const (
 	TargetDeadLetterMessage     TargetType = "dead_letter_message"
 	TargetKafkaDeadLetterRecord TargetType = "kafka_dead_letter_record"
 	TargetUserAccount           TargetType = "user_account"
+	TargetMediaProcessingJob    TargetType = "media_processing_job"
 )
 
 type Outcome string
@@ -102,6 +104,10 @@ var allowedDetailsByAction = map[Action]map[string]struct{}{
 	ActionAccountSessionsRevoke: detailKeys(
 		"http_method", "new_status", "new_version", "previous_status", "previous_version",
 		"reason_code", "revoked_session_count", "route",
+	),
+	ActionMediaProcessingRetry: detailKeys(
+		"http_method", "new_state", "previous_attempts", "previous_state",
+		"reason_code", "route", "video_id",
 	),
 }
 
@@ -228,6 +234,17 @@ var schemasByAction = map[Action]actionSchema{
 			domainaccount.AccountReasonOperatorRequest,
 		),
 	},
+	ActionMediaProcessingRetry: {
+		permission: domainaccount.PermissionContentEnforce,
+		targetType: TargetMediaProcessingJob,
+		successKeys: detailKeys(
+			"http_method", "new_state", "previous_attempts", "previous_state",
+			"reason_code", "route", "video_id",
+		),
+		successReasons: detailKeys(
+			"configuration_changed", "temporary_failure", "operator_retry",
+		),
+	},
 }
 
 var validTargetTypes = map[TargetType]struct{}{
@@ -239,6 +256,7 @@ var validTargetTypes = map[TargetType]struct{}{
 	TargetDeadLetterMessage:     {},
 	TargetKafkaDeadLetterRecord: {},
 	TargetUserAccount:           {},
+	TargetMediaProcessingJob:    {},
 }
 
 var detailNumberPattern = regexp.MustCompile(`^[0-9]+$`)
@@ -272,6 +290,11 @@ var kafkaDeadLetterRoutes = map[string]string{
 	"/api/admin/kafka-dead-letters":                                          "GET",
 	"/api/admin/kafka-dead-letters/:topic/records":                           "GET",
 	"/api/admin/kafka-dead-letters/:topic/records/:partition/:offset/replay": "POST",
+}
+
+var mediaProcessingRetryRoutes = map[string]string{
+	"/api/admin/media-processing/jobs/:jobId/retry": "POST",
+	"/api/admin/media-processing/jobs/bulk-retry":   "POST",
 }
 
 var validStatuses = map[string]struct{}{
@@ -462,7 +485,8 @@ func validDetailValue(action Action, key, value string) bool {
 	switch key {
 	case "filter_count", "new_revision", "previous_revision", "review_version",
 		"offset", "partition", "source_offset", "source_partition",
-		"new_version", "previous_version", "revoked_session_count":
+		"new_version", "previous_version", "revoked_session_count",
+		"previous_attempts", "video_id":
 		return len(value) <= 20 && detailNumberPattern.MatchString(value)
 	case "http_method":
 		switch value {
@@ -480,6 +504,10 @@ func validDetailValue(action Action, key, value string) bool {
 			_, ok := kafkaDeadLetterRoutes[value]
 			return ok
 		}
+		if action == ActionMediaProcessingRetry {
+			_, ok := mediaProcessingRetryRoutes[value]
+			return ok
+		}
 		return value == schemasByAction[action].route
 	case "operation":
 		return action == ActionGovernanceExecute && (value == "update" || value == "rollback")
@@ -489,6 +517,9 @@ func validDetailValue(action Action, key, value string) bool {
 	case "new_status", "previous_status":
 		_, ok := validStatuses[value]
 		return ok
+	case "new_state", "previous_state":
+		return action == ActionMediaProcessingRetry &&
+			(value == "failed" || value == "retryable")
 	case "reason_code":
 		return len(value) <= 64 && detailCodePattern.MatchString(value)
 	case "failure_code":
@@ -520,6 +551,10 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 			}
 		} else if action == ActionKafkaDeadLetterReplay {
 			if kafkaDeadLetterRoutes[detail["route"]] != detail["http_method"] {
+				return false
+			}
+		} else if action == ActionMediaProcessingRetry {
+			if mediaProcessingRetryRoutes[detail["route"]] != detail["http_method"] {
 				return false
 			}
 		} else if detail["http_method"] != schema.method || detail["route"] != schema.route {
@@ -559,7 +594,7 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 	if !sameDetailKeys(detail, schema.successKeys) {
 		return false
 	}
-	if action != ActionGovernanceExecute &&
+	if action != ActionGovernanceExecute && action != ActionMediaProcessingRetry &&
 		(detail["http_method"] != schema.method || detail["route"] != schema.route) {
 		return false
 	}
@@ -621,6 +656,14 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 				(detail["new_status"] == "normal" || detail["new_status"] == "frozen")
 		}
 		return false
+	case ActionMediaProcessingRetry:
+		if mediaProcessingRetryRoutes[detail["route"]] != detail["http_method"] ||
+			detail["previous_state"] != "failed" || detail["new_state"] != "retryable" {
+			return false
+		}
+		videoID, videoErr := strconv.ParseInt(detail["video_id"], 10, 64)
+		attempts, attemptsErr := strconv.Atoi(detail["previous_attempts"])
+		return videoErr == nil && videoID > 0 && attemptsErr == nil && attempts >= 0
 	default:
 		return false
 	}

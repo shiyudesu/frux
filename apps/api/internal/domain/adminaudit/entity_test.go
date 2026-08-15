@@ -137,6 +137,34 @@ func TestRequestIDAndIdempotencyKeyDigestAreOpaque(t *testing.T) {
 	}
 }
 
+func TestMediaProcessingRetryAuditIsPrivacyBounded(t *testing.T) {
+	digest, err := DigestIdempotencyKey("retry-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := FactInput{
+		ActorID: 7, Permission: domainaccount.PermissionContentEnforce,
+		Action:     ActionMediaProcessingRetry,
+		TargetType: TargetMediaProcessingJob, TargetID: "42",
+		Outcome: OutcomeSuccess, RequestID: NewRequestID(),
+		IdempotencyKeyHash: digest, CreatedAt: time.Now().UTC(),
+		Detail: map[string]string{
+			"http_method": "POST",
+			"route":       "/api/admin/media-processing/jobs/:jobId/retry",
+			"reason_code": "temporary_failure", "video_id": "9",
+			"previous_state": "failed", "new_state": "retryable",
+			"previous_attempts": "5",
+		},
+	}
+	if _, err := NewFact(input); err != nil {
+		t.Fatalf("valid media retry fact rejected: %v", err)
+	}
+	input.Detail["object_key"] = "uploads/secret.mp4"
+	if _, err := NewFact(input); !errors.Is(err, ErrInvalidDetail) {
+		t.Fatalf("sensitive detail error=%v", err)
+	}
+}
+
 func TestGovernanceAuditSupportsUpdateRollbackAndProtectedReads(t *testing.T) {
 	now := time.Date(2026, 8, 6, 14, 0, 0, 0, time.UTC)
 	for _, input := range []FactInput{

@@ -343,6 +343,104 @@ function isAdminPermission(value: unknown): value is AdminPermission {
     value === "account.manage";
 }
 
+export type MediaProcessingState =
+  | "pending"
+  | "processing"
+  | "retryable"
+  | "completed"
+  | "failed";
+
+export type MediaProcessingStage =
+  | "waiting"
+  | "downloading"
+  | "inspecting"
+  | "remuxing"
+  | "transcoding"
+  | "uploading"
+  | "finalizing"
+  | "completed"
+  | "failed";
+
+export type MediaProcessingRetryReasonCode =
+  | "configuration_changed"
+  | "temporary_failure"
+  | "operator_retry";
+
+export interface MediaProcessingSummary {
+  waiting: number;
+  processing: number;
+  failed: number;
+  completed: number;
+  oldest_waiting_at?: string;
+}
+
+export interface MediaProcessingAdminItem {
+  job_id: number;
+  video_id?: number;
+  author_id?: number;
+  title: string;
+  profile_version: string;
+  state: MediaProcessingState;
+  stage: MediaProcessingStage;
+  stage_progress_bps?: number | null;
+  attempts: number;
+  max_attempts: number;
+  error_code?: string;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  progress_updated_at?: string | null;
+  next_attempt_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface MediaProcessingOverviewResponse {
+  summary: MediaProcessingSummary;
+  active_items: MediaProcessingAdminItem[];
+  refreshed_at: string;
+}
+
+export interface MediaProcessingHistoryFilters {
+  state: "" | MediaProcessingState;
+  stage: "" | MediaProcessingStage;
+  error_code: string;
+  video_id: string;
+  completed_from: string;
+  completed_to: string;
+}
+
+export interface MediaProcessingHistoryPage {
+  items: MediaProcessingAdminItem[];
+  next_cursor: string;
+  has_more: boolean;
+}
+
+export interface MediaProcessingRetryRequest {
+  reason_code: MediaProcessingRetryReasonCode;
+  note: string;
+}
+
+export interface MediaProcessingRetryResponse {
+  item: MediaProcessingAdminItem;
+  audit_committed: boolean;
+  replayed: boolean;
+}
+
+export interface MediaProcessingBulkRetryRequest extends MediaProcessingRetryRequest {
+  job_ids: number[];
+}
+
+export interface MediaProcessingBulkRetryItemResult {
+  job_id: number;
+  status: "retried" | "conflict" | "rejected";
+  item?: MediaProcessingAdminItem;
+  error_code?: string;
+}
+
+export interface MediaProcessingBulkRetryResponse {
+  items: MediaProcessingBulkRetryItemResult[];
+}
+
 export interface ReviewCase {
   id: number;
   video_id: number;

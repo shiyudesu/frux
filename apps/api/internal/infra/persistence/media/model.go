@@ -69,24 +69,62 @@ func (ProcessingProfileModel) TableName() string {
 }
 
 type ProcessingJobModel struct {
-	ID             int64      `gorm:"column:id;primaryKey;autoIncrement"`
-	AssetID        int64      `gorm:"column:asset_id;not null;uniqueIndex:uk_media_processing_job_asset_profile,priority:1"`
-	ProfileVersion string     `gorm:"column:profile_version;size:64;not null;uniqueIndex:uk_media_processing_job_asset_profile,priority:2"`
-	State          string     `gorm:"column:state;size:24;not null;index:idx_media_processing_job_ready,priority:1"`
-	Attempts       int        `gorm:"column:attempts;not null;default:0"`
-	MaxAttempts    int        `gorm:"column:max_attempts;not null"`
-	ErrorCode      string     `gorm:"column:error_code;size:64;not null;default:''"`
-	ErrorMessage   string     `gorm:"column:error_message;size:512;not null;default:''"`
-	LeaseOwner     string     `gorm:"column:lease_owner;size:128;not null;default:''"`
-	LeaseUntil     *time.Time `gorm:"column:lease_until;index:idx_media_processing_job_lease"`
-	NextAttemptAt  time.Time  `gorm:"column:next_attempt_at;not null;index:idx_media_processing_job_ready,priority:2"`
-	CompletedAt    *time.Time `gorm:"column:completed_at"`
-	CreatedAt      time.Time  `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+	ID                int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	AssetID           int64      `gorm:"column:asset_id;not null;uniqueIndex:uk_media_processing_job_asset_profile,priority:1"`
+	ProfileVersion    string     `gorm:"column:profile_version;size:64;not null;uniqueIndex:uk_media_processing_job_asset_profile,priority:2"`
+	State             string     `gorm:"column:state;size:24;not null;index:idx_media_processing_job_ready,priority:1"`
+	Attempts          int        `gorm:"column:attempts;not null;default:0"`
+	MaxAttempts       int        `gorm:"column:max_attempts;not null"`
+	ErrorCode         string     `gorm:"column:error_code;size:64;not null;default:''"`
+	ErrorMessage      string     `gorm:"column:error_message;size:512;not null;default:''"`
+	LeaseOwner        string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil        *time.Time `gorm:"column:lease_until;index:idx_media_processing_job_lease"`
+	ProcessingStep    string     `gorm:"column:processing_step;size:24;not null;default:'waiting'"`
+	ProgressBPS       *int       `gorm:"column:progress_bps;check:chk_media_processing_progress_bps,progress_bps IS NULL OR (progress_bps >= 0 AND progress_bps <= 10000)"`
+	ProgressUpdatedAt *time.Time `gorm:"column:progress_updated_at"`
+	NextAttemptAt     time.Time  `gorm:"column:next_attempt_at;not null;index:idx_media_processing_job_ready,priority:2"`
+	CompletedAt       *time.Time `gorm:"column:completed_at"`
+	CreatedAt         time.Time  `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (ProcessingJobModel) TableName() string {
 	return "media_processing_job"
+}
+
+type ProcessingRetryReceiptModel struct {
+	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	ActorID        int64     `gorm:"column:actor_id;not null;uniqueIndex:uk_media_processing_retry_actor_key,priority:1"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;size:128;not null;uniqueIndex:uk_media_processing_retry_actor_key,priority:2"`
+	Fingerprint    string    `gorm:"column:fingerprint;size:64;not null"`
+	JobID          int64     `gorm:"column:job_id;not null;index:idx_media_processing_retry_job"`
+	ReasonCode     string    `gorm:"column:reason_code;size:64;not null"`
+	Note           string    `gorm:"column:note;size:2000;not null;default:''"`
+	ResultJSON     string    `gorm:"column:result_json;type:jsonb;not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;not null"`
+}
+
+func (ProcessingRetryReceiptModel) TableName() string {
+	return "media_processing_retry_receipt"
+}
+
+type ProcessingRetryOutboxModel struct {
+	EventID     string     `gorm:"column:event_id;size:128;primaryKey"`
+	JobID       int64      `gorm:"column:job_id;not null;index:idx_media_processing_retry_outbox_job"`
+	AssetID     int64      `gorm:"column:asset_id;not null"`
+	State       string     `gorm:"column:state;size:24;not null;index:idx_media_processing_retry_outbox_ready,priority:1"`
+	Attempts    int        `gorm:"column:attempts;not null;default:0"`
+	AvailableAt time.Time  `gorm:"column:available_at;not null;index:idx_media_processing_retry_outbox_ready,priority:2"`
+	LeaseOwner  string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil  *time.Time `gorm:"column:lease_until;index:idx_media_processing_retry_outbox_lease"`
+	LastError   string     `gorm:"column:last_error;size:1024;not null;default:''"`
+	DeliveredAt *time.Time `gorm:"column:delivered_at"`
+	CreatedAt   time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt   time.Time  `gorm:"column:updated_at;not null"`
+}
+
+func (ProcessingRetryOutboxModel) TableName() string {
+	return "media_processing_retry_outbox"
 }
 
 type UploadSessionModel struct {

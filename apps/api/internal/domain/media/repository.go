@@ -38,6 +38,13 @@ type ProcessingRepository interface {
 	UpdateProcessingJobOwned(ctx context.Context, job *MediaProcessingJob, leaseOwner string) error
 	FinalizeProcessingJob(ctx context.Context, finalization *ProcessingFinalization) error
 	ExtendProcessingLease(ctx context.Context, jobID int64, leaseOwner string, leaseTTL time.Duration) error
+	ExtendProcessingLeaseWithProgress(
+		ctx context.Context,
+		jobID int64,
+		leaseOwner string,
+		leaseTTL time.Duration,
+		progress ProcessingProgress,
+	) error
 	ReleaseExpiredProcessingLeases(ctx context.Context, now time.Time) (int64, error)
 	ListAssetsForReconciliation(ctx context.Context, limit int) ([]*MediaAsset, error)
 	FindProcessingJobByAsset(ctx context.Context, assetID int64) (*MediaProcessingJob, error)

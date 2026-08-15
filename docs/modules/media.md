@@ -31,6 +31,13 @@ Worker 保留处理租约续期、过期 lease 回收、重试时间、终态通
 media shadow 只读 `(asset_id, profile_version)` durable job；缺失为 propagation pending，
 已存在但 profile 冲突为 mismatch，不会 claim 或 signal job。
 
+Worker 将当前步骤和可计算的步骤内进度写回同一任务。下载和上传按字节计算，整理/转换按已处理媒体
+时间计算，检查和最终提交不伪造百分比。进度更新与 heartbeat 使用相同 claim token 和未过期 lease，
+最多每 5 秒持久化一次；旧 Worker 尝试不能覆盖已被回收任务的进度。
+
+后台重新处理只接受失败任务，要求 `content.enforce`、注册原因和 `Idempotency-Key`。任务重置、成功
+审计、幂等回执和视频状态修复 Outbox 同事务提交；状态修复失败由 Worker 重试，不重复重置处理任务。
+
 ## 4. 处理策略
 
 `media.processing` 显式配置：

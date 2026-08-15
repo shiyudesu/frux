@@ -656,6 +656,10 @@ flowchart LR
   S3 -->|"不可变公共资源"| CDN["CDN / 公共前缀"]
 ```
 
+视频运营通过受保护的 media admin Application 读取任务概览和终态历史，使用批量 video catalog 补充
+标题与作者。Worker 将当前步骤和节流后的步骤进度写入 PostgreSQL；后台重新处理先提交任务重置、
+幂等回执和审计，再由耐久 Outbox 驱动视频侧状态改为处理中。
+
 - 本地开发继续支持 `/api/uploads` 和受保护 `/uploads/*`；生产模式通过 `media.backend=s3` 使用上传会话。
 - `media_asset` 保存原始资产，`media_variant` 为新任务保存单个源分辨率基线，并继续兼容历史清晰度、
   manifest 和 segment；`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。

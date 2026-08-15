@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -46,6 +47,24 @@ func (e *ProcessError) Unwrap() error {
 
 type Processor interface {
 	Process(ctx context.Context, asset *domainmedia.MediaAsset, job *domainmedia.MediaProcessingJob) (*ProcessResult, error)
+}
+
+type ProgressReporter func(step string, progressBPS *int)
+
+type progressReporterContextKey struct{}
+
+func WithProgressReporter(ctx context.Context, reporter ProgressReporter) context.Context {
+	if reporter == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, progressReporterContextKey{}, reporter)
+}
+
+func ReportProgress(ctx context.Context, step string, progressBPS *int) {
+	reporter, _ := ctx.Value(progressReporterContextKey{}).(ProgressReporter)
+	if reporter != nil {
+		reporter(step, progressBPS)
+	}
 }
 
 type ProcessingRepository interface {
@@ -289,6 +308,9 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 		job.ErrorCode = asset.ErrorCode
 		job.LeaseOwner = ""
 		job.LeaseUntil = nil
+		job.ProcessingStep = domainmedia.ProcessingStepFailed
+		job.ProgressBPS = nil
+		job.ProgressUpdatedAt = &now
 		job.CompletedAt = &now
 		if err := w.finalize(ctx, nil, nil, nil, job, leaseOwner, now); err != nil {
 			return err
@@ -296,22 +318,40 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 		return w.notifyFailed(ctx, asset.ID, job.ProfileVersion, asset.ErrorCode)
 	}
 	processCtx, cancel := context.WithCancel(ctx)
-	heartbeatDone := w.startLeaseHeartbeat(processCtx, cancel, job.ID, leaseOwner)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(processCtx)
+	reporter := newWorkerProgressReporter(w, processCtx, cancel, job.ID, leaseOwner)
+	processCtx = WithProgressReporter(processCtx, reporter.Report)
+	heartbeatDone := w.startLeaseHeartbeat(heartbeatCtx, cancel, reporter)
 	defer func() {
+		stopHeartbeat()
 		cancel()
 		err = errors.Join(err, <-heartbeatDone)
 	}()
 	result, processErr := w.processor.Process(processCtx, asset, job)
-	select {
-	case heartbeatErr := <-heartbeatDone:
+	if processErr != nil {
+		stopHeartbeat()
+		heartbeatErr := <-heartbeatDone
 		heartbeatDone = closedHeartbeatResult()
 		if heartbeatErr != nil {
 			return heartbeatErr
 		}
-	default:
-	}
-	if processErr != nil {
+		if reporterErr := reporter.Err(); reporterErr != nil {
+			return reporterErr
+		}
 		return w.failJobOwned(processCtx, asset, job, leaseOwner, processErr)
+	}
+	if reporterErr := reporter.Err(); reporterErr != nil {
+		return reporterErr
+	}
+	reporter.Report(domainmedia.ProcessingStepFinalizing, nil)
+	if reporterErr := reporter.Err(); reporterErr != nil {
+		return reporterErr
+	}
+	stopHeartbeat()
+	heartbeatErr := <-heartbeatDone
+	heartbeatDone = closedHeartbeatResult()
+	if heartbeatErr != nil {
+		return heartbeatErr
 	}
 	if err := w.renewLease(processCtx, job.ID, leaseOwner); err != nil {
 		return err
@@ -336,6 +376,10 @@ func (w *MediaProcessingWorker) processLeased(ctx context.Context, job *domainme
 	job.ErrorMessage = ""
 	job.LeaseOwner = ""
 	job.LeaseUntil = nil
+	job.ProcessingStep = domainmedia.ProcessingStepCompleted
+	completedProgress := domainmedia.MaxProcessingProgressBPS
+	job.ProgressBPS = &completedProgress
+	job.ProgressUpdatedAt = &now
 	job.CompletedAt = &now
 	if err := w.finalize(
 		processCtx, asset, result.Variants, nil, job, leaseOwner, now,
@@ -369,6 +413,9 @@ func (w *MediaProcessingWorker) abortDeletedAsset(ctx context.Context, asset *do
 	job.ErrorMessage = "media asset was deleted during processing"
 	job.LeaseOwner = ""
 	job.LeaseUntil = nil
+	job.ProcessingStep = domainmedia.ProcessingStepFailed
+	job.ProgressBPS = nil
+	job.ProgressUpdatedAt = &now
 	job.CompletedAt = &now
 	return w.finalize(ctx, nil, nil, tasks, job, leaseOwner, now)
 }
@@ -380,6 +427,10 @@ func (w *MediaProcessingWorker) completeJob(ctx context.Context, job *domainmedi
 	job.ErrorMessage = ""
 	job.LeaseOwner = ""
 	job.LeaseUntil = nil
+	job.ProcessingStep = domainmedia.ProcessingStepCompleted
+	completedProgress := domainmedia.MaxProcessingProgressBPS
+	job.ProgressBPS = &completedProgress
+	job.ProgressUpdatedAt = &now
 	job.CompletedAt = &now
 	err := w.finalize(ctx, nil, nil, nil, job, leaseOwner, now)
 	if err == nil {
@@ -409,11 +460,15 @@ func (w *MediaProcessingWorker) failJobOwned(ctx context.Context, asset *domainm
 	job.LeaseUntil = nil
 	if terminal {
 		job.State = domainmedia.JobStateFailed
+		job.ProcessingStep = domainmedia.ProcessingStepFailed
 		job.CompletedAt = &now
 	} else {
 		job.State = domainmedia.JobStateRetryable
+		job.ProcessingStep = domainmedia.ProcessingStepWaiting
 		job.NextAttemptAt = now.Add(processingRetryDelay(job.Attempts))
 	}
+	job.ProgressBPS = nil
+	job.ProgressUpdatedAt = &now
 	if asset != nil {
 		asset.ErrorCode = code
 		if terminal {
@@ -466,11 +521,18 @@ func (w *MediaProcessingWorker) notifyFailed(
 	return w.notifier.MediaFailed(ctx, assetID, profileVersion, errorCode)
 }
 
-func (w *MediaProcessingWorker) startLeaseHeartbeat(ctx context.Context, cancel context.CancelFunc, jobID int64, leaseOwner string) <-chan error {
+func (w *MediaProcessingWorker) startLeaseHeartbeat(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	reporter *workerProgressReporter,
+) <-chan error {
 	done := make(chan error, 1)
 	interval := w.leaseTTL / 3
 	if interval < 100*time.Millisecond {
 		interval = 100 * time.Millisecond
+	}
+	if interval > 5*time.Second {
+		interval = 5 * time.Second
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -481,7 +543,7 @@ func (w *MediaProcessingWorker) startLeaseHeartbeat(ctx context.Context, cancel 
 				done <- nil
 				return
 			case <-ticker.C:
-				if err := w.renewLease(ctx, jobID, leaseOwner); err != nil {
+				if err := reporter.Flush(true); err != nil {
 					cancel()
 					done <- err
 					return
@@ -490,6 +552,141 @@ func (w *MediaProcessingWorker) startLeaseHeartbeat(ctx context.Context, cancel 
 		}
 	}()
 	return done
+}
+
+type workerProgressReporter struct {
+	worker     *MediaProcessingWorker
+	ctx        context.Context
+	cancel     context.CancelFunc
+	jobID      int64
+	leaseOwner string
+	mu         sync.Mutex
+	current    domainmedia.ProcessingProgress
+	dirty      bool
+	lastWrite  time.Time
+	err        error
+}
+
+func newWorkerProgressReporter(
+	worker *MediaProcessingWorker,
+	ctx context.Context,
+	cancel context.CancelFunc,
+	jobID int64,
+	leaseOwner string,
+) *workerProgressReporter {
+	return &workerProgressReporter{
+		worker: worker, ctx: ctx, cancel: cancel, jobID: jobID, leaseOwner: leaseOwner,
+		current: domainmedia.ProcessingProgress{
+			Step: domainmedia.ProcessingStepWaiting, UpdatedAt: worker.now(),
+		},
+	}
+}
+
+func (r *workerProgressReporter) Report(step string, progressBPS *int) {
+	if r == nil {
+		return
+	}
+	progress, err := domainmedia.NormalizeProcessingProgress(
+		step, progressBPS, r.worker.now(),
+	)
+	if err != nil {
+		r.fail(err)
+		return
+	}
+	r.mu.Lock()
+	stepChanged := r.current.Step != progress.Step
+	meaningful := progressDistance(r.current.ProgressBPS, progress.ProgressBPS) >= 100
+	r.current = progress
+	r.dirty = r.dirty || stepChanged || meaningful
+	shouldFlush := stepChanged || r.lastWrite.IsZero() ||
+		r.worker.now().Sub(r.lastWrite) >= 5*time.Second
+	r.mu.Unlock()
+	if shouldFlush {
+		if err := r.Flush(false); err != nil {
+			r.fail(err)
+		}
+	}
+}
+
+func (r *workerProgressReporter) Flush(force bool) error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	if r.err != nil {
+		err := r.err
+		r.mu.Unlock()
+		return err
+	}
+	if !force && !r.dirty {
+		r.mu.Unlock()
+		return nil
+	}
+	progress := r.current
+	r.mu.Unlock()
+
+	heartbeatCtx, cancel := context.WithTimeout(r.ctx, r.worker.heartbeatTTL)
+	defer cancel()
+	progressRepository, ok := r.worker.repo.(interface {
+		ExtendProcessingLeaseWithProgress(
+			context.Context, int64, string, time.Duration,
+			domainmedia.ProcessingProgress,
+		) error
+	})
+	var err error
+	if ok {
+		err = progressRepository.ExtendProcessingLeaseWithProgress(
+			heartbeatCtx, r.jobID, r.leaseOwner, r.worker.leaseTTL, progress,
+		)
+	} else {
+		err = r.worker.repo.ExtendProcessingLease(
+			heartbeatCtx, r.jobID, r.leaseOwner, r.worker.leaseTTL,
+		)
+	}
+	inframetrics.ObserveMediaProgress(progress.Step, err)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.dirty = false
+	r.lastWrite = r.worker.now()
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *workerProgressReporter) Err() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err
+}
+
+func (r *workerProgressReporter) fail(err error) {
+	if err == nil || r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.err == nil {
+		r.err = err
+	}
+	r.mu.Unlock()
+	r.cancel()
+}
+
+func progressDistance(left, right *int) int {
+	if left == nil || right == nil {
+		if left == nil && right == nil {
+			return 0
+		}
+		return domainmedia.MaxProcessingProgressBPS
+	}
+	distance := *left - *right
+	if distance < 0 {
+		return -distance
+	}
+	return distance
 }
 
 func (w *MediaProcessingWorker) renewLease(

@@ -88,6 +88,9 @@ Grafana 的 `Frux Playback Observability` 看板提供：
 - 启动耗时 p50/p95/p99，以及首帧耗时按 scene、network、player 的 p95 拆分。
 - 聚合卡顿时长占比、播放失败率、清晰度和媒体源分布。
 - 遥测 batch/event 吞吐、拒绝率、重复率和客户端投递延迟。
+- 媒体处理观察 `frux_media_progress_updates_total`、`frux_media_admin_processing_backlog`、
+  `frux_media_admin_oldest_waiting_seconds`、`frux_media_admin_retry_total`、
+  `frux_media_retry_outbox_backlog` 和 `frux_media_retry_projection_total`。
 
 首帧和卡顿优先按 network、player 判断是否为特定网络或播放器回归，再按 scene
 判断是否局限于某一入口。清晰度或 source 分布突变通常表示选源、转码或降级策略变化。
