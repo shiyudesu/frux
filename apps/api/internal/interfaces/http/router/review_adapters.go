@@ -177,6 +177,7 @@ func (p reviewPreviewProvider) resolve(
 			return "", time.Time{}, domainreview.ErrReviewPreviewUnavailable
 		}
 		objectKey := asset.ObjectKey
+		sizeBytes := asset.SizeBytes
 		variants, err := p.repository.ListReadyVariants(ctx, assetID)
 		if err != nil {
 			return "", time.Time{}, err
@@ -184,6 +185,7 @@ func (p reviewPreviewProvider) resolve(
 		for _, variant := range variants {
 			if variant != nil && variant.Role == role {
 				objectKey = variant.ObjectKey
+				sizeBytes = variant.SizeBytes
 				break
 			}
 		}
@@ -196,6 +198,7 @@ func (p reviewPreviewProvider) resolve(
 		if p.resolver == nil {
 			return "", time.Time{}, domainreview.ErrReviewPreviewUnavailable
 		}
+		inframetrics.ObserveMediaObjectOutboundBytes("protected_preview_estimate", sizeBytes)
 		return p.resolver.ProtectedURL(ctx, objectKey, expiry)
 	}
 

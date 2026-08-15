@@ -267,6 +267,9 @@ Worker是生产核心服务，会随API和Web一起启动。首次部署前必�
 
 当前媒体策略是单并发、最大源时长 180 分钟、单次 ffmpeg 命令超时 360 分钟和 `veryfast` preset。
 `processing` 表示正在执行；`pending`、`retryable` 表示排队；`completed`、`failed` 表示终态。
+Worker下载一次源文件并把输出直接写入确定性的 `processed/*` 最终键。公开发布、下架和恢复只切换
+PostgreSQL exposure generation，不再复制雨云对象。公开307缓存25分钟、签名媒体响应缓存30分钟；
+下架立即停止新授权，但已缓存播放最多延迟30分钟结束。
 
 查看当前任务和失败原因：
 

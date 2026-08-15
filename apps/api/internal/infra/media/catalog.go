@@ -6,15 +6,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 var exposureGenerationFallback atomic.Uint64
 var errVariantExposureConflict = errors.New("media variant exposure changed concurrently")
+
+const publicExposureRetention = 30 * time.Minute
 
 type DeliveryRepository interface {
 	FindAssetsByIDs(ctx context.Context, assetIDs []int64) (map[int64]*domainmedia.MediaAsset, error)
@@ -28,6 +32,15 @@ type DeliveryRepository interface {
 		objectKey string,
 		public bool,
 	) (bool, error)
+	UpdateVariantExposure(
+		ctx context.Context,
+		variantID int64,
+		expectedObjectKey string,
+		expectedPublic bool,
+		expectedGeneration string,
+		public bool,
+		generation string,
+	) (bool, error)
 	CreateCleanupTasks(ctx context.Context, tasks []*domainmedia.CleanupTask) error
 	ListIncompletePublicCleanupTasks(ctx context.Context, assetIDs []int64) ([]*domainmedia.CleanupTask, error)
 	UpdateCleanupTask(ctx context.Context, task *domainmedia.CleanupTask) error
@@ -36,6 +49,7 @@ type DeliveryRepository interface {
 func needsBundleNormalization(variants []*domainmedia.MediaVariant) bool {
 	publicCount := 0
 	privateCount := 0
+	missingGeneration := false
 	generations := map[string]struct{}{}
 	for _, variant := range variants {
 		if variant == nil {
@@ -46,28 +60,19 @@ func needsBundleNormalization(variants []*domainmedia.MediaVariant) bool {
 			continue
 		}
 		publicCount++
-		if generation := exposureGeneration(variant.ObjectKey); generation != "" {
+		if generation := variant.ExposureGeneration; generation != "" {
 			generations[generation] = struct{}{}
+		} else {
+			missingGeneration = true
 		}
 	}
-	return publicCount > 0 && (privateCount > 0 || len(generations) > 1)
+	return publicCount > 0 && (privateCount > 0 || missingGeneration || len(generations) > 1)
 }
 
 type DeliveryRef struct {
 	VideoID      int64
 	MediaAssetID int64
 	CoverAssetID int64
-}
-
-func exposureGeneration(key string) string {
-	if !strings.HasPrefix(key, "media/v2/") {
-		return ""
-	}
-	parts := strings.SplitN(strings.TrimPrefix(key, "media/v2/"), "/", 2)
-	if len(parts) != 2 {
-		return ""
-	}
-	return parts[0]
 }
 
 type DeliveryCatalog struct {
@@ -217,7 +222,13 @@ func (c *DeliveryCatalog) resolveBatch(
 				continue
 			}
 			variants := variantsByAsset[assetID]
-			if hasLegacyPublicVariant(variants) || needsBundleNormalization(variants) {
+			if hasLegacyPublicVariant(variants) {
+				variants, err = c.migrateLegacyPublicVariants(ctx, variants, assets)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if needsBundleNormalization(variants) {
 				variants, err = c.protectVariants(ctx, variants, assets)
 				if err != nil {
 					return nil, err
@@ -240,7 +251,11 @@ func (c *DeliveryCatalog) resolveBatch(
 		if coverAsset != nil && coverAsset.State == domainmedia.AssetStateReady {
 			for _, variant := range variantsByAsset[ref.CoverAssetID] {
 				if variant != nil && variant.Public && variant.Role == domainmedia.VariantRoleCover {
-					delivery.CoverURL, err = c.resolver.PublicURL(variant.ObjectKey)
+					publicKey, keyErr := publicDeliveryKey(variant)
+					if keyErr != nil {
+						return nil, keyErr
+					}
+					delivery.CoverURL, err = c.resolver.PublicURL(publicKey)
 					if err != nil {
 						return nil, err
 					}
@@ -253,7 +268,11 @@ func (c *DeliveryCatalog) resolveBatch(
 			if variant == nil || !variant.Public || variant.Role == domainmedia.VariantRoleSegment {
 				continue
 			}
-			resolvedURL, resolveErr := c.resolver.PublicURL(variant.ObjectKey)
+			publicKey, keyErr := publicDeliveryKey(variant)
+			if keyErr != nil {
+				return nil, keyErr
+			}
+			resolvedURL, resolveErr := c.resolver.PublicURL(publicKey)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
@@ -278,7 +297,7 @@ func (c *DeliveryCatalog) resolveBatch(
 
 func hasLegacyPublicVariant(variants []*domainmedia.MediaVariant) bool {
 	for _, variant := range variants {
-		if variant != nil && variant.Public && !strings.HasPrefix(variant.ObjectKey, "media/v2/") {
+		if variant != nil && variant.Public && isLegacyPublicObjectKey(variant.ObjectKey) {
 			return true
 		}
 	}
@@ -307,63 +326,27 @@ func (c *DeliveryCatalog) promoteVariants(
 		if variant == nil || variant.Public {
 			continue
 		}
-		if c.store == nil {
-			return nil, domainmedia.ErrMediaVariantNotFound
-		}
-		protectedKey := protectedObjectKey(variant.ObjectKey)
-		publicKey := publicObjectKey(protectedKey, generation)
-		reader, metadata, err := c.store.Open(ctx, protectedKey)
-		if err != nil {
-			return rollback(err)
-		}
-		contentType := mediaVariantContentType(variant)
-		if metadata != nil && metadata.ContentType != "" {
-			contentType = metadata.ContentType
-		}
-		_, putErr := c.store.Put(ctx, publicKey, reader, variant.SizeBytes, contentType, variant.ChecksumSHA256)
-		closeErr := reader.Close()
-		if putErr != nil {
-			return rollback(putErr)
-		}
-		if closeErr != nil {
-			return rollback(errors.Join(closeErr, c.removeUntrackedPublicObject(ctx, variant.AssetID, publicKey, assets)))
-		}
-		updated, err := c.repo.UpdateVariantPromotion(
+		updated, err := c.repo.UpdateVariantExposure(
 			ctx,
 			variant.ID,
 			variant.ObjectKey,
 			false,
-			publicKey,
+			variant.ExposureGeneration,
 			true,
+			generation,
 		)
 		if err != nil {
-			return rollback(errors.Join(err, c.removeUntrackedPublicObject(ctx, variant.AssetID, publicKey, assets)))
+			return rollback(err)
 		}
 
 		if !updated {
-			cleanupErr := c.removeUntrackedPublicObject(ctx, variant.AssetID, publicKey, assets)
-			return rollback(errors.Join(errVariantExposureConflict, cleanupErr))
+			return rollback(errVariantExposureConflict)
 		}
-		variant.ObjectKey = publicKey
 		variant.Public = true
+		variant.ExposureGeneration = generation
 		promotedThisCall = append(promotedThisCall, variant)
 	}
 	return variants, nil
-}
-
-func (c *DeliveryCatalog) removeUntrackedPublicObject(
-	ctx context.Context,
-	assetID int64,
-	publicKey string,
-	assets map[int64]*domainmedia.MediaAsset,
-) error {
-	if err := c.store.Delete(ctx, publicKey); err == nil {
-		return nil
-	} else if cleanupErr := c.schedulePublicObjectCleanup(ctx, assetID, publicKey, assets); cleanupErr != nil {
-		return errors.Join(err, cleanupErr)
-	} else {
-		return err
-	}
 }
 
 func (c *DeliveryCatalog) protectVariants(
@@ -387,6 +370,7 @@ func (c *DeliveryCatalog) protectVariants(
 		if protected != nil {
 			variant.ObjectKey = protected.ObjectKey
 			variant.Public = protected.Public
+			variant.ExposureGeneration = protected.ExposureGeneration
 		}
 	}
 
@@ -404,63 +388,151 @@ func (c *DeliveryCatalog) protectVariant(
 		if err != nil || current == nil || !current.Public {
 			return current, err
 		}
-		if c.store == nil {
-			return nil, domainmedia.ErrMediaVariantNotFound
+		if isLegacyPublicObjectKey(current.ObjectKey) {
+			return c.migrateLegacyPublicVariant(ctx, current, assets)
 		}
-		protectedKey := protectedObjectKey(current.ObjectKey)
-		if _, err := c.store.Head(ctx, protectedKey); err != nil {
-			reader, metadata, openErr := c.store.Open(ctx, current.ObjectKey)
-			if openErr != nil {
-				return nil, openErr
-			}
-			contentType := mediaVariantContentType(current)
-			if metadata != nil && metadata.ContentType != "" {
-				contentType = metadata.ContentType
-			}
-			_, putErr := c.store.Put(ctx, protectedKey, reader, current.SizeBytes, contentType, current.ChecksumSHA256)
-			closeErr := reader.Close()
-			if putErr != nil {
-				return nil, putErr
-			}
-			if closeErr != nil {
-				return nil, closeErr
-			}
-		}
-		publicKey := current.ObjectKey
-		updated, err := c.repo.UpdateVariantPromotion(
+		updated, err := c.repo.UpdateVariantExposure(
 			ctx,
 			current.ID,
 			current.ObjectKey,
 			true,
-			protectedKey,
+			current.ExposureGeneration,
 			false,
+			"",
 		)
 		if err != nil {
 			return nil, err
 		}
-		if publicKey != protectedKey {
-			if deleteErr := c.store.Delete(ctx, publicKey); deleteErr != nil {
-				if cleanupErr := c.schedulePublicObjectCleanup(ctx, current.AssetID, publicKey, assets); cleanupErr != nil {
-					_, restoreErr := c.repo.UpdateVariantPromotion(
-						ctx,
-						current.ID,
-						protectedKey,
-						false,
-						publicKey,
-						true,
-					)
-					return nil, errors.Join(deleteErr, cleanupErr, restoreErr)
-				}
-				return nil, deleteErr
-			}
-		}
 		if updated {
-			current.ObjectKey = protectedKey
 			current.Public = false
+			current.ExposureGeneration = ""
 			return current, nil
 		}
 	}
 	return nil, errVariantExposureConflict
+}
+
+func (c *DeliveryCatalog) migrateLegacyPublicVariants(
+	ctx context.Context,
+	variants []*domainmedia.MediaVariant,
+	assets map[int64]*domainmedia.MediaAsset,
+) ([]*domainmedia.MediaVariant, error) {
+	for _, variant := range variants {
+		if variant == nil || !variant.Public || !isLegacyPublicObjectKey(variant.ObjectKey) {
+			continue
+		}
+		migrated, err := c.migrateLegacyPublicVariant(ctx, variant, assets)
+		if err != nil {
+			return nil, err
+		}
+		variant.ObjectKey = migrated.ObjectKey
+		variant.Public = migrated.Public
+		variant.ExposureGeneration = migrated.ExposureGeneration
+	}
+	return variants, nil
+}
+
+func (c *DeliveryCatalog) migrateLegacyPublicVariant(
+	ctx context.Context,
+	variant *domainmedia.MediaVariant,
+	assets map[int64]*domainmedia.MediaAsset,
+) (*domainmedia.MediaVariant, error) {
+	if c.store == nil {
+		return nil, domainmedia.ErrMediaVariantNotFound
+	}
+	protectedKey := protectedObjectKey(variant.ObjectKey)
+	protectedMetadata, err := c.store.Head(ctx, protectedKey)
+	if err == nil {
+		if !variantObjectMatches(protectedMetadata, variant) {
+			return nil, domainmedia.ErrObjectChecksumMismatch
+		}
+	} else if !errors.Is(err, domainmedia.ErrObjectNotFound) {
+		return nil, err
+	} else {
+		reader, metadata, openErr := c.store.Open(ctx, variant.ObjectKey)
+		if openErr != nil {
+			return nil, openErr
+		}
+		contentType := mediaVariantContentType(variant)
+		if metadata != nil && metadata.ContentType != "" {
+			contentType = metadata.ContentType
+		}
+		countedReader := &outboundCountingReader{Reader: reader}
+		_, putErr := c.store.Put(
+			ctx,
+			protectedKey,
+			countedReader,
+			variant.SizeBytes,
+			contentType,
+			variant.ChecksumSHA256,
+		)
+		closeErr := reader.Close()
+		inframetrics.ObserveMediaObjectOutboundBytes("legacy_repair", countedReader.bytes)
+		if putErr != nil {
+			return nil, putErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		protectedMetadata, err = c.store.Head(ctx, protectedKey)
+		if err != nil {
+			return nil, err
+		}
+		if !variantObjectMatches(protectedMetadata, variant) {
+			return nil, domainmedia.ErrObjectChecksumMismatch
+		}
+	}
+	if err := c.schedulePublicObjectCleanupAfter(
+		ctx,
+		variant.AssetID,
+		variant.ObjectKey,
+		assets,
+		time.Now().UTC().Add(publicExposureRetention),
+	); err != nil {
+		return nil, err
+	}
+	updated, err := c.repo.UpdateVariantPromotion(
+		ctx,
+		variant.ID,
+		variant.ObjectKey,
+		true,
+		protectedKey,
+		false,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		current, reloadErr := c.reloadVariant(ctx, variant.AssetID, variant.ID)
+		if reloadErr == nil && current != nil && current.ObjectKey == protectedKey {
+			return current, nil
+		}
+		return nil, errVariantExposureConflict
+	}
+	variant.ObjectKey = protectedKey
+	variant.Public = false
+	variant.ExposureGeneration = ""
+	return variant, nil
+}
+
+func variantObjectMatches(
+	metadata *domainmedia.ObjectMetadata,
+	variant *domainmedia.MediaVariant,
+) bool {
+	return metadata != nil &&
+		metadata.SizeBytes == variant.SizeBytes &&
+		strings.EqualFold(metadata.ChecksumSHA256, variant.ChecksumSHA256)
+}
+
+type outboundCountingReader struct {
+	io.Reader
+	bytes int64
+}
+
+func (r *outboundCountingReader) Read(buffer []byte) (int, error) {
+	count, err := r.Reader.Read(buffer)
+	r.bytes += int64(count)
+	return count, err
 }
 
 func (c *DeliveryCatalog) reloadVariant(
@@ -480,23 +552,29 @@ func (c *DeliveryCatalog) reloadVariant(
 	return nil, domainmedia.ErrMediaVariantNotFound
 }
 
-func publicObjectKey(key, generation string) string {
-	if strings.HasPrefix(key, "processed/") {
-		return fmt.Sprintf(
-			"media/v2/%s/%s",
-			generation,
-			strings.TrimPrefix(key, "processed/"),
-		)
+func publicDeliveryKey(variant *domainmedia.MediaVariant) (string, error) {
+	if variant == nil || !variant.Public {
+		return "", domainmedia.ErrMediaVariantNotFound
 	}
-
-	return key
+	if isLegacyPublicObjectKey(variant.ObjectKey) {
+		return variant.ObjectKey, nil
+	}
+	if variant.ExposureGeneration == "" {
+		return "", domainmedia.ErrInvalidObjectKey
+	}
+	return domainmedia.BuildPublicExposureKey(variant)
 }
 
-func (c *DeliveryCatalog) schedulePublicObjectCleanup(
+func isLegacyPublicObjectKey(key string) bool {
+	return strings.HasPrefix(key, "media/")
+}
+
+func (c *DeliveryCatalog) schedulePublicObjectCleanupAfter(
 	ctx context.Context,
 	assetID int64,
 	objectKey string,
 	assets map[int64]*domainmedia.MediaAsset,
+	notBefore time.Time,
 ) error {
 	asset := assets[assetID]
 	if asset == nil {
@@ -507,7 +585,7 @@ func (c *DeliveryCatalog) schedulePublicObjectCleanup(
 		assetID,
 		asset.StorageBackend,
 		objectKey,
-		time.Now().UTC(),
+		notBefore,
 		10,
 	)
 	if err != nil {

@@ -219,6 +219,19 @@ func cacheControlForObjectKey(key string) string {
 }
 
 func (s *S3Store) PresignGet(ctx context.Context, key string, expiry time.Duration) (*domainmedia.PresignedRequest, error) {
+	return s.presignGet(ctx, key, expiry, "private, no-store")
+}
+
+func (s *S3Store) PresignPublicGet(ctx context.Context, key string, expiry time.Duration) (*domainmedia.PresignedRequest, error) {
+	return s.presignGet(ctx, key, expiry, "public, max-age=1800, must-revalidate")
+}
+
+func (s *S3Store) presignGet(
+	ctx context.Context,
+	key string,
+	expiry time.Duration,
+	responseCacheControl string,
+) (*domainmedia.PresignedRequest, error) {
 	if !domainmedia.ValidObjectKey(key) {
 		return nil, domainmedia.ErrInvalidObjectKey
 	}
@@ -227,7 +240,7 @@ func (s *S3Store) PresignGet(ctx context.Context, key string, expiry time.Durati
 	}
 	output, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket), Key: aws.String(key),
-		ResponseCacheControl: aws.String("private, no-store"),
+		ResponseCacheControl: aws.String(responseCacheControl),
 	}, func(options *s3.PresignOptions) {
 		options.Expires = expiry
 	})

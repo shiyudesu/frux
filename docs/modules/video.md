@@ -162,9 +162,9 @@ publication outbox 的 pending/oldest 统计查询与 dispatch 操作错误分�
 | 缓存防泄露 | 可见性、删除和生命周期变化清除视频卡片/统计缓存；Feed 组装还会用数据库重新校验缓存 ID 的公开可读性 |
 | 本地媒体防泄露 | `/uploads` 视频/封面同时验证不可变上传所有权、同所有者视频引用、生命周期、可见性和当前身份；他人公开重引用不能授权资产，保护资源禁用缓存 |
 | 审核专用预览 | 当前 review version 且非删除的视频可由 `review.read` 获得最长 5 分钟的 S3 预签名或本地 HMAC URL；不恢复公共 `media_url`，不改变 Feed/搜索/媒体公开资格 |
-| 生产媒体撤销 | 私密、下架、拒绝或删除会把已提升的 `media/` 变体降回 `processed/` 保护前缀；本地 `/media` 读取还会实时查询当前公开资格 |
-| 有界缓存撤销 | 公共对象和本地 `/media` 使用 60 秒 `must-revalidate` 缓存；状态变化后旧缓存最多保留一个短窗口，撤销失败返回错误并可幂等重试 |
-| 公共 URL 版本 | 新提升使用 `media/v2/{exposure-generation}/...`，恢复会产生新 URL；首次上线必须清理 CDN 中旧 `media/*` 一年缓存条目 |
+| 生产媒体撤销 | 私密、下架、拒绝或删除会清空 variant 公开资格和 exposure generation；protected 对象键不变，`/media` 每次新授权仍查询当前公开资格 |
+| 有界缓存撤销 | 公开 307 使用 25 分钟、签名媒体响应使用 30 分钟 `must-revalidate`；状态变化立即拒绝新授权，旧缓存最多延迟 30 分钟 |
+| 公共 URL 版本 | 新发布使用不暴露存储键的 `media/v3/{generation}/{variant_id}/{filename}`；恢复生成新 generation，历史 v2 在迁移窗口内兼容 |
 | 删除统计 | 删除视频扣减对应可见性计数和该视频当前获赞 |
 
 ## 5. 测试建议

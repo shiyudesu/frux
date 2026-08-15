@@ -42,13 +42,12 @@ flowchart LR
   API -->|"保存和读取本地文件"| Uploads
   API -->|"缓存 Feed、互动状态与计数；原子协调部分限流"| Redis
   API -->|"投递 action_changed、媒体 wakeup 等事件"| Kafka
-  API -.->|"迁移媒体文件"| ObjectStorage
+  API -.->|"签发上传与公开访问 URL"| ObjectStorage
 
   class Web,Client client;
   class API system;
-  class PostgreSQL,Uploads store;
+  class PostgreSQL,Uploads,ObjectStorage store;
   class Redis,Kafka service;
-  class ObjectStorage future;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
@@ -489,7 +488,7 @@ flowchart TB
   Video -->|"进入内容审核"| Review
   Video -->|"承载点赞评论收藏"| Interaction
   Video -->|"补齐可读卡片"| Library
-  Upload -->|"迁移媒体文件"| AsyncStore
+  Upload -->|"直传原文件；Worker写最终媒体对象"| AsyncStore
   Feed -->|"接入召回排序"| Recommendation
   Recommendation -->|"返回候选内容"| Feed
   Feed -->|"上报曝光 / 播放 / 进度 / 完播 / 跳过"| Exposure
@@ -651,9 +650,10 @@ flowchart LR
   API -->|"提交资产与 PostgreSQL job；尽力发布唤醒"| MQ["Kafka command"]
   MQ --> Worker["Media Worker"]
   Worker -->|"ffprobe + FFmpeg"| Outputs["单个源分辨率 MP4"]
-  Worker -->|"临时键校验后发布"| S3
-  Worker -->|"更新 ready 与兼容 URL"| PostgreSQL[("PostgreSQL")]
-  S3 -->|"不可变公共资源"| CDN["CDN / 公共前缀"]
+  Worker -->|"确定性最终键：HEAD / PUT / 校验"| S3
+  Worker -->|"更新 ready；发布时写 exposure generation"| PostgreSQL[("PostgreSQL")]
+  Web -->|"请求 v3 虚拟 URL"| API
+  API -->|"校验当前公开资格并签名同一 protected key"| S3
 ```
 
 视频运营通过受保护的 media admin Application 读取任务概览和终态历史，使用批量 video catalog 补充
@@ -669,8 +669,9 @@ flowchart LR
   Offset；轮询与 reconciliation 覆盖命令丢失、重复、延迟、满容量和重启。
 - `frux.video.published.v1` 保留 30 天首次发布事实。Feed 与 `hash-ngram-v1` 使用独立 Group，
   各自在幂等副作用或条件向量持久化成功后提交 Offset。
-- Worker 只在临时对象通过大小与 SHA-256 校验后发布受保护的内容寻址输出；只有审核已通过且公开的视频才提升到 `media/` 公共前缀。基线先就绪时仅更新 `media_status=ready` 并保持公共 URL 为空；批准先发生时也等待基线，双门满足后才投影 URL 和发送发布事件。
-- 公共变体使用版本化 `media/v2/{exposure-generation}/...` URL、60 秒可重验证缓存、ETag 和 Range/HEAD；私密、下架、拒绝、媒体失败或删除转换会将变体降回保护前缀，本地 `/media` 还实时校验数据库公开资格。状态撤销允许最多一个短缓存窗口；首次上线需 purge 旧 `media/*` 一年缓存条目。原始对象和未完成资产只能由不可变 owner 获取短期签名 URL。
+- Worker 对本地输出计算 SHA-256，按确定性最终键执行 HEAD/reuse 或一次 PUT 后校验；封面直接引用已校验上传键。基线先就绪时仅更新 `media_status=ready` 并保持公共 URL 为空；批准先发生时也等待基线，双门满足后才投影 URL 和发送发布事件。
+- 新公共变体使用不暴露存储键的 `media/v3/{generation}/{variant_id}/{filename}` 虚拟 URL。发布、下架和恢复只原子更新 `public/exposure_generation`，不复制正文；恢复生成新 generation。公开 resolver 校验 variant generation 与视频当前公开资格后签名原 protected key。
+- Frux 307 使用 25 分钟可重验证缓存，签名对象响应使用 30 分钟可重验证缓存，并保留 ETag、Range/HEAD。下架立即拒绝新签名，已缓存或已签发访问最多延迟 30 分钟失效。历史 `media/v2/*` 先验证或修复 protected counterpart，旧对象保留至少 30 分钟后清理。
 - 私密、删除、拒绝和下架事务与 `media_video_lifecycle_task` 原子提交。媒体 worker 通过租约、重试和
   any-status 视频状态执行保护；stale private intent 在视频重新公开后终结为 superseded。删除视频
   立即停止 API 发现，随后由 durable lifecycle task 调用 `media_cleanup_task` 延迟删除对象；

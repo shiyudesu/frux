@@ -3,14 +3,17 @@ package interfaceshttpupload
 import (
 	"context"
 	"errors"
-	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
-	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
-	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
+	inframedia "github.com/shiyudesu/frux/internal/infra/media"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 
 	"github.com/cloudwego/hertz/pkg/app"
 )
@@ -23,18 +26,22 @@ type PublicMediaHandler struct {
 }
 
 type PublicMediaAuthorizer interface {
-	AuthorizePublicMediaObject(ctx context.Context, objectKey string) (bool, error)
+	ResolvePublicMediaObject(ctx context.Context, objectKey string) (*domainmedia.PublicMediaObject, error)
 }
 
 const maxPublicManifestBytes int64 = 4 << 20
+const publicMediaResponseMaxAge = 30 * time.Minute
+const publicMediaRedirectMaxAge = 25 * time.Minute
+const maxCachedPublicRedirects = 2048
 
 type PublicMediaRedirectStore interface {
-	PresignGet(ctx context.Context, key string, expiry time.Duration) (*domainmedia.PresignedRequest, error)
+	PresignPublicGet(ctx context.Context, key string, expiry time.Duration) (*domainmedia.PresignedRequest, error)
 	Open(ctx context.Context, key string) (io.ReadCloser, *domainmedia.ObjectMetadata, error)
 	Head(ctx context.Context, key string) (*domainmedia.ObjectMetadata, error)
 }
 
 var errInvalidPublicMediaRedirectHandler = errors.New("invalid public media redirect handler")
+var errInvalidPublicMediaRedirect = errors.New("invalid public media redirect")
 
 type PublicMediaOption func(*PublicMediaHandler)
 
@@ -72,33 +79,42 @@ func (h *PublicMediaHandler) serve(ctx context.Context, c *app.RequestContext, s
 		c.Status(http.StatusNotFound)
 		return
 	}
-	if !authorizePublicMedia(ctx, c, h.authorizer, key) {
+	object, ok := resolvePublicMedia(ctx, c, h.authorizer, key)
+	if !ok {
 		return
 	}
-	metadata, err := h.store.Head(ctx, key)
-	if err != nil {
+	metadata, err := h.store.Head(ctx, object.StorageKey)
+	if err != nil || metadata == nil {
 		c.Status(http.StatusNotFound)
 		return
 	}
 	etag := `"` + metadata.ETag + `"`
 	c.Response.Header.Set("ETag", etag)
 	c.Response.Header.Set("Accept-Ranges", "bytes")
-	c.Response.Header.Set("Cache-Control", publicMediaCacheControl(key))
+	c.Response.Header.Set("Cache-Control", publicMediaCacheControl())
 	if strings.TrimSpace(string(c.GetHeader("If-None-Match"))) == etag {
 		c.Status(http.StatusNotModified)
 		return
 	}
+	c.Request.URI().SetPath("/media/" + object.StorageKey)
 	staticHandler(ctx, c)
 }
 
-func publicMediaCacheControl(key string) string {
-	return "public, max-age=60, must-revalidate"
+func publicMediaCacheControl() string {
+	return "public, max-age=1800, must-revalidate"
 }
 
 type PublicMediaRedirectHandler struct {
 	store      PublicMediaRedirectStore
 	authorizer PublicMediaAuthorizer
 	ttl        time.Duration
+	cacheMu    sync.Mutex
+	cache      map[string]cachedPublicRedirect
+}
+
+type cachedPublicRedirect struct {
+	request   *domainmedia.PresignedRequest
+	expiresAt time.Time
 }
 
 func NewPublicMediaRedirectHandler(
@@ -106,16 +122,17 @@ func NewPublicMediaRedirectHandler(
 	authorizer PublicMediaAuthorizer,
 	ttl time.Duration,
 ) (*PublicMediaRedirectHandler, error) {
-	if store == nil || authorizer == nil || ttl <= 0 || ttl > time.Minute {
+	if store == nil || authorizer == nil || ttl < publicMediaResponseMaxAge {
 		return nil, errInvalidPublicMediaRedirectHandler
 	}
 	return &PublicMediaRedirectHandler{
 		store: store, authorizer: authorizer, ttl: ttl,
+		cache: make(map[string]cachedPublicRedirect),
 	}, nil
 }
 
 func (h *PublicMediaRedirectHandler) Get(ctx context.Context, c *app.RequestContext) {
-	key, ok := h.authorizedKey(ctx, c)
+	key, exposureKey, ok := h.authorizedKey(ctx, c)
 	if !ok {
 		return
 	}
@@ -123,16 +140,19 @@ func (h *PublicMediaRedirectHandler) Get(ctx context.Context, c *app.RequestCont
 		h.serveManifest(ctx, c, key)
 		return
 	}
-	h.redirect(ctx, c, key)
+	h.redirect(ctx, c, exposureKey, key)
 }
 
 func (h *PublicMediaRedirectHandler) Head(ctx context.Context, c *app.RequestContext) {
-	key, ok := h.authorizedKey(ctx, c)
+	key, _, ok := h.authorizedKey(ctx, c)
 	if !ok {
 		return
 	}
 	metadata, err := h.store.Head(ctx, key)
-	if err != nil {
+	if err != nil || metadata == nil {
+		if err == nil {
+			err = domainmedia.ErrObjectNotFound
+		}
 		writePublicMediaStoreError(c, err)
 		return
 	}
@@ -143,32 +163,93 @@ func (h *PublicMediaRedirectHandler) Head(ctx context.Context, c *app.RequestCon
 func (h *PublicMediaRedirectHandler) redirect(
 	ctx context.Context,
 	c *app.RequestContext,
+	exposureKey string,
 	key string,
 ) {
-	request, err := h.store.PresignGet(ctx, key, h.ttl)
+	metadata, err := h.store.Head(ctx, key)
+	if err != nil || metadata == nil {
+		if err == nil {
+			err = domainmedia.ErrObjectNotFound
+		}
+		writePublicMediaStoreError(c, err)
+		return
+	}
+	observePublicMediaRequest(c, metadata.SizeBytes)
+	request, err := h.publicRedirect(ctx, exposureKey, key)
 	if err != nil || request == nil || strings.TrimSpace(request.URL) == "" {
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
+	c.Response.Header.Set("Cache-Control", "public, max-age=1500, must-revalidate")
 	c.Redirect(http.StatusTemporaryRedirect, []byte(request.URL))
 	c.Abort()
+}
+
+func (h *PublicMediaRedirectHandler) publicRedirect(
+	ctx context.Context,
+	exposureKey string,
+	key string,
+) (*domainmedia.PresignedRequest, error) {
+	now := time.Now().UTC()
+	h.cacheMu.Lock()
+	if cached, ok := h.cache[exposureKey]; ok && now.Before(cached.expiresAt) {
+		h.cacheMu.Unlock()
+		return cached.request, nil
+	}
+	h.cacheMu.Unlock()
+
+	request, err := h.store.PresignPublicGet(ctx, key, h.ttl)
+	if err != nil {
+		return nil, err
+	}
+	if request == nil || strings.TrimSpace(request.URL) == "" {
+		return nil, errInvalidPublicMediaRedirect
+	}
+	cacheExpiresAt := now.Add(publicMediaRedirectMaxAge)
+	if !request.ExpiresAt.IsZero() && request.ExpiresAt.Before(cacheExpiresAt) {
+		cacheExpiresAt = request.ExpiresAt
+	}
+	if !cacheExpiresAt.After(now) {
+		return nil, errInvalidPublicMediaRedirect
+	}
+	h.cacheMu.Lock()
+	if len(h.cache) >= maxCachedPublicRedirects {
+		for cachedKey, cached := range h.cache {
+			if !now.Before(cached.expiresAt) {
+				delete(h.cache, cachedKey)
+			}
+		}
+	}
+	if len(h.cache) >= maxCachedPublicRedirects {
+		for cachedKey := range h.cache {
+			delete(h.cache, cachedKey)
+			break
+		}
+	}
+	h.cache[exposureKey] = cachedPublicRedirect{
+		request: request, expiresAt: cacheExpiresAt,
+	}
+	h.cacheMu.Unlock()
+	return request, nil
 }
 
 func (h *PublicMediaRedirectHandler) authorizedKey(
 	ctx context.Context,
 	c *app.RequestContext,
-) (string, bool) {
+) (string, string, bool) {
 	c.Response.Header.Set("Cache-Control", "private, no-store")
 	c.Response.Header.Set("Pragma", "no-cache")
 	key, ok := publicMediaObjectKey(c)
 	if !ok {
 		c.Status(http.StatusNotFound)
-		return "", false
+		return "", "", false
 	}
-	if !authorizePublicMedia(ctx, c, h.authorizer, key) {
-		return "", false
+	object, ok := resolvePublicMedia(ctx, c, h.authorizer, key)
+	if !ok {
+		return "", "", false
 	}
-	return key, true
+	c.Response.Header.Del("Pragma")
+	return object.StorageKey, key, true
 }
 
 func (h *PublicMediaRedirectHandler) serveManifest(
@@ -198,6 +279,7 @@ func (h *PublicMediaRedirectHandler) serveManifest(
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
+	inframetrics.ObserveMediaObjectOutboundBytes("public_manifest", int64(len(content)))
 	setPublicMediaMetadataHeaders(c, metadata)
 	contentType := strings.TrimSpace(metadata.ContentType)
 	if contentType == "" {
@@ -220,7 +302,7 @@ func setPublicMediaMetadataHeaders(
 		c.Response.Header.Set("Content-Length", strconv.FormatInt(metadata.SizeBytes, 10))
 	}
 	c.Response.Header.Set("Accept-Ranges", "bytes")
-	c.Response.Header.Set("Cache-Control", publicMediaCacheControl(metadata.Key))
+	c.Response.Header.Set("Cache-Control", publicMediaCacheControl())
 }
 
 func writePublicMediaStoreError(c *app.RequestContext, err error) {
@@ -236,20 +318,71 @@ func publicMediaObjectKey(c *app.RequestContext) (string, bool) {
 	return key, domainmedia.ValidObjectKey(key) && strings.HasPrefix(key, "media/")
 }
 
-func authorizePublicMedia(
+func resolvePublicMedia(
 	ctx context.Context,
 	c *app.RequestContext,
 	authorizer PublicMediaAuthorizer,
 	key string,
-) bool {
+) (*domainmedia.PublicMediaObject, bool) {
 	if authorizer == nil {
 		c.Status(http.StatusNotFound)
-		return false
+		return nil, false
 	}
-	allowed, err := authorizer.AuthorizePublicMediaObject(ctx, key)
-	if err != nil || !allowed {
+	object, err := authorizer.ResolvePublicMediaObject(ctx, key)
+	if err != nil || object == nil || !domainmedia.ValidObjectKey(object.StorageKey) {
 		c.Status(http.StatusNotFound)
-		return false
+		return nil, false
 	}
-	return true
+	return object, true
+}
+
+func observePublicMediaRequest(c *app.RequestContext, sizeBytes int64) {
+	if sizeBytes <= 0 {
+		return
+	}
+	requested := estimatedRangeBytes(
+		strings.TrimSpace(string(c.GetHeader("Range"))),
+		sizeBytes,
+	)
+	source := "public_full_estimate"
+	if requested < sizeBytes {
+		source = "public_range_estimate"
+	}
+	inframetrics.ObserveMediaObjectOutboundBytes(source, requested)
+}
+
+func estimatedRangeBytes(header string, sizeBytes int64) int64 {
+	if header == "" || !strings.HasPrefix(header, "bytes=") || strings.Contains(header, ",") {
+		return sizeBytes
+	}
+	value := strings.TrimPrefix(header, "bytes=")
+	bounds := strings.SplitN(value, "-", 2)
+	if len(bounds) != 2 {
+		return sizeBytes
+	}
+	if bounds[0] == "" {
+		suffix, err := strconv.ParseInt(bounds[1], 10, 64)
+		if err != nil || suffix <= 0 {
+			return sizeBytes
+		}
+		if suffix > sizeBytes {
+			return sizeBytes
+		}
+		return suffix
+	}
+	start, err := strconv.ParseInt(bounds[0], 10, 64)
+	if err != nil || start < 0 || start >= sizeBytes {
+		return sizeBytes
+	}
+	if bounds[1] == "" {
+		return sizeBytes - start
+	}
+	end, err := strconv.ParseInt(bounds[1], 10, 64)
+	if err != nil || end < start {
+		return sizeBytes
+	}
+	if end >= sizeBytes {
+		end = sizeBytes - 1
+	}
+	return end - start + 1
 }

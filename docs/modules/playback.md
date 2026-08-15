@@ -69,6 +69,8 @@
 | 自定义播放器外壳 | Feed 和个人内容库使用自定义控制栏；底层 video 不启用原生 controls，并禁用浏览器媒体右键菜单、画中画和远程播放入口，避免出现翻译音频等浏览器扩展操作 |
 | DASH 安全回退 | manifest、网络或可恢复 DASH 错误会保留位置、静音、速度和播放意图并切换兼容 MP4 |
 | 三槽播放器池 | Feed 只保留 previous/current/next，按 generation、video ID 和 source revision 复用，离开窗口立即销毁 |
+| 公开源版本 | v3 媒体 URL 包含 exposure generation；恢复发布会生成新 URL，现有 source revision 自动失效，不使用 Service Worker 或整文件持久缓存 |
+| HTTP 缓存边界 | 公开 307 最多缓存 25 分钟，签名媒体响应最多缓存 30 分钟并保留 Range/ETag；下架后新授权立即拒绝，已有缓存最多延迟 30 分钟失效 |
 | 能力感知选源 | codec、MediaSource、MediaCapabilities、网络、save-data、视口和用户偏好共同决定初始源与码率边界 |
 | 用户播放偏好 | 0.5x-2x 速度和连续播放经过类型校验后保存到 localStorage；历史多源视频仍兼容已有清晰度偏好 |
 | 短视频手势 | video 元素只负责渲染，覆盖层统一接收指针事件；活动视频单击在短双击判定窗口后切换播放/暂停，双击只执行点赞、不取消已有点赞，并在点击位置显示短暂爱心反馈 |
@@ -101,6 +103,7 @@
 | DASH 初始化失败 | 自动切回兼容 MP4，位置、静音、速度和 intended-play 不丢失 |
 | 手动清晰度 | 历史视频存在至少两个可用 representation/MP4 变体时才显示并应用；单源视频不显示菜单 |
 | 三槽轮换 | 前进/后退复用相邻资源，跨 generation 和源 revision 时释放旧槽 |
+| 恢复发布 | 新 exposure generation 产生不同 source revision，不复用旧播放器资源 |
 | buffer_ms | next slot 达标后 ready；未达标切入时显示真实 loading/buffering |
 | 上报 QoS | 写入 `playback_qos_log` |
 | 上报遥测批次 | 返回 event_count、accepted_count 和 duplicate_count |

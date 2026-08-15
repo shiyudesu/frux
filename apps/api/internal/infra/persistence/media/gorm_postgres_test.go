@@ -49,6 +49,10 @@ func TestCleanupTaskPostgreSQLFencingAndDeadline(t *testing.T) {
 	if err := repository.CreateCleanupTasks(context.Background(), []*domainmedia.CleanupTask{earlier}); err != nil {
 		t.Fatal(err)
 	}
+	var cleanupCount int64
+	if err := db.Model(&CleanupTaskModel{}).Count(&cleanupCount).Error; err != nil || cleanupCount != 1 {
+		t.Fatalf("cleanup task count=%d err=%v", cleanupCount, err)
+	}
 	var stored CleanupTaskModel
 	if err := db.Where("object_key = ?", task.ObjectKey).Take(&stored).Error; err != nil {
 		t.Fatal(err)
@@ -480,6 +484,48 @@ func (r *postgresProtectedResolver) ProtectedURL(
 ) (string, time.Time, error) {
 	r.objectKey = objectKey
 	return "https://protected.example/" + objectKey, time.Now().UTC().Add(expiry), nil
+}
+
+func TestVariantExposurePostgreSQLCompareAndSwap(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set")
+	}
+	db := openMediaPostgres(t, dsn)
+	repository := New(db)
+	model := VariantModel{
+		AssetID: 31, ProfileVersion: "v2", SourceType: domainmedia.SourceTypeMP4,
+		Format: "mp4", ObjectKey: "processed/31/v2/checksum/source.mp4",
+		Role: domainmedia.VariantRoleBaseline, State: domainmedia.VariantStateReady,
+		ChecksumSHA256: strings.Repeat("a", 64), SizeBytes: 100,
+	}
+	if err := db.Create(&model).Error; err != nil {
+		t.Fatal(err)
+	}
+	updated, err := repository.UpdateVariantExposure(
+		context.Background(), model.ID, model.ObjectKey, false, "", true, "generation-a",
+	)
+	if err != nil || !updated {
+		t.Fatalf("publish updated=%t err=%v", updated, err)
+	}
+	if stale, err := repository.UpdateVariantExposure(
+		context.Background(), model.ID, model.ObjectKey, false, "", true, "generation-b",
+	); err != nil || stale {
+		t.Fatalf("stale publish updated=%t err=%v", stale, err)
+	}
+	updated, err = repository.UpdateVariantExposure(
+		context.Background(), model.ID, model.ObjectKey, true, "generation-a", false, "",
+	)
+	if err != nil || !updated {
+		t.Fatalf("protect updated=%t err=%v", updated, err)
+	}
+	var stored VariantModel
+	if err := db.Where("id = ?", model.ID).Take(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Public || stringValue(stored.ExposureGeneration) != "" {
+		t.Fatalf("stored variant = %+v", stored)
+	}
 }
 
 func openMediaPostgres(t *testing.T, dsn string) *gorm.DB {

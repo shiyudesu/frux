@@ -8,21 +8,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
-
-type deleteFailingStore struct {
-	domainmedia.MediaObjectStore
-	failKey string
-}
-
-func (s *deleteFailingStore) Delete(ctx context.Context, key string) error {
-	if key == s.failKey {
-		return errors.New("forced delete failure")
-	}
-	return s.MediaObjectStore.Delete(ctx, key)
-}
 
 func TestDeliveryCatalogPromotesOnlyResolvedPublicAssets(t *testing.T) {
 	store := newCatalogTestStore(t)
@@ -45,29 +34,31 @@ func TestDeliveryCatalogPromotesOnlyResolvedPublicAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve delivery: %v", err)
 	}
-	if !strings.HasPrefix(delivery.MediaURL, "https://cdn.example.test/media/v2/") ||
-		!strings.HasSuffix(delivery.MediaURL, "/1/v1/baseline.mp4") ||
-		!strings.HasPrefix(delivery.CoverURL, "https://cdn.example.test/media/v2/") ||
-		!strings.HasSuffix(delivery.CoverURL, "/2/cover/cover.jpg") {
+	if !strings.HasPrefix(delivery.MediaURL, "https://cdn.example.test/media/v3/") ||
+		!strings.HasSuffix(delivery.MediaURL, "/11/baseline.mp4") ||
+		!strings.HasPrefix(delivery.CoverURL, "https://cdn.example.test/media/v3/") ||
+		!strings.HasSuffix(delivery.CoverURL, "/21/cover.jpg") {
 		t.Fatalf("unexpected promoted delivery: %+v", delivery)
 	}
 	if _, err := store.Head(context.Background(), videoKey); err != nil {
 		t.Fatal("protected processed video should remain as the canonical copy")
 	}
-	publicVideoKey := strings.TrimPrefix(delivery.MediaURL, "https://cdn.example.test/")
-	if _, err := store.Head(context.Background(), publicVideoKey); err != nil {
-		t.Fatalf("public video missing after promotion: %v", err)
+	publicObjects, err := store.List(context.Background(), "media")
+	if err != nil {
+		t.Fatalf("list public objects: %v", err)
+	}
+	if len(publicObjects) != 0 {
+		t.Fatalf("promotion copied public objects: %+v", publicObjects)
 	}
 	if err := catalog.ProtectVideo(context.Background(), 9, 1, 2); err != nil {
 		t.Fatalf("protect delivery: %v", err)
 	}
-	if _, err := store.Head(context.Background(), publicVideoKey); err == nil {
-		t.Fatal("public video remained after protection")
-	}
 	if _, err := store.Head(context.Background(), videoKey); err != nil {
 		t.Fatalf("protected video missing after demotion: %v", err)
 	}
-	if repo.variants[1][0].Public || repo.variants[1][0].ObjectKey != videoKey {
+	if repo.variants[1][0].Public ||
+		repo.variants[1][0].ExposureGeneration != "" ||
+		repo.variants[1][0].ObjectKey != videoKey {
 		t.Fatalf("video variant remained public: %+v", repo.variants[1][0])
 	}
 }
@@ -110,46 +101,131 @@ func TestDeliveryCatalogUsesOneExposureGenerationForDashBundle(t *testing.T) {
 		t.Fatalf("unexpected DASH delivery: %+v", delivery)
 	}
 	manifestKey := strings.TrimPrefix(manifestURL, "https://cdn.example.test/")
-	bundleDir := strings.TrimSuffix(manifestKey, "manifest.mpd")
-	for _, name := range []string{"init-stream0.m4s", "chunk-stream0-00001.m4s"} {
-		if _, err := store.Head(context.Background(), bundleDir+name); err != nil {
-			t.Fatalf("DASH bundle member %s missing beside manifest: %v", name, err)
+	generation, _, _, ok := domainmedia.ParsePublicExposureKey(manifestKey)
+	if !ok {
+		t.Fatalf("invalid manifest exposure key %q", manifestKey)
+	}
+	for _, variant := range repo.variants[7] {
+		if !variant.Public || variant.ExposureGeneration != generation {
+			t.Fatalf("variant did not share exposure generation: %+v", variant)
 		}
+	}
+	publicObjects, err := store.List(context.Background(), "media")
+	if err != nil || len(publicObjects) != 0 {
+		t.Fatalf("DASH promotion copied public objects: objects=%+v err=%v", publicObjects, err)
 	}
 }
 
-func TestDeliveryCatalogSchedulesCleanupWhenPublicDeleteFails(t *testing.T) {
+func TestDeliveryCatalogMigratesLegacyPublicObjectWithoutImmediateDeletion(t *testing.T) {
 	store := newCatalogTestStore(t)
 	content, checksum := catalogTestContent()
 	protectedKey := "processed/8/v1/baseline.mp4"
-	putCatalogTestObjects(t, store, content, checksum, protectedKey)
+	legacyKey := "media/v2/legacy-generation/8/v1/baseline.mp4"
+	putCatalogTestObjects(t, store, content, checksum, protectedKey, legacyKey)
 	repo := &deliveryRepositoryStub{
 		assets: map[int64]*domainmedia.MediaAsset{
 			8: {ID: 8, State: domainmedia.AssetStateReady, StorageBackend: domainmedia.StorageBackendLocal},
 		},
 		variants: map[int64][]*domainmedia.MediaVariant{
-			8: {{ID: 81, AssetID: 8, SourceType: domainmedia.SourceTypeMP4, ObjectKey: protectedKey, Role: domainmedia.VariantRoleBaseline, State: domainmedia.VariantStateReady, ChecksumSHA256: checksum, SizeBytes: int64(len(content))}},
+			8: {{ID: 81, AssetID: 8, SourceType: domainmedia.SourceTypeMP4, ObjectKey: legacyKey, Role: domainmedia.VariantRoleBaseline, State: domainmedia.VariantStateReady, ChecksumSHA256: checksum, SizeBytes: int64(len(content)), Public: true}},
 		},
 	}
 	catalog := newCatalogTestCatalog(t, repo, store)
 	if _, err := catalog.ResolveVideo(context.Background(), 18, 8, 0); err != nil {
-		t.Fatalf("promote public object: %v", err)
+		t.Fatalf("migrate public object: %v", err)
 	}
-	publicKey := repo.variants[8][0].ObjectKey
-	failing := &deleteFailingStore{MediaObjectStore: store, failKey: publicKey}
-	catalog = NewDeliveryCatalog(repo, mustCatalogResolver(t, store), failing)
-	if err := catalog.ProtectVideo(context.Background(), 18, 8, 0); err == nil {
-		t.Fatal("expected public delete failure")
+	variant := repo.variants[8][0]
+	if variant.ObjectKey != protectedKey || !variant.Public || variant.ExposureGeneration == "" {
+		t.Fatalf("legacy variant was not migrated to virtual exposure: %+v", variant)
 	}
-	if len(repo.cleanupTasks) != 1 || repo.cleanupTasks[0].ObjectKey != publicKey {
-		t.Fatalf("public delete failure was not persisted for retry: %+v", repo.cleanupTasks)
+	if _, err := store.Head(context.Background(), legacyKey); err != nil {
+		t.Fatalf("legacy object was deleted before cache window: %v", err)
 	}
-	failing.failKey = ""
-	if err := catalog.ProtectVideo(context.Background(), 18, 8, 0); err != nil {
-		t.Fatalf("retry public cleanup: %v", err)
+	if len(repo.cleanupTasks) != 1 ||
+		repo.cleanupTasks[0].ObjectKey != legacyKey ||
+		time.Until(repo.cleanupTasks[0].NotBefore) < 29*time.Minute {
+		t.Fatalf("legacy cleanup was not delayed: %+v", repo.cleanupTasks)
+	}
+}
+
+func TestDeliveryCatalogRepairsMissingProtectedLegacyCounterpart(t *testing.T) {
+	store := newCatalogTestStore(t)
+	content, checksum := catalogTestContent()
+	protectedKey := "processed/9/v1/baseline.mp4"
+	legacyKey := "media/v2/legacy-generation/9/v1/baseline.mp4"
+	putCatalogTestObjects(t, store, content, checksum, legacyKey)
+	repo := &deliveryRepositoryStub{
+		assets: map[int64]*domainmedia.MediaAsset{
+			9: {ID: 9, State: domainmedia.AssetStateReady, StorageBackend: domainmedia.StorageBackendLocal},
+		},
+		variants: map[int64][]*domainmedia.MediaVariant{
+			9: {{ID: 91, AssetID: 9, SourceType: domainmedia.SourceTypeMP4, ObjectKey: legacyKey, Role: domainmedia.VariantRoleBaseline, State: domainmedia.VariantStateReady, ChecksumSHA256: checksum, SizeBytes: int64(len(content)), Public: true}},
+		},
+	}
+	catalog := newCatalogTestCatalog(t, repo, store)
+	if _, err := catalog.ResolveVideo(context.Background(), 19, 9, 0); err != nil {
+		t.Fatalf("repair legacy object: %v", err)
+	}
+	if _, err := store.Head(context.Background(), protectedKey); err != nil {
+		t.Fatalf("protected counterpart was not repaired: %v", err)
+	}
+}
+
+func TestDeliveryCatalogKeepsLegacyIdentityWhenCleanupSchedulingFails(t *testing.T) {
+	store := newCatalogTestStore(t)
+	content, checksum := catalogTestContent()
+	protectedKey := "processed/10/v1/baseline.mp4"
+	legacyKey := "media/v2/legacy-generation/10/v1/baseline.mp4"
+	putCatalogTestObjects(t, store, content, checksum, legacyKey)
+	repo := &deliveryRepositoryStub{
+		assets: map[int64]*domainmedia.MediaAsset{
+			10: {ID: 10, State: domainmedia.AssetStateReady, StorageBackend: domainmedia.StorageBackendLocal},
+		},
+		variants: map[int64][]*domainmedia.MediaVariant{
+			10: {{ID: 101, AssetID: 10, SourceType: domainmedia.SourceTypeMP4, ObjectKey: legacyKey, Role: domainmedia.VariantRoleBaseline, State: domainmedia.VariantStateReady, ChecksumSHA256: checksum, SizeBytes: int64(len(content)), Public: true}},
+		},
+		createCleanupErr: errors.New("cleanup unavailable"),
+	}
+	catalog := newCatalogTestCatalog(t, repo, store)
+	if _, err := catalog.ResolveVideo(context.Background(), 20, 10, 0); err == nil {
+		t.Fatal("expected cleanup scheduling failure")
+	}
+	variant := repo.variants[10][0]
+	if variant.ObjectKey != legacyKey || !variant.Public {
+		t.Fatalf("legacy identity changed before cleanup scheduling: %+v", variant)
+	}
+	if _, err := store.Head(context.Background(), protectedKey); err != nil {
+		t.Fatalf("protected repair was not retained for retry: %v", err)
+	}
+}
+
+func TestDeliveryCatalogDeletesDueLegacyObject(t *testing.T) {
+	store := newCatalogTestStore(t)
+	content, checksum := catalogTestContent()
+	protectedKey := "processed/11/v1/baseline.mp4"
+	legacyKey := "media/v2/legacy-generation/11/v1/baseline.mp4"
+	putCatalogTestObjects(t, store, content, checksum, protectedKey, legacyKey)
+	repo := &deliveryRepositoryStub{
+		assets: map[int64]*domainmedia.MediaAsset{
+			11: {ID: 11, State: domainmedia.AssetStateReady, StorageBackend: domainmedia.StorageBackendLocal},
+		},
+		variants: map[int64][]*domainmedia.MediaVariant{
+			11: {{ID: 111, AssetID: 11, SourceType: domainmedia.SourceTypeMP4, ObjectKey: legacyKey, Role: domainmedia.VariantRoleBaseline, State: domainmedia.VariantStateReady, ChecksumSHA256: checksum, SizeBytes: int64(len(content)), Public: true}},
+		},
+	}
+	catalog := newCatalogTestCatalog(t, repo, store)
+	if _, err := catalog.ResolveVideo(context.Background(), 21, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	repo.cleanupTasks[0].NotBefore = time.Now().UTC().Add(-time.Minute)
+	if err := catalog.ProtectVideo(context.Background(), 21, 11, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Head(context.Background(), legacyKey); !errors.Is(err, domainmedia.ErrObjectNotFound) {
+		t.Fatalf("due legacy object still exists: %v", err)
 	}
 	if repo.cleanupTasks[0].State != domainmedia.CleanupStateCompleted {
-		t.Fatalf("retry did not complete public cleanup: %+v", repo.cleanupTasks[0])
+		t.Fatalf("cleanup task = %+v", repo.cleanupTasks[0])
 	}
 }
 
@@ -192,9 +268,10 @@ func putCatalogTestObjects(t *testing.T, store *LocalStore, content []byte, chec
 }
 
 type deliveryRepositoryStub struct {
-	assets       map[int64]*domainmedia.MediaAsset
-	variants     map[int64][]*domainmedia.MediaVariant
-	cleanupTasks []*domainmedia.CleanupTask
+	assets           map[int64]*domainmedia.MediaAsset
+	variants         map[int64][]*domainmedia.MediaVariant
+	cleanupTasks     []*domainmedia.CleanupTask
+	createCleanupErr error
 }
 
 func (r *deliveryRepositoryStub) FindAssetsByIDs(_ context.Context, ids []int64) (map[int64]*domainmedia.MediaAsset, error) {
@@ -218,6 +295,9 @@ func (*deliveryRepositoryStub) UpsertVariants(context.Context, []*domainmedia.Me
 }
 
 func (r *deliveryRepositoryStub) CreateCleanupTasks(_ context.Context, tasks []*domainmedia.CleanupTask) error {
+	if r.createCleanupErr != nil {
+		return r.createCleanupErr
+	}
 	for _, task := range tasks {
 		cloned := *task
 		cloned.ID = int64(len(r.cleanupTasks) + 1)
@@ -232,9 +312,11 @@ func (r *deliveryRepositoryStub) ListIncompletePublicCleanupTasks(_ context.Cont
 		allowed[assetID] = struct{}{}
 	}
 	var tasks []*domainmedia.CleanupTask
+	now := time.Now().UTC()
 	for _, task := range r.cleanupTasks {
 		if _, ok := allowed[task.AssetID]; ok &&
 			strings.HasPrefix(task.ObjectKey, "media/") &&
+			!task.NotBefore.After(now) &&
 			task.State != domainmedia.CleanupStateCompleted {
 			tasks = append(tasks, task)
 		}
@@ -259,6 +341,33 @@ func (r *deliveryRepositoryStub) UpdateVariantPromotion(
 			if variant.ID == variantID && variant.ObjectKey == expectedObjectKey && variant.Public == expectedPublic {
 				variant.ObjectKey = objectKey
 				variant.Public = public
+				if !public {
+					variant.ExposureGeneration = ""
+				}
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (r *deliveryRepositoryStub) UpdateVariantExposure(
+	_ context.Context,
+	variantID int64,
+	expectedObjectKey string,
+	expectedPublic bool,
+	expectedGeneration string,
+	public bool,
+	generation string,
+) (bool, error) {
+	for _, variants := range r.variants {
+		for _, variant := range variants {
+			if variant.ID == variantID &&
+				variant.ObjectKey == expectedObjectKey &&
+				variant.Public == expectedPublic &&
+				variant.ExposureGeneration == expectedGeneration {
+				variant.Public = public
+				variant.ExposureGeneration = generation
 				return true, nil
 			}
 		}

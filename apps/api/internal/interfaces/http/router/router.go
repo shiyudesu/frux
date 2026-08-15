@@ -541,14 +541,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		if !ok {
 			return errors.New("S3 media store does not support public media redirects")
 		}
-		publicRedirectTTL := signedURLTTL
-		if publicRedirectTTL > time.Minute {
-			publicRedirectTTL = time.Minute
-		}
 		publicMediaHandler, err := interfaceshttpupload.NewPublicMediaRedirectHandler(
 			publicMediaStore,
 			videoRepo,
-			publicRedirectTTL,
+			30*time.Minute,
 		)
 		if err != nil {
 			return err

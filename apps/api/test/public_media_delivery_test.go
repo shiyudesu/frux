@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 	interfaceshttpupload "github.com/shiyudesu/frux/internal/interfaces/http/upload"
 
@@ -20,10 +21,14 @@ import (
 
 type publicMediaAuthorizerStub struct {
 	allowed bool
+	key     string
 }
 
-func (a *publicMediaAuthorizerStub) AuthorizePublicMediaObject(context.Context, string) (bool, error) {
-	return a.allowed, nil
+func (a *publicMediaAuthorizerStub) ResolvePublicMediaObject(context.Context, string) (*domainmedia.PublicMediaObject, error) {
+	if !a.allowed {
+		return nil, nil
+	}
+	return &domainmedia.PublicMediaObject{StorageKey: a.key}, nil
 }
 
 func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
@@ -35,11 +40,11 @@ func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
 	content := []byte("0123456789abcdef")
 	sum := sha256.Sum256(content)
 	checksum := hex.EncodeToString(sum[:])
-	key := "media/10/v1/" + checksum + "/baseline.mp4"
+	key := "processed/10/v1/" + checksum + "/baseline.mp4"
 	if _, err := store.Put(context.Background(), key, bytes.NewReader(content), int64(len(content)), "video/mp4", checksum); err != nil {
 		t.Fatalf("put public media: %v", err)
 	}
-	authorizer := &publicMediaAuthorizerStub{allowed: true}
+	authorizer := &publicMediaAuthorizerStub{allowed: true, key: key}
 	handler, err := interfaceshttpupload.NewPublicMediaHandler(
 		store,
 		root,
@@ -66,7 +71,7 @@ func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
 		<-runErr
 	})
 
-	url := "http://" + listener.Addr().String() + "/media/" + key
+	url := "http://" + listener.Addr().String() + "/media/media/v3/generation/10/baseline.mp4"
 	request, _ := http.NewRequest(http.MethodGet, url, nil)
 	request.Header.Set("Range", "bytes=0-7")
 	response, err := http.DefaultClient.Do(request)
@@ -81,7 +86,7 @@ func TestPublicMediaImmutableRangeHeadAndETag(t *testing.T) {
 	if string(body) != "01234567" {
 		t.Fatalf("unexpected range body %q", body)
 	}
-	if response.Header.Get("Cache-Control") != "public, max-age=60, must-revalidate" {
+	if response.Header.Get("Cache-Control") != "public, max-age=1800, must-revalidate" {
 		t.Fatalf("unexpected cache control %q", response.Header.Get("Cache-Control"))
 	}
 	etag := response.Header.Get("ETag")

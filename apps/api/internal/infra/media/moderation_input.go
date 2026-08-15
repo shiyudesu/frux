@@ -64,7 +64,7 @@ func (p *ModerationInputPreparer) Prepare(
 		ObjectKey: metadata.Key, ContentType: metadata.ContentType,
 		SizeBytes: metadata.SizeBytes, ChecksumSHA256: metadata.ChecksumSHA256,
 	}
-	if err := p.processor.downloadSource(ctx, asset, sourcePath); err != nil {
+	if err := p.processor.downloadSource(ctx, asset, sourcePath, "moderation_source"); err != nil {
 		return nil, moderationInputError("source_download", false, err)
 	}
 	probe, err := p.processor.probe(ctx, sourcePath)

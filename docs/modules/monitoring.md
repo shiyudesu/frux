@@ -91,6 +91,10 @@ Grafana 的 `Frux Playback Observability` 看板提供：
 - 媒体处理观察 `frux_media_progress_updates_total`、`frux_media_admin_processing_backlog`、
   `frux_media_admin_oldest_waiting_seconds`、`frux_media_admin_retry_total`、
   `frux_media_retry_outbox_backlog` 和 `frux_media_retry_projection_total`。
+- 对象存储出站流量观察 `frux_media_object_outbound_bytes_total{source}`。`processing_source` 和
+  `legacy_repair/moderation_source` 为应用控制读取的字节，
+  `public_full_estimate/public_range_estimate/protected_preview_estimate` 为签名访问估算；雨云账单仍是
+  最终权威。该指标只允许封闭 `source` 标签。
 
 首帧和卡顿优先按 network、player 判断是否为特定网络或播放器回归，再按 scene
 判断是否局限于某一入口。清晰度或 source 分布突变通常表示选源、转码或降级策略变化。
@@ -100,6 +104,7 @@ Grafana 的 `Frux Playback Observability` 看板提供：
 Prometheus 标签仅允许固定低基数集合。播放指标不包含 `user_id`、`video_id`、
 `request_id`、`session_id` 或 `playback_session_id`；未知 scene、network、player、
 quality、source、错误和恢复结果会折叠到 `unknown` 或 `other`。
+媒体流量指标同样不得包含用户、视频、资产、URL 或对象键。
 
 后端 ingestion 可使用 `internal/infra/metrics.PlaybackMetrics`：
 

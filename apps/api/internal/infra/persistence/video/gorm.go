@@ -3,14 +3,16 @@ package infravideo
 import (
 	"context"
 	"errors"
+	"path"
+	"strings"
+	"time"
+
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	inframediastore "github.com/shiyudesu/frux/internal/infra/media"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
-	"strings"
-	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -575,10 +577,22 @@ func (r *Repository) AuthorizeMediaAsset(ctx context.Context, assetID, ownerID i
 	return referenced, allowed, nil
 }
 
-func (r *Repository) AuthorizePublicMediaObject(ctx context.Context, objectKey string) (bool, error) {
-	var count int64
+func (r *Repository) ResolvePublicMediaObject(
+	ctx context.Context,
+	objectKey string,
+) (*domainmedia.PublicMediaObject, error) {
+	generation, variantID, filename, virtual := domainmedia.ParsePublicExposureKey(objectKey)
+	if !virtual {
+		return r.resolveLegacyPublicMediaObject(ctx, objectKey)
+	}
+
+	var exposed struct {
+		AssetID   int64
+		ObjectKey string
+	}
 	err := r.db.WithContext(ctx).
 		Table("media_variant AS mv").
+		Select("mv.asset_id, mv.object_key").
 		Joins(`
 			JOIN video AS v
 				ON v.id = mv.video_id
@@ -586,17 +600,115 @@ func (r *Repository) AuthorizePublicMediaObject(ctx context.Context, objectKey s
 				OR v.cover_asset_id = mv.asset_id
 		`).
 		Where(
-			"mv.object_key = ? AND mv.public = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?",
-			objectKey,
+			"mv.id = ? AND mv.exposure_generation = ? AND mv.public = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?",
+			variantID,
+			generation,
 			true,
 			domainvideo.StatusPublished,
 			domainvideo.VisibilityPublic,
 			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
 		).
-		Distinct("v.id").
-		Count(&count).
-		Error
-	return count > 0, err
+		Take(&exposed).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if path.Base(exposed.ObjectKey) == filename {
+		return &domainmedia.PublicMediaObject{
+			StorageKey: exposed.ObjectKey,
+			VariantID:  variantID,
+			Generation: generation,
+		}, nil
+	}
+
+	var siblings []struct {
+		ID        int64
+		ObjectKey string
+	}
+	if err := r.db.WithContext(ctx).
+		Table("media_variant").
+		Select("id, object_key").
+		Where(
+			"asset_id = ? AND public = ? AND exposure_generation = ? AND state = ?",
+			exposed.AssetID,
+			true,
+			generation,
+			domainmedia.VariantStateReady,
+		).
+		Find(&siblings).Error; err != nil {
+		return nil, err
+	}
+	for _, sibling := range siblings {
+		if path.Base(sibling.ObjectKey) == filename {
+			return &domainmedia.PublicMediaObject{
+				StorageKey: sibling.ObjectKey,
+				VariantID:  sibling.ID,
+				Generation: generation,
+			}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *Repository) resolveLegacyPublicMediaObject(
+	ctx context.Context,
+	objectKey string,
+) (*domainmedia.PublicMediaObject, error) {
+	if !strings.HasPrefix(objectKey, "media/") {
+		return nil, nil
+	}
+	protectedKey := ""
+	if strings.HasPrefix(objectKey, "media/v2/") {
+		legacyParts := strings.SplitN(strings.TrimPrefix(objectKey, "media/v2/"), "/", 2)
+		if len(legacyParts) != 2 || legacyParts[0] == "" || legacyParts[1] == "" {
+			return nil, nil
+		}
+		protectedKey = "processed/" + legacyParts[1]
+	} else {
+		protectedKey = "processed/" + strings.TrimPrefix(objectKey, "media/")
+	}
+	var variant struct {
+		ID int64
+	}
+	err := r.db.WithContext(ctx).
+		Table("media_variant AS mv").
+		Select("mv.id").
+		Joins(`
+			JOIN video AS v
+				ON v.id = mv.video_id
+				OR v.media_asset_id = mv.asset_id
+				OR v.cover_asset_id = mv.asset_id
+		`).
+		Where(
+			"mv.object_key IN ? AND mv.public = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?",
+			[]string{objectKey, protectedKey},
+			true,
+			domainvideo.StatusPublished,
+			domainvideo.VisibilityPublic,
+			[]string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady},
+		).
+		Take(&variant).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &domainmedia.PublicMediaObject{
+		StorageKey: objectKey,
+		VariantID:  variant.ID,
+		Generation: exposureGenerationFromLegacyKey(objectKey),
+	}, nil
+}
+
+func exposureGenerationFromLegacyKey(objectKey string) string {
+	parts := strings.SplitN(strings.TrimPrefix(objectKey, "media/v2/"), "/", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[0]
 }
 
 // restoreVideo 把联表查询结果转换成领域视频对象。
