@@ -128,6 +128,21 @@ describe("admin content operations workspace", () => {
     expect(container.textContent).not.toContain("视频运营");
   });
 
+  it("keeps the video operations shell on the existing permission boundary", async () => {
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "operator", permissions: ["review.read", "content.enforce"]
+    });
+    vi.mocked(searchAdminVideos).mockResolvedValue({
+      items: [],
+      next_cursor: "",
+      has_more: false
+    });
+    window.history.replaceState({}, "", "/admin/videos");
+    await renderAdmin();
+    expect(container.textContent).toContain("视频列表");
+    expect(container.textContent).toContain("处理进度");
+  });
+
   it("routes direct admin navigation to the dedicated login without reusing consumer auth", async () => {
       sessionStorage.clear();
       window.history.replaceState({}, "", "/admin/reviews");

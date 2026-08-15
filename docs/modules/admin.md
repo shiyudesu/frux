@@ -14,6 +14,10 @@
 | 已实现 | GET | `/api/admin/videos` | 按生命周期、作者、ID、关键词和有界创建时间查询视频 | `content.enforce` |
 | 已实现 | POST | `/api/admin/videos/{videoId}/enforcement` | 按预期版本、注册原因和备注下架已发布视频 | `content.enforce` |
 | 已实现 | POST | `/api/admin/videos/{videoId}/restoration` | 按预期版本恢复已批准的下架视频 | `content.enforce` |
+| 已实现 | GET | `/api/admin/media-processing/overview` | 查询等待、处理、失败、完成概览和当前任务 | `content.enforce` |
+| 已实现 | GET | `/api/admin/media-processing/history` | 稳定分页查询处理完成和失败历史 | `content.enforce` |
+| 已实现 | POST | `/api/admin/media-processing/jobs/{jobId}/retry` | 原因化、幂等、审计地重新处理单个失败视频 | `content.enforce` |
+| 已实现 | POST | `/api/admin/media-processing/jobs/bulk-retry` | 最多 50 个失败任务逐项重新处理并返回逐项结果 | `content.enforce` |
 | 已实现 | GET | `/api/admin/accounts` | 按账号、昵称、用户 ID 和状态稳定分页查询普通用户 | `account.manage` |
 | 已实现 | GET | `/api/admin/accounts/{userId}` | 查看普通用户账号、资料、统计和活跃会话数量 | `account.manage` |
 | 已实现 | POST | `/api/admin/accounts/{userId}/freeze` | 原因化、版本化、幂等冻结普通用户并撤销 Refresh Session | `account.manage` |
@@ -115,3 +119,7 @@ Admin Shell 通过 `/api/admin/me` 获取服务端确认的封闭权限集合，
 Refresh Session 会立即撤销，但已签发的短期 Access Token 最长仍可存活到其既有到期时间，默认约
 5 分钟；冻结不会自动下架作品。
 冻结/解冻成功后由 Worker 生成原因化站内消息；强制退出不生成冻结/解冻消息。
+
+视频运营页包含“视频列表”和“处理进度”。处理进度主表只显示等待、下载、检查、整理格式、转换格式、
+上传结果、完成和失败等用户文案；任务 ID、处理版本和脱敏错误只在“诊断信息”中展开。存在处理中任务
+时每 5 秒刷新，只有等待任务时每 10 秒刷新，全部为终态时每 30 秒刷新；页面隐藏时暂停。

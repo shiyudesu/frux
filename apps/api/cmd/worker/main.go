@@ -468,11 +468,15 @@ func startWorkers(
 		return err
 	}
 
+	mediaNotifier := reviewMediaReadyNotifier{
+		publication: mediaPublication, videoRepo: videoRepo, reviewService: reviewService,
+	}
+	applicationmedia.NewProcessingRetryNotificationWorker(
+		mediaRepo, mediaNotifier,
+	).Start(ctx)
 	mediaWorker := applicationmedia.NewMediaProcessingWorker(
 		mediaRepo, mediaProcessor, nil, leaseTTL, cfg.Media.Processing.WorkerConcurrency,
-		applicationmedia.WithMediaStateNotifier(reviewMediaReadyNotifier{
-			publication: mediaPublication, videoRepo: videoRepo, reviewService: reviewService,
-		}),
+		applicationmedia.WithMediaStateNotifier(mediaNotifier),
 	)
 	if err := mediaWorker.Start(ctx); err != nil {
 		return err

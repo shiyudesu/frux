@@ -1,6 +1,7 @@
 package inframedia
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -94,6 +95,7 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 	if err := p.downloadSource(ctx, asset, sourcePath); err != nil {
 		return nil, &applicationmedia.ProcessError{Code: "source_download", Err: err}
 	}
+	applicationmedia.ReportProgress(ctx, domainmedia.ProcessingStepInspecting, nil)
 	probeStart := time.Now()
 	probe, err := p.probe(ctx, sourcePath)
 	inframetrics.ObserveVideoProcessing("media_probe", time.Since(probeStart), err)
@@ -109,6 +111,12 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 		return nil, &applicationmedia.ProcessError{Code: "output_dir", Err: err}
 	}
 	mode := baselineModeFor(probe)
+	step := domainmedia.ProcessingStepTranscoding
+	if mode == baselineModeRemux || mode == baselineModeNormalizeAudio {
+		step = domainmedia.ProcessingStepRemuxing
+	}
+	zero := 0
+	applicationmedia.ReportProgress(ctx, step, &zero)
 	outputPath := filepath.Join(outputDir, "source.mp4")
 	start := time.Now()
 	outputWidth, outputHeight, audioCodec, err := p.writeBaselineMP4(
@@ -118,6 +126,8 @@ func (p *FFmpegProcessor) Process(ctx context.Context, asset *domainmedia.MediaA
 	if err != nil {
 		return nil, err
 	}
+	completed := domainmedia.MaxProcessingProgressBPS
+	applicationmedia.ReportProgress(ctx, step, &completed)
 	objectKey, checksum, size, err := p.publishFile(
 		ctx, asset.ID, job.ID, job.ProfileVersion, outputPath, "video/mp4",
 	)
@@ -290,7 +300,9 @@ func (p *FFmpegProcessor) writeBaselineMP4(
 		"-avoid_negative_ts", "make_zero",
 		"-movflags", "+faststart", outputPath,
 	)
-	if _, err := p.runCommand(ctx, "ffmpeg", args...); err != nil {
+	if err := p.runFFmpegCommand(
+		ctx, probe.DurationMS, processingStepForMode(mode), args...,
+	); err != nil {
 		code := string(mode) + "_failed"
 		if errors.Is(err, ErrMediaCommandTimeout) {
 			code = string(mode) + "_timeout"
@@ -311,7 +323,9 @@ func (p *FFmpegProcessor) publishFile(ctx context.Context, assetID, jobID int64,
 	}
 	filename := filepath.Base(path)
 	tempKey := fmt.Sprintf("tmp/media/%d/%d/%s", assetID, jobID, filename)
-	if err := p.putFile(ctx, tempKey, path, size, contentType, checksum); err != nil {
+	zero := 0
+	applicationmedia.ReportProgress(ctx, domainmedia.ProcessingStepUploading, &zero)
+	if err := p.putFile(ctx, tempKey, path, size, contentType, checksum, 0, 5000); err != nil {
 		return "", "", 0, err
 	}
 	tempMetadata, err := p.store.Head(ctx, tempKey)
@@ -326,7 +340,10 @@ func (p *FFmpegProcessor) publishFile(ctx context.Context, assetID, jobID int64,
 	if err != nil {
 		return "", "", 0, &applicationmedia.ProcessError{Code: "temp_open_failed", Err: err}
 	}
-	_, putErr := p.store.Put(ctx, finalKey, reader, size, contentType, checksum)
+	progressReader := newProgressReader(
+		ctx, reader, size, domainmedia.ProcessingStepUploading, 5000, 5000,
+	)
+	_, putErr := p.store.Put(ctx, finalKey, progressReader, size, contentType, checksum)
 	closeErr := reader.Close()
 	if putErr != nil {
 		return "", "", 0, &applicationmedia.ProcessError{Code: "publish_failed", Err: putErr}
@@ -344,16 +361,30 @@ func (p *FFmpegProcessor) publishFile(ctx context.Context, assetID, jobID int64,
 	if err := p.store.Delete(ctx, tempKey); err != nil {
 		return "", "", 0, &applicationmedia.ProcessError{Code: "temp_cleanup_failed", Err: err}
 	}
+	completed := domainmedia.MaxProcessingProgressBPS
+	applicationmedia.ReportProgress(
+		ctx, domainmedia.ProcessingStepUploading, &completed,
+	)
 	return finalKey, checksum, size, nil
 }
 
-func (p *FFmpegProcessor) putFile(ctx context.Context, key, path string, size int64, contentType, checksum string) error {
+func (p *FFmpegProcessor) putFile(
+	ctx context.Context,
+	key, path string,
+	size int64,
+	contentType, checksum string,
+	progressBase, progressSpan int,
+) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return &applicationmedia.ProcessError{Code: "output_open_failed", Err: err}
 	}
 	defer file.Close()
-	if _, err := p.store.Put(ctx, key, file, size, contentType, checksum); err != nil {
+	reader := newProgressReader(
+		ctx, file, size, domainmedia.ProcessingStepUploading,
+		progressBase, progressSpan,
+	)
+	if _, err := p.store.Put(ctx, key, reader, size, contentType, checksum); err != nil {
 		return &applicationmedia.ProcessError{Code: "object_put_failed", Err: err}
 	}
 	return nil
@@ -370,7 +401,13 @@ func (p *FFmpegProcessor) downloadSource(ctx context.Context, asset *domainmedia
 		return err
 	}
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(file, hash), reader)
+	zero := 0
+	applicationmedia.ReportProgress(ctx, domainmedia.ProcessingStepDownloading, &zero)
+	progressReader := newProgressReader(
+		ctx, reader, asset.SizeBytes, domainmedia.ProcessingStepDownloading, 0,
+		domainmedia.MaxProcessingProgressBPS,
+	)
+	written, copyErr := io.Copy(io.MultiWriter(file, hash), progressReader)
 	closeErr := file.Close()
 	if copyErr != nil {
 		return copyErr
@@ -382,7 +419,54 @@ func (p *FFmpegProcessor) downloadSource(ctx context.Context, asset *domainmedia
 	if written != asset.SizeBytes || metadata.SizeBytes != asset.SizeBytes || !strings.EqualFold(checksum, asset.ChecksumSHA256) {
 		return domainmedia.ErrObjectChecksumMismatch
 	}
+	completed := domainmedia.MaxProcessingProgressBPS
+	applicationmedia.ReportProgress(
+		ctx, domainmedia.ProcessingStepDownloading, &completed,
+	)
 	return nil
+}
+
+type progressReader struct {
+	ctx     context.Context
+	reader  io.Reader
+	total   int64
+	read    int64
+	step    string
+	base    int
+	span    int
+	lastBPS int
+}
+
+func newProgressReader(
+	ctx context.Context,
+	reader io.Reader,
+	total int64,
+	step string,
+	base, span int,
+) *progressReader {
+	return &progressReader{
+		ctx: ctx, reader: reader, total: total, step: step,
+		base: base, span: span, lastBPS: -1,
+	}
+}
+
+func (r *progressReader) Read(buffer []byte) (int, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	default:
+	}
+	count, err := r.reader.Read(buffer)
+	r.read += int64(count)
+	if r.total > 0 {
+		progress := r.base + int(float64(r.read)/float64(r.total)*float64(r.span))
+		progress = min(max(progress, r.base), r.base+r.span)
+		if progress != r.lastBPS {
+			r.lastBPS = progress
+			applicationmedia.ReportProgress(r.ctx, r.step, &progress)
+		}
+	}
+	return count, err
 }
 
 func (p *FFmpegProcessor) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -408,6 +492,72 @@ func (p *FFmpegProcessor) runCommand(ctx context.Context, name string, args ...s
 		return nil, commandError(name, err, message)
 	}
 	return stdout.Bytes(), nil
+}
+
+func (p *FFmpegProcessor) runFFmpegCommand(
+	ctx context.Context,
+	durationMS int64,
+	step string,
+	args ...string,
+) error {
+	commandCtx, cancel := context.WithTimeout(ctx, p.commandTimeout)
+	defer cancel()
+	args = append([]string{"-progress", "pipe:1", "-nostats"}, args...)
+	command := exec.CommandContext(commandCtx, "ffmpeg", args...)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "out_time_us=") || durationMS <= 0 {
+			continue
+		}
+		microseconds, parseErr := strconv.ParseInt(
+			strings.TrimPrefix(line, "out_time_us="), 10, 64,
+		)
+		if parseErr != nil || microseconds < 0 {
+			continue
+		}
+		progress := int(
+			min(microseconds/1000, durationMS) *
+				int64(domainmedia.MaxProcessingProgressBPS) / durationMS,
+		)
+		applicationmedia.ReportProgress(ctx, step, &progress)
+	}
+	scanErr := scanner.Err()
+	waitErr := command.Wait()
+	if scanErr != nil && waitErr == nil {
+		return scanErr
+	}
+	if waitErr != nil {
+		message := tailText(strings.TrimSpace(stderr.String()), 2048)
+		if ctx.Err() != nil {
+			return commandError("ffmpeg", ctx.Err(), message)
+		}
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return commandError(
+				"ffmpeg",
+				fmt.Errorf("%w after %s", ErrMediaCommandTimeout, p.commandTimeout),
+				message,
+			)
+		}
+		return commandError("ffmpeg", waitErr, message)
+	}
+	return nil
+}
+
+func processingStepForMode(mode baselineMode) string {
+	if mode == baselineModeRemux || mode == baselineModeNormalizeAudio {
+		return domainmedia.ProcessingStepRemuxing
+	}
+	return domainmedia.ProcessingStepTranscoding
 }
 
 func commandError(name string, err error, diagnostic string) error {

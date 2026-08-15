@@ -61,6 +61,7 @@ import (
 	interfaceshttpinteraction "github.com/shiyudesu/frux/internal/interfaces/http/interaction"
 	interfaceshttpkafkafailure "github.com/shiyudesu/frux/internal/interfaces/http/kafkafailure"
 	interfaceshttplibrary "github.com/shiyudesu/frux/internal/interfaces/http/library"
+	interfaceshttpmedia "github.com/shiyudesu/frux/internal/interfaces/http/media"
 	interfaceshttpmessage "github.com/shiyudesu/frux/internal/interfaces/http/message"
 	interfaceshttpmiddleware "github.com/shiyudesu/frux/internal/interfaces/http/middleware"
 	interfaceshttpplayback "github.com/shiyudesu/frux/internal/interfaces/http/playback"
@@ -162,7 +163,10 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		governanceRepo,
 		applicationgovernance.WithRuntimeObserver(inframetrics.GovernanceObserver{}),
 	)
-	mediaRepo := infrapersistencemedia.New(gormDB)
+	mediaRepo := infrapersistencemedia.New(
+		gormDB,
+		infrapersistencemedia.WithAdminAuditWriter(adminAuditRepo),
+	)
 	mediaStore, err := inframediastore.NewObjectStore(context.Background(), cfg.Media)
 	if err != nil {
 		return err
@@ -415,6 +419,12 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		cfg.Security.HMACSecret,
 	)
 	videoAdminHandler := interfaceshttpvideo.NewAdmin(videoAdminService)
+	mediaAdminService := applicationmedia.NewAdminProcessing(
+		mediaRepo,
+		mediaAdminVideoCatalog{reader: videoRepo},
+		cfg.Security.HMACSecret,
+	)
+	mediaAdminHandler := interfaceshttpmedia.NewAdmin(mediaAdminService)
 	searchService := applicationsearch.New(videoRepo, accountRepo)
 	searchHandler := interfaceshttpsearch.New(searchService)
 	interactionOptions = append(
@@ -691,6 +701,50 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			),
 		),
 		videoAdminHandler.Restore,
+	)
+	admin.GET(
+		"/media-processing/overview",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionContentEnforce,
+		),
+		mediaAdminHandler.Overview,
+	)
+	admin.GET(
+		"/media-processing/history",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionContentEnforce,
+		),
+		mediaAdminHandler.History,
+	)
+	admin.POST(
+		"/media-processing/jobs/:jobId/retry",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionContentEnforce,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionMediaProcessingRetry,
+				domainadminaudit.TargetMediaProcessingJob,
+				"job",
+			),
+		),
+		mediaAdminHandler.Retry,
+	)
+	admin.POST(
+		"/media-processing/jobs/bulk-retry",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionContentEnforce,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionMediaProcessingRetry,
+				domainadminaudit.TargetMediaProcessingJob,
+				"bulk",
+			),
+		),
+		mediaAdminHandler.BulkRetry,
 	)
 	admin.GET(
 		"/accounts",

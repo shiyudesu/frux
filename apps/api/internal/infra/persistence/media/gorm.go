@@ -3,6 +3,7 @@ package inframedia
 import (
 	"context"
 	"errors"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 	"strings"
@@ -13,7 +14,19 @@ import (
 )
 
 type Repository struct {
-	db *gorm.DB
+	db          *gorm.DB
+	auditWriter AuditWriter
+}
+
+type Option func(*Repository)
+
+type AuditWriter interface {
+	AppendInTransaction(
+		ctx context.Context,
+		tx *gorm.DB,
+		fact *domainadminaudit.Fact,
+	) error
+	RecordCommittedWrite(fact *domainadminaudit.Fact)
 }
 
 func (r *Repository) ScheduleAssetCleanup(
@@ -67,8 +80,20 @@ func (r *Repository) ScheduleAssetCleanup(
 	})
 }
 
-func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+func New(db *gorm.DB, options ...Option) *Repository {
+	repository := &Repository{db: db}
+	for _, option := range options {
+		if option != nil {
+			option(repository)
+		}
+	}
+	return repository
+}
+
+func WithAdminAuditWriter(writer AuditWriter) Option {
+	return func(repository *Repository) {
+		repository.auditWriter = writer
+	}
 }
 
 func (r *Repository) CreateAsset(ctx context.Context, asset *domainmedia.MediaAsset) error {
@@ -281,7 +306,9 @@ func (r *Repository) LeaseProcessingJob(ctx context.Context, assetID int64, prof
 		}
 		if err := tx.Model(&model).Updates(map[string]any{
 			"state": domainmedia.JobStateProcessing, "lease_owner": owner, "lease_until": leaseUntil,
-			"attempts": gorm.Expr("attempts + 1"), "updated_at": now,
+			"attempts":        gorm.Expr("attempts + 1"),
+			"processing_step": domainmedia.ProcessingStepWaiting,
+			"progress_bps":    nil, "progress_updated_at": now, "updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
@@ -289,6 +316,9 @@ func (r *Repository) LeaseProcessingJob(ctx context.Context, assetID int64, prof
 		model.LeaseOwner = owner
 		model.LeaseUntil = &leaseUntil
 		model.Attempts++
+		model.ProcessingStep = domainmedia.ProcessingStepWaiting
+		model.ProgressBPS = nil
+		model.ProgressUpdatedAt = &now
 		return nil
 	})
 	if err != nil {
@@ -322,7 +352,9 @@ func (r *Repository) LeaseProcessingJobs(ctx context.Context, owner string, now 
 		}
 		if err := tx.Model(&ProcessingJobModel{}).Where("id IN ?", ids).Updates(map[string]any{
 			"state": domainmedia.JobStateProcessing, "lease_owner": owner, "lease_until": leaseUntil,
-			"attempts": gorm.Expr("attempts + 1"), "updated_at": now,
+			"attempts":        gorm.Expr("attempts + 1"),
+			"processing_step": domainmedia.ProcessingStepWaiting,
+			"progress_bps":    nil, "progress_updated_at": now, "updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
@@ -343,7 +375,9 @@ func (r *Repository) UpdateProcessingJob(ctx context.Context, job *domainmedia.M
 		"state": job.State, "attempts": job.Attempts, "max_attempts": job.MaxAttempts,
 		"error_code": job.ErrorCode, "error_message": job.ErrorMessage,
 		"lease_owner": job.LeaseOwner, "lease_until": job.LeaseUntil,
-		"next_attempt_at": job.NextAttemptAt, "completed_at": job.CompletedAt,
+		"processing_step": job.ProcessingStep, "progress_bps": job.ProgressBPS,
+		"progress_updated_at": job.ProgressUpdatedAt,
+		"next_attempt_at":     job.NextAttemptAt, "completed_at": job.CompletedAt,
 		"updated_at": time.Now().UTC(),
 	})
 	if result.Error != nil {
@@ -364,7 +398,9 @@ func (r *Repository) UpdateProcessingJobOwned(ctx context.Context, job *domainme
 			"state": job.State, "attempts": job.Attempts, "max_attempts": job.MaxAttempts,
 			"error_code": job.ErrorCode, "error_message": job.ErrorMessage,
 			"lease_owner": job.LeaseOwner, "lease_until": job.LeaseUntil,
-			"next_attempt_at": job.NextAttemptAt, "completed_at": job.CompletedAt,
+			"processing_step": job.ProcessingStep, "progress_bps": job.ProgressBPS,
+			"progress_updated_at": job.ProgressUpdatedAt,
+			"next_attempt_at":     job.NextAttemptAt, "completed_at": job.CompletedAt,
 			"updated_at": time.Now().UTC(),
 		})
 	if result.Error != nil {
@@ -435,7 +471,9 @@ func (r *Repository) FinalizeProcessingJob(
 				"state": job.State, "attempts": job.Attempts, "max_attempts": job.MaxAttempts,
 				"error_code": job.ErrorCode, "error_message": job.ErrorMessage,
 				"lease_owner": job.LeaseOwner, "lease_until": job.LeaseUntil,
-				"next_attempt_at": job.NextAttemptAt, "completed_at": job.CompletedAt,
+				"processing_step": job.ProcessingStep, "progress_bps": job.ProgressBPS,
+				"progress_updated_at": job.ProgressUpdatedAt,
+				"next_attempt_at":     job.NextAttemptAt, "completed_at": job.CompletedAt,
 				"updated_at": committedAt,
 			})
 		if result.Error != nil {
@@ -566,12 +604,50 @@ func (r *Repository) ExtendProcessingLease(
 	return nil
 }
 
+func (r *Repository) ExtendProcessingLeaseWithProgress(
+	ctx context.Context,
+	jobID int64,
+	leaseOwner string,
+	leaseTTL time.Duration,
+	progress domainmedia.ProcessingProgress,
+) error {
+	progress, err := domainmedia.NormalizeProcessingProgress(
+		progress.Step, progress.ProgressBPS, progress.UpdatedAt,
+	)
+	if err != nil || jobID <= 0 || strings.TrimSpace(leaseOwner) == "" || leaseTTL <= 0 {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	result := r.db.WithContext(ctx).Model(&ProcessingJobModel{}).
+		Where(`id = ? AND state = ? AND lease_owner = ?
+			AND lease_until > clock_timestamp()`,
+			jobID, domainmedia.JobStateProcessing, strings.TrimSpace(leaseOwner)).
+		Updates(map[string]any{
+			"lease_until": gorm.Expr(
+				"clock_timestamp() + (? * interval '1 millisecond')",
+				leaseTTL.Milliseconds(),
+			),
+			"processing_step":     progress.Step,
+			"progress_bps":        progress.ProgressBPS,
+			"progress_updated_at": progress.UpdatedAt,
+			"updated_at":          gorm.Expr("clock_timestamp()"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return domainmedia.ErrProcessingJobLeaseLost
+	}
+	return nil
+}
+
 func (r *Repository) ReleaseExpiredProcessingLeases(ctx context.Context, now time.Time) (int64, error) {
 	result := r.db.WithContext(ctx).Model(&ProcessingJobModel{}).
 		Where("state = ? AND lease_until < ?", domainmedia.JobStateProcessing, now).
 		Updates(map[string]any{
 			"state": domainmedia.JobStateRetryable, "lease_owner": "", "lease_until": nil,
 			"error_code": "lease_expired", "error_message": "processing lease expired before finalization",
+			"processing_step": domainmedia.ProcessingStepWaiting,
+			"progress_bps":    nil, "progress_updated_at": now,
 			"next_attempt_at": now, "updated_at": now,
 		})
 	return result.RowsAffected, result.Error
@@ -620,6 +696,8 @@ func (r *Repository) ResetProcessingJob(ctx context.Context, assetID int64, prof
 		Updates(map[string]any{
 			"state": domainmedia.JobStateRetryable, "lease_owner": "", "lease_until": nil,
 			"next_attempt_at": now, "completed_at": nil, "error_code": "", "error_message": "",
+			"processing_step": domainmedia.ProcessingStepWaiting,
+			"progress_bps":    nil, "progress_updated_at": now,
 			"updated_at": now,
 		})
 	if result.Error != nil {
@@ -1067,16 +1145,36 @@ func processingJobModelFromDomain(job *domainmedia.MediaProcessingJob) Processin
 		ID: job.ID, AssetID: job.AssetID, ProfileVersion: job.ProfileVersion, State: job.State,
 		Attempts: job.Attempts, MaxAttempts: job.MaxAttempts, ErrorCode: job.ErrorCode,
 		ErrorMessage: job.ErrorMessage, LeaseOwner: job.LeaseOwner, LeaseUntil: job.LeaseUntil,
-		NextAttemptAt: job.NextAttemptAt, CompletedAt: job.CompletedAt,
+		ProcessingStep: job.ProcessingStep, ProgressBPS: job.ProgressBPS,
+		ProgressUpdatedAt: job.ProgressUpdatedAt,
+		NextAttemptAt:     job.NextAttemptAt, CompletedAt: job.CompletedAt,
 	}
 }
 
 func processingJobFromModel(model ProcessingJobModel) *domainmedia.MediaProcessingJob {
+	step := model.ProcessingStep
+	if !domainmedia.ValidProcessingStep(step) {
+		switch model.State {
+		case domainmedia.JobStateCompleted:
+			step = domainmedia.ProcessingStepCompleted
+		case domainmedia.JobStateFailed:
+			step = domainmedia.ProcessingStepFailed
+		default:
+			step = domainmedia.ProcessingStepWaiting
+		}
+	}
+	progress := model.ProgressBPS
+	if progress != nil &&
+		(*progress < 0 || *progress > domainmedia.MaxProcessingProgressBPS) {
+		progress = nil
+	}
 	return &domainmedia.MediaProcessingJob{
 		ID: model.ID, AssetID: model.AssetID, ProfileVersion: model.ProfileVersion, State: model.State,
 		Attempts: model.Attempts, MaxAttempts: model.MaxAttempts, ErrorCode: model.ErrorCode,
 		ErrorMessage: model.ErrorMessage, LeaseOwner: model.LeaseOwner, LeaseUntil: model.LeaseUntil,
-		NextAttemptAt: model.NextAttemptAt, CompletedAt: model.CompletedAt,
+		ProcessingStep: step, ProgressBPS: progress,
+		ProgressUpdatedAt: model.ProgressUpdatedAt,
+		NextAttemptAt:     model.NextAttemptAt, CompletedAt: model.CompletedAt,
 		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}
 }

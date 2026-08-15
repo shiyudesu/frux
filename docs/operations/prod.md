@@ -295,8 +295,11 @@ LIMIT 20;"
 ```
 
 `lease_expired` 表示 Worker 中断后由 reconciliation 回收；`duration_limit` 是源视频超过配置上限；
-`probe_timeout`、`transcode_timeout`、`dash_timeout` 表示对应命令超过预算。retryable 任务会由
+`probe_timeout`、`remux_timeout`、`transcode_timeout` 表示对应命令超过预算。retryable 任务会由
 数据库 polling 自动重新领取，不需要恢复 Kafka 消息。
+
+部署包含视频运营处理视图后，日常查看和重新处理失败视频应优先使用 `/admin/videos` 的“处理进度”，
+不再要求运维人员直接执行 SQL。服务器命令保留为后台不可用时的诊断手段。
 
 ## 设置后台管理员
 
