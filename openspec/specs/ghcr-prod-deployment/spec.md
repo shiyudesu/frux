@@ -84,15 +84,20 @@ The server SHALL check public GHCR through a locked systemd oneshot service one 
 - **THEN** `Persistent=true` causes a missed check to run
 
 ### Requirement: Controlled Compose Update
-The deployment agent SHALL preserve persistent volumes and update Worker only if Worker was already enabled.
+The deployment agent SHALL preserve persistent volumes and SHALL pull, start, health-check, and
+restore API, Web, and Worker as one required Prod release unit.
 
-#### Scenario: Worker is disabled
-- **WHEN** a new bundle is deployed while no Worker container exists
-- **THEN** Worker remains disabled
+#### Scenario: Worker container does not exist before deployment
+- **WHEN** an approved bundle is deployed to a server without an existing Worker container
+- **THEN** deployment creates Worker with the approved API image digest
 
-#### Scenario: Worker is enabled
+#### Scenario: Worker is already running
 - **WHEN** a new bundle is deployed while Worker exists
 - **THEN** Worker is recreated with the approved API image digest
+
+#### Scenario: Worker is unhealthy
+- **WHEN** Worker fails its container health check or required Kafka workflow readiness
+- **THEN** the new bundle is not promoted and the deployment agent restores the previous release
 
 ### Requirement: Health-Gated Bundle Rollback
 The deployment agent SHALL switch `current` only after API and Web are healthy and SHALL restore the previous bundle if deployment fails.
