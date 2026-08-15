@@ -2,7 +2,7 @@
 
 ## 1. 模块职责
 
-账户模块负责注册、短期 Access JWT、耐久 Refresh Session、登录刷新、登出、修改密码、当前用户资料、公开资料、个人资料更新、主页隐私设置和后台主体读取，为其他模块提供统一身份与资料展示能力。作品和获赞计数由视频模块维护，账户查询负责聚合读取；后台权限注册表仍属于账户领域，但具体审核、运营和治理数据由各自模块拥有。
+账户模块负责注册、短期 Access JWT、耐久 Refresh Session、登录刷新、登出、修改密码、当前用户资料、公开资料、个人资料更新、主页隐私设置、后台主体读取和普通用户账号管理，为其他模块提供统一身份与资料展示能力。作品和获赞计数由视频模块维护，账户查询负责聚合读取；后台权限注册表仍属于账户领域，但具体审核、运营和治理数据由各自模块拥有。
 
 ## 2. 接口设计
 
@@ -19,6 +19,11 @@
 | GET | `/api/users/me/profile-settings` | 获取当前用户主页隐私设置 | 登录 | 无 |
 | PATCH | `/api/users/me/profile-settings` | 部分更新主页隐私设置 | 登录 | 无 |
 | GET | `/api/users/{userId}` | 获取公开用户聚合资料 | 可匿名 | 无 |
+| GET | `/api/admin/accounts` | 查询普通 `user` 账号、状态和统计 | `account.manage` | 无 |
+| GET | `/api/admin/accounts/{userId}` | 查看普通账号详情和活跃 Refresh Session 数量 | `account.manage` | 无 |
+| POST | `/api/admin/accounts/{userId}/freeze` | 冻结普通账号并撤销全部 Refresh Session | `account.manage` | 必需 |
+| POST | `/api/admin/accounts/{userId}/unfreeze` | 解冻普通账号，旧会话保持撤销 | `account.manage` | 必需 |
+| POST | `/api/admin/accounts/{userId}/sessions/revoke` | 不改变状态地强制退出全部耐久会话 | `account.manage` | 必需 |
 
 `GET /api/users/me` 返回登录账号、角色、状态、性别、关系计数、公开/私密作品计数、获赞数和完整 `profile_settings`。`GET /api/users/{userId}` 只返回昵称、头像、简介、性别、关系与内容统计，以及派生布尔值 `liked_videos_public`；不返回登录账号、角色、账号状态、私密作品数或完整设置对象。
 
@@ -73,7 +78,7 @@
 | `gender` | SMALLINT | NOT NULL, DEFAULT 0 | 0 未设置 / 1 男 / 2 女 / 3 其他 |
 | `status` | SMALLINT | NOT NULL, DEFAULT 1 | 1 正常 / 2 冻结 / 3 注销 |
 | `role` | VARCHAR(32) | NOT NULL | `user` / `reviewer` / `operator` / `admin` |
-| `auth_version` | BIGINT | NOT NULL, DEFAULT 1 | 密码变化时递增的认证版本 |
+| `auth_version` | BIGINT | NOT NULL, DEFAULT 1 | 密码或后台账号生命周期操作时递增的认证版本 |
 | `created_at` | TIMESTAMPTZ | NOT NULL | 创建时间 |
 | `updated_at` | TIMESTAMPTZ | NOT NULL | 更新时间 |
 
@@ -105,6 +110,32 @@
 
 Worker 以有界批次清理到期行和保留期外的已撤销行。
 
+### 3.4 `account_management_operation`
+
+| 字段 | 说明 |
+| --- | --- |
+| `actor_id` / `idempotency_key` | 操作者范围内唯一的 128 字符重试键 |
+| `fingerprint` | 绑定目标、操作、预期版本和原因的 SHA-256 |
+| `user_id` / `operation` | 普通用户目标及 `freeze/unfreeze/revoke_sessions` |
+| `result_json` | 只保存状态、版本、撤销会话数和发生时间的重放结果 |
+| `created_at` | 首次提交时间 |
+
+该表只承担安全重试，不是账号或审计事实源；成功历史仍由 `admin_audit_event` 保存。
+
+### 3.5 `account_notification_outbox`
+
+| 字段 | 说明 |
+| --- | --- |
+| `event_id` | `user_id + freeze/unfreeze + new auth_version` 组成的稳定消息身份 |
+| `recipient_id` / `operation` / `reason_code` | 接收普通用户、冻结/解冻操作和注册原因 |
+| `occurred_at` / `auth_version` | 账号生命周期事实时间及提交后的认证版本 |
+| `state` / `attempts` / `available_at` | pending/delivered/terminal、尝试次数和重试时间 |
+| `lease_owner` / `lease_until` | Worker fencing 租约 |
+| `last_error` / `delivered_at` | 有界错误与投递完成时间 |
+
+冻结/解冻事务原子写入该 Outbox；强制退出不写。Worker 通过 message Application 窄接口生成
+幂等 `SYSTEM` 消息，account 持久化不得直接写 `user_message`。
+
 ## 4. 业务规则
 
 | 规则 | 说明 |
@@ -113,7 +144,7 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 账号唯一 | 大小写变体共享同一规范化 `account` |
 | 密码规则 | 新注册和新密码至少 8 个 Unicode 字符，UTF-8 不超过 bcrypt 的 72 字节边界；旧短密码仍可登录并迁移 |
 | 密码只保存哈希 | `account.password` 仅保存 bcrypt；Refresh Session 仅保存 SHA-256 Secret Hash |
-| 登录只允许正常账号 | 冻结和注销用户不能登录 |
+| 登录只允许正常账号 | 密码正确的冻结账号返回 `423 AUTH_ACCOUNT_FROZEN` 且不签发任何凭证；错误密码、未知账号和注销账号仍返回统一无效凭证 |
 | JWT 严格身份 | Token 必须带 `kid/iss/aud/sub/token_type/jti/iat/nbf/exp/auth_version`；消费端另带 Refresh Session ID，不携带授权角色 |
 | Token purpose 与密钥隔离 | 用户端和后台使用不同 HS256 key ring；用户端只接受 `access` + `frux-consumer`，后台只接受 `admin_access` + `frux-admin` |
 | Access Token 有界 | 用户 Access 默认 5 分钟且上限 15 分钟；登出或改密后旧 Access 最多存活到该到期时间，不能再次刷新 |
@@ -121,7 +152,7 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 密钥轮换 | 新 Token 使用 active `kid`；旧 key 只在有界重叠期验证。旧共享密钥兼容必须配置明确截止时间 |
 | 后台角色封闭映射 | `reviewer`、`operator` 和兼容 `admin` 映射到代码注册的固定权限；普通用户、未知角色和未知权限默认拒绝 |
 | 账号变更立即生效 | 后台每次读取当前状态、角色和 `auth_version`；停用、降权或改密后旧 Admin Token 下一次请求即失效 |
-| 登录失败不可枚举账号 | 未注册账号和密码错误使用相同响应和 dummy bcrypt 主要计算路径；Web 统一展示“账号或密码错误，请重新输入” |
+| 登录失败不可枚举账号 | 未注册账号和密码错误使用相同响应和 dummy bcrypt 主要计算路径；只有完成正确密码校验后才可返回冻结状态 |
 | 后台登录失败不可枚举 | 未知账号、错误密码、停用账号和无后台权限账号统一返回 `401 ADMIN_AUTH_INVALID_CREDENTIALS`；未知账号路径执行固定 dummy bcrypt 校验，避免明显时序差异 |
 | 当前用户资料走鉴权 | `/api/users/me` 只返回当前登录用户 |
 | Refresh 旋转 | 每次成功刷新替换 Secret；短竞争窗口内旧 Secret 返回 superseded 冲突。已知有效 Session ID 上任何非当前且不满足竞争窗口的 Secret 均 fail-closed 撤销整个 family，因此不保存无界历史 Hash |
@@ -142,6 +173,14 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 喜欢公开能力 | 只有 `liked_visibility=public` 会派生公开主页的 `liked_videos_public=true` |
 | 收藏始终本人可见 | 没有公开收藏接口或公开主页收藏 Tab；`favorite_visibility` 仅为兼容字段，Web 编辑器固定显示“仅自己可见”并写回 `private` |
 | 内容统计来源 | `user_content_stat` 提供公开/私密作品和获赞计数；所有值对外按非负数返回 |
+| 普通用户边界 | 后台账号管理列表、详情和写入都固定要求当前 `role=user`；Reviewer、Operator、Admin 和未知角色按不存在处理 |
+| 管理查询隐私 | 特权响应可返回规范登录账号、资料、统计和活跃会话总数，但不选择密码、Session ID、Secret Hash、Token 或 Cookie |
+| 冻结/解冻 | 只允许 `normal -> frozen` 和 `frozen -> normal`；注销账号只读，后台不提供注销或硬删除 |
+| 强制退出 | 保持 normal/frozen 状态，递增 `auth_version` 并撤销全部活动 Refresh Session |
+| Access 残留窗口 | 冻结或强制退出后不能刷新；此前 Access JWT 最多存活到原短期到期，默认约 5 分钟、硬上限 15 分钟 |
+| 管理事务 | 账号状态/版本、Refresh Session、actor 范围幂等结果和成功 audit 同一 PostgreSQL 事务提交 |
+| 生命周期消息 | 冻结和解冻随账号事务写耐久 Outbox，消息服务按注册 reason 生成“账号已被冻结/已解冻”；重放不重复消息 |
+| 内容分离 | 账号冻结不改变视频、评论、关系、既有消息或资料；只追加账号生命周期消息，需下架内容时单独使用视频运营 |
 
 ## 5. 测试建议
 
@@ -163,6 +202,13 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 改密成功 | 旧密码不能登录、当前设备获得新会话、其他 Refresh Session 被撤销 |
 | 并发改密 | 使用同一旧哈希的请求最多一个成功，另一个返回 credential conflict |
 | 后台改密失效 | 旧 Admin Token 在下一次权限读取时返回 401 |
+| 管理列表 | 稳定 `(created_at, id)` 分页、筛选绑定 cursor，且不返回任何非 `user` 角色 |
+| 冻结与解冻 | 校验 expected version、状态转换、注册 reason 和幂等键 |
+| 冻结登录 | 正确密码返回专用 423，错误密码仍为通用 401，且响应不产生 Access/Refresh/资产 Cookie |
+| 生命周期通知 | 事务回滚不留 Outbox；Worker 瞬时重试、非法 payload terminal、稳定 event 去重 |
+| 强制退出 | 状态不变、版本递增、Refresh Session 全部撤销 |
+| 并发或重试 | 同键同 payload 只提交一次；同键不同 payload 冲突；并发旧版本不留下部分写入 |
+| 审计失败 | 状态、版本、Session 和幂等结果全部回滚 |
 
 ## 6. 前端接入点
 
@@ -173,6 +219,7 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 顶部用户区 | 展示当前用户资料和耐久登出 |
 | 个人主页 | 展示资料与内容，并通过独立“账号安全”弹窗修改密码，不把凭证混入资料编辑请求 |
 | 作者主页 | 以用户 ID、昵称和头像展示公开资料，不显示登录账号，并根据 `liked_videos_public` 决定是否显示喜欢 Tab |
+| 后台账号管理 | `/admin/accounts` 只展示普通用户，提供筛选、详情、冻结、解冻和强制退出；不管理后台账号、角色或权限 |
 
 ## 7. 错误码
 
@@ -184,6 +231,7 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 400 | `ACCOUNT_CURRENT_PASSWORD_INCORRECT` | 修改密码时当前密码错误 |
 | 400 | `ACCOUNT_PASSWORD_UNCHANGED` | 新密码与当前密码相同 |
 | 401 | `AUTH_INVALID_CREDENTIALS` | 登录账号不存在或密码错误，两种情况不可区分 |
+| 423 | `AUTH_ACCOUNT_FROZEN` | 冻结账号已提交正确密码；不创建任何登录凭证 |
 | 401 | `AUTH_INVALID_ACCESS_TOKEN` | 当前登录态缺失、无效或已过期 |
 | 401 | `AUTH_REFRESH_INVALID` | Refresh Session 缺失、过期、撤销或账号不可用 |
 | 401 | `AUTH_REFRESH_REPLAYED` | 检测到旋转后 Secret 重放并撤销 family |
@@ -197,6 +245,13 @@ Worker 以有界批次清理到期行和保留期外的已撤销行。
 | 503 | `AUTHENTICATION_UNAVAILABLE` | Session 持久化、签发或安全决策暂时不可用 |
 | 503 | `ADMIN_AUTHORIZATION_UNAVAILABLE` | 当前后台主体读取暂时不可用 |
 | 503 | `ADMIN_AUTHENTICATION_UNAVAILABLE` | 后台凭证校验或 Token 签发暂时不可用 |
+| 400 | `ADMIN_USER_ACCOUNT_VALIDATION_FAILED` | 普通账号管理筛选、版本、reason 或幂等键无效 |
+| 400 | `ADMIN_USER_ACCOUNT_CURSOR_INVALID` | cursor 格式无效或与筛选条件不匹配 |
+| 404 | `ADMIN_USER_ACCOUNT_NOT_FOUND` | 目标缺失或当前角色不是普通 `user` |
+| 409 | `ADMIN_USER_ACCOUNT_VERSION_CONFLICT` | 账号认证版本已变化 |
+| 409 | `ADMIN_USER_ACCOUNT_STATE_CONFLICT` | 冻结、解冻或强制退出状态不允许 |
+| 409 | `ADMIN_USER_ACCOUNT_IDEMPOTENCY_CONFLICT` | actor 范围重试键绑定了不同请求 |
+| 503 | `ADMIN_USER_ACCOUNT_UNAVAILABLE` | 普通账号管理查询或事务暂时不可用 |
 | 500 | `INTERNAL_ERROR` | 账号仓储、设置读取或 Token 签发等内部失败 |
 
 响应同时保留原有 `error` 字段；Web 只根据 `code` 和安全 fallback 生成用户文案，不直接展示兼容文本。

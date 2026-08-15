@@ -60,6 +60,8 @@ func AutoMigrate(db *gorm.DB) error {
 			&infraaccount.UserModel{},
 			&infraaccount.ProfileSettingModel{},
 			&infraaccount.RefreshSessionModel{},
+			&infraaccount.ManagementOperationModel{},
+			&infraaccount.NotificationOutboxModel{},
 			&infraadminaudit.EventModel{},
 			&infrakafkafailure.ReplayAttemptModel{},
 			&infrakafkafailure.RetryGroupInitializationModel{},
@@ -145,6 +147,9 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 		if err := infraaccount.EnsureProfileSettings(tx); err != nil {
+			return err
+		}
+		if err := infraaccount.EnsureManagedAccountIndexes(tx); err != nil {
 			return err
 		}
 		if err := tx.Model(&infraaccount.UserModel{}).

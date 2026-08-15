@@ -3,6 +3,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchAdminPrincipal, loginAdmin } from "../api/admin";
+import {
+  fetchManagedAccount,
+  freezeManagedAccount,
+  revokeManagedAccountSessions,
+  searchManagedAccounts,
+  unfreezeManagedAccount
+} from "../api/accountAdmin";
 import { ADMIN_AUTH_INVALID_EVENT, ApiError } from "../api/client";
 import { fetchUnreadStat } from "../api/messages";
 import {
@@ -30,6 +37,14 @@ import { forgetReviewLease } from "./reviewLeaseMemory";
 import { defaultAdminVideoFilters } from "./VideoOperationsPage";
 
 vi.mock("../api/admin", () => ({ fetchAdminPrincipal: vi.fn(), loginAdmin: vi.fn() }));
+vi.mock("../api/accountAdmin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/accountAdmin")>()),
+  fetchManagedAccount: vi.fn(),
+  freezeManagedAccount: vi.fn(),
+  revokeManagedAccountSessions: vi.fn(),
+  searchManagedAccounts: vi.fn(),
+  unfreezeManagedAccount: vi.fn()
+}));
 vi.mock("../api/messages", () => ({ fetchUnreadStat: vi.fn() }));
 vi.mock("../api/review", () => ({
   claimReviewCase: vi.fn(),
@@ -86,6 +101,9 @@ describe("admin content operations workspace", () => {
       media_url: "https://preview.example.test/video.mp4",
       cover_url: "https://preview.example.test/cover.jpg",
       expires_at: "2099-01-01T00:00:00Z"
+    });
+    vi.mocked(searchManagedAccounts).mockResolvedValue({
+      items: [], next_cursor: "", has_more: false
     });
   });
 
@@ -604,6 +622,89 @@ describe("admin content operations workspace", () => {
     expect(container.textContent).toContain("服务端拒绝了视频运营访问");
   });
 
+  it("shows ordinary account management only with account.manage", async () => {
+    sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
+      version: 1,
+      token: "admin-token",
+      principal: {
+        user_id: 9,
+        role: "admin",
+        permissions: ["review.read", "account.manage"]
+      },
+      expires_at: Date.now() + 30 * 60 * 1000
+    }));
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 9, role: "admin", permissions: ["review.read", "account.manage"]
+    });
+    vi.mocked(searchManagedAccounts).mockResolvedValue({
+      items: [{
+        id: 42, account: "alice-login", nickname: "Alice", avatar_url: "", bio: "",
+        gender: 0, status: 1, status_name: "normal", version: 3,
+        following_count: 2, follower_count: 4, public_work_count: 5,
+        private_work_count: 1, received_like_count: 8, active_session_count: 2,
+        created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-02T00:00:00Z"
+      }],
+      next_cursor: "",
+      has_more: false
+    });
+    window.history.replaceState({}, "", "/admin/accounts");
+    await renderAdmin();
+    expect(container.textContent).toContain("账号管理");
+    expect(container.textContent).toContain("alice-login");
+    expect(container.textContent).not.toContain("视频运营");
+  });
+
+  it("freezes an ordinary account with versioned audited confirmation", async () => {
+    const account = {
+      id: 42, account: "alice-login", nickname: "Alice", avatar_url: "", bio: "",
+      gender: 0, status: 1, status_name: "normal" as const, version: 3,
+      following_count: 2, follower_count: 4, public_work_count: 5,
+      private_work_count: 1, received_like_count: 8, active_session_count: 2,
+      created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-02T00:00:00Z"
+    };
+    sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
+      version: 1,
+      token: "admin-token",
+      principal: {
+        user_id: 9,
+        role: "admin",
+        permissions: ["review.read", "account.manage"]
+      },
+      expires_at: Date.now() + 30 * 60 * 1000
+    }));
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 9, role: "admin", permissions: ["review.read", "account.manage"]
+    });
+    vi.mocked(searchManagedAccounts).mockResolvedValue({
+      items: [account], next_cursor: "", has_more: false
+    });
+    vi.mocked(fetchManagedAccount).mockResolvedValue(account);
+    vi.mocked(freezeManagedAccount).mockResolvedValue({
+      user_id: 42, operation: "freeze", status: 2, status_name: "frozen",
+      version: 4, revoked_session_count: 2,
+      occurred_at: "2026-08-03T00:00:00Z",
+      replayed: false, audit_committed: true
+    });
+    window.history.replaceState({}, "", "/admin/accounts");
+    await renderAdmin();
+    await clickButton("查看");
+    await clickButton("冻结账号");
+    expect(container.textContent).toContain("现有作品不会自动下架");
+    const checkbox = required<HTMLInputElement>('input[type="checkbox"]');
+    await act(async () => {
+      checkbox.click();
+    });
+    await clickButton("确认冻结");
+    expect(freezeManagedAccount).toHaveBeenCalledWith(
+      "admin-token",
+      42,
+      { expected_version: 3, reason_code: "abuse" },
+      expect.any(String)
+    );
+    expect(container.textContent).toContain("账号已冻结并完成审计");
+    expect(container.textContent).toContain("已冻结");
+  });
+
   async function renderAdmin() {
     await act(async () => {
       root.render(
@@ -693,3 +794,5 @@ void renewReviewLease;
 void releaseReviewLease;
 void resumeReviewLease;
 void restoreAdminVideo;
+void revokeManagedAccountSessions;
+void unfreezeManagedAccount;

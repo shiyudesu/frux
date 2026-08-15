@@ -39,6 +39,9 @@ const (
 	ActionGovernanceExecute     Action = "governance.execute"
 	ActionDeadLetterReplay      Action = "dead_letter.replay"
 	ActionKafkaDeadLetterReplay Action = "kafka_dead_letter.replay"
+	ActionAccountFreeze         Action = "account.freeze"
+	ActionAccountUnfreeze       Action = "account.unfreeze"
+	ActionAccountSessionsRevoke Action = "account.sessions_revoke"
 )
 
 type TargetType string
@@ -51,6 +54,7 @@ const (
 	TargetGovernanceControl     TargetType = "governance_control"
 	TargetDeadLetterMessage     TargetType = "dead_letter_message"
 	TargetKafkaDeadLetterRecord TargetType = "kafka_dead_letter_record"
+	TargetUserAccount           TargetType = "user_account"
 )
 
 type Outcome string
@@ -86,6 +90,18 @@ var allowedDetailsByAction = map[Action]map[string]struct{}{
 		"consumer_group", "failure_code", "http_method", "offset", "original_event_id",
 		"partition", "reason_code", "replay_id", "route", "source_offset",
 		"source_partition", "source_topic", "topic",
+	),
+	ActionAccountFreeze: detailKeys(
+		"http_method", "new_status", "new_version", "previous_status", "previous_version",
+		"reason_code", "revoked_session_count", "route",
+	),
+	ActionAccountUnfreeze: detailKeys(
+		"http_method", "new_status", "new_version", "previous_status", "previous_version",
+		"reason_code", "revoked_session_count", "route",
+	),
+	ActionAccountSessionsRevoke: detailKeys(
+		"http_method", "new_status", "new_version", "previous_status", "previous_version",
+		"reason_code", "revoked_session_count", "route",
 	),
 }
 
@@ -167,6 +183,51 @@ var schemasByAction = map[Action]actionSchema{
 			"source_partition", "source_topic", "topic",
 		),
 	},
+	ActionAccountFreeze: {
+		permission: domainaccount.PermissionAccountManage,
+		targetType: TargetUserAccount,
+		route:      "/api/admin/accounts/:userId/freeze",
+		method:     "POST",
+		successKeys: detailKeys(
+			"http_method", "new_status", "new_version", "previous_status", "previous_version",
+			"reason_code", "revoked_session_count", "route",
+		),
+		successReasons: detailKeys(
+			domainaccount.AccountReasonPolicyViolation,
+			domainaccount.AccountReasonAbuse,
+			domainaccount.AccountReasonSecurityRisk,
+		),
+	},
+	ActionAccountUnfreeze: {
+		permission: domainaccount.PermissionAccountManage,
+		targetType: TargetUserAccount,
+		route:      "/api/admin/accounts/:userId/unfreeze",
+		method:     "POST",
+		successKeys: detailKeys(
+			"http_method", "new_status", "new_version", "previous_status", "previous_version",
+			"reason_code", "revoked_session_count", "route",
+		),
+		successReasons: detailKeys(
+			domainaccount.AccountReasonAppealApproved,
+			domainaccount.AccountReasonIssueResolved,
+			domainaccount.AccountReasonManualCorrection,
+		),
+	},
+	ActionAccountSessionsRevoke: {
+		permission: domainaccount.PermissionAccountManage,
+		targetType: TargetUserAccount,
+		route:      "/api/admin/accounts/:userId/sessions/revoke",
+		method:     "POST",
+		successKeys: detailKeys(
+			"http_method", "new_status", "new_version", "previous_status", "previous_version",
+			"reason_code", "revoked_session_count", "route",
+		),
+		successReasons: detailKeys(
+			domainaccount.AccountReasonSecurityResponse,
+			domainaccount.AccountReasonUserRequest,
+			domainaccount.AccountReasonOperatorRequest,
+		),
+	},
 }
 
 var validTargetTypes = map[TargetType]struct{}{
@@ -177,6 +238,7 @@ var validTargetTypes = map[TargetType]struct{}{
 	TargetGovernanceControl:     {},
 	TargetDeadLetterMessage:     {},
 	TargetKafkaDeadLetterRecord: {},
+	TargetUserAccount:           {},
 }
 
 var detailNumberPattern = regexp.MustCompile(`^[0-9]+$`)
@@ -217,6 +279,8 @@ var validStatuses = map[string]struct{}{
 	"pending_review": {},
 	"published":      {},
 	"rejected":       {},
+	"normal":         {},
+	"frozen":         {},
 }
 
 type FactInput struct {
@@ -397,7 +461,8 @@ func validDetailValue(action Action, key, value string) bool {
 	}
 	switch key {
 	case "filter_count", "new_revision", "previous_revision", "review_version",
-		"offset", "partition", "source_offset", "source_partition":
+		"offset", "partition", "source_offset", "source_partition",
+		"new_version", "previous_version", "revoked_session_count":
 		return len(value) <= 20 && detailNumberPattern.MatchString(value)
 	case "http_method":
 		switch value {
@@ -538,6 +603,24 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 		previous, previousErr := strconv.ParseUint(detail["previous_revision"], 10, 64)
 		next, nextErr := strconv.ParseUint(detail["new_revision"], 10, 64)
 		return previousErr == nil && nextErr == nil && next > previous
+	case ActionAccountFreeze, ActionAccountUnfreeze, ActionAccountSessionsRevoke:
+		previousVersion, previousErr := strconv.ParseUint(detail["previous_version"], 10, 64)
+		newVersion, newErr := strconv.ParseUint(detail["new_version"], 10, 64)
+		if previousErr != nil || newErr != nil || previousVersion == 0 ||
+			newVersion != previousVersion+1 {
+			return false
+		}
+		switch action {
+		case ActionAccountFreeze:
+			return detail["previous_status"] == "normal" && detail["new_status"] == "frozen"
+		case ActionAccountUnfreeze:
+			return detail["previous_status"] == "frozen" && detail["new_status"] == "normal" &&
+				detail["revoked_session_count"] == "0"
+		case ActionAccountSessionsRevoke:
+			return detail["previous_status"] == detail["new_status"] &&
+				(detail["new_status"] == "normal" || detail["new_status"] == "frozen")
+		}
+		return false
 	default:
 		return false
 	}

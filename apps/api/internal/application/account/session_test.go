@@ -163,9 +163,19 @@ func TestLoginCreatesHashedRefreshSessionAndRejectsInactiveAccount(t *testing.T)
 		t.Fatalf("result=%+v session=%+v", result, repo.session)
 	}
 
-	repo.user.Status = 2
+	repo.user.Status = domainaccount.StatusFrozen
+	if _, err := service.Login(context.Background(), "alice", "wrong-password"); !errors.Is(err, domainaccount.ErrInvalidCredentials) {
+		t.Fatalf("frozen wrong-password error = %v", err)
+	}
+	if _, err := service.Login(context.Background(), "alice", "Password123!"); !errors.Is(err, domainaccount.ErrAccountFrozen) {
+		t.Fatalf("frozen login error = %v", err)
+	}
+	if repo.session == nil || repo.session.ID != "session" {
+		t.Fatalf("frozen login created or replaced session: %+v", repo.session)
+	}
+	repo.user.Status = domainaccount.StatusCancelled
 	if _, err := service.Login(context.Background(), "alice", "Password123!"); !errors.Is(err, domainaccount.ErrInvalidCredentials) {
-		t.Fatalf("inactive login error = %v", err)
+		t.Fatalf("cancelled login error = %v", err)
 	}
 	repo.user = nil
 	if _, err := service.Login(context.Background(), "missing", "Password123!"); !errors.Is(err, domainaccount.ErrInvalidCredentials) {

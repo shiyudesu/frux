@@ -44,6 +44,35 @@ type ProfileSettingModel struct {
 	UpdatedAt          time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
+type ManagementOperationModel struct {
+	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	ActorID        int64     `gorm:"column:actor_id;not null;uniqueIndex:uk_account_management_operation_actor_key,priority:1"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;size:128;not null;uniqueIndex:uk_account_management_operation_actor_key,priority:2"`
+	Fingerprint    string    `gorm:"column:fingerprint;size:64;not null"`
+	UserID         int64     `gorm:"column:user_id;not null;index:idx_account_management_operation_user_created,priority:1"`
+	Operation      string    `gorm:"column:operation;size:32;not null"`
+	ResultJSON     string    `gorm:"column:result_json;type:jsonb;not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;not null;index:idx_account_management_operation_user_created,priority:2"`
+}
+
+type NotificationOutboxModel struct {
+	EventID     string     `gorm:"column:event_id;size:64;primaryKey"`
+	RecipientID int64      `gorm:"column:recipient_id;not null;index:idx_account_notification_recipient_created,priority:1"`
+	Operation   string     `gorm:"column:operation;size:32;not null"`
+	ReasonCode  string     `gorm:"column:reason_code;size:64;not null"`
+	AuthVersion int64      `gorm:"column:auth_version;not null"`
+	OccurredAt  time.Time  `gorm:"column:occurred_at;not null"`
+	State       string     `gorm:"column:state;size:16;not null;default:'pending';index:idx_account_notification_pending,priority:1"`
+	Attempts    int        `gorm:"column:attempts;not null;default:0"`
+	AvailableAt time.Time  `gorm:"column:available_at;not null;index:idx_account_notification_pending,priority:2"`
+	LeaseOwner  string     `gorm:"column:lease_owner;size:128;not null;default:''"`
+	LeaseUntil  *time.Time `gorm:"column:lease_until;index:idx_account_notification_pending,priority:3"`
+	LastError   string     `gorm:"column:last_error;size:1024;not null;default:''"`
+	DeliveredAt *time.Time `gorm:"column:delivered_at"`
+	CreatedAt   time.Time  `gorm:"column:created_at;not null;index:idx_account_notification_recipient_created,priority:2"`
+	UpdatedAt   time.Time  `gorm:"column:updated_at;not null"`
+}
+
 func (ProfileSettingModel) TableName() string {
 	return "account_profile_setting"
 }
@@ -55,4 +84,12 @@ func (UserModel) TableName() string {
 
 func (RefreshSessionModel) TableName() string {
 	return "account_refresh_session"
+}
+
+func (ManagementOperationModel) TableName() string {
+	return "account_management_operation"
+}
+
+func (NotificationOutboxModel) TableName() string {
+	return "account_notification_outbox"
 }

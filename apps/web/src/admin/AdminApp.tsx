@@ -12,6 +12,7 @@ import { AdminSessionProvider, useAdminSession } from "./adminSession";
 import { ReviewDetailPage } from "./ReviewDetailPage";
 import { ReviewQueuePage } from "./ReviewQueuePage";
 import { VideoOperationsPage } from "./VideoOperationsPage";
+import { AccountManagementPage } from "./AccountManagementPage";
 import "./admin.css";
 
 interface AdminDestination {
@@ -22,7 +23,8 @@ interface AdminDestination {
 
 const destinations: AdminDestination[] = [
   { label: "审核任务", route: "/admin/reviews", permission: "review.read" },
-  { label: "视频运营", route: "/admin/videos", permission: "content.enforce" }
+  { label: "视频运营", route: "/admin/videos", permission: "content.enforce" },
+  { label: "账号管理", route: "/admin/accounts", permission: "account.manage" }
 ];
 
 export default function AdminApp() {
@@ -63,9 +65,7 @@ function AdminRoutes() {
     );
   }
   const permissions = new Set(principal?.permissions || []);
-  const requiredPermission: AdminPermission = route === "/admin/videos"
-    ? "content.enforce"
-    : "review.read";
+  const requiredPermission = adminRoutePermission(route);
   if (state === "forbidden" || !permissions.has(requiredPermission)) {
     return (
       <AdminEntryState
@@ -80,6 +80,8 @@ function AdminRoutes() {
   let page: ReactNode;
   if (route === "/admin/videos") {
     page = <VideoOperationsPage />;
+  } else if (route === "/admin/accounts") {
+    page = <AccountManagementPage />;
   } else if (reviewRoute) {
     page = <ReviewDetailPage reviewID={reviewRoute.reviewID} />;
   } else {
@@ -120,11 +122,17 @@ function AdminRoutes() {
 }
 
 function adminProtectedRoute(route: Route): AdminProtectedRoute {
-  if (route === "/admin/videos" || route === "/admin/reviews") return route;
+  if (route === "/admin/videos" || route === "/admin/reviews" || route === "/admin/accounts") return route;
   if (/^\/admin\/reviews\/[1-9]\d*$/.test(route)) {
     return route as `/admin/reviews/${number}`;
   }
   return "/admin/reviews";
+}
+
+function adminRoutePermission(route: Route): AdminPermission {
+  if (route === "/admin/videos") return "content.enforce";
+  if (route === "/admin/accounts") return "account.manage";
+  return "review.read";
 }
 
 function AdminEntryState({

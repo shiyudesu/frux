@@ -8,11 +8,13 @@ import (
 )
 
 const (
-	RoleUser     = "user"
-	RoleReviewer = "reviewer"
-	RoleOperator = "operator"
-	RoleAdmin    = "admin"
-	StatusNormal = 1
+	RoleUser        = "user"
+	RoleReviewer    = "reviewer"
+	RoleOperator    = "operator"
+	RoleAdmin       = "admin"
+	StatusNormal    = 1
+	StatusFrozen    = 2
+	StatusCancelled = 3
 
 	GenderUnspecified = 0
 	GenderMale        = 1
@@ -336,6 +338,10 @@ func ValidProfileVisibility(value string) bool {
 	default:
 		return false
 	}
+}
+
+func ValidAccountStatus(status int) bool {
+	return status == StatusNormal || status == StatusFrozen || status == StatusCancelled
 }
 
 func clampCount(value int) int {

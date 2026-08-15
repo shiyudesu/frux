@@ -14,6 +14,11 @@
 | 已实现 | GET | `/api/admin/videos` | 按生命周期、作者、ID、关键词和有界创建时间查询视频 | `content.enforce` |
 | 已实现 | POST | `/api/admin/videos/{videoId}/enforcement` | 按预期版本、注册原因和备注下架已发布视频 | `content.enforce` |
 | 已实现 | POST | `/api/admin/videos/{videoId}/restoration` | 按预期版本恢复已批准的下架视频 | `content.enforce` |
+| 已实现 | GET | `/api/admin/accounts` | 按账号、昵称、用户 ID 和状态稳定分页查询普通用户 | `account.manage` |
+| 已实现 | GET | `/api/admin/accounts/{userId}` | 查看普通用户账号、资料、统计和活跃会话数量 | `account.manage` |
+| 已实现 | POST | `/api/admin/accounts/{userId}/freeze` | 原因化、版本化、幂等冻结普通用户并撤销 Refresh Session | `account.manage` |
+| 已实现 | POST | `/api/admin/accounts/{userId}/unfreeze` | 原因化、版本化、幂等解冻普通用户 | `account.manage` |
+| 已实现 | POST | `/api/admin/accounts/{userId}/sessions/revoke` | 保持账号状态并强制撤销全部耐久登录会话 | `account.manage` |
 | 已实现 | GET | `/api/admin/review/cases` | 查询待处理、本人进行中和最近完成的审核任务 | `review.read` |
 | 已实现 | GET | `/api/admin/review/cases/{caseId}` | 查询案件证据和历史 | `review.read` |
 | 已实现 | GET | `/api/admin/review/cases/{caseId}/preview-access` | 获取审核专用短期保护预览 | `review.read` |
@@ -33,9 +38,11 @@
 | `user` | 无 |
 | `reviewer` | `review.read`、`review.decide` |
 | `operator` | `review.read`、`content.enforce`、`config.publish`、`governance.execute`、`audit.read` |
-| `admin` | 全部已注册权限，作为兼容 bootstrap 角色 |
+| `admin` | 全部已注册权限，作为兼容 bootstrap 角色；包括普通用户账号管理 |
 
-已注册权限为 `review.read`、`review.decide`、`content.enforce`、`config.publish`、`governance.execute` 和 `audit.read`。未知角色、未知权限和未配置映射均不授予权限。
+已注册权限为 `review.read`、`review.decide`、`content.enforce`、`config.publish`、
+`governance.execute`、`audit.read` 和 `account.manage`。`account.manage` 只授予兼容
+`admin`，Reviewer 和 Operator 均不能查看或操作账号管理页面。未知角色、未知权限和未配置映射均不授予权限。
 
 ## 4. 授权链路
 
@@ -69,6 +76,8 @@ Resolved Admin Principal → Handler
 - 视频处罚和恢复由视频模块拥有。
 - 不可变操作事实由 [admin-audit.md](admin-audit.md) 描述的审计模块拥有，并与生产变更同事务提交。
 - 运行时配置由治理模块使用版本化 Revision 管理。
+- 普通用户账号查询、状态和耐久会话撤销由 account 模块拥有；所有查询和锁定写入都要求当前
+  `role=user`。Reviewer、Operator、Admin 和未知角色账号不会出现在该功能中，也不能通过直接 URL 操作。
 
 ## 6. 测试要求
 
@@ -86,13 +95,23 @@ Resolved Admin Principal → Handler
 | 当前 Reviewer 刷新详情 | resume 轮换 token、旧 token 失效，任务继续出现在“我正在审核” |
 | 非持有人或过期租约决定 | 返回稳定冲突，不写案件、视频、审计或通知 |
 | Reviewer 请求待审视频预览 | 返回最长 5 分钟保护 URL，公共媒体资格保持不变 |
+| Admin 查询账号列表 | 只返回普通 `user`，登录账号仅在该特权边界展示，不返回密码或会话标识 |
+| Operator 访问账号管理 | 返回 403，Handler 不执行 |
+| 普通用户冻结 | 状态、`auth_version`、Refresh Session、幂等结果、成功审计和冻结消息 Outbox 同事务提交 |
+| 普通用户解冻 | 解冻消息 Outbox 同事务提交，旧 Refresh Session 保持撤销 |
+| 重试冻结请求 | 相同 actor/key/payload 返回原结果，不重复写状态、审计、Outbox 或消息 |
+| 冻结用户拥有公开视频 | 视频状态保持不变，内容处罚继续走视频运营 |
 
 ## 7. 前端接入点
 
 Web 使用现有 History API typed router 懒加载 `/admin/login`、`/admin/reviews`、
-`/admin/reviews/{reviewId}` 和 `/admin/videos`。`AdminSessionProvider` 使用版本化
+`/admin/reviews/{reviewId}`、`/admin/videos` 和 `/admin/accounts`。`AdminSessionProvider` 使用版本化
 `sessionStorage` 键保存 Admin Token/主体，和用户端 localStorage 会话完全独立；任一后台 API 的
 匹配 Token 401 只清理 Admin Session，并返回后台登录页。审核任务页提供“待我处理 / 我正在审核 /
 最近完成”，详情页使用短期保护预览、自动延长占用、刷新恢复和主动放回，不向审核员暴露 lease token。
 Admin Shell 通过 `/api/admin/me` 获取服务端确认的封闭权限集合，只展示获准目的地；直接 URL 仍请求
 拥有领域的后台 API，并稳定呈现登录、权限验证、403 和服务不可用状态。
+账号管理提供普通用户筛选、稳定分页、详情以及冻结、解冻和强制退出确认。确认文案明确提示：
+Refresh Session 会立即撤销，但已签发的短期 Access Token 最长仍可存活到其既有到期时间，默认约
+5 分钟；冻结不会自动下架作品。
+冻结/解冻成功后由 Worker 生成原因化站内消息；强制退出不生成冻结/解冻消息。

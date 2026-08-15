@@ -120,7 +120,9 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 
 	// 下面按领域模块组装依赖：Repository -> Service -> Handler。
-	accountRepo := infraaccount.New(gormDB)
+	adminAuditMetrics := adminAuditMetricsAdapter{}
+	adminAuditRepo := infraadminaudit.New(gormDB, infraadminaudit.WithWriteObserver(adminAuditMetrics))
+	accountRepo := infraaccount.New(gormDB, infraaccount.WithAdminAuditWriter(adminAuditRepo))
 	accountService := applicationaccount.New(
 		accountRepo,
 		jwtManager,
@@ -128,10 +130,12 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		applicationaccount.WithRefreshSessionRepository(accountRepo),
 	)
 	accountHandler := interfaceshttpaccount.New(accountService)
+	accountManagementService := applicationaccount.NewManagement(
+		accountRepo, cfg.Security.HMACSecret,
+	)
+	accountManagementHandler := interfaceshttpaccount.NewManagementHandler(accountManagementService)
 	adminAuthService := applicationadminauth.New(accountRepo, jwtManager)
 	adminAuthHandler := interfaceshttpadminauth.New(adminAuthService)
-	adminAuditMetrics := adminAuditMetricsAdapter{}
-	adminAuditRepo := infraadminaudit.New(gormDB, infraadminaudit.WithWriteObserver(adminAuditMetrics))
 	adminAuditService := applicationadminaudit.New(
 		adminAuditRepo,
 		applicationadminaudit.WithAttemptObserver(adminAuditMetrics),
@@ -687,6 +691,64 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			),
 		),
 		videoAdminHandler.Restore,
+	)
+	admin.GET(
+		"/accounts",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionAccountManage,
+		),
+		accountManagementHandler.List,
+	)
+	admin.GET(
+		"/accounts/:userId",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionAccountManage,
+		),
+		accountManagementHandler.Get,
+	)
+	admin.POST(
+		"/accounts/:userId/freeze",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionAccountManage,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionAccountFreeze,
+				domainadminaudit.TargetUserAccount,
+				"account",
+			),
+		),
+		accountManagementHandler.Freeze,
+	)
+	admin.POST(
+		"/accounts/:userId/unfreeze",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionAccountManage,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionAccountUnfreeze,
+				domainadminaudit.TargetUserAccount,
+				"account",
+			),
+		),
+		accountManagementHandler.Unfreeze,
+	)
+	admin.POST(
+		"/accounts/:userId/sessions/revoke",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionAccountManage,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionAccountSessionsRevoke,
+				domainadminaudit.TargetUserAccount,
+				"account",
+			),
+		),
+		accountManagementHandler.RevokeSessions,
 	)
 	governancePermission := func(
 		targetID string,

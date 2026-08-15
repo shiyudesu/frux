@@ -8,6 +8,11 @@
 
 视频生命周期通知事实分别归 video 和 review：提交、媒体终态失败、首次公开、下架和恢复写入 `video_notification_outbox`；审核决定写入 `review_notification_outbox`。两个 Worker 都通过窄 writer 创建 `VIDEO_LIFECYCLE` 消息，标题和正文由 message Application Service 根据注册 stage/result/reason 生成。message 不读取视频或审核表，也不拥有其 Outbox。历史 `SYSTEM` 审核消息继续兼容读取。
 
+账号生命周期通知事实归 account：冻结和解冻与账号状态、认证版本、Refresh Session、审计和幂等
+结果同事务写入 `account_notification_outbox`。Account Worker 通过
+`AccountLifecycleMessageWriter` 调用 message Application，按封闭 operation/reason 映射生成
+`SYSTEM` 消息；message 不读取 account 表，也不拥有该 Outbox。强制退出不发送冻结/解冻消息。
+
 ## 2. 接口设计
 
 | 方法 | 路径 | 作用 | 鉴权/幂等 |
@@ -81,6 +86,10 @@ actor 与 recipient 相同时 interaction 不创建 Outbox，避免自己评论�
 7. 人工审核 Outbox 使用相同的 `FOR UPDATE SKIP LOCKED`、30 秒租约、5 秒写入超时和指数退避；event ID 为稳定决定 ID，message 以 `user_id + event_id` 去重。
 8. 视频生命周期 Outbox 使用稳定业务 event ID、数据库租约、有界指数退避和 terminal 分类。首次发布行在媒体提升及发布事件成功前保持 `delivery_ready=false`，Publication Recovery 完成副作用后才允许创建用户消息。
 9. 生命周期 event ID 覆盖 `video-submitted`、`video-review-approved/rejected`、`video-media-failed`、`video-published`、`video-taken-down` 和 `video-restored`；同一接收人和 event 只产生一条消息。
+10. 账号生命周期 event ID 绑定用户、freeze/unfreeze 和新 `auth_version`；Worker 使用相同租约、
+    退避和 terminal 规则，生成“账号已被冻结/已解冻”及注册安全原因。同一 event 重投只保存一条。
+11. 冻结前已签发的短期 Access 尚有效时，消息中心可读取已投递冻结消息；若未及时读取，消息保持
+    耐久并在解冻后重新登录时继续可见。
 
 迁移不为历史评论合成消息；既有无目标消息保持可读、可分页、可标已读。
 
@@ -99,4 +108,4 @@ actor 与 recipient 相同时 interaction 不创建 Outbox，避免自己评论�
 
 ## 7. 测试覆盖
 
-已覆盖根评论、回复、评论点赞事件，自通知抑制，租约/瞬时重试/terminal 错误，稳定 event 去重，结构化目标，旧消息补齐与 legacy 读取；并覆盖生命周期载荷校验、事务回滚、发布竞态、重启恢复、消息渲染、先已读后导航、保护/删除目标和旧 `SYSTEM` 兼容。
+已覆盖根评论、回复、评论点赞事件，自通知抑制，租约/瞬时重试/terminal 错误，稳定 event 去重，结构化目标，旧消息补齐与 legacy 读取；并覆盖视频与账号生命周期载荷校验、事务回滚、发布竞态、重启恢复、冻结/解冻原因文案、残留 Access 读取、解冻后读取、消息渲染、先已读后导航、保护/删除目标和旧 `SYSTEM` 兼容。

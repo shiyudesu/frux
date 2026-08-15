@@ -109,6 +109,7 @@ describe("typed video discussion routing", () => {
     expect(normalizeRoute("/admin/login")).toBe("/admin/login");
     expect(normalizeRoute("/admin/reviews")).toBe("/admin/reviews");
     expect(normalizeRoute("/admin/videos")).toBe("/admin/videos");
+    expect(normalizeRoute("/admin/accounts")).toBe("/admin/accounts");
     expect(normalizeRoute("/admin/reviews/42")).toBe("/admin/reviews/42");
     expect(adminReviewFromRoute("/admin/reviews/42")).toEqual({ reviewID: 42 });
     expect(normalizeRoute("/admin/reviews/0")).toBe("/not-found");
@@ -121,6 +122,10 @@ describe("typed video discussion routing", () => {
       "/admin/login",
       "?return=%2Fadmin%2Fvideos"
     )).toEqual({ returnTo: "/admin/videos" });
+    expect(adminLoginFromLocation(
+      "/admin/login",
+      "?return=%2Fadmin%2Faccounts"
+    )).toEqual({ returnTo: "/admin/accounts" });
     expect(adminLoginFromLocation(
       "/admin/login",
       "?return=https%3A%2F%2Fevil.example"

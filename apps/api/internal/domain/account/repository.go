@@ -41,6 +41,11 @@ type AdminPrincipalReader interface {
 	FindAdminPrincipalByID(ctx context.Context, userID int64) (*AdminPrincipal, error)
 }
 
+type ManagedAccountReader interface {
+	ListManagedAccounts(ctx context.Context, query ManagedAccountQuery) ([]*ManagedAccount, error)
+	GetManagedAccount(ctx context.Context, userID int64) (*ManagedAccount, error)
+}
+
 type RefreshSessionRepository interface {
 	CreateRefreshSession(ctx context.Context, session *RefreshSession) error
 	RotateRefreshSession(ctx context.Context, input RotateRefreshSessionInput) (*RotateRefreshSessionResult, error)

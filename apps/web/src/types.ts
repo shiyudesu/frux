@@ -308,7 +308,8 @@ export type AdminPermission =
   | "content.enforce"
   | "config.publish"
   | "governance.execute"
-  | "audit.read";
+  | "audit.read"
+  | "account.manage";
 
 export interface AdminPrincipal {
   user_id: number;
@@ -338,7 +339,8 @@ function isAdminPermission(value: unknown): value is AdminPermission {
     value === "content.enforce" ||
     value === "config.publish" ||
     value === "governance.execute" ||
-    value === "audit.read";
+    value === "audit.read" ||
+    value === "account.manage";
 }
 
 export interface ReviewCase {
@@ -498,6 +500,66 @@ export interface AdminEnforcementRequest {
 export interface AdminTransitionResponse {
   video: AdminVideo;
   previous_status: AdminVideoStatusName;
+  audit_committed: boolean;
+}
+
+export type ManagedAccountStatusName = "normal" | "frozen" | "cancelled";
+
+export interface ManagedAccount {
+  id: number;
+  account: string;
+  nickname: string;
+  avatar_url: string;
+  bio: string;
+  gender: number;
+  status: number;
+  status_name: ManagedAccountStatusName;
+  version: number;
+  following_count: number;
+  follower_count: number;
+  public_work_count: number;
+  private_work_count: number;
+  received_like_count: number;
+  active_session_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ManagedAccountPage = CursorPage<ManagedAccount>;
+
+export interface ManagedAccountSearchFilters {
+  query: string;
+  user_id: string;
+  status: "" | ManagedAccountStatusName;
+}
+
+export type ManagedAccountAction = "freeze" | "unfreeze" | "revoke_sessions";
+
+export type ManagedAccountReason =
+  | "policy_violation"
+  | "abuse"
+  | "security_risk"
+  | "appeal_approved"
+  | "issue_resolved"
+  | "manual_correction"
+  | "security_response"
+  | "user_request"
+  | "operator_request";
+
+export interface ManageAccountRequest {
+  expected_version: number;
+  reason_code: ManagedAccountReason;
+}
+
+export interface ManageAccountResponse {
+  user_id: number;
+  operation: ManagedAccountAction;
+  status: number;
+  status_name: ManagedAccountStatusName;
+  version: number;
+  revoked_session_count: number;
+  occurred_at: string;
+  replayed: boolean;
   audit_committed: boolean;
 }
 

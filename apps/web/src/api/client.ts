@@ -70,6 +70,7 @@ export function isUnauthorized(error: unknown): boolean {
 
 const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   AUTH_INVALID_CREDENTIALS: "账号或密码错误，请重新输入",
+  AUTH_ACCOUNT_FROZEN: "该账号已被冻结，请查看账号消息或联系管理员",
   AUTH_INVALID_ACCESS_TOKEN: "登录状态已失效，请重新登录",
   AUTH_REFRESH_INVALID: "登录状态已失效，请重新登录",
   AUTH_INVALID_REFRESH_SESSION: "登录状态已失效，请重新登录",
@@ -139,6 +140,13 @@ const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   ADMIN_VIDEO_VERSION_CONFLICT: "视频版本已变化，请刷新后重试",
   ADMIN_VIDEO_STATE_CONFLICT: "视频状态已变化，请刷新后重试",
   ADMIN_VIDEO_UNAVAILABLE: "视频运营服务暂时不可用，请稍后重试",
+  ADMIN_USER_ACCOUNT_VALIDATION_FAILED: "账号管理参数有误，请检查后重试",
+  ADMIN_USER_ACCOUNT_CURSOR_INVALID: "筛选条件已变化，请重新查询",
+  ADMIN_USER_ACCOUNT_NOT_FOUND: "普通用户账号不存在或已不再属于可管理范围",
+  ADMIN_USER_ACCOUNT_VERSION_CONFLICT: "账号版本已变化，请刷新后重试",
+  ADMIN_USER_ACCOUNT_STATE_CONFLICT: "账号状态已变化，请刷新后重试",
+  ADMIN_USER_ACCOUNT_IDEMPOTENCY_CONFLICT: "重试凭据已用于其他账号操作，请重新执行",
+  ADMIN_USER_ACCOUNT_UNAVAILABLE: "账号管理服务暂时不可用，请稍后重试",
   REVIEW_LEASE_EXPIRED: "审核租约已过期，请重新领取",
   REVIEW_LEASE_NOT_OWNED: "当前账号不持有该审核租约",
   REVIEW_CASE_VERSION_CONFLICT: "审核案件版本已变化，请刷新后重试",

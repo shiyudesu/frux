@@ -11,6 +11,7 @@ const (
 	PermissionConfigPublish     AdminPermission = "config.publish"
 	PermissionGovernanceExecute AdminPermission = "governance.execute"
 	PermissionAuditRead         AdminPermission = "audit.read"
+	PermissionAccountManage     AdminPermission = "account.manage"
 )
 
 var registeredAdminPermissions = []AdminPermission{
@@ -20,6 +21,7 @@ var registeredAdminPermissions = []AdminPermission{
 	PermissionConfigPublish,
 	PermissionGovernanceExecute,
 	PermissionAuditRead,
+	PermissionAccountManage,
 }
 
 var adminPermissionsByRole = map[string][]AdminPermission{

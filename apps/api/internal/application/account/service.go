@@ -158,6 +158,9 @@ func (s *Service) Login(ctx context.Context, account, password string) (*LoginRe
 		}
 		return nil, domainaccount.ErrInvalidCredentials
 	}
+	if user.Status == domainaccount.StatusFrozen {
+		return nil, domainaccount.ErrAccountFrozen
+	}
 	if user.Status != domainaccount.StatusNormal {
 		return nil, domainaccount.ErrInvalidCredentials
 	}

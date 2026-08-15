@@ -575,6 +575,35 @@ sequenceDiagram
 意图：先失效 Redis，再按当前数据库状态保护或发布媒体，全部成功后才标记 delivered；失败保留
 有界错误并重试。按当前状态收敛也避免旧恢复意图在后续再次下架后错误公开内容。
 
+普通账号管理继续由 account 领域拥有，而不是放入通用 Admin Repository：
+
+```mermaid
+sequenceDiagram
+  participant Admin
+  participant API as Admin Account API
+  participant Account as Account Repository
+  participant Audit as Admin Audit
+  participant DB as PostgreSQL
+
+  Admin->>API: freeze/unfreeze/revoke sessions(expected version, reason, idempotency key)
+  API->>Account: validated ordinary-user command
+  Account->>DB: lock role=user account and actor/key receipt
+  Account->>DB: status/auth_version + refresh revocation
+  Account->>Audit: append account action in same transaction
+  Account->>DB: notification outbox + idempotency result + audit + account commit
+  API-->>Admin: status/version/revoked count/replayed
+  Worker->>DB: lease account notification outbox
+  Worker->>Message: idempotent SYSTEM freeze/unfreeze message
+```
+
+列表和详情只查询当前 `role=user`，因此 Reviewer、Operator、Admin 或未知角色即使通过直接 ID 也按
+普通用户不存在处理。冻结、解冻和强制退出都递增 `auth_version`；冻结与强制退出撤销全部活动
+Refresh Session，解冻不恢复旧会话。消费端 Access JWT 不逐请求查询数据库，所以旧 Access 只在
+原短 TTL 内可能继续有效，并可读取已投递的冻结消息。冻结/解冻 Outbox 耐久保存注册原因，旧 Token
+错过后仍可在解冻并重新登录时读取。密码登录只在正确密码校验后返回
+`AUTH_ACCOUNT_FROZEN`，未知账号、错误密码和注销账号保持通用失败。账号处置不改变视频生命周期，
+内容下架仍使用独立视频运营事务。
+
 ### 5.3 运行时降级控制链路
 
 ```mermaid
@@ -606,7 +635,7 @@ max staleness 后使用 failure default。请求和消费热路径不访问控�
 - 个人主页本人能力包括作品、推荐、喜欢、收藏、观看历史、稍后再看；公开主页仅含公开作品和隐私允许的喜欢。“短剧”、合集和“我的预约”没有当前产品入口。
 - 播放技术遥测与观看行为事实分流：Web 将渲染首帧、播放结果、rebuffer/seek、选源、帧质量和终止错误组成有界版本化批次；API 严格校验并原子写入 `playback_telemetry_batch/event`，立即聚合低基数 Prometheus 指标。批次失败不影响播放，旧 QoS 端点在迁移窗口内继续兼容。
 - 人工审核使用数据库时间租约和 optimistic case/review version；最终决定、视频生命周期、成功审计和作者通知 Outbox 原子提交，Review Worker 再通过 message Application 幂等生成站内通知。
-- Web Admin Shell 复用 typed History router 和 SessionProvider，`AdminApp` 通过动态 import 形成独立 JS/CSS chunk；客户端权限只过滤导航，直接 URL 和所有动作仍由后台中间件授权。
+- Web Admin Shell 复用 typed History router 和 SessionProvider，`AdminApp` 通过动态 import 形成独立 JS/CSS chunk；客户端权限只过滤导航，直接 URL 和所有动作仍由后台中间件授权。`/admin/accounts` 只在服务端确认 `account.manage` 后展示，并明确冻结不等于内容下架、旧 Access 最多残留到短期到期。
 - 运行时降级控制只接受代码注册 typed key；API 与 Worker 轮询 PostgreSQL 后原子替换本地
   snapshot。当前 `feed.preload.enabled` 仅影响兼容 preload 与非关键 cache preheat；poll
   failure 使用 last-known-good，过度陈旧使用 failure default，不能关闭 fanout 或耐久事实。

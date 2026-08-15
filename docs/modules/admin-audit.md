@@ -60,7 +60,7 @@
 | 稳定游标 | 游标绑定 actor/action/target/outcome/from/to，改变过滤条件后游标失效 |
 | 组合校验 | 每个 action/outcome 同时绑定 permission、target type、HTTP method、route、reason、状态转换和必需 detail，不能拼接出语义矛盾的不可变事实 |
 
-当前注册 action 包括审计查询、审核决定、内容处罚与恢复、配置发布、治理执行，以及 Kafka
+当前注册 action 包括审计查询、审核决定、内容处罚与恢复、普通账号冻结/解冻/会话撤销、配置发布、治理执行，以及 Kafka
 `kafka_dead_letter.replay`。退役前的 `dead_letter.replay` 只作为历史审计 schema 保留查询兼容。
 Kafka action 的 target 为
 `kafka_dead_letter_record`，详情严格包含 DLQ/source 坐标、注册 Group、Event/Replay ID、
@@ -78,6 +78,12 @@ active pointer 与成功审计同事务提交。
 `review.decide` 成功事实绑定 `review.decide` 权限、review case、POST decision 路由、正
 `review_version`、approved/rejected 结果和人工审核注册 reason code。审计保存幂等键摘要，
 不保存租约 token 或 note；审计插入失败会回滚人工决定、案件、视频和通知 Outbox。
+
+普通账号管理注册 `account.freeze`、`account.unfreeze` 和 `account.sessions_revoke`，统一使用
+`account.manage` 与 `user_account` target。成功详情只保存目标用户 ID、前后状态、前后认证版本、
+撤销 Session 数、注册 reason、方法和路由；不保存登录账号、昵称、资料、Session ID、Token 或
+原始幂等键。账号、认证版本、Refresh Session、幂等结果和审计插入任一失败时整体回滚；同键安全
+重放返回原结果且不重复追加审计。
 
 ## 5. 错误码
 

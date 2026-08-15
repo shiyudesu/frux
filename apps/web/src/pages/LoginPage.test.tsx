@@ -74,6 +74,17 @@ describe("login and registration errors", () => {
     }
   );
 
+  it("shows the dedicated frozen-account message", async () => {
+    vi.mocked(login).mockRejectedValueOnce(
+      new ApiError("account frozen", 423, "AUTH_ACCOUNT_FROZEN")
+    );
+
+    await submit();
+
+    expect(message()).toBe("该账号已被冻结，请查看账号消息或联系管理员");
+    expect(fetchMyProfileWithAccessToken).not.toHaveBeenCalled();
+  });
+
   it("shows a distinct duplicate-account message", async () => {
     vi.mocked(registerUser).mockRejectedValueOnce(
       new ApiError("account already exists", 409, "ACCOUNT_ALREADY_EXISTS")

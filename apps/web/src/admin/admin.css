@@ -296,8 +296,14 @@
 }
 
 .admin-status-pill.offline,
-.admin-status-pill.rejected {
+.admin-status-pill.rejected,
+.admin-status-pill.frozen,
+.admin-status-pill.cancelled {
   color: #ff8099;
+}
+
+.admin-status-pill.normal {
+  color: #56e4a0;
 }
 
 .admin-state,
@@ -570,5 +576,69 @@
 .admin-dialog-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-account-filters {
+  grid-template-columns: minmax(220px, 2fr) minmax(140px, 1fr) minmax(140px, 1fr) auto;
+}
+
+.admin-table tr.selected td {
+  background: rgba(37, 244, 238, 0.06);
+}
+
+.admin-account-detail {
+  display: grid;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.admin-account-detail > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.admin-account-detail h2,
+.admin-account-detail p {
+  margin: 0;
+}
+
+.admin-account-detail header p {
+  margin-top: 5px;
+  color: #8f94a5;
+}
+
+.admin-account-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(100px, 1fr));
+  gap: 10px;
+}
+
+.admin-account-stat-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #20232d;
+}
+
+.admin-account-stat-grid span {
+  color: #8f94a5;
+  font-size: 11px;
+}
+
+.admin-account-stat-grid strong {
+  font-size: 18px;
+}
+
+.admin-account-bio {
+  color: #c5c8d2;
+}
+
+.admin-account-actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }

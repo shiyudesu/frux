@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
 
 	"gorm.io/gorm"
@@ -11,7 +12,15 @@ import (
 )
 
 type Repository struct {
-	db *gorm.DB
+	db          *gorm.DB
+	auditWriter AuditWriter
+}
+
+type Option func(*Repository)
+
+type AuditWriter interface {
+	AppendInTransaction(ctx context.Context, tx *gorm.DB, fact *domainadminaudit.Fact) error
+	RecordCommittedWrite(fact *domainadminaudit.Fact)
 }
 
 type userWithStatModel struct {
@@ -39,8 +48,20 @@ type authorDisplayModel struct {
 }
 
 // New 创建账号仓储实现，db 由路由装配阶段注入。
-func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+func New(db *gorm.DB, options ...Option) *Repository {
+	repository := &Repository{db: db}
+	for _, option := range options {
+		if option != nil {
+			option(repository)
+		}
+	}
+	return repository
+}
+
+func WithAdminAuditWriter(writer AuditWriter) Option {
+	return func(repository *Repository) {
+		repository.auditWriter = writer
+	}
 }
 
 // Save 将领域用户转换为 GORM 模型并写入 account 表。

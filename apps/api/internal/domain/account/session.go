@@ -11,6 +11,8 @@ const (
 	RefreshRevocationPasswordChange = "password_change"
 	RefreshRevocationReplay         = "replay"
 	RefreshRevocationExpired        = "expired"
+	RefreshRevocationAdminFreeze    = "admin_freeze"
+	RefreshRevocationAdminSignOut   = "admin_sign_out"
 )
 
 type RefreshSession struct {

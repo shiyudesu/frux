@@ -24,6 +24,7 @@ import (
 	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
@@ -188,6 +189,17 @@ func startWorkers(
 		infrareview.WithModerationJobConfig(moderationJobConfig),
 	)
 	messageService := applicationmessage.New(inframessage.New(gormDB))
+	accountNotificationWorker := applicationaccount.NewAccountNotificationWorker(
+		accountRepo,
+		&accountNotificationMessageWriter{service: messageService},
+		inframetrics.AccountNotificationObserver{},
+		applicationaccount.WithAccountNotificationErrorHandler(func(err error) {
+			log.Printf("account lifecycle notification delivery failed: %v", err)
+		}),
+	)
+	if err := accountNotificationWorker.Start(ctx); err != nil {
+		return err
+	}
 	commentNotificationWorker := applicationinteraction.NewCommentNotificationWorker(
 		interactionRepo,
 		interactionRepo,
@@ -1051,6 +1063,10 @@ type commentNotificationMessageWriter struct {
 	service *applicationmessage.Service
 }
 
+type accountNotificationMessageWriter struct {
+	service *applicationmessage.Service
+}
+
 type reviewNotificationMessageWriter struct {
 	service   *applicationmessage.Service
 	lifecycle *lifecycleNotificationMessageWriter
@@ -1087,6 +1103,20 @@ func (w *reviewNotificationMessageWriter) WriteReviewNotification(
 		ctx, notification.RecipientID, "SYSTEM", notification.Title, notification.Content,
 		notification.EventID, notification.EventID,
 	)
+	return err
+}
+
+func (w *accountNotificationMessageWriter) WriteAccountLifecycle(
+	ctx context.Context,
+	notification domainaccount.AccountLifecycleNotification,
+) error {
+	if w == nil || w.service == nil {
+		return errors.New("account notification message service unavailable")
+	}
+	_, err := w.service.CreateAccountLifecycle(ctx, notification)
+	if applicationmessage.IsTerminalAccountLifecycleError(err) {
+		return fmt.Errorf("%w: %v", applicationaccount.ErrTerminalAccountNotification, err)
+	}
 	return err
 }
 

@@ -680,7 +680,7 @@ func TestAccountLoginInvalidCredentialsAreIndistinguishable(t *testing.T) {
 	}
 }
 
-func TestInactiveAccountCannotCreateSession(t *testing.T) {
+func TestFrozenAccountRequiresPasswordProofAndCannotCreateSession(t *testing.T) {
 	router, repo := newAccountRouterWithRepo(t)
 	register := performJSONRequest(
 		router, http.MethodPost, "/api/users",
@@ -689,15 +689,45 @@ func TestInactiveAccountCannotCreateSession(t *testing.T) {
 	)
 	requireStatus(t, register, http.StatusCreated)
 	repo.mu.Lock()
-	repo.byID[1].Status = 2
+	repo.byID[1].Status = domainaccount.StatusFrozen
+	sessionCount := len(repo.sessions)
 	repo.mu.Unlock()
+	wrongPassword := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"inactive","password":"wrong-password"}`,
+		"",
+	)
+	assertAPIError(
+		t, wrongPassword, http.StatusUnauthorized,
+		interfaceshttpapierror.CodeAuthInvalidCredentials,
+		"invalid credentials",
+	)
 	login := performJSONRequest(
 		router, http.MethodPost, "/api/sessions",
 		`{"account":"inactive","password":"Password123!"}`,
 		"",
 	)
 	assertAPIError(
-		t, login, http.StatusUnauthorized,
+		t, login, http.StatusLocked,
+		interfaceshttpapierror.CodeAuthAccountFrozen,
+		"account frozen",
+	)
+	if strings.TrimSpace(strings.Join(login.Header().GetAll("Set-Cookie"), "")) != "" {
+		t.Fatalf("frozen login set cookies: %v", login.Header().GetAll("Set-Cookie"))
+	}
+	repo.mu.Lock()
+	if len(repo.sessions) != sessionCount {
+		t.Fatalf("frozen login created session: before=%d after=%d", sessionCount, len(repo.sessions))
+	}
+	repo.byID[1].Status = domainaccount.StatusCancelled
+	repo.mu.Unlock()
+	cancelled := performJSONRequest(
+		router, http.MethodPost, "/api/sessions",
+		`{"account":"inactive","password":"Password123!"}`,
+		"",
+	)
+	assertAPIError(
+		t, cancelled, http.StatusUnauthorized,
 		interfaceshttpapierror.CodeAuthInvalidCredentials,
 		"invalid credentials",
 	)

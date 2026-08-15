@@ -84,6 +84,10 @@ func (h *Handler) Login(ctx context.Context, c *app.RequestContext) {
 			interfaceshttpapierror.Write(c, http.StatusUnauthorized, interfaceshttpapierror.CodeAuthInvalidCredentials, "invalid credentials")
 			return
 		}
+		if errors.Is(err, domainaccount.ErrAccountFrozen) {
+			interfaceshttpapierror.Write(c, http.StatusLocked, interfaceshttpapierror.CodeAuthAccountFrozen, "account frozen")
+			return
+		}
 		interfaceshttpapierror.WriteInternal(c, "internal server error", err)
 		return
 	}

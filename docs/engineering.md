@@ -300,6 +300,20 @@ Handler 避免承载业务规则。业务判断放在 Domain 或 Application。
 
 所有 `/api/admin` 路由必须先使用强制 JWT 鉴权建立用户 ID 和 `auth_version`，再通过参数化 Admin Permission Middleware 读取当前 `account.status/role/auth_version` 并检查路由声明的单项权限。JWT role claim 不能作为后台授权事实；停用、降权、改密、普通和未知角色默认拒绝。权限中间件把 `AdminPrincipal` 写入 `RequestContext.Keys`，后台 Handler 只能通过共享 helper 读取主体用于归因，不得自行比较角色字符串。当前封闭权限集合和角色映射位于 `domain/account`，后续审核、审计、视频运营和治理模块复用该边界，但继续拥有各自数据与事务。
 
+普通账号管理要求独立 `account.manage`，只授予兼容 `admin`。列表、详情和锁定写入都必须在
+Persistence 再次约束 `role=user`，不能依赖 Web 导航过滤；非普通角色直接 ID 请求按不存在处理。
+筛选 cursor 绑定 user ID、account/nickname query 和 status，排序固定
+`(created_at DESC, id DESC)`。冻结、解冻和会话撤销要求 128 字符内幂等键、注册 reason 与正
+expected auth version；`account/status/auth_version`、Refresh Session 撤销、actor 范围重放结果和
+成功 audit 同事务。freeze/unfreeze 还必须同事务追加稳定 `account_notification_outbox`，强制退出
+不得追加。审计或 Outbox 失败整体回滚，同键同 payload 返回原结果且不重复 Outbox/message，同键
+不同 payload 冲突。Account Worker 使用 `SKIP LOCKED`、租约、退避、terminal 分类和窄 message
+writer；原因文案只从封闭 registry 映射。账号状态不得级联修改视频、评论、关系或既有消息。
+
+消费端登录只有在 bcrypt 成功后才能把 frozen 映射为 `423 AUTH_ACCOUNT_FROZEN`，并且不得设置
+Access、Refresh 或资产 Cookie；未知账号继续执行 dummy bcrypt，未知/错误密码/注销保持统一
+`AUTH_INVALID_CREDENTIALS`。
+
 普通用户接口中涉及管理员附加能力时也不得读取 consumer JWT role。评论管理通过 Router 注入的当前账号读取器判断活动 `admin` 角色；改密或降权后立即按数据库事实失效。
 
 Kafka 死信摘要、精确检查和单消息 Replay 均要求 `governance.execute`。Replay 的成功/失败 Audit
@@ -629,6 +643,8 @@ CI 只使用只读仓库权限和非敏感测试值，不依赖仓库 Secret。�
   Admin Shell 必须 route-level lazy load；权限集合只控制展示，API 403、租约过期和版本冲突必须
   作为独立可恢复状态，不能显示乐观成功。审核决定在同一 case 与规范化 payload 未变化且尚未
   成功时必须复用同一幂等键；队列收到 403 必须清除缓存行；视频查询默认结束时间必须包含当前分钟。
+  `/admin/accounts` 同样必须清除 403 后的账号缓存；冻结/强制退出确认必须说明 Refresh 立即撤销、
+  已签发 Access 最多存活到原短 TTL，并明确作品不会自动下架。
 - 治理 control mutation 要求 `governance.execute`、非空 reason 和 expected revision；rollback
   选择较早且未过期 revision，但必须创建新的 immutable revision。控制面失败不得阻塞请求：
   last-known-good 在 max staleness 内继续使用，之后使用代码注册 failure default。

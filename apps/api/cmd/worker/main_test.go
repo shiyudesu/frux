@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
+	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
@@ -109,6 +111,39 @@ func TestLifecycleWriterWaitsForDurablePublicationReadiness(t *testing.T) {
 		repository.created.Type != domainmessage.TypeVideoLifecycle ||
 		repository.created.EventID != notification.EventID {
 		t.Fatalf("created lifecycle message = %#v", repository.created)
+	}
+}
+
+func TestAccountNotificationWriterCreatesSystemMessageAndClassifiesInvalid(t *testing.T) {
+	now := time.Now().UTC()
+	notification, err := domainaccount.NewAccountLifecycleNotification(
+		7, domainaccount.AccountOperationFreeze,
+		domainaccount.AccountReasonAbuse, 2, now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &lifecycleMessageRepositoryStub{}
+	writer := &accountNotificationMessageWriter{
+		service: applicationmessage.New(repository),
+	}
+	if err := writer.WriteAccountLifecycle(
+		context.Background(), *notification,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if repository.created == nil ||
+		repository.created.Type != domainmessage.TypeSystem ||
+		repository.created.Title != "账号已被冻结" ||
+		repository.created.EventID != notification.EventID {
+		t.Fatalf("created account message = %#v", repository.created)
+	}
+	forged := *notification
+	forged.ReasonCode = domainaccount.AccountReasonAppealApproved
+	if err := writer.WriteAccountLifecycle(
+		context.Background(), forged,
+	); !errors.Is(err, applicationaccount.ErrTerminalAccountNotification) {
+		t.Fatalf("invalid notification error = %v", err)
 	}
 }
 

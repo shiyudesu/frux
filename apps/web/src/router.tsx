@@ -20,6 +20,7 @@ export type Route =
   | "/admin/login"
   | "/admin/reviews"
   | "/admin/videos"
+  | "/admin/accounts"
   | `/admin/reviews/${number}`
   | `/users/${number}`
   | `/videos/${number}`;
@@ -51,6 +52,7 @@ export interface SearchRoute {
 export type AdminProtectedRoute =
   | "/admin/reviews"
   | "/admin/videos"
+  | "/admin/accounts"
   | `/admin/reviews/${number}`;
 
 export interface AdminLoginNavigation {
@@ -121,6 +123,8 @@ export function normalizeRoute(pathname: string): Route {
       return "/admin/reviews";
     case "/admin/videos":
       return "/admin/videos";
+    case "/admin/accounts":
+      return "/admin/accounts";
     default:
       return "/timeline";
   }
@@ -284,7 +288,7 @@ export function useProfileVideoTarget(): number {
 }
 
 function validAdminReturnRoute(value: string): AdminProtectedRoute | null {
-  if (value === "/admin/reviews" || value === "/admin/videos") return value;
+  if (value === "/admin/reviews" || value === "/admin/videos" || value === "/admin/accounts") return value;
   if (/^\/admin\/reviews\/[1-9]\d*$/.test(value)) {
     return value as `/admin/reviews/${number}`;
   }

@@ -74,6 +74,12 @@ func TestAdminPermissionRegistryIsClosedAndCopied(t *testing.T) {
 	if RestoreAdminPrincipal(1, StatusNormal, RoleAdmin).HasPermission(AdminPermission("review.override")) {
 		t.Fatal("compatible admin must not receive unknown permissions")
 	}
+	if RestoreAdminPrincipal(1, StatusNormal, RoleOperator).HasPermission(PermissionAccountManage) {
+		t.Fatal("operator must not receive account management")
+	}
+	if !RestoreAdminPrincipal(1, StatusNormal, RoleAdmin).HasPermission(PermissionAccountManage) {
+		t.Fatal("compatible admin must receive account management")
+	}
 
 	permissions := RegisteredAdminPermissions()
 	permissions[0] = AdminPermission("mutated")
