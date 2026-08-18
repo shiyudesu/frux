@@ -303,7 +303,15 @@ main() {
     "$DOCKER_BIN" image inspect \
       -f '{{range .RepoDigests}}{{println .}}{{end}}' \
       "$FRUX_DEPLOY_IMAGE" |
-      awk '/@sha256:[0-9a-f]{64}$/ { print; exit }'
+      while IFS= read -r reference; do
+        digest=${reference##*@sha256:}
+        if [[ $reference == *@sha256:* &&
+          ${#digest} -eq 64 &&
+          $digest =~ ^[0-9a-f]+$ ]]; then
+          printf '%s\n' "$reference"
+          break
+        fi
+      done
   )
   [[ $digest_ref =~ @sha256:([0-9a-f]{64})$ ]] ||
     die "could not resolve deployment image digest"
