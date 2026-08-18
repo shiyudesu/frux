@@ -1,6 +1,9 @@
-# 雨云对象存储
+# 雨云对象存储（旧部署）
 
-Frux Prod 当前固定使用雨云浙江 Endpoint，Bucket 名由服务器环境变量配置：
+本文只适用于切换到自托管 MinIO 之前的旧 Prod。新的 NAT 主机部署使用
+[私有自托管 MinIO](self-hosted-minio.md)，不要把本页配置复制到新环境。
+
+旧版本固定使用雨云浙江 Endpoint，Bucket 名由服务器环境变量配置：
 
 ```text
 Endpoint  https://cn-zj1.rains3.com
@@ -8,7 +11,10 @@ Bucket    FRUX_S3_BUCKET
 Region    us-east-1
 ```
 
-你在雨云只需要做两件事：保持Bucket私有，把AccessKey和SecretKey填进服务器。
+旧部署在雨云只需要做两件事：保持Bucket私有，把AccessKey和SecretKey填进旧服务器。
+
+> 一套 Frux PostgreSQL 只能连接一个活动媒体 Bucket。绝不能让同一数据库同时向雨云和自托管
+> MinIO 写入，也不要把新空数据库接到旧雨云 Bucket 后启动 Worker。
 
 ## 保持当前 Bucket 私有
 
@@ -58,7 +64,7 @@ Access-Control-Expose-Headers: *
 ```bash
 curl -i -X OPTIONS \
   "https://cn-zj1.rains3.com/你的Bucket名/uploads/cors-test" \
-  -H "Origin: https://你的Frux域名" \
+  -H "Origin: https://你的Frux域名:<public-port>" \
   -H "Access-Control-Request-Method: PUT" \
   -H "Access-Control-Request-Headers: content-type,cache-control,x-amz-checksum-sha256,x-amz-meta-sha256"
 ```
@@ -82,7 +88,7 @@ API校验大小、类型和SHA-256
 公开视频：
 
 ```text
-浏览器请求 https://你的Frux域名/media/...
+浏览器请求 https://你的Frux域名:<public-port>/media/...
     ↓
 Frux校验v3 generation、variant和视频当前公开资格
     ├─ MPD和HEAD：Frux返回
@@ -101,4 +107,6 @@ Frux校验v3 generation、variant和视频当前公开资格
 - 同一v3地址重复请求可复用307/签名地址；恢复发布后URL generation发生变化。
 - 直接匿名访问雨云中的 `uploads/*`、`processed/*` 和 `media/*` 均返回无权限。
 
-一个 Bucket 只能对应一套Frux PostgreSQL。换服务器时先恢复数据库，再启动Worker。
+一个 Bucket 只能对应一套Frux PostgreSQL，一套数据库也只能有一个活动 Bucket。新的 NAT 演示部署
+不迁移旧数据库或雨云对象；切换后保留旧主机和雨云 Bucket 至少72小时，只用于恢复旧公开入口。
+回滚时不要把新主机产生的数据合并到旧部署，也不要让两套 Worker 同时操作同一数据库或 Bucket。

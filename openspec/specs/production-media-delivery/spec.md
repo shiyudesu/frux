@@ -47,8 +47,9 @@ when the required current baseline reaches a terminal failure. New processing SH
 one browser-compatible MP4 baseline at the source resolution, except for the minimal even-dimension
 adjustment required by H.264, and SHALL NOT generate selectable renditions or DASH outputs.
 Input-duration policy, per-command timeout, and encoder speed preset SHALL remain explicit validated
-runtime configuration. The command budget SHALL not reject a source that is within the configured
-duration policy solely because of the previous fixed 15-minute limit.
+runtime configuration. Worker SHALL upload a generated video body directly from its local temporary
+file to the deterministic final protected key and SHALL NOT use the object store as an intermediate
+temporary-file round trip.
 
 #### Scenario: Browser-compatible source is uploaded
 - **WHEN** the primary source video is H.264 and its optional audio is AAC
@@ -65,6 +66,22 @@ duration policy solely because of the previous fixed 15-minute limit.
 #### Scenario: Source dimensions are odd
 - **WHEN** H.264 encoding cannot retain an odd source width or height
 - **THEN** the worker floors only the affected dimensions to the nearest positive even value
+
+#### Scenario: Final output does not exist
+- **WHEN** the deterministic protected output key is absent after local processing succeeds
+- **THEN** Worker uploads the local output once, verifies size and checksum, and commits the variant without uploading or downloading an object-store temporary copy
+
+#### Scenario: Matching final output already exists
+- **WHEN** a retry finds the deterministic final key with the expected size and checksum
+- **THEN** Worker reuses it idempotently without transferring the body again
+
+#### Scenario: Final output metadata conflicts
+- **WHEN** the deterministic final key exists with different size or checksum
+- **THEN** processing fails explicitly and does not overwrite or advertise the conflicting file
+
+#### Scenario: Worker exits after final PUT
+- **WHEN** the final file commits but PostgreSQL finalization does not
+- **THEN** the unreferenced deterministic file remains protected and delayed orphan reconciliation removes it only after the configured safety window
 
 #### Scenario: Processing output is exposed
 - **WHEN** the single baseline completes and the video's other public gates are satisfied
@@ -145,27 +162,38 @@ Video and Feed responses SHALL preserve `media_url` and `cover_url` while option
 - **THEN** the compatibility fields resolve to a playable baseline and cover
 
 ### Requirement: Public CDN Cache Contract
-Ready public variants and covers SHALL use versioned exposure URLs with Range, HEAD, ETag, and a bounded revalidating public cache so lifecycle revocation can take effect.
+Ready public variants and covers SHALL use versioned virtual exposure URLs with Range, HEAD, ETag,
+and a bounded revalidating public cache. Public eligibility and exposure generation SHALL be stored
+in PostgreSQL while the protected object-storage key remains unchanged; lifecycle transitions SHALL
+NOT copy or move the media body.
 
 #### Scenario: Browser requests a public byte range
-- **WHEN** a browser requests a valid byte range for a currently eligible public variant
-- **THEN** the delivery path returns correct partial-content semantics, cache validators, and a public cache lifetime no longer than 60 seconds with `must-revalidate`
+- **WHEN** a browser requests a valid byte range for a currently eligible public exposure
+- **THEN** the delivery path resolves the protected storage key, returns correct partial-content semantics and cache validators, and permits caching for no longer than 30 minutes with `must-revalidate`
 
-#### Scenario: Public variant is requested repeatedly
-- **WHEN** the same currently eligible versioned exposure URL is requested within its bounded cache window
-- **THEN** browser and CDN caching are permitted without per-request application authorization, but revalidation is required no later than 60 seconds
+#### Scenario: Public exposure is requested repeatedly
+- **WHEN** the same currently eligible generation URL is requested within its bounded cache window
+- **THEN** browser caching and bounded signed-URL reuse are permitted without another lifecycle database mutation or storage-body copy
 
 #### Scenario: Video becomes public-ineligible
 - **WHEN** a published video becomes private, offline, rejected, deleted, or media-failed
-- **THEN** its promoted variants are moved back to the protected prefix, public delivery stops after the bounded cache window, and failed object cleanup remains durably retryable
+- **THEN** database eligibility immediately denies new signed URLs, existing redirects and signed URLs expire within 30 minutes, and the protected storage file remains unchanged
 
 #### Scenario: Video becomes public again
 - **WHEN** an eligible restored video is published again
-- **THEN** Frux promotes the protected bundle under a new exposure generation without changing its original publication time
+- **THEN** Frux creates a new exposure generation pointing to the same protected file without changing original publication time or copying the body
 
-#### Scenario: Legacy immutable cache is migrated
-- **WHEN** the bounded-revocation delivery policy is first deployed
-- **THEN** operators purge legacy `media/*` entries that were previously advertised with year-long immutable caching
+#### Scenario: Cover becomes public
+- **WHEN** a validated ready cover is exposed with its video
+- **THEN** its virtual public URL points to the immutable uploaded cover key without creating an identical processed or public copy
+
+#### Scenario: Legacy v2 exposure is migrated
+- **WHEN** a legacy public variant has a verified protected counterpart
+- **THEN** Frux stores the protected key and logical generation, serves a v3 URL, retains the old URL for the bounded cache window, and later schedules old public-object cleanup
+
+#### Scenario: Legacy protected counterpart is missing
+- **WHEN** migration cannot find the protected counterpart for a legacy public object
+- **THEN** reconciliation repairs the protected copy before switching identity and keeps existing playback available until repair succeeds
 
 ### Requirement: Protected Media Delivery
 Originals, private outputs, incomplete assets, and non-public creator previews SHALL remain owner-protected and SHALL NOT inherit public immutable caching. Owner asset access SHALL prefer a ready protected baseline or cover variant when available and SHALL otherwise fall back to the protected original.
@@ -255,27 +283,34 @@ The deployment SHALL verify that Rainyun's provider-managed wildcard CORS respon
 - **THEN** the URL is treated as a temporary credential limited to its signed object, headers, checksum, and expiry
 
 ### Requirement: Private-Bucket Public Media Redirect
-The Rainyun bucket SHALL remain private, and Frux SHALL serve stable public-media application URLs that authorize each promoted object. Frux SHALL serve DASH manifests and HEAD metadata from the stable URL and SHALL redirect media-byte GET requests to a Rainyun presigned GET lasting no more than 60 seconds.
+The Rainyun bucket SHALL remain private, and Frux SHALL serve stable virtual public-media URLs that
+authorize each currently eligible exposure while resolving a separate protected storage key.
+Frux SHALL redirect media-byte GET requests to a Rainyun presigned GET lasting no more than 30
+minutes and SHALL permit browser caching only within the same revocation bound.
 
-#### Scenario: Public promoted media is requested
-- **WHEN** a browser requests a currently eligible promoted `media/*` object through the Frux public media route
-- **THEN** Frux returns a no-store temporary redirect to a short-lived signed Rainyun URL and the browser can use Range and ETag behavior
+#### Scenario: Public v3 media is requested
+- **WHEN** a browser requests a currently eligible v3 exposure through the Frux public media route
+- **THEN** Frux resolves the protected key, returns a cacheable redirect lasting less than the signed URL lifetime, and the signed Rainyun response permits at most 30 minutes of revalidating cache
 
-#### Scenario: DASH manifest is requested
-- **WHEN** a browser requests an eligible MPD manifest
-- **THEN** Frux serves the small authorized manifest from the stable application URL so relative segment requests return through Frux authorization
+#### Scenario: Redirect is requested repeatedly
+- **WHEN** the same exposure is requested repeatedly during the safe redirect-cache window
+- **THEN** Frux may reuse the same signed Rainyun URL so the browser can reuse its cached redirect and media ranges
 
 #### Scenario: Public object metadata is requested
-- **WHEN** a browser sends HEAD for an eligible public object
-- **THEN** Frux returns authorized content type, content length, ETag, Range support, and bounded cache metadata without exposing a storage URL
+- **WHEN** a browser sends HEAD for an eligible virtual exposure
+- **THEN** Frux resolves and returns content type, content length, ETag, Range support, and bounded cache metadata without disclosing the protected storage key
 
 #### Scenario: Protected object is requested anonymously
-- **WHEN** an unauthenticated caller requests an original upload, protected output, moderation sample, unknown key, or public-ineligible media object
+- **WHEN** an unauthenticated caller requests an original upload, protected key, moderation sample, unknown exposure, or public-ineligible media
 - **THEN** Frux denies the request and issues no signed URL
 
 #### Scenario: Video becomes public-ineligible
-- **WHEN** a previously public video's stable media URL is requested after it becomes private, offline, rejected, deleted, or failed
-- **THEN** Frux denies a new redirect while previously issued signed URLs expire within their bounded lifetime
+- **WHEN** a previously public generation URL is requested after the video becomes private, offline, rejected, deleted, or failed
+- **THEN** Frux denies new redirects while previously cached redirects and signed URLs expire within the configured 30-minute maximum
+
+#### Scenario: Owner or reviewer requests protected media
+- **WHEN** current owner or reviewer authorization permits protected access
+- **THEN** Frux continues to issue separate short-lived `private, no-store` access that never inherits public cache behavior
 
 ### Requirement: Rainyun Provider Contract Verification
 The Rainyun rollout SHALL verify the exact S3 operations and metadata semantics required by Frux before the external storage migration is considered complete.
@@ -302,3 +337,31 @@ Rainyun AccessKey and SecretKey values SHALL be supplied only through production
 #### Scenario: Developer works without production secrets
 - **WHEN** Rainyun is unavailable, unconfigured, or fails compatibility validation
 - **THEN** the documented default local Compose workflow continues to use MinIO without production secrets or application-code changes
+
+### Requirement: No-Copy Cover Completion
+A valid completed cover upload SHALL become the protected ready cover variant without downloading
+and uploading an identical cover body.
+
+#### Scenario: Cover upload completes
+- **WHEN** object metadata matches the authenticated cover upload session
+- **THEN** Frux records the uploaded key as the ready protected cover variant and performs no object-body GET during completion
+
+#### Scenario: Cover and asset cleanup reference the same key
+- **WHEN** deleting the video schedules cleanup for both the cover asset and cover variant
+- **THEN** cleanup deduplication produces one safe physical deletion
+
+### Requirement: Media Outbound Byte Observability
+Frux SHALL expose low-cardinality byte counters for application-controlled object-storage reads
+without video, asset, user, URL, object-key, or token labels.
+
+#### Scenario: Worker downloads a source
+- **WHEN** processing reads source bytes from object storage
+- **THEN** exact transferred bytes are counted under the registered source-processing operation
+
+#### Scenario: Legacy exposure repair reads a body
+- **WHEN** reconciliation must repair a missing protected legacy object
+- **THEN** exact transferred bytes are counted under the registered legacy-repair operation
+
+#### Scenario: Public playback is redirected
+- **WHEN** Frux issues a signed public media redirect
+- **THEN** requested full or Range byte estimates may be counted separately while provider billing remains the authoritative outbound total

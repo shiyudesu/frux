@@ -68,6 +68,74 @@ func TestNormalizeAndValidateMediaConfigAcceptsS3CompatibleEndpoint(t *testing.T
 	}
 }
 
+func TestNormalizeAndValidateMediaConfigPreservesDefaultS3EndpointSupport(t *testing.T) {
+	cfg := MediaConfig{
+		Backend:       domainmedia.StorageBackendS3,
+		PublicBaseURL: "/media",
+		S3: S3Config{
+			Region: "us-east-1",
+			Bucket: "frux-media",
+		},
+	}
+	if err := normalizeAndValidateMediaConfig(&cfg); err != nil {
+		t.Fatalf("normalize default S3 endpoint: %v", err)
+	}
+	if cfg.S3.Endpoint != "" || cfg.S3.PresignEndpoint != "" {
+		t.Fatalf("unexpected default endpoints: %+v", cfg.S3)
+	}
+}
+
+func TestNormalizeAndValidateMediaConfigRejectsInvalidPublicS3Endpoints(t *testing.T) {
+	tests := []struct {
+		name            string
+		publicBaseURL   string
+		endpoint        string
+		presignEndpoint string
+	}{
+		{
+			name:          "remote insecure public base",
+			publicBaseURL: "http://frux.example.com:18443/media",
+			endpoint:      "http://minio:9000", presignEndpoint: "https://s3.example.com:18443",
+		},
+		{
+			name:          "remote insecure presign",
+			publicBaseURL: "https://frux.example.com:18443/media",
+			endpoint:      "http://minio:9000", presignEndpoint: "http://s3.example.com:18443",
+		},
+		{
+			name:          "shared public hostname",
+			publicBaseURL: "https://frux.example.com:18443/media",
+			endpoint:      "http://minio:9000", presignEndpoint: "https://frux.example.com:18443",
+		},
+		{
+			name:          "invalid public port",
+			publicBaseURL: "https://frux.example.com:70000/media",
+			endpoint:      "http://minio:9000", presignEndpoint: "https://s3.example.com:18443",
+		},
+		{
+			name:          "runtime endpoint path",
+			publicBaseURL: "https://frux.example.com:18443/media",
+			endpoint:      "http://minio:9000/storage", presignEndpoint: "https://s3.example.com:18443",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := MediaConfig{
+				Backend: domainmedia.StorageBackendS3, PublicBaseURL: test.publicBaseURL,
+				S3: S3Config{
+					Endpoint: test.endpoint, PresignEndpoint: test.presignEndpoint,
+					Region: "us-east-1", Bucket: "frux-media",
+					AccessKey: "minio", SecretKey: "secret", UsePathStyle: true,
+					RequirePublicHTTPS: true,
+				},
+			}
+			if err := normalizeAndValidateMediaConfig(&cfg); !errors.Is(err, ErrInvalidMediaConfig) {
+				t.Fatalf("expected invalid media config, got %v", err)
+			}
+		})
+	}
+}
+
 func TestNormalizeAndValidatePlaybackConfig(t *testing.T) {
 	var cfg PlaybackConfig
 	if err := normalizeAndValidatePlaybackConfig(&cfg); err != nil {
@@ -349,9 +417,11 @@ func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	}
 }
 
-func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
+func TestLoadProdConfigUsesMinIOAndSingleKafka(t *testing.T) {
 	environment := map[string]string{
 		"FRUX_DOMAIN":              "frux.example.com",
+		"FRUX_PUBLIC_HTTPS_PORT":   "18443",
+		"FRUX_S3_DOMAIN":           "s3.frux.example.com",
 		"FRUX_JWT_CONSUMER_SECRET": "prod-consumer-jwt-secret-123456",
 		"FRUX_JWT_ADMIN_SECRET":    "prod-admin-jwt-secret-123456789",
 		"FRUX_HMAC_SECRET":         "prod-application-hmac-secret-123456",
@@ -360,9 +430,9 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 		"FRUX_POSTGRES_PASSWORD":   "database-secret",
 		"FRUX_POSTGRES_DATABASE":   "frux",
 		"FRUX_REDIS_PASSWORD":      "redis-secret",
-		"FRUX_S3_ACCESS_KEY":       "rainyun-access-key",
-		"FRUX_S3_SECRET_KEY":       "rainyun-secret-key",
-		"FRUX_S3_BUCKET":           "rainyun-switch-bucket",
+		"FRUX_S3_ACCESS_KEY":       "frux-app",
+		"FRUX_S3_SECRET_KEY":       "minio-application-secret",
+		"FRUX_S3_BUCKET":           "frux-media",
 	}
 	for name, value := range environment {
 		t.Setenv(name, value)
@@ -372,10 +442,12 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.Media.S3.Endpoint != "https://cn-zj1.rains3.com" ||
-		cfg.Media.S3.Bucket != "rainyun-switch-bucket" ||
+	if cfg.Media.S3.Endpoint != "http://minio:9000" ||
+		cfg.Media.S3.PresignEndpoint != "https://s3.frux.example.com:18443" ||
+		cfg.Media.S3.Bucket != "frux-media" ||
 		!cfg.Media.S3.UsePathStyle ||
 		cfg.Media.S3.AutoCreateBucket ||
+		!cfg.Media.S3.RequirePublicHTTPS ||
 		cfg.Media.Processing.ProfileVersion != "v2" ||
 		cfg.Media.Processing.MaxDuration != "180m" ||
 		cfg.Media.Processing.CommandTimeout != "360m" ||
@@ -383,7 +455,7 @@ func TestLoadProdConfigUsesRainyunAndSingleKafka(t *testing.T) {
 		!cfg.Media.Processing.DisableOrphanCleanup {
 		t.Fatalf("prod media config = %+v", cfg.Media)
 	}
-	if cfg.Media.PublicBaseURL != "https://frux.example.com/media" ||
+	if cfg.Media.PublicBaseURL != "https://frux.example.com:18443/media" ||
 		cfg.Database.Host != "postgres" ||
 		cfg.Redis.Addr != "redis:6379" ||
 		cfg.Kafka.Environment != "local" ||

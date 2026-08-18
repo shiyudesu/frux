@@ -34,7 +34,7 @@ flowchart LR
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
   Kafka[("Kafka<br/>领域事件与短时唤醒")]
-  ObjectStorage[("对象存储<br/>媒体文件")]
+  ObjectStorage[("私有对象存储<br/>本地开发 / Prod MinIO")]
 
   Web -->|"调用管理与浏览接口"| API
   Client -->|"调用公开 API"| API
@@ -42,7 +42,7 @@ flowchart LR
   API -->|"保存和读取本地文件"| Uploads
   API -->|"缓存 Feed、互动状态与计数；原子协调部分限流"| Redis
   API -->|"投递 action_changed、媒体 wakeup 等事件"| Kafka
-  API -.->|"签发上传与公开访问 URL"| ObjectStorage
+  API -.->|"运行时读写；签发浏览器 URL"| ObjectStorage
 
   class Web,Client client;
   class API system;
@@ -50,6 +50,11 @@ flowchart LR
   class Redis,Kafka service;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
+
+NAT 主机 Prod 将对象存储分成两个端点：API/Worker 通过 Compose 网络访问
+`http://minio:9000`，浏览器使用 `https://FRUX_S3_DOMAIN:<public-port>` 的预签名 URL。主机
+systemd Caddy 在本地 443 根据 `FRUX_DOMAIN` 和 `FRUX_S3_DOMAIN` 分流；公网分配的 HTTPS 高端口
+只由 NAT 转发到本地 443。MinIO Bucket 保持私有，Console 只绑定回环地址并通过 SSH 隧道访问。
 
 ## 2. API 内部分层
 
@@ -645,15 +650,17 @@ max staleness 后使用 failure default。请求和消费热路径不访问控�
 flowchart LR
   Web["Web 上传页"] -->|"创建上传会话"| API["Hertz API"]
   API -->|"返回预签名 PUT"| Web
-  Web -->|"直传原始视频/封面"| S3[("S3 / MinIO")]
+  Web -->|"公开高端口 PUT/GET/Range"| Caddy["Caddy S3 主机名"]
+  Caddy -->|"保持签名请求不变"| S3[("私有 MinIO Bucket")]
   Web -->|"完成会话"| API
   API -->|"提交资产与 PostgreSQL job；尽力发布唤醒"| MQ["Kafka command"]
   MQ --> Worker["Media Worker"]
   Worker -->|"ffprobe + FFmpeg"| Outputs["单个源分辨率 MP4"]
-  Worker -->|"确定性最终键：HEAD / PUT / 校验"| S3
+  API -->|"http://minio:9000 HEAD/签名"| S3
+  Worker -->|"http://minio:9000 最终键 HEAD/PUT/校验"| S3
   Worker -->|"更新 ready；发布时写 exposure generation"| PostgreSQL[("PostgreSQL")]
   Web -->|"请求 v3 虚拟 URL"| API
-  API -->|"校验当前公开资格并签名同一 protected key"| S3
+  API -->|"校验资格并签名 public S3 origin"| Web
 ```
 
 视频运营通过受保护的 media admin Application 读取任务概览和终态历史，使用批量 video catalog 补充
@@ -661,6 +668,9 @@ flowchart LR
 幂等回执和审计，再由耐久 Outbox 驱动视频侧状态改为处理中。
 
 - 本地开发继续支持 `/api/uploads` 和受保护 `/uploads/*`；生产模式通过 `media.backend=s3` 使用上传会话。
+- Prod 运行时 S3 endpoint 为 `http://minio:9000`，浏览器 presign endpoint 为
+  `https://FRUX_S3_DOMAIN:<public-port>`；保持 path-style、私有 Bucket 和精确应用 Origin CORS。
+- Caddy 的 S3 路由不得改写 Host、path、query、method 或 Range，MinIO Console 不进入公开路由。
 - `media_asset` 保存原始资产，`media_variant` 为新任务保存单个源分辨率基线，并继续兼容历史清晰度、
   manifest 和 segment；`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。
 - 转码输出的 asset metadata、variants、cleanup/job 最终 transition 在一个 PostgreSQL 事务内先验证
@@ -670,6 +680,8 @@ flowchart LR
 - `frux.video.published.v1` 保留 30 天首次发布事实。Feed 与 `hash-ngram-v1` 使用独立 Group，
   各自在幂等副作用或条件向量持久化成功后提交 Offset。
 - Worker 对本地输出计算 SHA-256，按确定性最终键执行 HEAD/reuse 或一次 PUT 后校验；封面直接引用已校验上传键。基线先就绪时仅更新 `media_status=ready` 并保持公共 URL 为空；批准先发生时也等待基线，双门满足后才投影 URL 和发送发布事件。
+- Worker 和 FFmpeg 仍是媒体状态机的必需执行边界；H.264/AAC 可以 stream copy，但不能通过部署配置
+  禁用 FFmpeg 或把原始上传直接标记为 ready。
 - 新公共变体使用不暴露存储键的 `media/v3/{generation}/{variant_id}/{filename}` 虚拟 URL。发布、下架和恢复只原子更新 `public/exposure_generation`，不复制正文；恢复生成新 generation。公开 resolver 校验 variant generation 与视频当前公开资格后签名原 protected key。
 - Frux 307 使用 25 分钟可重验证缓存，签名对象响应使用 30 分钟可重验证缓存，并保留 ETag、Range/HEAD。下架立即拒绝新签名，已缓存或已签发访问最多延迟 30 分钟失效。历史 `media/v2/*` 先验证或修复 protected counterpart，旧对象保留至少 30 分钟后清理。
 - 私密、删除、拒绝和下架事务与 `media_video_lifecycle_task` 原子提交。媒体 worker 通过租约、重试和

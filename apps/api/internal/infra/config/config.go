@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -747,7 +748,67 @@ func normalizeAndValidateMediaConfig(cfg *MediaConfig) error {
 	if (cfg.S3.AccessKey == "") != (cfg.S3.SecretKey == "") {
 		return ErrInvalidMediaConfig
 	}
+	publicURL, err := validateMediaURL(cfg.PublicBaseURL, true, !cfg.S3.RequirePublicHTTPS)
+	if err != nil {
+		return ErrInvalidMediaConfig
+	}
+	if cfg.S3.Endpoint != "" {
+		if _, err := validateMediaURL(cfg.S3.Endpoint, false, false); err != nil {
+			return ErrInvalidMediaConfig
+		}
+	}
+	var presignURL *url.URL
+	if cfg.S3.PresignEndpoint != "" {
+		presignURL, err = validateMediaURL(cfg.S3.PresignEndpoint, false, false)
+		if err != nil {
+			return ErrInvalidMediaConfig
+		}
+	}
+	if !cfg.S3.RequirePublicHTTPS {
+		return nil
+	}
+	if publicURL.Scheme != "https" ||
+		presignURL == nil ||
+		presignURL.Scheme != "https" ||
+		strings.EqualFold(publicURL.Hostname(), presignURL.Hostname()) {
+		return ErrInvalidMediaConfig
+	}
 	return nil
+}
+
+func validateMediaURL(value string, allowPath, allowRelative bool) (*url.URL, error) {
+	parsed, err := url.Parse(value)
+	if err == nil &&
+		allowRelative &&
+		parsed.Scheme == "" &&
+		parsed.Host == "" &&
+		strings.HasPrefix(parsed.Path, "/") &&
+		parsed.RawQuery == "" &&
+		parsed.Fragment == "" {
+		return parsed, nil
+	}
+	if err != nil ||
+		parsed.Host == "" ||
+		parsed.Hostname() == "" ||
+		parsed.User != nil ||
+		parsed.RawQuery != "" ||
+		parsed.Fragment != "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, ErrInvalidMediaConfig
+	}
+	if !allowPath && parsed.EscapedPath() != "" && parsed.EscapedPath() != "/" {
+		return nil, ErrInvalidMediaConfig
+	}
+	if strings.HasSuffix(parsed.Host, ":") {
+		return nil, ErrInvalidMediaConfig
+	}
+	if port := parsed.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return nil, ErrInvalidMediaConfig
+		}
+	}
+	return parsed, nil
 }
 
 func validFFmpegPreset(value string) bool {

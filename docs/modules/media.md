@@ -52,7 +52,15 @@ H.264/AAC 源走 stream copy，只有音频不兼容时只转 AAC，其他已接
 H.264 转码，x264 使用 CRF 25。未完成的 `v1` retryable 任务使用相同单输出恢复路径，已完成的历史多源对象不改动。
 Prod 保持单个媒体执行 slot，避免同一 VPS 上多个 x264 进程竞争 CPU 和内存。
 
+stream copy 只是 FFmpeg 的一种执行路径。Worker 仍必须运行 ffprobe/FFmpeg 完成探测、封装、音频
+规范化、必要转码和输出校验；部署不能因为上传不频繁或输入兼容而禁用 FFmpeg 或绕过 durable job。
+
 ## 5. 对象存储流量与公开交付
+
+NAT 主机 Prod 的 API/Worker 通过 Compose 网络 `http://minio:9000` 访问私有 Bucket；浏览器上传与
+签名播放使用 `https://FRUX_S3_DOMAIN:<public-port>`。两者都保持 path-style。MinIO CORS 只允许
+完整应用 Origin `https://FRUX_DOMAIN:<public-port>`；Caddy 保持 Host、path、query、method 和
+Range，不提供公开 Console 路由。
 
 新处理结果计算校验和后直接写入确定性的 `processed/{asset}/{profile}/{checksum}/...` 最终键：
 已存在且大小、校验和一致时直接复用；冲突时明确失败，不覆盖已有对象。封面完成后直接把已校验的
@@ -74,7 +82,7 @@ generation、variant 公开状态以及视频当前仍为已发布、公开且�
         -> 发布/下架/恢复只更新 PostgreSQL exposure
 ```
 
-公开 307 缓存 25 分钟，雨云签名 GET 和媒体响应缓存 30 分钟；Range、HEAD、ETag 和历史 DASH 相对
+公开 307 缓存 25 分钟，MinIO 签名 GET 和媒体响应缓存 30 分钟；Range、HEAD、ETag 和历史 DASH 相对
 分片继续兼容。下架立即拒绝新签名，但已经缓存的 307 或签名地址最多可继续使用 30 分钟。私密、owner、
 reviewer 和 moderation 访问保持 `private, no-store`。
 

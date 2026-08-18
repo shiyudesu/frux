@@ -15,13 +15,13 @@
 Frux 使用 Go、React、PostgreSQL、Redis、Kafka 和 S3 兼容对象存储，
 实现短视频从上传、审核、分发到播放互动的完整链路。
 
-[在线体验](https://frux.shiyudesu.com) · [功能概览](#功能概览) · [快速启动](#快速启动) · [开发与验证](#开发与验证) · [文档](#文档)
+[在线体验](#在线体验) · [功能概览](#功能概览) · [快速启动](#快速启动) · [开发与验证](#开发与验证) · [文档](#文档)
 
 </div>
 
 ## 在线体验
 
-[https://frux.shiyudesu.com](https://frux.shiyudesu.com)
+公开 NAT 演示地址使用完整高端口 Origin：`https://frux.shiyudesu.com:<public-port>`。
 
 **郑重说明：**
 
@@ -94,9 +94,10 @@ docker compose up --build
 
 > `docker compose down -v` 会删除 PostgreSQL、Redis、Kafka 和 MinIO 的本地数据卷。
 
-该 Compose 文件只用于本地开发，并始终使用MinIO。Prod操作见
-[Prod操作手册](docs/operations/prod.md)，雨云设置见
-[雨云对象存储](docs/operations/rainyun-object-storage.md)。
+该 Compose 文件只用于本地开发，并始终使用 MinIO。Prod 使用 NAT 高端口入口和私有自托管
+MinIO，操作见 [Prod操作手册](docs/operations/prod.md) 与
+[自托管MinIO](docs/operations/self-hosted-minio.md)。旧部署的雨云设置保留在
+[雨云对象存储（旧部署）](docs/operations/rainyun-object-storage.md)。
 Prod由GitHub Actions构建并推送公开GHCR镜像；服务器不Clone仓库，也不开放部署Webhook或保存
 GitHub部署SSH Key，而是通过systemd每小时主动检查已批准的部署包。
 

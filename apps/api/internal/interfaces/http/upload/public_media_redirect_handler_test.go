@@ -86,7 +86,7 @@ func (a *publicMediaRedirectAuthorizer) ResolvePublicMediaObject(
 func TestPublicMediaRedirectHandlerRedirectsGetAndServesHead(t *testing.T) {
 	const (
 		key       = "media/v2/generation/processed/1/v1/baseline.mp4"
-		signedURL = "https://cn-zj1.rains3.com/frux1/media/v2/file.mp4?signature=test"
+		signedURL = "https://s3.frux.example.com:18443/frux-media/media/v2/file.mp4?signature=test"
 	)
 	store := &publicMediaRedirectStore{
 		request: &domainmedia.PresignedRequest{URL: signedURL},

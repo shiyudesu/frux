@@ -123,14 +123,18 @@ jobs:
       - name: Validate Prod Compose
         env:
           FRUX_DOMAIN: frux.example.com
+          FRUX_PUBLIC_HTTPS_PORT: "18443"
+          FRUX_S3_DOMAIN: s3.frux.example.com
           FRUX_JWT_CONSUMER_SECRET: CI-Only-Consumer-JWT-Secret-123!
           FRUX_JWT_ADMIN_SECRET: CI-Only-Admin-JWT-Secret-123456!
           FRUX_HMAC_SECRET: CI-Only-Application-HMAC-Secret-123!
           FRUX_INTERNAL_TOKEN: CI-Only-Internal-Token-123456!
           FRUX_POSTGRES_PASSWORD: CI-Only-Postgres-Password-123!
           FRUX_REDIS_PASSWORD: CI-Only-Redis-Password-123!
+          FRUX_MINIO_ROOT_USER: ci-root
+          FRUX_MINIO_ROOT_PASSWORD: CI-Only-MinIO-Root-Password-123!
           FRUX_S3_ACCESS_KEY: ci-access
-          FRUX_S3_SECRET_KEY: CI-Only-Rainyun-Secret
+          FRUX_S3_SECRET_KEY: CI-Only-MinIO-App-Secret
           FRUX_S3_BUCKET: ci-bucket
         run: |
           services=$(
@@ -139,21 +143,54 @@ jobs:
               -f apps/docker-compose.prod.yml \
               config --services
           )
-          grep -qx worker <<<"$services"
+          for service in worker minio minio-init; do
+            grep -qx "$service" <<<"$services"
+          done
           profiles=$(
             docker compose \
               --env-file apps/.env.release.example \
               -f apps/docker-compose.prod.yml \
               config --profiles
           )
-          if grep -qx worker <<<"$profiles"; then
-            echo "Prod Worker must not require an optional Compose profile."
-            exit 1
-          fi
+          for service in worker minio minio-init; do
+            if grep -qx "$service" <<<"$profiles"; then
+              echo "Required Prod service must not use an optional Compose profile: $service"
+              exit 1
+            fi
+          done
           docker compose \
             --env-file apps/.env.release.example \
             -f apps/docker-compose.prod.yml \
             config --quiet
+          docker compose \
+            --env-file apps/.env.release.example \
+            -f apps/docker-compose.prod.yml \
+            config --format json >"$RUNNER_TEMP/frux-prod-compose.json"
+          python3 - "$RUNNER_TEMP/frux-prod-compose.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              services = json.load(handle)["services"]
+
+          for name in ("postgres", "redis", "kafka", "worker", "minio-init"):
+              assert not services[name].get("ports"), f"{name} must not publish host ports"
+
+          for name in ("api", "web", "minio"):
+              ports = services[name].get("ports", [])
+              assert ports, f"{name} must publish loopback ports"
+              assert all(port.get("host_ip") == "127.0.0.1" for port in ports), (
+                  f"{name} ports must bind to loopback"
+              )
+
+          for name in ("api", "worker"):
+              dependency = services[name]["depends_on"]["minio-init"]
+              assert dependency["condition"] == "service_completed_successfully", (
+                  f"{name} must wait for successful MinIO initialization"
+              )
+          PY
+          grep -Fq 'wait_healthy "$release" minio' scripts/prod-deploy.sh
+          bash scripts/validate-prod-minio.sh
 
       - name: Validate OpenSpec
         run: pnpm dlx @fission-ai/openspec@1.6.0 validate --all --strict

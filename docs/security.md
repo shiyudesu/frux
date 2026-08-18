@@ -17,8 +17,15 @@
 | 私密作品 | API 不返回公共播放源；owner 按当前引用状态获取签名访问 | `private, no-store` |
 | 删除作品 | 立即移除 API 发现并拒绝 owner 访问，物理对象延迟清理 | 不新增缓存 |
 
-生产对象存储 bucket 始终保持私有，公开播放也只使用短期签名 GET。签名 URL 不包含 JWT、Cookie 或
-长期凭据。下架立即拒绝新签名，但已缓存 307 或已签发 URL 最多可继续使用 30 分钟。
+生产对象存储 bucket 始终保持私有，公开播放也只使用短期签名 GET。API/Worker 通过
+`http://minio:9000` 使用 Bucket-scoped 应用凭据；MinIO Root 凭据只供服务和初始化器使用，不能
+注入应用容器。浏览器只接收 `https://FRUX_S3_DOMAIN:<public-port>` 的对象级预签名 URL，签名 URL
+不包含 JWT、Cookie 或长期凭据。下架立即拒绝新签名，但已缓存 307 或已签发 URL 最多可继续使用
+30 分钟。
+
+MinIO CORS 只允许精确 Origin `https://FRUX_DOMAIN:<public-port>` 和上传/播放所需方法、头部；不能
+使用通配 Origin。主机 Caddy 不改写签名请求的 Host、path、query、method 或 Range。MinIO Console
+只绑定 `127.0.0.1:19001` 并通过 SSH 隧道访问；DNS-01 API 凭据使用最小权限并保存在仓库之外。
 
 ## 处理与清理
 
@@ -27,6 +34,8 @@
 - 处理任务按资产和 profile 版本幂等，租约过期后可重试。
 - 删除请求只写清理任务，不同步批量删除对象。
 - Reconciler 检查缺失源、缺失变体、过期租约和孤儿对象。
+- `minio_data` 与 PostgreSQL 备份位于同一单机故障域；媒体恢复还需要提供商磁盘快照或外部 MinIO/S3
+  镜像。一个数据库不得同时连接两个活动 Bucket。
 
 ## 播放遥测隐私
 

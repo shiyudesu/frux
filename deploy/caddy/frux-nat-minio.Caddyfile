@@ -1,0 +1,20 @@
+https://{$FRUX_DOMAIN}:443 {
+	tls {$FRUX_TLS_CERT_FILE} {$FRUX_TLS_KEY_FILE}
+
+	@api path /api/* /uploads/* /media/* /health
+
+	handle @api {
+		reverse_proxy 127.0.0.1:18081
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:18080
+	}
+}
+
+https://{$FRUX_S3_DOMAIN}:443 {
+	tls {$FRUX_TLS_CERT_FILE} {$FRUX_TLS_KEY_FILE}
+
+	# Do not rewrite the request: SigV4 may cover Host, path, query, method, and Range.
+	reverse_proxy 127.0.0.1:19000
+}

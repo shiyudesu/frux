@@ -199,9 +199,12 @@ feed:hot:window:v1:{windowEndUnix}
 
 ## 12. 生产媒体交付
 
-- Web 直接上传对象存储，避免大文件经过 API 进程；完成接口只执行有界元数据校验和任务持久化。
+- Web 经 `https://FRUX_S3_DOMAIN:<public-port>` 直接上传私有 MinIO，避免大文件经过 API 进程；
+  完成接口只执行有界元数据校验和任务持久化。API/Worker 运行时使用 `http://minio:9000`，不绕行
+  NAT 和 Caddy。
 - Worker 只生成一个源分辨率 H.264/AAC faststart MP4；兼容 H.264/AAC 源使用 stream copy，
   不再为新任务生成 480p/720p/1080p rendition 或 DASH bundle。
+- stream copy 不等于跳过处理；Worker、ffprobe 和 FFmpeg 仍是 durable job 的必需部分。
 - 单机 Prod 保持一个媒体 slot，使用启动时验证的 180 分钟源时长、360 分钟单命令预算和 `veryfast`
   preset；不要用增加并发掩盖单条命令预算不足。
 - 处理输出按资产、处理版本和校验和直接写入一个受保护最终键；匹配对象复用，冲突不覆盖。封面直接
@@ -209,6 +212,8 @@ feed:hot:window:v1:{windowEndUnix}
 - 公开发布使用数据库 exposure generation 和 v3 虚拟 URL，发布、下架、恢复不复制对象正文。307
   缓存 25 分钟，签名媒体响应缓存 30 分钟；历史 v2 对象验证/修复 protected counterpart 后延迟清理。
 - `media_url` 保留基线兼容，`playback_sources` 增量返回多源，避免旧客户端同步升级。
+- Caddy 只做 S3 反向代理且不改写 Host、path、query、method 或 Range；MinIO 保持私有、path-style
+  和精确高端口 Origin CORS，Console 不公开。
 - 重点指标为对象操作耗时、`frux_media_object_outbound_bytes_total{source}`、处理成功/失败、输出
   数量、过期租约、孤儿对象和清理积压；标签不得包含用户、视频、资产、URL 或对象键。
 

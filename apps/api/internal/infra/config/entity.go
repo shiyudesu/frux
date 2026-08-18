@@ -112,14 +112,15 @@ type MediaConfig struct {
 }
 
 type S3Config struct {
-	Endpoint         string `yaml:"endpoint"`
-	PresignEndpoint  string `yaml:"presign_endpoint"`
-	Region           string `yaml:"region"`
-	Bucket           string `yaml:"bucket"`
-	AccessKey        string `yaml:"access_key"`
-	SecretKey        string `yaml:"secret_key"`
-	UsePathStyle     bool   `yaml:"use_path_style"`
-	AutoCreateBucket bool   `yaml:"auto_create_bucket"`
+	Endpoint           string `yaml:"endpoint"`
+	PresignEndpoint    string `yaml:"presign_endpoint"`
+	Region             string `yaml:"region"`
+	Bucket             string `yaml:"bucket"`
+	AccessKey          string `yaml:"access_key"`
+	SecretKey          string `yaml:"secret_key"`
+	UsePathStyle       bool   `yaml:"use_path_style"`
+	AutoCreateBucket   bool   `yaml:"auto_create_bucket"`
+	RequirePublicHTTPS bool   `yaml:"require_public_https"`
 }
 
 type MediaProcessingConfig struct {

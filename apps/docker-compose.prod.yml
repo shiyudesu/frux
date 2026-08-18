@@ -68,10 +68,136 @@ services:
     networks:
       - backend
 
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${FRUX_MINIO_ROOT_USER:?set FRUX_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${FRUX_MINIO_ROOT_PASSWORD:?set FRUX_MINIO_ROOT_PASSWORD}
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${FRUX_DOMAIN:?set FRUX_DOMAIN}:${FRUX_PUBLIC_HTTPS_PORT:?set FRUX_PUBLIC_HTTPS_PORT}
+    ports:
+      - "127.0.0.1:${FRUX_MINIO_API_PORT:-19000}:9000"
+      - "127.0.0.1:${FRUX_MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    environment:
+      MINIO_ROOT_USER: ${FRUX_MINIO_ROOT_USER:?set FRUX_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${FRUX_MINIO_ROOT_PASSWORD:?set FRUX_MINIO_ROOT_PASSWORD}
+      FRUX_S3_ACCESS_KEY: ${FRUX_S3_ACCESS_KEY:?set FRUX_S3_ACCESS_KEY}
+      FRUX_S3_SECRET_KEY: ${FRUX_S3_SECRET_KEY:?set FRUX_S3_SECRET_KEY}
+      FRUX_S3_BUCKET: ${FRUX_S3_BUCKET:?set FRUX_S3_BUCKET}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if test "$${MINIO_ROOT_USER}" = "$${FRUX_S3_ACCESS_KEY}"; then
+          echo "MinIO root user and Frux application access key must differ" >&2
+          exit 1
+        fi
+        if test "$${MINIO_ROOT_PASSWORD}" = "$${FRUX_S3_SECRET_KEY}"; then
+          echo "MinIO root password and Frux application secret key must differ" >&2
+          exit 1
+        fi
+        bucket="$${FRUX_S3_BUCKET}"
+        if test "$${#bucket}" -lt 3 || test "$${#bucket}" -gt 63; then
+          echo "FRUX_S3_BUCKET must contain between 3 and 63 characters" >&2
+          exit 1
+        fi
+        case "$${bucket}" in
+          *[!a-z0-9.-]*|.*|*.|-*|*-|*..*)
+            echo "FRUX_S3_BUCKET must be a valid lowercase S3 bucket name" >&2
+            exit 1
+            ;;
+        esac
+        app_user="$${FRUX_S3_ACCESS_KEY}"
+        if test "$${#app_user}" -lt 3 || test "$${#app_user}" -gt 64; then
+          echo "FRUX_S3_ACCESS_KEY must contain between 3 and 64 characters" >&2
+          exit 1
+        fi
+        case "$${app_user}" in
+          *[!A-Za-z0-9._-]*)
+            echo "FRUX_S3_ACCESS_KEY contains unsupported characters" >&2
+            exit 1
+            ;;
+        esac
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing "local/$${bucket}"
+        mc anonymous set none "local/$${bucket}"
+        marker="local/$${bucket}/.frux/application-access-key"
+        previous_user=
+        if mc stat "$${marker}" >/dev/null 2>&1; then
+          previous_user=$$(mc cat "$${marker}")
+        fi
+        cat >/tmp/frux-app-policy.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetBucketLocation",
+                "s3:ListBucket",
+                "s3:ListBucketMultipartUploads"
+              ],
+              "Resource": ["arn:aws:s3:::$${bucket}"]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:AbortMultipartUpload",
+                "s3:ListMultipartUploadParts"
+              ],
+              "Resource": [
+                "arn:aws:s3:::$${bucket}/uploads/*",
+                "arn:aws:s3:::$${bucket}/processed/*",
+                "arn:aws:s3:::$${bucket}/moderation/*",
+                "arn:aws:s3:::$${bucket}/media/*"
+              ]
+            }
+          ]
+        }
+        EOF
+        mc admin policy create local frux-app /tmp/frux-app-policy.json
+        mc admin user add local "$${app_user}" "$${FRUX_S3_SECRET_KEY}"
+        mc admin policy attach local frux-app --user "$${app_user}"
+        if test -n "$${previous_user}" && test "$${previous_user}" != "$${app_user}"; then
+          if mc admin user info local "$${previous_user}" >/dev/null 2>&1; then
+            mc admin user remove local "$${previous_user}"
+          fi
+        fi
+        printf '%s' "$${app_user}" | mc pipe "$${marker}" >/dev/null
+        recorded_user=$$(mc cat "$${marker}")
+        if test "$${recorded_user}" != "$${app_user}"; then
+          echo "Frux MinIO application identity rotation could not be verified" >&2
+          exit 1
+        fi
+    networks:
+      - backend
+
   api:
     image: ${FRUX_API_IMAGE:?load .env.release}
     environment: &app-environment
       FRUX_DOMAIN: ${FRUX_DOMAIN:?set FRUX_DOMAIN}
+      FRUX_PUBLIC_HTTPS_PORT: ${FRUX_PUBLIC_HTTPS_PORT:?set FRUX_PUBLIC_HTTPS_PORT}
+      FRUX_S3_DOMAIN: ${FRUX_S3_DOMAIN:?set FRUX_S3_DOMAIN}
       FRUX_JWT_CONSUMER_SECRET: ${FRUX_JWT_CONSUMER_SECRET:?set FRUX_JWT_CONSUMER_SECRET}
       FRUX_JWT_ADMIN_SECRET: ${FRUX_JWT_ADMIN_SECRET:?set FRUX_JWT_ADMIN_SECRET}
       FRUX_JWT_LEGACY_SECRET: ${FRUX_JWT_LEGACY_SECRET:-}
@@ -93,6 +219,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:${FRUX_API_PORT:-18081}:8080"
     volumes:
@@ -122,6 +250,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     volumes:
       - ./api/configs/config.prod.yaml:/app/configs/config.yaml:ro
     healthcheck:
@@ -185,6 +315,7 @@ volumes:
   postgres_data:
   redis_data:
   kafka_data:
+  minio_data:
   api_uploads:
   postgres_backups:
 

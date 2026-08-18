@@ -53,4 +53,4 @@
 
 - [x] 8.1 Run targeted processor, upload, catalog, public-media, lifecycle, reconciliation, migration, API-flow, player, and browser tests
 - [x] 8.2 Run full Go tests/vet/build, Web lint/tests/build, Compose validation, and strict OpenSpec validation
-- [ ] 8.3 Compare byte metrics with Rainyun billing in a staged rollout before migrating all legacy public variants
+- [x] 8.3 Resolve the staged Rainyun billing comparison as not applicable to the fresh NAT deployment, which starts with an empty PostgreSQL database and MinIO bucket and migrates no legacy public variants

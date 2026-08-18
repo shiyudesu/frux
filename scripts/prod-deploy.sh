@@ -145,7 +145,8 @@ wait_worker_ready() {
 wait_compose_ready() {
   local release=$1
 
-  wait_healthy "$release" api &&
+  wait_healthy "$release" minio &&
+    wait_healthy "$release" api &&
     wait_healthy "$release" web &&
     wait_healthy "$release" postgres-backup &&
     wait_worker_ready "$release"
