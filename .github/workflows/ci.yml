@@ -188,8 +188,13 @@ jobs:
               assert dependency["condition"] == "service_completed_successfully", (
                   f"{name} must wait for successful MinIO initialization"
               )
+
+          with open("scripts/prod-deploy.sh", encoding="utf-8") as handle:
+              deploy_script = handle.read()
+          assert 'wait_healthy "$release" minio' in deploy_script, (
+              "Prod deployment readiness must include MinIO"
+          )
           PY
-          grep -Fq 'wait_healthy "$release" minio' scripts/prod-deploy.sh
           bash scripts/validate-prod-minio.sh
 
       - name: Validate OpenSpec
