@@ -31,6 +31,7 @@ compose_release() {
   local release=$1
   shift
   "$DOCKER_BIN" compose \
+    --progress plain \
     --env-file "$FRUX_ROOT/.env.prod" \
     --env-file "$release/apps/.env.release" \
     -p frux-prod \
@@ -298,7 +299,7 @@ main() {
     fi
   fi
 
-  "$DOCKER_BIN" pull "$FRUX_DEPLOY_IMAGE" >/dev/null
+  "$DOCKER_BIN" pull "$FRUX_DEPLOY_IMAGE"
   digest_ref=$(
     "$DOCKER_BIN" image inspect \
       -f '{{range .RepoDigests}}{{println .}}{{end}}' \
