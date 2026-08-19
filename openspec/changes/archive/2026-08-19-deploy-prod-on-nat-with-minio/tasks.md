@@ -69,16 +69,21 @@
 
 ## 8. Prepare and Cut Over the Fresh NAT Host
 
-- [ ] 8.1 Confirm the allocated NAT ports are fixed, TCP forwarding targets local 443 and 22, Docker is permitted, and the data disk is persistent
-- [ ] 8.2 Install Docker, Docker Compose, Caddy, curl, OpenSSL, and systemd units on the fresh host
-- [ ] 8.3 Configure bounded Docker log rotation and verify adequate disk space for images, PostgreSQL, Kafka, MinIO, and backups
-- [ ] 8.4 Create new JWT, HMAC, internal, PostgreSQL, Redis, MinIO root, and MinIO application secrets in `/opt/frux/.env.prod`
-- [ ] 8.5 Configure DNS, issue the DNS-01 certificate, load the Caddy routes, and verify both hostnames through the mapped public HTTPS port
-- [ ] 8.6 Install the GHCR pull agent and deploy the approved digest-pinned release to empty volumes
+- [x] 8.1 Confirm the allocated NAT ports are fixed, TCP forwarding targets local 443 and 22, Docker is permitted, and the data disk is persistent
+- [x] 8.2 Install Docker, Docker Compose, Caddy, curl, OpenSSL, and systemd units on the fresh host
+- [x] 8.3 Configure bounded Docker log rotation and verify adequate disk space for images, PostgreSQL, Kafka, MinIO, and backups
+- [x] 8.4 Create new JWT, HMAC, internal, PostgreSQL, Redis, MinIO root, and MinIO application secrets in `/opt/frux/.env.prod`
+- [x] 8.5 Configure DNS, issue the DNS-01 certificate, load the Caddy routes, and verify both hostnames through the mapped public HTTPS port
+- [x] 8.6 Install the GHCR pull agent and deploy the approved digest-pinned release to empty volumes
 - [ ] 8.7 Complete registration, login, upload, processing, review, publication, playback, Range seeking, restart, and backup acceptance tests
 - [ ] 8.8 Switch public links to the new high-port application origin while leaving the old host and Rainyun Bucket unchanged
 - [ ] 8.9 Observe health, memory, disk, MinIO traffic, Worker readiness, and PostgreSQL backups during the acceptance window
 - [ ] 8.10 Retain the old deployment for at least 72 hours and roll back public routing without merging new data if acceptance fails
+
+> Archive note (2026-08-19): the stack, TLS, MinIO, persistence, backup, and public-port health checks
+> were technically validated, but the NAT provider intercepted public HTTP/TLS traffic with mandatory
+> ICP filtering. The user chose not to proceed with备案 or public cutover, so tasks 8.7-8.10 remain
+> intentionally incomplete.
 
 ## 9. Final Validation
 
