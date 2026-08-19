@@ -78,7 +78,7 @@ kafka:
 media:
   backend: "s3"
   local_root: "./uploads"
-  public_base_url: "http://127.0.0.1:9000/frux-media"
+  public_base_url: "${FRUX_MINIO_PUBLIC_URL}"
   signed_url_ttl: "15m"
   upload_session_ttl: "15m"
   processing:
@@ -92,7 +92,7 @@ media:
     cleanup_delay: "24h"
   s3:
     endpoint: "http://minio:9000"
-    presign_endpoint: "http://127.0.0.1:9000"
+    presign_endpoint: "${FRUX_MINIO_PRESIGN_ENDPOINT}"
     region: "us-east-1"
     bucket: "frux-media"
     access_key: "frux"

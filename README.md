@@ -72,6 +72,19 @@ cd apps
 docker compose up --build
 ```
 
+如果宿主机端口已被其他项目占用，可以只修改 Frux 的宿主机映射端口：
+
+```bash
+export FRUX_POSTGRES_HOST_PORT=15432
+export FRUX_API_HOST_PORT=18081
+export FRUX_MINIO_HOST_PORT=19000
+export FRUX_MINIO_CONSOLE_HOST_PORT=19001
+cd apps
+docker compose up --build
+```
+
+Compose 内的服务仍使用原始容器端口；MinIO 预签名地址和浏览器 CORS 会自动跟随新的宿主机端口。
+
 主要入口：
 
 | 服务 | 地址 |

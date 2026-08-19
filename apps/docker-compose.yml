@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: frux
       POSTGRES_PASSWORD: password
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${FRUX_POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -39,7 +39,7 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:${FRUX_KAFKA_HOST_PORT:-29092}"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
@@ -52,7 +52,7 @@ services:
       KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: "LogAppendTime"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
     ports:
-      - "127.0.0.1:29092:29092"
+      - "127.0.0.1:${FRUX_KAFKA_HOST_PORT:-29092}:29092"
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
@@ -69,10 +69,10 @@ services:
     environment:
       MINIO_ROOT_USER: frux
       MINIO_ROOT_PASSWORD: frux-secret
-      MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:5173,http://localhost:5173"
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:${FRUX_WEB_HOST_PORT:-5173},http://localhost:${FRUX_WEB_HOST_PORT:-5173}"
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:${FRUX_MINIO_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${FRUX_MINIO_CONSOLE_HOST_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -109,6 +109,8 @@ services:
       FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
       FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
       FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
+      FRUX_MINIO_PUBLIC_URL: http://127.0.0.1:${FRUX_MINIO_HOST_PORT:-9000}/frux-media
+      FRUX_MINIO_PRESIGN_ENDPOINT: http://127.0.0.1:${FRUX_MINIO_HOST_PORT:-9000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,7 +121,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${FRUX_API_HOST_PORT:-8080}:8080"
     volumes:
       - ./api/configs/config.docker.yaml:/app/configs/config.yaml:ro
       - api_uploads:/app/uploads
@@ -143,6 +145,8 @@ services:
       FRUX_MODERATION_ENDPOINT: ${FRUX_MODERATION_ENDPOINT:-}
       FRUX_MODERATION_HMAC_SECRET: ${FRUX_MODERATION_HMAC_SECRET:-}
       FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT: ${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT:-}
+      FRUX_MINIO_PUBLIC_URL: http://127.0.0.1:${FRUX_MINIO_HOST_PORT:-9000}/frux-media
+      FRUX_MINIO_PRESIGN_ENDPOINT: http://127.0.0.1:${FRUX_MINIO_HOST_PORT:-9000}
     command: ["./frux-worker"]
     depends_on:
       postgres:
@@ -165,7 +169,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:5173:80"
+      - "127.0.0.1:${FRUX_WEB_HOST_PORT:-5173}:80"
     networks:
       default:
         ipv4_address: 172.31.250.10
@@ -177,7 +181,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${FRUX_PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerts:/etc/prometheus/alerts:ro
@@ -192,7 +196,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${FRUX_GRAFANA_HOST_PORT:-3000}:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
