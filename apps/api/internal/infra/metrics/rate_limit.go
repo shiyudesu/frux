@@ -31,7 +31,7 @@ func (RateLimitObserver) Observe(endpointGroup, layer, result string) {
 
 func rateLimitGroupLabel(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "playback_telemetry", "public_search", "upload_session":
+	case "playback_telemetry", "public_search", "upload_session", "chat_send":
 		return strings.TrimSpace(strings.ToLower(value))
 	default:
 		return "unknown"

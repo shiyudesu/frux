@@ -7,6 +7,7 @@ import (
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
 	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
 	applicationadminauth "github.com/shiyudesu/frux/internal/application/adminauth"
+	applicationchat "github.com/shiyudesu/frux/internal/application/chat"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
@@ -37,6 +38,7 @@ import (
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
+	infrachat "github.com/shiyudesu/frux/internal/infra/persistence/chat"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
 	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
@@ -55,6 +57,7 @@ import (
 	interfaceshttpaccount "github.com/shiyudesu/frux/internal/interfaces/http/account"
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
 	interfaceshttpadminauth "github.com/shiyudesu/frux/internal/interfaces/http/adminauth"
+	interfaceshttpchat "github.com/shiyudesu/frux/internal/interfaces/http/chat"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpgovernance "github.com/shiyudesu/frux/internal/interfaces/http/governance"
@@ -289,6 +292,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	messageRepo := inframessage.New(gormDB)
 	messageService := applicationmessage.New(messageRepo)
 	messageHandler := interfaceshttpmessage.New(messageService)
+	chatRepo := infrachat.New(gormDB)
 	playbackRepo := infraplayback.New(gormDB, infraplayback.WithMediaCatalog(mediaCatalog))
 	playbackService := applicationplayback.New(
 		playbackRepo,
@@ -454,6 +458,15 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 	relationService := applicationrelation.New(relationRepo, relationOptions...)
 	relationHandler := interfaceshttprelation.New(relationService)
+	chatService := applicationchat.New(
+		chatRepo,
+		chatAccountAdapter{reader: accountRepo},
+		chatRelationAdapter{service: relationService},
+		chatVideoAdapter{reader: videoRepo},
+		applicationchat.WithNotificationUnreadReader(notificationUnreadAdapter{service: messageService}),
+		applicationchat.WithObserver(inframetrics.ChatObserver{}),
+	)
+	chatHandler := interfaceshttpchat.New(chatService)
 	uploadHandler := interfaceshttpupload.New(cfg.Media.LocalRoot, interfaceshttpupload.WithOwnershipRecorder(videoManagementService))
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 	adminAuthMiddleware := interfaceshttpmiddleware.NewAdminJWTAuth(jwtManager)
@@ -505,6 +518,14 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		interfaceshttpmiddleware.WithRateLimitRejectHook(func() {
 			playbackMetricsAdapter{}.RecordTelemetryRejection(0)
 		}),
+	)
+	if err != nil {
+		return err
+	}
+	chatSendRateLimit, err := interfaceshttpmiddleware.NewRateLimit(
+		rateLimitService,
+		applicationratelimit.PolicyChatSend,
+		rateLimitIdentity,
 	)
 	if err != nil {
 		return err
@@ -902,6 +923,14 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	api.GET("/messages", authMiddleware, messageHandler.List)
 	api.PATCH("/messages", authMiddleware, messageHandler.MarkRead)
 	api.GET("/message-stats/unread", authMiddleware, messageHandler.CountUnread)
+	api.GET("/inbox-stats/unread", authMiddleware, chatHandler.InboxUnread)
+	api.GET("/chat/users/:targetUserId/eligibility", authMiddleware, chatHandler.Eligibility)
+	api.GET("/chat/recipients", authMiddleware, chatHandler.ListRecipients)
+	api.GET("/chat/conversations", authMiddleware, chatHandler.ListConversations)
+	api.POST("/chat/conversations", authMiddleware, chatHandler.CreateConversation)
+	api.GET("/chat/conversations/:conversationId/messages", authMiddleware, chatHandler.History)
+	api.POST("/chat/conversations/:conversationId/messages", authMiddleware, chatSendRateLimit, chatHandler.Send)
+	api.PATCH("/chat/conversations/:conversationId/read", authMiddleware, chatHandler.MarkRead)
 	api.GET("/playback-config", authMiddleware, playbackHandler.GetConfig)
 	api.GET("/preload-videos", authMiddleware, playbackHandler.ListPreloadVideos)
 	api.POST("/playback-qos-reports", authMiddleware, playbackHandler.CreateQoSReport)

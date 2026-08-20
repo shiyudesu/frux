@@ -57,6 +57,7 @@ export interface VideoStageProps {
   onLike: () => void;
   onComment: () => void;
   onFavorite: () => void;
+  onShare?: () => void;
   onFollow: () => void;
   onPlaybackQoS?: (item: FeedVideo, metrics: PlaybackQoSMetrics) => void;
   telemetryEnabled?: boolean;
@@ -90,6 +91,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     onLike,
     onComment,
     onFavorite,
+    onShare,
     onFollow,
     onPlaybackQoS,
     telemetryEnabled,
@@ -697,6 +699,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
         onLike={onLike}
         onComment={onComment}
         onFavorite={onFavorite}
+        onShare={onShare}
         onFollow={onFollow}
         onOpenAuthor={onOpenAuthor}
         onRecommendationFeedback={onRecommendationFeedback ? (type) => onRecommendationFeedback(item, type) : undefined}

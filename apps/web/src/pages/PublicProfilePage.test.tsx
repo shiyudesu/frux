@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RouterProvider } from "../router";
-import { SessionProvider } from "../session";
+import { SessionProvider, useSession } from "../session";
+import { emptyProfile } from "../constants";
 import type { Video } from "../types";
 import { PublicProfilePage } from "./PublicProfilePage";
 
@@ -11,10 +13,18 @@ const accountAPI = vi.hoisted(() => ({
   fetchPublicProfile: vi.fn(),
   fetchUserVideos: vi.fn()
 }));
+const chatAPI = vi.hoisted(() => ({
+  createChatConversation: vi.fn(),
+  fetchChatEligibility: vi.fn()
+}));
 
 vi.mock("../api/account", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/account")>()),
   ...accountAPI
+}));
+vi.mock("../api/chat", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/chat")>()),
+  ...chatAPI
 }));
 
 describe("public profile playback", () => {
@@ -48,6 +58,8 @@ describe("public profile playback", () => {
     });
     accountAPI.fetchPublicProfile.mockReset();
     accountAPI.fetchUserVideos.mockReset();
+    chatAPI.createChatConversation.mockReset();
+    chatAPI.fetchChatEligibility.mockReset();
     accountAPI.fetchPublicProfile.mockResolvedValue({
       id: 2,
       nickname: "作者",
@@ -66,6 +78,12 @@ describe("public profile playback", () => {
       limit: 24,
       offset: 0
     });
+    chatAPI.fetchChatEligibility.mockResolvedValue({
+      eligible: true,
+      reason: "ELIGIBLE",
+      conversation_id: 8
+    });
+    chatAPI.createChatConversation.mockResolvedValue({ conversation_id: 8 });
   });
 
   afterEach(() => {
@@ -105,12 +123,66 @@ describe("public profile playback", () => {
     expect(queue.dataset.activeVideoId).toBe("2");
   });
 
+  it("loads chat eligibility and opens an authorized conversation", async () => {
+    act(() => {
+      root.render(
+        <RouterProvider>
+          <SessionProvider>
+            <AuthenticatedSessionGate>
+              <PublicProfilePage userID={2} />
+            </AuthenticatedSessionGate>
+          </SessionProvider>
+        </RouterProvider>
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(chatAPI.fetchChatEligibility).toHaveBeenCalledWith("profile-token", 2);
+    click(buttonByText("私信"));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(chatAPI.createChatConversation).toHaveBeenCalledWith(
+      "profile-token",
+      2,
+      expect.any(String)
+    );
+    expect(window.location.pathname).toBe("/messages/8");
+  });
+
   function required<T extends Element>(selector: string): T {
     const element = container.querySelector<T>(selector);
     if (!element) throw new Error(`missing element: ${selector}`);
     return element;
   }
+
+  function buttonByText(text: string): HTMLButtonElement {
+    const button = [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === text);
+    if (!button) throw new Error(`missing button: ${text}`);
+    return button;
+  }
 });
+
+function AuthenticatedSessionGate({ children }: { children: ReactNode }) {
+  const session = useSession();
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      session.setAuth("profile-token", { ...emptyProfile, id: 1, nickname: "Owner" }, 3600);
+      setReady(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return ready && session.token ? <>{children}</> : null;
+}
 
 function click(element: HTMLElement) {
   act(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));

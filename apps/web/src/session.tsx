@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { configureConsumerAuthController, isUnauthorized } from "./api/client";
-import { fetchUnreadStat } from "./api/messages";
+import * as messageApi from "./api/messages";
 import {
   ConsumerSessionCoordinator,
   type ConsumerSessionStatus
@@ -27,6 +27,9 @@ export interface Session {
 
 export interface UnreadState {
   unreadCount: number;
+  notificationUnreadCount: number;
+  chatUnreadCount: number;
+  totalUnreadCount: number;
   refreshUnreadCount: () => Promise<number>;
 }
 
@@ -41,7 +44,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
   const coordinator = coordinatorRef.current;
   const [snapshot, setSnapshot] = useState(() => coordinator.getSnapshot());
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
+  const [totalUnreadCount, setTotalUnreadCount] = useState(0);
 
   useLayoutEffect(() => coordinator.subscribe(setSnapshot), [coordinator]);
 
@@ -90,20 +95,50 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const refreshUnreadCount = useCallback((): Promise<number> => {
     if (!snapshot.token || !snapshot.user) {
-      setUnreadCount(0);
+      setNotificationUnreadCount(0);
+      setChatUnreadCount(0);
+      setTotalUnreadCount(0);
       return Promise.resolve(0);
     }
-    return fetchUnreadStat(snapshot.token)
+    let fetchSummary: typeof messageApi.fetchInboxUnreadSummary | undefined;
+    try {
+      fetchSummary = messageApi.fetchInboxUnreadSummary;
+    } catch {
+      fetchSummary = undefined;
+    }
+    const summaryRequest = fetchSummary
+      ? fetchSummary(snapshot.token)
+      : Promise.reject(new Error("inbox summary unavailable"));
+    return summaryRequest
       .then((data) => {
-        const count = Number(data.unread_count || 0);
-        setUnreadCount(Number.isFinite(count) ? count : 0);
-        return count;
+        const notification = Number(data.notification_unread_count || 0);
+        const chat = Number(data.chat_unread_count || 0);
+        const total = Number(data.total_unread_count);
+        const safeNotification = Number.isFinite(notification) ? notification : 0;
+        const safeChat = Number.isFinite(chat) ? chat : 0;
+        const safeTotal = Number.isFinite(total) ? total : safeNotification + safeChat;
+        setNotificationUnreadCount(safeNotification);
+        setChatUnreadCount(safeChat);
+        setTotalUnreadCount(safeTotal);
+        return safeTotal;
       })
       .catch((error: unknown) => {
         if (isUnauthorized(error)) {
-          setUnreadCount(0);
+          setNotificationUnreadCount(0);
+          setChatUnreadCount(0);
+          setTotalUnreadCount(0);
+          return 0;
         }
-        return 0;
+        return messageApi.fetchUnreadStat(snapshot.token)
+          .then((data) => {
+            const count = Number(data.unread_count || 0);
+            const safeCount = Number.isFinite(count) ? count : 0;
+            setNotificationUnreadCount(safeCount);
+            setChatUnreadCount(0);
+            setTotalUnreadCount(safeCount);
+            return safeCount;
+          })
+          .catch(() => 0);
       });
   }, [snapshot.token, snapshot.user]);
 
@@ -138,7 +173,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     ]
   );
 
-  const unread = useMemo<UnreadState>(() => ({ unreadCount, refreshUnreadCount }), [unreadCount, refreshUnreadCount]);
+  const unread = useMemo<UnreadState>(() => ({
+    unreadCount: totalUnreadCount,
+    notificationUnreadCount,
+    chatUnreadCount,
+    totalUnreadCount,
+    refreshUnreadCount
+  }), [
+    chatUnreadCount,
+    notificationUnreadCount,
+    refreshUnreadCount,
+    totalUnreadCount
+  ]);
 
   return (
     <SessionContext.Provider value={session}>

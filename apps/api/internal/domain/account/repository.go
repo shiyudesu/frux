@@ -37,6 +37,20 @@ type AuthorDisplayReader interface {
 	BatchGetAuthorDisplays(ctx context.Context, userIDs []int64) (map[int64]*AuthorDisplay, error)
 }
 
+type ConsumerDisplay struct {
+	UserID    int64
+	Nickname  string
+	AvatarURL string
+	Bio       string
+	Status    int
+	Role      string
+}
+
+type ConsumerDisplayReader interface {
+	GetConsumerDisplay(ctx context.Context, userID int64) (*ConsumerDisplay, error)
+	BatchGetConsumerDisplays(ctx context.Context, userIDs []int64) (map[int64]*ConsumerDisplay, error)
+}
+
 type AdminPrincipalReader interface {
 	FindAdminPrincipalByID(ctx context.Context, userID int64) (*AdminPrincipal, error)
 }

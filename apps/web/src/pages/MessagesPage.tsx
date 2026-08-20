@@ -5,6 +5,7 @@ import { fetchMessages, markMessagesRead } from "../api/messages";
 import { fetchVideo } from "../api/account";
 import { ApiError } from "../api/client";
 import { PageMessage } from "../components/StatusMessages";
+import { ChatWorkspace } from "../components/ChatWorkspace";
 import { useNavigate } from "../router";
 import type { NavigationTarget } from "../router";
 import { useSession, useUnreadCount } from "../session";
@@ -22,10 +23,11 @@ import { Icon } from "../components/Icon";
 
 type MessagesState = "loading" | "loadingMore" | "ready" | "error";
 
-export function MessagesPage() {
+export function MessagesPage({ conversationID = 0 }: { conversationID?: number }) {
   const session = useSession();
   const navigate = useNavigate();
-  const { refreshUnreadCount } = useUnreadCount();
+  const { refreshUnreadCount, notificationUnreadCount, chatUnreadCount } = useUnreadCount();
+  const [view, setView] = useState<"notifications" | "private">(conversationID > 0 ? "private" : "notifications");
   const [items, setItems] = useState<Message[]>([]);
   const [nextCursor, setNextCursor] = useState("");
   const [hasMore, setHasMore] = useState(false);
@@ -33,6 +35,10 @@ export function MessagesPage() {
   const [error, setError] = useState("");
   const [busyID, setBusyID] = useState(0);
   const [markingAll, setMarkingAll] = useState(false);
+
+  useEffect(() => {
+    if (conversationID > 0) setView("private");
+  }, [conversationID]);
 
   const loadMessages = useCallback(
     (cursor = "", append = false): Promise<void> => {
@@ -64,8 +70,8 @@ export function MessagesPage() {
   );
 
   useEffect(() => {
-    loadMessages("", false);
-  }, [loadMessages]);
+    if (view === "notifications") void loadMessages("", false);
+  }, [loadMessages, view]);
 
   async function markMessageRead(message: Message): Promise<boolean> {
     if (!message || message.is_read) return true;
@@ -154,19 +160,44 @@ export function MessagesPage() {
           <h1>消息中心</h1>
         </div>
         <div className="messages-actions">
-          <span className="messages-count">{unreadCount > 0 ? `${unreadCount} 未读` : "已读完"}</span>
-          <button className="ghost-button compact" onClick={() => loadMessages("", false)} disabled={loadingInitial || loadingMore}>
-            <Icon name="refresh" size={17} />
-            刷新
-          </button>
-          <button className="primary-button compact" onClick={markAllRead} disabled={markingAll || unreadCount === 0}>
+          <div className="messages-view-tabs" role="tablist" aria-label="消息类型">
+            <button
+              className={view === "notifications" ? "active" : ""}
+              role="tab"
+              aria-selected={view === "notifications"}
+              type="button"
+              onClick={() => {
+                setView("notifications");
+                navigate("/messages");
+              }}
+            >
+              通知{notificationUnreadCount > 0 ? ` (${notificationUnreadCount})` : ""}
+            </button>
+            <button
+              className={view === "private" ? "active" : ""}
+              role="tab"
+              aria-selected={view === "private"}
+              type="button"
+              onClick={() => setView("private")}
+            >
+              私信{chatUnreadCount > 0 ? ` (${chatUnreadCount})` : ""}
+            </button>
+          </div>
+          {view === "notifications" && <span className="messages-count">{unreadCount > 0 ? `${unreadCount} 未读` : "已读完"}</span>}
+          {view === "notifications" && <button className="ghost-button compact" onClick={() => loadMessages("", false)} disabled={loadingInitial || loadingMore}>
+              <Icon name="refresh" size={17} />
+              刷新
+            </button>}
+          {view === "notifications" && <button className="primary-button compact" onClick={markAllRead} disabled={markingAll || unreadCount === 0}>
             <Icon name="check-all" size={17} />
             {markingAll ? "处理中" : "全部已读"}
-          </button>
+          </button>}
         </div>
       </section>
 
-      <section className="messages-list-wrap">
+      {view === "private" ? (
+        <ChatWorkspace initialConversationID={conversationID} />
+      ) : <section className="messages-list-wrap">
         {loadingInitial && <PageMessage icon="hourglass" title="正在加载消息" />}
         {state === "error" && items.length === 0 && (
           <PageMessage icon="alert" title={error || "消息加载失败"} action="重试" onAction={() => loadMessages("", false)} />
@@ -219,7 +250,7 @@ export function MessagesPage() {
             {loadingMore ? "加载中" : "加载更多"}
           </button>
         )}
-      </section>
+      </section>}
     </main>
   );
 }

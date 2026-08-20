@@ -44,6 +44,7 @@ import { FeedDetailsPanel } from "./FeedDetailsPanel";
 import { FeedMessage } from "./StatusMessages";
 import { VideoStage, type VideoStageHandle } from "./VideoStage";
 import { Icon } from "./Icon";
+import { PrivateShareDialog } from "./PrivateShareDialog";
 
 interface CollectionQueueViewerProps {
   source: CollectionQueueSource;
@@ -142,6 +143,7 @@ export function CollectionQueueViewer({
   const [followBusyID, setFollowBusyID] = useState(0);
   const [followError, setFollowError] = useState("");
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [shareVideoID, setShareVideoID] = useState(0);
   const [advanceWhenLoaded, setAdvanceWhenLoaded] = useState(false);
   const [watchLaterRemovalPending, setWatchLaterRemovalPending] = useState(false);
   const followRequest = useRef(0);
@@ -153,6 +155,14 @@ export function CollectionQueueViewer({
     session.clearAuth();
     navigate("/auth");
   }, [navigate, session]);
+
+  const openShare = useCallback((videoID: number) => {
+    if (!session.token) {
+      navigate("/auth");
+      return;
+    }
+    setShareVideoID(videoID);
+  }, [navigate, session.token]);
 
   const {
     swipe,
@@ -572,6 +582,7 @@ export function CollectionQueueViewer({
                         onLike={setLike}
                         onComment={() => setCommentsOpen(true)}
                         onFavorite={setFavorite}
+                        onShare={() => openShare(item.video_id)}
                         onFollow={setFollow}
                         onPlaybackQoS={reportPlaybackQoS}
                         telemetryEnabled={Boolean(session.token)}
@@ -630,6 +641,12 @@ export function CollectionQueueViewer({
             authenticated={Boolean(session.token && session.user)}
             onOpenUser={(profile) => openPublicProfile(profile, navigate)}
           />
+          {shareVideoID > 0 && (() => {
+            const shareVideo = items.find((item) => item.video_id === shareVideoID);
+            return shareVideo
+              ? <PrivateShareDialog video={shareVideo} onClose={() => setShareVideoID(0)} />
+              : null;
+          })()}
         </div>
       </section>
     </div>

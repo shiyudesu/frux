@@ -1,12 +1,17 @@
 import { useEffect, useRef } from "react";
 
+const dialogStack: symbol[] = [];
+
 export function useDialogFocus<T extends HTMLElement>(open: boolean, onDismiss?: () => void) {
   const initialFocusRef = useRef<T | null>(null);
   const dismissRef = useRef(onDismiss);
+  const dialogID = useRef(Symbol("dialog"));
   dismissRef.current = onDismiss;
 
   useEffect(() => {
     if (!open) return undefined;
+    const currentDialogID = dialogID.current;
+    dialogStack.push(currentDialogID);
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = window.requestAnimationFrame(() => initialFocusRef.current?.focus());
     const inerted: Array<{ element: HTMLElement; alreadyInert: boolean }> = [];
@@ -23,8 +28,10 @@ export function useDialogFocus<T extends HTMLElement>(open: boolean, onDismiss?:
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (dialogStack[dialogStack.length - 1] !== currentDialogID) return;
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopImmediatePropagation();
         dismissRef.current?.();
         return;
       }
@@ -53,6 +60,8 @@ export function useDialogFocus<T extends HTMLElement>(open: boolean, onDismiss?:
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener("keydown", handleKeyDown);
+      const index = dialogStack.lastIndexOf(currentDialogID);
+      if (index >= 0) dialogStack.splice(index, 1);
       for (const { element, alreadyInert } of inerted) {
         if (!alreadyInert) element.removeAttribute("inert");
       }

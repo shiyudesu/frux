@@ -179,6 +179,16 @@ const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   UPLOAD_STORAGE_UNAVAILABLE: "上传存储暂时不可用，请稍后重试",
   UPLOAD_UNAVAILABLE: "上传服务暂时不可用，请稍后重试",
   VIDEO_VALIDATION_FAILED: "视频信息有误，请检查标题和简介",
+  CHAT_NOT_ELIGIBLE: "需要互相关注后才能私信",
+  CHAT_SELF_CONVERSATION: "不能给自己发送私信",
+  CHAT_ACCOUNT_UNAVAILABLE: "该用户暂时无法接收私信",
+  CHAT_CONVERSATION_NOT_FOUND: "会话不存在或已不可用",
+  CHAT_VALIDATION_FAILED: "私信内容有误，请检查后重试",
+  CHAT_MESSAGE_NOT_FOUND: "私信不存在或已不可用",
+  CHAT_VIDEO_UNAVAILABLE: "这个视频已无法分享",
+  CHAT_IDEMPOTENCY_CONFLICT: "这次操作状态已变化，请重试",
+  CHAT_CURSOR_INVALID: "私信列表已更新，请刷新后重试",
+  CHAT_UNAVAILABLE: "私信服务暂时不可用，请稍后重试",
   SERVICE_UNAVAILABLE: "服务暂时不可用，请稍后重试",
   INTERNAL_ERROR: "服务暂时不可用，请稍后重试"
 };

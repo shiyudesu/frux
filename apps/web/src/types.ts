@@ -928,6 +928,116 @@ export interface UnreadStatResponse {
   unread_count: number;
 }
 
+// ---------- 私信 ----------
+
+export type ChatMessageKind = "TEXT" | "VIDEO";
+
+export type ChatEligibilityReason =
+  | "ELIGIBLE"
+  | "SELF"
+  | "NOT_MUTUAL_FOLLOW"
+  | "ACCOUNT_UNAVAILABLE";
+
+export interface ChatParticipant {
+  user_id: number;
+  nickname: string;
+  avatar_url: string;
+  bio: string;
+  available: boolean;
+}
+
+export interface ChatRecipient {
+  user_id: number;
+  nickname: string;
+  avatar_url: string;
+  bio: string;
+  followed_at: string;
+  conversation_id?: number;
+}
+
+export interface ChatVideoCardAvailable {
+  available: true;
+  video_id: number;
+  title: string;
+  cover_url: string;
+  media_url: string;
+  author_id: number;
+  author_nickname: string;
+  author_avatar_url: string;
+}
+
+export interface ChatVideoCardUnavailable {
+  available: false;
+  video_id: number;
+}
+
+export type ChatVideoCard = ChatVideoCardAvailable | ChatVideoCardUnavailable;
+
+export interface ChatMessage {
+  id: number;
+  conversation_id: number;
+  sender: ChatParticipant;
+  kind: ChatMessageKind;
+  text?: string;
+  video?: ChatVideoCard;
+  created_at: string;
+}
+
+export interface ChatMessageSummary {
+  id: number;
+  kind: ChatMessageKind;
+  preview?: string;
+  created_at: string;
+}
+
+export interface ChatConversation {
+  id: number;
+  counterpart: ChatParticipant;
+  last_message_id: number;
+  last_message?: ChatMessageSummary;
+  last_message_at?: string;
+  unread_count: number;
+}
+
+export interface ChatEligibilityResponse {
+  eligible: boolean;
+  reason: ChatEligibilityReason;
+  conversation_id?: number;
+}
+
+export interface ChatCreateConversationResponse {
+  conversation_id: number;
+}
+
+export type ChatRecipientPage = CursorPage<ChatRecipient>;
+
+export type ChatConversationPage = CursorPage<ChatConversation>;
+
+export interface ChatHistoryPage extends CursorPage<ChatMessage> {
+  conversation: ChatConversation;
+  eligibility: ChatEligibilityResponse;
+}
+
+export type ChatSendRequest =
+  | { kind: "TEXT"; text: string }
+  | { kind: "VIDEO"; video_id: number };
+
+export interface ChatSendResponse {
+  message: ChatMessage;
+  created: boolean;
+}
+
+export interface ChatReadResponse {
+  last_read_message_id: number;
+  unread_count: number;
+}
+
+export interface InboxUnreadSummary {
+  notification_unread_count: number;
+  chat_unread_count: number;
+  total_unread_count: number;
+}
+
 // ---------- 行为上报 ----------
 
 export type ViewEventType = "exposed" | "play" | "progress" | "complete" | "skip";

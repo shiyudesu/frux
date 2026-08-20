@@ -16,6 +16,14 @@ type Repository interface {
 	GetUserProfile(ctx context.Context, userID int64) (*UserProfile, error)
 }
 
+type MutualFollowRepository interface {
+	AreMutuallyFollowing(ctx context.Context, firstUserID int64, secondUserID int64) (bool, error)
+}
+
+type MutualRecipientRepository interface {
+	ListMutualRecipients(ctx context.Context, userID int64, query string, cursor *ListCursor, limit int) ([]*MutualRecipient, error)
+}
+
 // RecommendationOutcomeRepository is optional during the backward-compatible
 // rollout. Implementations persist recommendation metadata with the existing
 // durable follow projection outbox.

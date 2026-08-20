@@ -69,6 +69,12 @@ type ListResult struct {
 	HasMore    bool
 }
 
+type MutualRecipientResult struct {
+	Items      []*domainrelation.MutualRecipient
+	NextCursor string
+	HasMore    bool
+}
+
 type listCursorPayload struct {
 	Version    int    `json:"v,omitempty"`
 	Kind       string `json:"kind,omitempty"`
@@ -129,6 +135,73 @@ func (s *Service) GetFollowState(ctx context.Context, userID int64, targetUserID
 		return nil, ErrLoadRelationFailed
 	}
 	return &FollowStateResult{UserID: userID, TargetUserID: targetUserID, Following: following}, nil
+}
+
+func (s *Service) AreMutuallyFollowing(ctx context.Context, userID, targetUserID int64) (bool, error) {
+	if userID <= 0 {
+		return false, domainrelation.ErrInvalidUserID
+	}
+	if targetUserID <= 0 {
+		return false, domainrelation.ErrInvalidTargetUserID
+	}
+	if userID == targetUserID {
+		return false, domainrelation.ErrFollowSelfForbidden
+	}
+	mutualRepo, ok := s.repo.(domainrelation.MutualFollowRepository)
+	if !ok {
+		return false, ErrLoadRelationFailed
+	}
+	following, err := mutualRepo.AreMutuallyFollowing(ctx, userID, targetUserID)
+	if err != nil {
+		if errors.Is(err, domainrelation.ErrTargetUserNotFound) {
+			return false, domainrelation.ErrTargetUserNotFound
+		}
+		return false, ErrLoadRelationFailed
+	}
+	return following, nil
+}
+
+func (s *Service) ListMutualRecipients(ctx context.Context, userID int64, query string, cursor *domainrelation.ListCursor, limit int) (*MutualRecipientResult, error) {
+	if userID <= 0 {
+		return nil, domainrelation.ErrInvalidUserID
+	}
+	normalizedQuery, err := domainrelation.NormalizeListQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	if cursor != nil && (cursor.Kind != domainrelation.ListKindMutual || cursor.Query != normalizedQuery) {
+		return nil, domainrelation.ErrInvalidCursor
+	}
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	if limit > domainrelation.MaxLimit+1 {
+		limit = domainrelation.MaxLimit + 1
+	}
+	mutualRepo, ok := s.repo.(domainrelation.MutualRecipientRepository)
+	if !ok {
+		return nil, ErrLoadRelationFailed
+	}
+	items, err := mutualRepo.ListMutualRecipients(ctx, userID, normalizedQuery, cursor, limit+1)
+	if err != nil {
+		return nil, ErrLoadRelationFailed
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	nextCursor := ""
+	if len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = encodeListCursor(&domainrelation.ListCursor{
+			Version:    domainrelation.ListCursorVersion,
+			Kind:       domainrelation.ListKindMutual,
+			Query:      normalizedQuery,
+			FollowedAt: last.FollowedAt,
+			UserID:     last.UserID,
+		})
+	}
+	return &MutualRecipientResult{Items: items, NextCursor: nextCursor, HasMore: hasMore}, nil
 }
 
 // ListFollowing 查询当前用户的关注列表。

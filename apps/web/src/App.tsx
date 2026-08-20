@@ -11,6 +11,7 @@ import { SearchPage } from "./pages/SearchPage";
 import {
   RouterProvider,
   feedSceneFromRoute,
+  useMessageRoute,
   publicUserIDFromRoute,
   useNavigate,
   useRoute,
@@ -38,6 +39,7 @@ export default function App() {
 function AppRoutes() {
   const route = useRoute();
   const videoDiscussion = useVideoDiscussionRoute();
+  const messageRoute = useMessageRoute();
   const searchRoute = useSearchRoute();
   const navigate = useNavigate();
   const { token, user, status } = useSession();
@@ -52,10 +54,10 @@ function AppRoutes() {
     if (route === "/profile" && !(token && user)) {
       navigate("/timeline");
     }
-    if (route === "/messages" && !(token && user)) {
+    if ((route === "/messages" || messageRoute) && !(token && user)) {
       navigate("/auth");
     }
-  }, [bootstrapping, navigate, route, token, user]);
+  }, [bootstrapping, messageRoute, navigate, route, token, user]);
 
   if (route === "/auth") {
     return <LoginPage />;
@@ -77,7 +79,7 @@ function AppRoutes() {
     );
   }
 
-  if (bootstrapping && (route === "/" || route === "/profile" || route === "/messages")) {
+  if (bootstrapping && (route === "/" || route === "/profile" || route === "/messages" || messageRoute)) {
     return (
       <AppShell key={sessionKey}>
         <PageMessage icon="hourglass" title="正在恢复登录状态" />
@@ -126,10 +128,10 @@ function AppRoutes() {
     );
   }
 
-  if (route === "/messages") {
+  if (route === "/messages" || messageRoute) {
     return (
       <AppShell key={sessionKey}>
-        <MessagesPage />
+        <MessagesPage conversationID={messageRoute?.conversationID} />
       </AppShell>
     );
   }

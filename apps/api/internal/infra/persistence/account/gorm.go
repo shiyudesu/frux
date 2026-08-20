@@ -6,6 +6,7 @@ import (
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	infrapersistence "github.com/shiyudesu/frux/internal/infra/persistence"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -163,6 +164,41 @@ func (r *Repository) BatchGetAuthorDisplays(ctx context.Context, userIDs []int64
 	}
 	for _, model := range models {
 		result[model.ID] = domainaccount.RestoreAuthorDisplay(model.ID, model.Nickname, model.AvatarURL)
+	}
+	return result, nil
+}
+
+func (r *Repository) GetConsumerDisplay(ctx context.Context, userID int64) (*domainaccount.ConsumerDisplay, error) {
+	var model UserModel
+	err := r.db.WithContext(ctx).Where("id = ?", userID).Take(&model).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domainaccount.ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &domainaccount.ConsumerDisplay{
+		UserID: model.ID, Nickname: strings.TrimSpace(model.Nickname),
+		AvatarURL: strings.TrimSpace(model.AvatarURL), Bio: strings.TrimSpace(model.Bio),
+		Status: model.Status, Role: strings.TrimSpace(model.Role),
+	}, nil
+}
+
+func (r *Repository) BatchGetConsumerDisplays(ctx context.Context, userIDs []int64) (map[int64]*domainaccount.ConsumerDisplay, error) {
+	result := make(map[int64]*domainaccount.ConsumerDisplay, len(userIDs))
+	if len(userIDs) == 0 {
+		return result, nil
+	}
+	var models []UserModel
+	if err := r.db.WithContext(ctx).Where("id IN ?", userIDs).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	for _, model := range models {
+		result[model.ID] = &domainaccount.ConsumerDisplay{
+			UserID: model.ID, Nickname: strings.TrimSpace(model.Nickname),
+			AvatarURL: strings.TrimSpace(model.AvatarURL), Bio: strings.TrimSpace(model.Bio),
+			Status: model.Status, Role: strings.TrimSpace(model.Role),
+		}
 	}
 	return result, nil
 }

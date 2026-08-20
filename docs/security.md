@@ -44,3 +44,13 @@ MinIO CORS 只允许精确 Origin `https://FRUX_DOMAIN:<public-port>` 和上传/
 - PostgreSQL 可以保存认证用户 ID、视频 ID、request ID 和播放会话用于受控诊断，但 Prometheus/Grafana 标签禁止包含这些标识符。
 - browser、OS、network、viewport、codec、quality、source 和 scene 都折叠到固定枚举；未知值归入 `unknown`/`other`。
 - 原始遥测默认保留 168 小时并由有界清理任务删除；行为历史和推荐事实使用独立保留策略。
+
+## 私信数据与内容安全
+
+- 私信只允许正常消费端账号之间的当前互关关系；每次创建会话和发送都重新检查关系与账号状态。取关保留历史但禁止继续发送，避免把历史内容误删或让旧资格永久有效。
+- 发送接口使用严格 JSON schema 和 `Idempotency-Key`，只接受 trim 后的文本或正数 `video_id`；客户端不能提交媒体 URL、封面、标题、作者快照或任意 metadata。服务端先按 sender+key 和完整 payload 解析已提交消息，再检查当前账号、成员、互关和视频资格；因此精确重试返回 `created=false`，同键不同 payload 才冲突。发送受用户维度 `chat_send` 限流，Redis 协调不可用时 fail-closed。
+- `chat_message` 只保存视频 ID。读取历史时按当前 `published + public + media-ready` 资格批量 hydration；视频删除、下架、私密或处理中时返回 `available=false` tombstone，不返回保护 URL、封面、标题或作者隐私数据。
+- `chat_conversation`、`chat_conversation_member` 和 `chat_message` 是独立于 `user_message` 的 PostgreSQL 表；私信正文不复制到 Kafka、搜索索引、Redis 内容缓存或 telemetry。备份中仍可能存在正文，留存、导出和删除政策需后续 change 明确。
+- 日志、trace、Prometheus 标签和错误诊断不得包含正文、昵称、用户/会话/消息/视频 ID 或媒体 URL；chat metrics 仅使用封闭 operation、`TEXT`/`VIDEO`、outcome、error class 和延迟。
+- 当前协议为前端路由、去重和卡片 hydration 携带正数 `user_id`/`video_id`；这些标识只用于请求响应，不得进入观测或二次数据集。不可用 participant/video 使用最小字段和 safe fallback。
+- 初版没有陌生人消息、block/report、群聊、附件、在线状态、撤回、端到端加密或 WebSocket。未来增加这些能力前，需单独定义滥用治理、留存、删除、导出和密钥管理边界。

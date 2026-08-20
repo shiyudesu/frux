@@ -22,6 +22,7 @@ type ListKind string
 const (
 	ListKindFollowing ListKind = "following"
 	ListKindFollowers ListKind = "followers"
+	ListKindMutual    ListKind = "mutual"
 )
 
 // Follow 表示一个用户对另一个用户的关注关系，取关使用软状态保留历史。
@@ -64,6 +65,14 @@ type UserProfile struct {
 	Nickname  string
 	AvatarURL string
 	Bio       string
+}
+
+type MutualRecipient struct {
+	UserID     int64
+	Nickname   string
+	AvatarURL  string
+	Bio        string
+	FollowedAt time.Time
 }
 
 // ListCursor 保存关系列表分页需要的排序字段。
