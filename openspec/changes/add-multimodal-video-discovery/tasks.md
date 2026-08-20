@@ -128,18 +128,18 @@
 - [x] 9.2 Add bounded operator inspection and manual requeue for multimodal jobs with permission,
   audit, cursor, and closed-detail contracts that expose no images, vectors, raw queries, credentials,
   signed URLs, or arbitrary provider errors.
-- [ ] 9.3 Create a small versioned human golden set and deterministic evaluation command comparing
+- [x] 9.3 Create a small versioned human golden set and deterministic evaluation command comparing
   lexical-only, available component baselines, and multimodal hybrid relevance with denominators,
   model/merge versions, Recall/NDCG-style metrics, overlap, and latency.
 - [x] 9.4 Add privacy/logging tests proving raw images, vectors, query text, credentials, user/video/
   request IDs, model strings, and raw errors never become metric labels or normal log payloads.
-- [ ] 9.5 Document enablement, contract changes, development fixture generation, disabled behavior,
+- [x] 9.5 Document enablement, contract changes, development fixture generation, disabled behavior,
   query fallback, exact-capacity evidence, operator inspection, rollback, and the explicit absence of
   historical backfill/HNSW/recommendation activation.
 
 ## 10. Integration Verification
 
-- [ ] 10.1 Update `docs/modules/embedding.md`, `docs/modules/search.md`, `docs/product.md`, relevant
+- [x] 10.1 Update `docs/modules/embedding.md`, `docs/modules/search.md`, `docs/product.md`, relevant
   architecture/engineering sections, and roadmap status without presenting future Session
   recommendation or ANN work as implemented.
 - [ ] 10.2 Run targeted embedding, publication-consumer, persistence, search, similar-video, router,

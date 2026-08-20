@@ -1,0 +1,30 @@
+{
+  "version": "multimodal-golden-v1",
+  "model_contract": "development-fixture-contract-v1",
+  "merge_version": "hybrid-rank-v1",
+  "cutoff": 3,
+  "cases": [
+    {
+      "query_id": "basketball-training",
+      "relevant": {"101": 3, "102": 2},
+      "baselines": {
+        "lexical": {"ranked_video_ids": [102, 109, 101], "latency_ms": 2.1},
+        "text": {"ranked_video_ids": [101, 102, 109], "latency_ms": 3.4},
+        "image": {"ranked_video_ids": [101, 108, 107], "latency_ms": 4.8},
+        "multimodal": {"ranked_video_ids": [101, 102, 108], "latency_ms": 6.2},
+        "hybrid": {"ranked_video_ids": [101, 102, 109], "latency_ms": 8.1}
+      }
+    },
+    {
+      "query_id": "night-city-view",
+      "relevant": {"201": 3, "204": 1},
+      "baselines": {
+        "lexical": {"ranked_video_ids": [209, 204, 201], "latency_ms": 2.3},
+        "text": {"ranked_video_ids": [204, 201, 209], "latency_ms": 3.6},
+        "image": {"ranked_video_ids": [201, 207, 204], "latency_ms": 4.9},
+        "multimodal": {"ranked_video_ids": [201, 204, 207], "latency_ms": 6.5},
+        "hybrid": {"ranked_video_ids": [201, 204, 209], "latency_ms": 8.4}
+      }
+    }
+  ]
+}

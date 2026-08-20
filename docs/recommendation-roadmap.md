@@ -294,7 +294,7 @@ Shadow
 
 | Change | 处置 | 说明 |
 | --- | --- | --- |
-| `add-multimodal-video-discovery` | 当前 Active | 新视频、Exact、Hybrid Search、Similar Videos |
+| `add-multimodal-video-discovery` | 当前 Active（实现收尾） | 默认关闭的环境无关合同、新视频 Job、Exact、Hybrid Search、Similar Videos、Golden Set；尚未选择正式 Provider/模型合同 |
 | `fix-recommendation-candidate-pool-truncation` | 已完成并归档 | 当前策略预算内的完整有界候选集进入统一评分，已移除 response-limit 派生的 recency 截断 |
 | `add-recommendation-provider-quota-merge` | 已完成并归档 | 预算总和可高于 pool；显式 Provider Order、Reservation、可见性优先和 Round-Robin Fill 保证至多500条确定输入 |
 | `add-semantic-embedding-service` | 被替代 | 外部文本-only 合同被环境无关多模态合同替代 |

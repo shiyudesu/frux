@@ -4,7 +4,8 @@
 
 `search` 模块聚合视频和账户的公开发现能力。它只搜索已发布、公开且媒体就绪的视频，以及状态正常的用户；不搜索评论、消息、私密内容或推荐内部数据。
 
-Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，PostgreSQL 查询由基础设施实现。该边界允许后续替换为 trigram、全文或外部搜索索引，而不改变 HTTP 和 Web 合约。
+Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，PostgreSQL 查询由基础设施实现。
+视频搜索还提供默认关闭的 Multimodal Query + Exact Retrieval 组合；用户搜索始终保持 lexical-only。
 
 ## 2. 接口设计
 
@@ -12,6 +13,7 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 | --- | --- | --- | --- |
 | GET | `/api/search/videos` | 搜索公开视频 | 可匿名 |
 | GET | `/api/search/users` | 搜索正常用户 | 可匿名 |
+| GET | `/api/videos/{videoId}/similar` | Exact 相似视频；无向量时返回健康 unavailable | 可匿名 |
 
 共同 query：
 
@@ -33,7 +35,9 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 
 ## 3. 数据与排序
 
-首版不新增数据表或外部依赖，直接使用 PostgreSQL 参数化查询。
+Lexical 路径直接使用 PostgreSQL 参数化查询。启用多模态后，第一页先得到 bounded lexical candidates，
+再从 normalized-query + contract cache 读取或进行一次无 HTTP 重试的有界 query embedding，并对 active
+contract Projection 做数据库侧 Exact Cosine。失败、饱和、超时或无覆盖时第一页返回 lexical-only。
 
 视频相关性顺序：
 
@@ -42,6 +46,17 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 3. 标题包含匹配。
 4. 简介包含匹配。
 5. 同相关性按 `published_at DESC, id DESC`。
+
+Hybrid v1 用显式 lexical/semantic reservation、video ID 去重、固定 round-robin fill 和版本化 rank
+combination；同一视频保留两种内部 reason。结果在响应前再次验证 published/public/media-ready，按
+hybrid score、`published_at DESC, id DESC` 稳定分页。
+
+Hybrid cursor 绑定 normalized query、mode、merge version、contract key、完整排序元组和 expiry；Hybrid
+后续页无法重现兼容 query vector 时返回可重试 503，不能静默切换成 lexical 顺序。Lexical cursor 独立。
+
+相似视频使用 source 的 active-contract 权威向量，Exact 查询排除 source，复检候选可见性和发布时间，
+cursor 绑定 source、contract、exact ranking version 与排序元组。source 可读但无向量时返回
+`semantic_available=false` 与空页；source 不可读返回404。
 
 用户相关性顺序：
 
@@ -75,6 +90,9 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 | 相同游标换 query/type | 返回非法游标 |
 | 旧用户搜索游标 | 拒绝账号/昵称混合相关性版本，不影响视频游标 |
 | 查询切换时旧响应返回 | Web 忽略旧响应 |
+| Semantic 首页面不可用 | 返回原 Lexical 结果并记录 fallback |
+| Hybrid 后续页无法重现 | 返回可重试错误，不混入 Lexical 页 |
+| Similar source 无向量 | 200 空页且 `semantic_available=false` |
 
 ## 6. 前端接入点
 
@@ -87,4 +105,5 @@ Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，Postg
 - 视频结果进入现有 `/videos/{videoId}`，用户结果进入 `/users/{userId}`。
 - 空 query 不发起宽泛请求；页面展示输入提示。
 - 参数错误返回可操作中文提示；数据库或搜索基础设施异常统一显示“搜索服务暂时不可用，请稍后重试”，网络失败提示检查连接，不向用户暴露内部错误文案。
+- 视频详情页用明确 loading/unavailable/empty/error 状态展示相似视频；功能关闭或无向量不渲染伪造结果。
 - 搜索错误使用稳定 code：`SEARCH_QUERY_REQUIRED`、`SEARCH_QUERY_INVALID`、`SEARCH_QUERY_TOO_LONG`、`SEARCH_PARAMETERS_INVALID` 和 `SEARCH_SERVICE_UNAVAILABLE`；兼容 `error` 文本不得绕过 Web 统一消息解析器。

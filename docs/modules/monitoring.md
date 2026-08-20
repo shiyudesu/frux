@@ -173,6 +173,19 @@ play/complete 和反馈率；任何错误或降级恶化、snapshot hit 明显�
 应记录有界 failure metric 但不能影响 Feed 响应。snapshot 的 `hit/miss` 只表示读取结果；
 `write_success/write_failure` 单独表示写入，避免以写入量污染命中率。
 
+### 9.1 Multimodal discovery observability
+
+多模态发现额外暴露 `frux_multimodal_embedding_jobs{state}`、oldest age、
+`frux_multimodal_provider_calls_total{operation,result}`、provider duration/admission、coverage、
+projection reconciliation、Exact latency/result、query cache、Hybrid mode/contribution 和 Similar outcome。
+标签只允许封闭 state/operation/result/mode/contribution；provider/model/revision 使用配置 alias 进入
+受限管理响应，不作为这些指标标签。禁止 user/video/request/session ID、query、图片、向量、URL、
+credential、claim token、source hash、map payload 或 raw error。
+
+排障顺序：Job backlog/oldest → admission/provider result → active-contract coverage → projection drift →
+Exact P95/P99 → Hybrid fallback/overlap/semantic-only → Similar unavailable/filtered。Exact 合格行数、
+查询计划、CPU 与并发未超过路线图门槛前，不得以告警为理由直接增加 HNSW。
+
 ## 10. Automated review observability
 
 自动审核使用 `frux_review_events_total{stage,result}`。stage 仅允许 `intake`、

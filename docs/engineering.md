@@ -210,7 +210,10 @@ GORM Repository 规则：
   Group。
 - 视频首次公开事实在视频拥有的 `video_publication_event_outbox` 中耐久保存，再由 Worker 发布到
   30 天保留的 `frux.video.published.v1`。Feed 与 embedding 使用独立 Group；前者在幂等 Redis
-  fanout/preheat 后提交，后者在 `hash-ngram-v1` 条件持久化成功后提交。
+  fanout/preheat 后提交，后者在 `hash-ngram-v1` 条件持久化以及可选多模态 Job durable handoff 后提交。
+  Provider 调用不得进入 Kafka Handler；多模态 Worker 必须使用数据库时间租约、heartbeat、claim-token
+  fencing、非阻塞 admission 和推理前后 source revalidation。Projection 只能从权威 fact 与当前
+  published/public/media-ready 事实重建；Exact 容量实测前禁止增加 ANN 索引。
 - `video.published` 共享契约只校验 envelope、业务 identity、时间、key 与视频字段边界。
   publication outbox 的 publish aggregate context 与 durable mark/stats
   context 分离；mark/stats 使用 `context.WithoutCancel` 加短 deadline。transport timeout 后必须尝试
