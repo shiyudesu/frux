@@ -45,6 +45,7 @@ type TongyiAdapter struct {
 	secret          []byte
 	client          tongyiEmbeddingClient
 	contract        domainembedding.MultimodalContractIdentity
+	maxImages       int
 	maxRequestBytes int64
 	now             func() time.Time
 	ready           atomic.Bool
@@ -65,6 +66,7 @@ func NewTongyiAdapter(config TongyiAdapterConfig, client tongyiEmbeddingClient) 
 	return &TongyiAdapter{
 		secret: []byte(strings.TrimSpace(config.FruxHMACSecret)),
 		client: client, contract: config.Profile.Contract,
+		maxImages:       config.Profile.MaxImages,
 		maxRequestBytes: config.MaxInboundRequestBytes,
 		now:             func() time.Time { return time.Now().UTC() },
 		replay: &tongyiReplayGuard{
@@ -176,7 +178,7 @@ func (a *TongyiAdapter) handleVideo(writer http.ResponseWriter, request *http.Re
 		a.writeError(writer, status, operationID, code, 0)
 		return
 	}
-	if !validTongyiVideoText(input.Text) || len(input.Images) == 0 || len(input.Images) > maxTongyiAdapterImages {
+	if !validTongyiVideoText(input.Text) || len(input.Images) == 0 || len(input.Images) > a.maxImages {
 		a.writeError(writer, http.StatusBadRequest, operationID, "invalid_request", 0)
 		return
 	}

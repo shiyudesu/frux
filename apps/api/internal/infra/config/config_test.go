@@ -8,6 +8,7 @@ import (
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
+	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 )
 
 func TestNormalizeAndValidateMediaConfigDefaultsToLocal(t *testing.T) {
@@ -419,6 +420,20 @@ func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	if cfg.Multimodal.Enabled || cfg.Multimodal.Provider.Deadline != defaultMultimodalProviderDeadline ||
 		cfg.Multimodal.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback {
 		t.Fatalf("multimodal config = %+v, want disabled-safe defaults", cfg.Multimodal)
+	}
+}
+
+func TestLoadConfigResolvesMultimodalProfileFromEnvironment(t *testing.T) {
+	t.Setenv("FRUX_INTERNAL_TOKEN", "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y")
+	t.Setenv("FRUX_MULTIMODAL_PROFILE", multimodalprofile.TongyiFlashStableProfile)
+	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Multimodal.Profile != multimodalprofile.TongyiFlashStableProfile ||
+		cfg.Multimodal.Contract.RevisionAlias != "stable-independent-mean-v1" ||
+		cfg.Multimodal.Contract.FusionPolicy != domainembedding.MultimodalNormalizedMeanFusionV1 {
+		t.Fatalf("multimodal config=%#v", cfg.Multimodal)
 	}
 }
 

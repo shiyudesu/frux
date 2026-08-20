@@ -275,6 +275,56 @@ func TestTongyiAdapterRejectsContractSourceAndImageBeforeUpstream(t *testing.T) 
 	}
 }
 
+func TestTongyiStableAdapterRejectsNinthImageBeforeClient(t *testing.T) {
+	profile, err := multimodalprofile.Resolve(multimodalprofile.TongyiFlashStableProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &tongyiEmbeddingClientStub{}
+	config := tongyiTestConfig("https://workspace.example.com/multimodal", nil)
+	config.Profile = profile
+	adapter, err := NewTongyiAdapter(config, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(adapter.Handler())
+	defer server.Close()
+	content := []byte("frame")
+	digest := sha256.Sum256(content)
+	images := make([]multimodalImageEnvelope, 9)
+	for index := range images {
+		images[index] = multimodalImageEnvelope{
+			MIMEType: "image/jpeg", Width: 32, Height: 32,
+			Digest: hex.EncodeToString(digest[:]), ContentBase64: base64.StdEncoding.EncodeToString(content),
+		}
+	}
+	operationID := randomTongyiOperationID(t)
+	request := multimodalVideoRequest{
+		ProtocolVersion: MultimodalProviderProtocolV1, OperationID: operationID,
+		Contract: multimodalContractToEnvelope(profile.Contract), SourceHash: strings.Repeat("1", 64),
+		Text: "public", Images: images,
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := sendTongyiSignedRequest(
+		t, server.URL+multimodalVideoPath, operationID, body, time.Now(), multimodalTestSecret,
+	)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+	upstream.mutex.Lock()
+	defer upstream.mutex.Unlock()
+	if upstream.videoCalls != 0 {
+		t.Fatalf("video calls=%d", upstream.videoCalls)
+	}
+}
+
 func TestTongyiAdapterMapsUpstreamFailuresToSignedClosedErrors(t *testing.T) {
 	for _, test := range []struct {
 		name       string

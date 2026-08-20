@@ -152,8 +152,14 @@ func TestTongyiClientTranslatesQueryAndFusedVideo(t *testing.T) {
 
 func TestTongyiClientTranslatesAndFusesIndependentVideo(t *testing.T) {
 	var payload tongyiRequest
+	var rawPayload []byte
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		var err error
+		rawPayload, err = io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+		}
+		if err := json.Unmarshal(rawPayload, &payload); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
 		textVector := make([]float64, TongyiDimension)
@@ -191,6 +197,9 @@ func TestTongyiClientTranslatesAndFusesIndependentVideo(t *testing.T) {
 		len(payload.Input.Contents[0].MultiImages) != 0 || payload.Input.Contents[1].Text != "" ||
 		len(payload.Input.Contents[1].MultiImages) != 1 {
 		t.Fatalf("independent payload=%#v", payload)
+	}
+	if bytes.Contains(rawPayload, []byte(`"dimension"`)) || bytes.Contains(rawPayload, []byte(`"res_level"`)) {
+		t.Fatalf("unsupported parameters were sent: %s", rawPayload)
 	}
 }
 
@@ -364,6 +373,28 @@ func TestValidateTongyiResponseRejectsNonFiniteVector(t *testing.T) {
 		TongyiDimension,
 	); err == nil {
 		t.Fatal("expected non-finite vector error")
+	}
+}
+
+func TestValidateTongyiResponseRejectsReorderedIndependentVectors(t *testing.T) {
+	response := tongyiResponse{}
+	response.Output.Embeddings = append(response.Output.Embeddings, struct {
+		Index     int       `json:"index"`
+		Embedding []float64 `json:"embedding"`
+		Type      string    `json:"type"`
+	}{Index: 0, Embedding: tongyiNonNormalizedVector(), Type: "multi_images"}, struct {
+		Index     int       `json:"index"`
+		Embedding []float64 `json:"embedding"`
+		Type      string    `json:"type"`
+	}{Index: 1, Embedding: tongyiNonNormalizedVector(), Type: "text"})
+	response.Usage.InputTokens = 1
+	response.Usage.TotalTokens = 1
+	if _, err := validateTongyiResponse(
+		response,
+		[]tongyiExpectedEmbedding{{Index: 0, Type: "text"}, {Index: 1, Type: "multi_images"}},
+		TongyiDimension,
+	); err == nil {
+		t.Fatal("expected reordered independent-vector error")
 	}
 }
 
