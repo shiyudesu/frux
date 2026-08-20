@@ -28,7 +28,8 @@ func TestNormalizeAndValidateMultimodalConfigDisabledDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Enabled || cfg.Provider.Deadline != defaultMultimodalProviderDeadline ||
-		cfg.Provider.AdmissionLimit != 2 || cfg.Images.MaxCount != 4 ||
+		cfg.Provider.AdmissionLimit != 2 || cfg.Jobs.MaxAttempts != 5 || cfg.Jobs.LeaseTTL != "45s" ||
+		cfg.Images.MaxCount != 4 ||
 		cfg.Query.MaxRunes != 128 || cfg.Query.CacheEntries != 1000 ||
 		cfg.Exact.MaxLimit != 100 || cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV1 ||
 		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback {
@@ -71,6 +72,9 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 		{name: "weak dimension", mutate: func(c *MultimodalConfig) { c.Contract.Dimension = domainembedding.MinMultimodalDimension - 1 }},
 		{name: "weak deadline", mutate: func(c *MultimodalConfig) { c.Provider.Deadline = "10ms" }},
 		{name: "unbounded admission", mutate: func(c *MultimodalConfig) { c.Provider.AdmissionLimit = 65 }},
+		{name: "short lease", mutate: func(c *MultimodalConfig) { c.Jobs.LeaseTTL = "1s" }},
+		{name: "slow heartbeat", mutate: func(c *MultimodalConfig) { c.Jobs.HeartbeatInterval = "30s" }},
+		{name: "invalid retry range", mutate: func(c *MultimodalConfig) { c.Jobs.RetryBase = "20m" }},
 		{name: "unbounded image count", mutate: func(c *MultimodalConfig) { c.Images.MaxCount = 17 }},
 		{name: "invalid image type", mutate: func(c *MultimodalConfig) { c.Images.AllowedMIMETypes = []string{"image/svg+xml"} }},
 		{name: "weak query cache", mutate: func(c *MultimodalConfig) { c.Query.CacheTTL = "100ms" }},

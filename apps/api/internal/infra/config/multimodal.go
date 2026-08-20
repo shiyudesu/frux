@@ -92,6 +92,30 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		cfg.Provider.AdmissionLimit < 1 || cfg.Provider.AdmissionLimit > 64 {
 		return ErrInvalidMultimodalConfig
 	}
+	if cfg.Jobs.MaxAttempts == 0 {
+		cfg.Jobs.MaxAttempts = 5
+	}
+	cfg.Jobs.LeaseTTL = defaultDuration(cfg.Jobs.LeaseTTL, "45s")
+	cfg.Jobs.HeartbeatInterval = defaultDuration(cfg.Jobs.HeartbeatInterval, "10s")
+	cfg.Jobs.PollInterval = defaultDuration(cfg.Jobs.PollInterval, "1s")
+	cfg.Jobs.RetryBase = defaultDuration(cfg.Jobs.RetryBase, "5s")
+	cfg.Jobs.RetryMax = defaultDuration(cfg.Jobs.RetryMax, "15m")
+	cfg.Jobs.TerminalRetention = defaultDuration(cfg.Jobs.TerminalRetention, "720h")
+	leaseTTL, leaseErr := time.ParseDuration(cfg.Jobs.LeaseTTL)
+	heartbeatInterval, heartbeatErr := time.ParseDuration(cfg.Jobs.HeartbeatInterval)
+	pollInterval, pollErr := time.ParseDuration(cfg.Jobs.PollInterval)
+	retryBase, retryBaseErr := time.ParseDuration(cfg.Jobs.RetryBase)
+	retryMax, retryMaxErr := time.ParseDuration(cfg.Jobs.RetryMax)
+	terminalRetention, retentionErr := time.ParseDuration(cfg.Jobs.TerminalRetention)
+	if leaseErr != nil || heartbeatErr != nil || pollErr != nil || retryBaseErr != nil ||
+		retryMaxErr != nil || retentionErr != nil || cfg.Jobs.MaxAttempts < 1 || cfg.Jobs.MaxAttempts > 10 ||
+		leaseTTL < providerDeadline+time.Second || leaseTTL > 10*time.Minute ||
+		heartbeatInterval < time.Second || heartbeatInterval*2 >= leaseTTL ||
+		pollInterval < 100*time.Millisecond || pollInterval > time.Minute ||
+		retryBase < time.Second || retryMax < retryBase || retryMax > 24*time.Hour ||
+		terminalRetention < time.Hour || terminalRetention > 90*24*time.Hour {
+		return ErrInvalidMultimodalConfig
+	}
 
 	if cfg.Images.MaxCount == 0 {
 		cfg.Images.MaxCount = 4

@@ -33,19 +33,19 @@
 
 ## 3. Persistence and Additive Migrations
 
-- [ ] 3.1 Add PostgreSQL models and additive migrations for multimodal jobs, authoritative
+- [x] 3.1 Add PostgreSQL models and additive migrations for multimodal jobs, authoritative
   model-isolated vector facts, job operation receipts where needed, and rebuildable exact-retrieval
   projection rows.
-- [ ] 3.2 Add constraints and indexes for exact contract identity, source hash, one active fact per
+- [x] 3.2 Add constraints and indexes for exact contract identity, source hash, one active fact per
   video/contract, lease scans, retry scans, terminal inspection, and projection eligibility without
   creating HNSW/IVFFlat indexes.
-- [ ] 3.3 Implement repositories for idempotent handoff, database-time claim, heartbeat, fenced
+- [x] 3.3 Implement repositories for idempotent handoff, database-time claim, heartbeat, fenced
   retry/success/terminal transitions, manual requeue, cleanup, authoritative fact persistence, and
   equality-checked projection reconciliation.
-- [ ] 3.4 Add real PostgreSQL tests for concurrent handoff, lease reclaim, stale-token fencing,
+- [x] 3.4 Add real PostgreSQL tests for concurrent handoff, lease reclaim, stale-token fencing,
   source-change conflicts, duplicate success, terminal requeue, active-contract isolation, and
   stale projection removal.
-- [ ] 3.5 Prove existing readable videos without multimodal rows remain valid and that migrations
+- [x] 3.5 Prove existing readable videos without multimodal rows remain valid and that migrations
   create no automatic historical jobs or full-catalog scan.
 
 ## 4. Newly Published Video Job Handoff

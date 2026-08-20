@@ -25,6 +25,7 @@ type MultimodalConfig struct {
 	SimilarVideosEnabled  bool                     `yaml:"similar_videos_enabled"`
 	Contract              MultimodalContractConfig `yaml:"contract"`
 	Provider              MultimodalProviderConfig `yaml:"provider"`
+	Jobs                  MultimodalJobConfig      `yaml:"jobs"`
 	Images                MultimodalImageConfig    `yaml:"images"`
 	Query                 MultimodalQueryConfig    `yaml:"query"`
 	Exact                 MultimodalExactConfig    `yaml:"exact"`
@@ -45,6 +46,16 @@ type MultimodalContractConfig struct {
 type MultimodalProviderConfig struct {
 	Deadline       string `yaml:"deadline"`
 	AdmissionLimit int    `yaml:"admission_limit"`
+}
+
+type MultimodalJobConfig struct {
+	MaxAttempts       int    `yaml:"max_attempts"`
+	LeaseTTL          string `yaml:"lease_ttl"`
+	HeartbeatInterval string `yaml:"heartbeat_interval"`
+	PollInterval      string `yaml:"poll_interval"`
+	RetryBase         string `yaml:"retry_base"`
+	RetryMax          string `yaml:"retry_max"`
+	TerminalRetention string `yaml:"terminal_retention"`
 }
 
 type MultimodalImageConfig struct {
