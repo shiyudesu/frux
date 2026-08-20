@@ -89,10 +89,10 @@
 
 ## 7. Hybrid Public Video Search
 
-- [ ] 7.1 Add bounded semantic query-vector caching keyed by normalized query plus active contract,
+- [x] 7.1 Add bounded semantic query-vector caching keyed by normalized query plus active contract,
   with TTL, validation, no raw-query persistence beyond existing search handling, and safe invalidation
   on contract change.
-- [ ] 7.2 Implement one no-retry synchronous query embedding attempt behind deadline and
+- [x] 7.2 Implement one no-retry synchronous query embedding attempt behind deadline and
   non-blocking admission, with lexical-only first-page fallback for disabled, saturated, failed,
   timed-out, or invalid semantic results.
 - [ ] 7.3 Implement a versioned deterministic lexical/semantic candidate merge with explicit
