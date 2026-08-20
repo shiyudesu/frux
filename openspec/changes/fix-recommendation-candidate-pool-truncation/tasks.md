@@ -11,16 +11,16 @@
 
 ## 2. Complete Policy Recall Pool
 
-- [ ] 2.1 Separate policy-driven pre-rank pool sizing from the response-derived
+- [x] 2.1 Separate policy-driven pre-rank pool sizing from the response-derived
   `candidatePoolLimit` used by legacy repository/no-policy fallback paths.
-- [ ] 2.2 Remove global `published_at`/video-ID sorting and response-size truncation from the
+- [x] 2.2 Remove global `published_at`/video-ID sorting and response-size truncation from the
   policy-driven merged recall set.
-- [ ] 2.3 Preserve duplicate merge, canonical Recall Reasons/Source Scores, Provider-local budgets,
+- [x] 2.3 Preserve duplicate merge, canonical Recall Reasons/Source Scores, Provider-local budgets,
   Provider degradation, healthy-provider counting, and visibility revalidation for the complete
   bounded set.
-- [ ] 2.4 Ensure the policy Ranker receives the entire visibility-filtered unique set independent of
+- [x] 2.4 Ensure the policy Ranker receives the entire visibility-filtered unique set independent of
   Provider completion order and Go map iteration order.
-- [ ] 2.5 Preserve the direct no-policy caller's deterministic total limit and recent-exposure
+- [x] 2.5 Preserve the direct no-policy caller's deterministic total limit and recent-exposure
   compatibility behavior.
 
 ## 3. Ranking and Resource Regressions

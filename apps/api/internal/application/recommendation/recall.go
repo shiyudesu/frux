@@ -396,6 +396,14 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 	if len(s.providers) == 0 {
 		return nil, nil
 	}
+	policyDriven := len(policies) > 0 && policies[0] != nil
+	poolLimit := totalLimit
+	if policyDriven {
+		poolLimit = policyRecallPoolLimit(policies[0])
+		if poolLimit <= 0 || poolLimit > domainrecommendation.MaxPolicyPreRankCandidates {
+			return nil, ErrLoadRecommendationFailed
+		}
+	}
 	type result struct {
 		provider   string
 		candidates []*domainrecommendation.Candidate
@@ -472,12 +480,14 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 	for _, candidate := range merged {
 		pool = append(pool, candidate)
 	}
-	sort.Slice(pool, func(i, j int) bool {
-		if !pool[i].PublishedAt.Equal(pool[j].PublishedAt) {
-			return pool[i].PublishedAt.After(pool[j].PublishedAt)
-		}
-		return pool[i].VideoID > pool[j].VideoID
-	})
+	if !policyDriven {
+		sort.Slice(pool, func(i, j int) bool {
+			if !pool[i].PublishedAt.Equal(pool[j].PublishedAt) {
+				return pool[i].PublishedAt.After(pool[j].PublishedAt)
+			}
+			return pool[i].VideoID > pool[j].VideoID
+		})
+	}
 	if s.visibility != nil && len(pool) > 0 {
 		visible, err := s.visibility.ListVisibleCandidates(ctx, candidateIDs(pool))
 		if err != nil {
@@ -523,11 +533,28 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 		}
 		pool = filtered
 	}
-	if len(pool) > totalLimit {
-		pool = pool[:totalLimit]
+	if len(pool) > poolLimit {
+		if policyDriven {
+			return nil, ErrLoadRecommendationFailed
+		}
+		pool = pool[:poolLimit]
 	}
 	execution.candidates = pool
 	return execution, nil
+}
+
+func policyRecallPoolLimit(policy *domainrecommendation.Policy) int {
+	if policy == nil {
+		return 0
+	}
+	total := 0
+	for _, budget := range policy.Config.RecallBudgets {
+		if budget <= 0 || total > domainrecommendation.MaxPolicyPreRankCandidates-budget {
+			return 0
+		}
+		total += budget
+	}
+	return total
 }
 
 var errRecallProviderCapacity = errors.New("recall provider capacity exhausted")
