@@ -221,6 +221,8 @@ func videoPayload(event *applicationvideo.PublishedEvent) infrakafka.VideoPublis
 		EventID: event.EventID, VideoID: event.VideoID, AuthorID: event.AuthorID,
 		Title: event.Title, Description: event.Description,
 		MediaURL: event.MediaURL, CoverURL: event.CoverURL,
+		MediaAssetID: event.MediaAssetID, CoverAssetID: event.CoverAssetID,
+		MediaProfileVersion: event.MediaProfileVersion, VideoVersion: event.VideoVersion,
 		PublishedAt: event.PublishedAt, OccurredAt: event.OccurredAt,
 	}
 }
@@ -230,6 +232,8 @@ func publishedEvent(payload *infrakafka.VideoPublishedPayload) *applicationvideo
 		EventID: payload.EventID, VideoID: payload.VideoID, AuthorID: payload.AuthorID,
 		Title: payload.Title, Description: payload.Description,
 		MediaURL: payload.MediaURL, CoverURL: payload.CoverURL,
+		MediaAssetID: payload.MediaAssetID, CoverAssetID: payload.CoverAssetID,
+		MediaProfileVersion: payload.MediaProfileVersion, VideoVersion: payload.VideoVersion,
 		PublishedAt: payload.PublishedAt, OccurredAt: payload.OccurredAt,
 	}
 }

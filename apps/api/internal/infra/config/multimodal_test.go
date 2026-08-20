@@ -29,6 +29,7 @@ func TestNormalizeAndValidateMultimodalConfigDisabledDefaults(t *testing.T) {
 	}
 	if cfg.Enabled || cfg.Provider.Deadline != defaultMultimodalProviderDeadline ||
 		cfg.Provider.AdmissionLimit != 2 || cfg.Jobs.MaxAttempts != 5 || cfg.Jobs.LeaseTTL != "45s" ||
+		cfg.Jobs.ShutdownTimeout != "15s" ||
 		cfg.MaxVideoTextRunes != 2048 || cfg.Images.MaxCount != 4 ||
 		cfg.Query.MaxRunes != 128 || cfg.Query.CacheEntries != 1000 ||
 		cfg.Exact.MaxLimit != 100 || cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV1 ||
@@ -76,6 +77,7 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 		{name: "short lease", mutate: func(c *MultimodalConfig) { c.Jobs.LeaseTTL = "1s" }},
 		{name: "slow heartbeat", mutate: func(c *MultimodalConfig) { c.Jobs.HeartbeatInterval = "30s" }},
 		{name: "invalid retry range", mutate: func(c *MultimodalConfig) { c.Jobs.RetryBase = "20m" }},
+		{name: "invalid shutdown", mutate: func(c *MultimodalConfig) { c.Jobs.ShutdownTimeout = "100ms" }},
 		{name: "unbounded image count", mutate: func(c *MultimodalConfig) { c.Images.MaxCount = 17 }},
 		{name: "invalid image type", mutate: func(c *MultimodalConfig) { c.Images.AllowedMIMETypes = []string{"image/svg+xml"} }},
 		{name: "weak query cache", mutate: func(c *MultimodalConfig) { c.Query.CacheTTL = "100ms" }},

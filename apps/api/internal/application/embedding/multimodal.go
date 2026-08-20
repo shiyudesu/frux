@@ -77,6 +77,26 @@ func NewMultimodalVideoEmbeddingRequest(
 	}, nil
 }
 
+func NewMultimodalVideoEmbeddingRequestForSource(
+	contract domainembedding.MultimodalContractIdentity,
+	sourceHash string,
+	content MultimodalPublicVideoContent,
+	maxTextRunes int,
+	images []PreparedMultimodalImage,
+) (MultimodalVideoEmbeddingRequest, error) {
+	request, err := NewMultimodalVideoEmbeddingRequest(contract, content, maxTextRunes, images)
+	if err != nil {
+		return MultimodalVideoEmbeddingRequest{}, err
+	}
+	sourceHash = strings.ToLower(strings.TrimSpace(sourceHash))
+	decoded, decodeErr := hex.DecodeString(sourceHash)
+	if decodeErr != nil || len(decoded) != sha256.Size {
+		return MultimodalVideoEmbeddingRequest{}, ErrInvalidMultimodalMediaPreparation
+	}
+	request.SourceHash = sourceHash
+	return request, nil
+}
+
 func (r MultimodalVideoEmbeddingRequest) Clone() MultimodalVideoEmbeddingRequest {
 	cloned := r
 	cloned.Images = make([]PreparedMultimodalImage, len(r.Images))
@@ -108,6 +128,28 @@ func NewMultimodalQueryEmbeddingRequest(
 		),
 		Query: query,
 	}, nil
+}
+
+func MultimodalVideoSourceHash(
+	contract domainembedding.MultimodalContractIdentity,
+	canonicalText string,
+	mediaURL string,
+	coverURL string,
+	mediaAssetID int64,
+	coverAssetID int64,
+	mediaProfileVersion string,
+	videoVersion int,
+) string {
+	return domainembedding.MultimodalSourceHash(
+		[]byte(contract.Canonical()),
+		[]byte(canonicalText),
+		[]byte(strings.TrimSpace(mediaURL)),
+		[]byte(strings.TrimSpace(coverURL)),
+		[]byte(strconv.FormatInt(mediaAssetID, 10)),
+		[]byte(strconv.FormatInt(coverAssetID, 10)),
+		[]byte(strings.TrimSpace(mediaProfileVersion)),
+		[]byte(strconv.Itoa(videoVersion)),
+	)
 }
 
 type PreparedMultimodalImage struct {

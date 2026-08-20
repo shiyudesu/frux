@@ -62,16 +62,16 @@
 
 ## 5. Multimodal Job Execution
 
-- [ ] 5.1 Implement a bounded Worker loop with non-blocking provider admission, database-time claim,
+- [x] 5.1 Implement a bounded Worker loop with non-blocking provider admission, database-time claim,
   heartbeat, cancellation, reclaim, retry classification/backoff, terminal classification, and
   graceful shutdown.
-- [ ] 5.2 Re-read and revalidate video publication, visibility, media readiness, selected content,
+- [x] 5.2 Re-read and revalidate video publication, visibility, media readiness, selected content,
   source hash, and contract immediately before media preparation and provider access.
-- [ ] 5.3 Execute one bounded video-content provider call per attempt, validate the complete result,
+- [x] 5.3 Execute one bounded video-content provider call per attempt, validate the complete result,
   and conditionally persist only while the lease and source/contract remain current.
-- [ ] 5.4 Discard stale results when content or lifecycle changes during inference and schedule the
+- [x] 5.4 Discard stale results when content or lifecycle changes during inference and schedule the
   appropriate no-op, retry, or refreshed exact-contract job without overwriting newer facts.
-- [ ] 5.5 Add focused unit/concurrency tests for provider timeout, admission exhaustion, invalid
+- [x] 5.5 Add focused unit/concurrency tests for provider timeout, admission exhaustion, invalid
   vectors, cancellation-ignoring calls, heartbeat loss, stale source, retry-after, duplicate
   completion, terminal failure, manual requeue, and shutdown.
 

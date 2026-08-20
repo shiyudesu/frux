@@ -56,6 +56,7 @@ type MultimodalJobConfig struct {
 	PollInterval      string `yaml:"poll_interval"`
 	RetryBase         string `yaml:"retry_base"`
 	RetryMax          string `yaml:"retry_max"`
+	ShutdownTimeout   string `yaml:"shutdown_timeout"`
 	TerminalRetention string `yaml:"terminal_retention"`
 }
 

@@ -183,6 +183,7 @@ func TestPublicationIntakeHandsOffMultimodalOnlyAfterHashPersistence(t *testing.
 	event := &applicationvideo.PublishedEvent{
 		VideoID: 12, Title: " title ", Description: " description ",
 		MediaURL: "https://media.example/video.mp4", CoverURL: "https://media.example/cover.jpg",
+		MediaAssetID: 21, CoverAssetID: 22, MediaProfileVersion: "v2", VideoVersion: 3,
 		PublishedAt: now, OccurredAt: now,
 	}
 	first, err := service.GenerateForPublishedVideo(context.Background(), event)
@@ -217,7 +218,7 @@ func TestPublicationIntakeMultimodalNoopAndRetryBoundaries(t *testing.T) {
 	handoff = &multimodalHandoffStub{hashRepository: repository, err: errors.New("database unavailable")}
 	service = New(repository, nil, WithMultimodalJobHandoff(handoff, config), WithEmbeddingNow(func() time.Time { return now }))
 	_, err = service.GenerateForPublishedVideo(context.Background(), &applicationvideo.PublishedEvent{
-		VideoID: 14, Title: "title", MediaURL: "https://media.example/video.mp4", PublishedAt: now,
+		VideoID: 14, Title: "title", MediaURL: "https://media.example/video.mp4", MediaAssetID: 21, PublishedAt: now,
 	})
 	if !errors.Is(err, ErrHandoffMultimodalEmbeddingFailed) || repository.embedding == nil {
 		t.Fatalf("handoff failure=%v hash=%#v", err, repository.embedding)
@@ -232,7 +233,7 @@ func TestPublicationIntakeRejectsOversizedMultimodalTextAfterHashSafety(t *testi
 	config.MaxVideoTextRunes = 4
 	service := New(repository, nil, WithMultimodalJobHandoff(handoff, config), WithEmbeddingNow(func() time.Time { return now }))
 	_, err := service.GenerateForPublishedVideo(context.Background(), &applicationvideo.PublishedEvent{
-		VideoID: 15, Title: "too long", MediaURL: "https://media.example/video.mp4", PublishedAt: now,
+		VideoID: 15, Title: "too long", MediaURL: "https://media.example/video.mp4", MediaAssetID: 21, PublishedAt: now,
 	})
 	if !errors.Is(err, ErrInvalidMultimodalHandoff) || repository.embedding == nil || len(handoff.jobs) != 0 {
 		t.Fatalf("oversized handoff=%v hash=%#v jobs=%d", err, repository.embedding, len(handoff.jobs))

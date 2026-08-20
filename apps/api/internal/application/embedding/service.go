@@ -174,7 +174,8 @@ func (s *Service) handoffMultimodalJob(ctx context.Context, event *applicationvi
 	if s.multimodalJobs == nil {
 		return "", ErrHandoffMultimodalEmbeddingFailed
 	}
-	if event == nil || event.VideoID <= 0 || event.PublishedAt.IsZero() || strings.TrimSpace(event.MediaURL) == "" {
+	if event == nil || event.VideoID <= 0 || event.PublishedAt.IsZero() ||
+		event.MediaAssetID <= 0 || strings.TrimSpace(event.MediaURL) == "" {
 		return MultimodalHandoffNoop, nil
 	}
 	text, err := domainembedding.CanonicalizePublicVideoText(
@@ -183,11 +184,9 @@ func (s *Service) handoffMultimodalJob(ctx context.Context, event *applicationvi
 	if err != nil {
 		return "", ErrInvalidMultimodalHandoff
 	}
-	sourceHash := domainembedding.MultimodalSourceHash(
-		[]byte(s.multimodalConfig.Contract.Canonical()),
-		[]byte(text),
-		[]byte(strings.TrimSpace(event.MediaURL)),
-		[]byte(strings.TrimSpace(event.CoverURL)),
+	sourceHash := MultimodalVideoSourceHash(
+		s.multimodalConfig.Contract, text, event.MediaURL, event.CoverURL,
+		event.MediaAssetID, event.CoverAssetID, event.MediaProfileVersion, event.VideoVersion,
 	)
 	job, err := domainembedding.NewMultimodalEmbeddingJob(
 		event.VideoID, s.multimodalConfig.Contract, sourceHash,
