@@ -19,6 +19,8 @@ stringData:
   jwt-admin-secret: "replace-with-strong-admin-jwt-secret"
   application-hmac-secret: "replace-with-strong-application-hmac-secret"
   internal-token: "replace-with-strong-internal-token"
+  multimodal-provider-endpoint: ""
+  multimodal-provider-hmac-secret: ""
   api-config.yaml: |
     port: 8080
     jwt:
@@ -96,6 +98,22 @@ stringData:
         cleanup_delay: "24h"
     moderation:
       mode: "disabled"
+    multimodal:
+      enabled: false
+      video_jobs_enabled: false
+      query_embedding_enabled: false
+      hybrid_search_enabled: false
+      similar_videos_enabled: false
+      provider:
+        endpoint: "${FRUX_MULTIMODAL_ENDPOINT}"
+        hmac_secret: "${FRUX_MULTIMODAL_HMAC_SECRET}"
+        protocol_version: "frux-multimodal-v1"
+        allow_insecure_local: false
+        startup_timeout: "3s"
+        deadline: "15s"
+        admission_limit: 2
+        max_request_bytes: 25165824
+        max_response_bytes: 2097152
     playback:
       telemetry:
         retention: "168h"
@@ -443,6 +461,16 @@ spec:
                 secretKeyRef:
                   name: frux-secret
                   key: internal-token
+            - name: FRUX_MULTIMODAL_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: multimodal-provider-endpoint
+            - name: FRUX_MULTIMODAL_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: multimodal-provider-hmac-secret
           ports:
             - name: http
               containerPort: 8080
@@ -540,6 +568,16 @@ spec:
                 secretKeyRef:
                   name: frux-secret
                   key: internal-token
+            - name: FRUX_MULTIMODAL_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: multimodal-provider-endpoint
+            - name: FRUX_MULTIMODAL_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: frux-secret
+                  key: multimodal-provider-hmac-secret
           ports:
             - name: metrics
               containerPort: 9091

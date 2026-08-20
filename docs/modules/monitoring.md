@@ -178,6 +178,8 @@ play/complete 和反馈率；任何错误或降级恶化、snapshot hit 明显�
 多模态发现额外暴露 `frux_multimodal_embedding_jobs{state}`、oldest age、
 `frux_multimodal_provider_calls_total{operation,result}`、provider duration/admission、coverage、
 projection reconciliation、Exact latency/result、query cache、Hybrid mode/contribution 和 Similar outcome。
+HTTP Adapter 另暴露 `frux_multimodal_provider_transport_total{operation,result}` 与 transport duration；
+operation 仅为 readiness/video/query，result 复用 success/retryable/terminal/invalid/cancelled 封闭集合。
 标签只允许封闭 state/operation/result/mode/contribution；provider/model/revision 使用配置 alias 进入
 受限管理响应，不作为这些指标标签。禁止 user/video/request/session ID、query、图片、向量、URL、
 credential、claim token、source hash、map payload 或 raw error。

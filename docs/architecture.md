@@ -148,7 +148,9 @@ active Group。视频首次公开事实通过
 embedding Group 先保证 `hash-ngram-v1`，再在启用时将完整多模态合同/source hash handoff 到
 PostgreSQL leased Job，随后即可提交 Offset；媒体准备和 Provider 推理由独立 Worker 完成。权威
 `multimodal_vector_fact` 与可重建 `multimodal_projection` 分离，数据库执行 Exact Cosine，未创建
-HNSW/IVFFlat。媒体仍由 PostgreSQL job 决定正确性，Kafka command 只负责唤醒。
+HNSW/IVFFlat。API/Worker 通过双向 HMAC 的 `frux-multimodal-v1` HTTP Adapter 连接外部推理运行时，
+启用前校验 capability 与完整合同；具体模型和部署语言不进入 Domain/Application。媒体仍由 PostgreSQL
+job 决定正确性，Kafka command 只负责唤醒。
 
 Kafka 故障恢复也是独立 sibling surface：实时事件 Consumer 可在有界本地重试后进入固定 delay
 Topic 和 Group 专属不可变 DLQ；API 只允许按注册 Topic/Partition/Offset 脱敏读取。Replay 在

@@ -4,8 +4,9 @@
 
 视频向量模块同时保留稳定的 `hash-ngram-v1` 基线，以及默认关闭的多模态合同、Durable Job、权威
 向量事实、Exact Projection、查询向量和媒体帧准备能力。Application 合同不规定 Python、Go、ONNX、
-本地/远程服务、模型家族、硬件或供应商；当前仓库没有选择或内置正式 Provider，因此所有配置默认
-`multimodal.enabled=false`，不会调用模型或改变现有产品行为。
+本地/远程服务、模型家族、硬件或供应商；Infrastructure 已提供签名 HTTP Provider Adapter 和进程接线，
+但当前仓库没有选择或内置正式模型服务，因此所有配置默认 `multimodal.enabled=false`，不会调用模型或
+改变现有产品行为。
 
 多模态路径不训练/微调模型，不扫描历史视频，不创建 HNSW/IVFFlat，也不接入推荐 Policy 或新的
 Recall Provider。开发 Fixture 和功能启用后首次公开的新视频是第一阶段唯一向量来源。
@@ -76,11 +77,17 @@ Provider admission 是非阻塞的；超时、取消、忽略 cancellation 的�
 不会形成无界本地队列。推理前后都复检 source hash；期间发生标题、媒体、可见性或版本变化时丢弃结果，
 刷新 exact-contract Job，不覆盖新事实。
 
+`video_jobs_enabled=true` 时，Worker 在领取任务前先完成 Provider readiness/contract handshake，再组装
+FFmpeg Preparer 与 `MultimodalJobWorker`。握手失败会让 Worker 启动失败，不会提前领取 Job；启动后的
+429/5xx、超时和网络故障仍进入既有 bounded retry，取消和 lease loss 仍由 fencing 隔离。
+
 ## 7. Configuration and rollback
 
-配置必须一次提供完整合同及有界 provider/jobs/images/query/exact/hybrid 参数。任何进程启用自身能力时，
-必须注入与配置完全相同的 Provider 合同；API 的 Hybrid Search 还需要 query cache 和 Exact Repository。
-关闭模式不需要 Provider。
+配置必须一次提供完整合同及有界 provider/jobs/images/query/exact/hybrid 参数。Provider 配置包含
+`endpoint`、`hmac_secret`、`protocol_version`、`allow_insecure_local`、`startup_timeout`、调用 deadline、
+admission 和请求/响应字节上限。任何进程启用自身推理能力时，必须通过 readiness 得到与配置完全相同的
+Provider 合同；API 的 Hybrid Search 还需要 query cache 和 Exact Repository。Similar-only 与全部关闭
+模式不需要在线 Provider。
 
 回滚顺序是关闭 `hybrid_search_enabled`、`similar_videos_enabled`、`query_embedding_enabled` 和
 `video_jobs_enabled`，最后关闭 `multimodal.enabled`。Hash、Lexical Search、发布、Feed 和推荐不受影响；
@@ -96,3 +103,31 @@ Provider admission 是非阻塞的；超时、取消、忽略 cancellation 的�
 比较 lexical、text、image、multimodal 和 hybrid 的 Recall@K、NDCG@K、MRR、词法重叠与 P50/P95。
 Fixture 结果只验证命令和报告格式；选择具体预训练模型前必须用真实开发样本替换评分，不得把报告解释为
 CTR、完播率或因果提升。
+
+## 9. Provider HTTP protocol
+
+协议版本固定为 `frux-multimodal-v1`，Provider base URL 下提供三个 POST 操作：
+
+- `/v1/ready`：返回 readiness、`video/query` capability 和完整 immutable contract；
+- `/v1/embed/video`：接收 canonical public text 与有界 base64 图片；
+- `/v1/embed/query`：接收 canonical public query。
+
+请求头使用 `X-Frux-Multimodal-Protocol`、`X-Frux-Operation-ID`、`X-Frux-Timestamp` 和
+`X-Frux-Signature`。请求签名覆盖 protocol、method、path、timestamp、operation ID 与 body SHA-256；
+响应通过 `X-Frux-Response-Signature` 覆盖 protocol、status、operation ID 与原始 body SHA-256。
+非 loopback 地址必须使用 HTTPS，客户端拒绝 redirect，并对 JSON unknown field、trailing value、body
+大小、source hash、vector digest、维度、finite 分量和 L2 norm 做严格校验。
+
+HTTP 408/429/5xx 与 transport failure 映射为 retryable，其他非 2xx 映射为 terminal；错误响应也必须签名
+且只使用 `invalid_request`、`unsupported_contract`、`capacity`、`unavailable`、`internal` 封闭 code。
+客户端自身不重试，重试和降级仍由 Worker Job 与 Query Embedder 决定。
+
+不需要真实模型即可运行 transport conformance：
+
+```bash
+cd apps/api
+go test ./internal/infra/persistence/embedding -run '^TestHTTPMultimodalProvider'
+```
+
+该测试服务只存在于 `_test.go`，其单位向量只验证协议，不能作为运行时 Provider 或相关性证据。下一阶段
+选择具体预训练模型后，模型服务必须先通过同一协议与 Golden Set，再考虑打开开发环境 feature flags。

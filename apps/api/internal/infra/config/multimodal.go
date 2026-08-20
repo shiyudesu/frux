@@ -98,11 +98,7 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 	}
 
 	providerFieldsConfigured := strings.TrimSpace(cfg.Provider.Endpoint) != "" ||
-		strings.TrimSpace(cfg.Provider.HMACSecret) != "" ||
-		strings.TrimSpace(cfg.Provider.ProtocolVersion) != "" ||
-		strings.TrimSpace(cfg.Provider.StartupTimeout) != "" ||
-		cfg.Provider.AllowInsecureLocal || cfg.Provider.MaxRequestBytes != 0 ||
-		cfg.Provider.MaxResponseBytes != 0
+		strings.TrimSpace(cfg.Provider.HMACSecret) != ""
 	providerRequired := cfg.VideoJobsEnabled || cfg.QueryEmbeddingEnabled || cfg.HybridSearchEnabled
 	cfg.Provider.Endpoint = strings.TrimRight(strings.TrimSpace(cfg.Provider.Endpoint), "/")
 	cfg.Provider.HMACSecret = strings.TrimSpace(cfg.Provider.HMACSecret)

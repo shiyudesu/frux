@@ -56,9 +56,9 @@
 
 ## 6. Configuration Surfaces and Documentation
 
-- [ ] 6.1 Add inactive local, Docker, and production configuration fields and environment bindings
+- [x] 6.1 Add inactive local, Docker, and production configuration fields and environment bindings
   without committing an endpoint, secret, model identity, or enabled multimodal flag.
-- [ ] 6.2 Document the provider protocol, startup handshake, security boundary, failure mapping,
+- [x] 6.2 Document the provider protocol, startup handshake, security boundary, failure mapping,
   process wiring, conformance workflow, activation order, and rollback.
 - [ ] 6.3 Update the recommendation roadmap to mark the transport/runtime prerequisite complete only
   after implementation, while keeping concrete model selection and semantic quality evaluation next.

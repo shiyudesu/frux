@@ -109,6 +109,20 @@ moderation:
 
 multimodal:
   enabled: false
+  video_jobs_enabled: false
+  query_embedding_enabled: false
+  hybrid_search_enabled: false
+  similar_videos_enabled: false
+  provider:
+    endpoint: "${FRUX_MULTIMODAL_ENDPOINT}"
+    hmac_secret: "${FRUX_MULTIMODAL_HMAC_SECRET}"
+    protocol_version: "frux-multimodal-v1"
+    allow_insecure_local: false
+    startup_timeout: "3s"
+    deadline: "15s"
+    admission_limit: 2
+    max_request_bytes: 25165824
+    max_response_bytes: 2097152
 
 playback:
   telemetry:

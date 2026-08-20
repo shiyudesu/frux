@@ -6,6 +6,8 @@
 
 Application 层依赖 `VideoSearchIndex` 和 `UserSearchIndex` 窄接口，PostgreSQL 查询由基础设施实现。
 视频搜索还提供默认关闭的 Multimodal Query + Exact Retrieval 组合；用户搜索始终保持 lexical-only。
+当 Query/Hybrid 开启时，API 在注册路由前对签名 HTTP Provider 执行 query capability 与完整合同握手，
+然后组装 bounded query cache、query embedder、Exact index 和 Hybrid option；Similar-only 不依赖在线模型。
 
 ## 2. 接口设计
 
@@ -53,6 +55,8 @@ hybrid score、`published_at DESC, id DESC` 稳定分页。
 
 Hybrid cursor 绑定 normalized query、mode、merge version、contract key、完整排序元组和 expiry；Hybrid
 后续页无法重现兼容 query vector 时返回可重试 503，不能静默切换成 lexical 顺序。Lexical cursor 独立。
+Provider 在启动后超时、饱和或短暂不可用时，Hybrid 首页面仍降级到 Lexical；带 Hybrid cursor 的请求则
+继续返回可重试错误，以免在同一游标链中改变排序语义。
 
 相似视频使用 source 的 active-contract 权威向量，Exact 查询排除 source，复检候选可见性和发布时间，
 cursor 绑定 source、contract、exact ranking version 与排序元组。source 可读但无向量时返回
