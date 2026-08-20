@@ -45,8 +45,15 @@ type MultimodalContractConfig struct {
 }
 
 type MultimodalProviderConfig struct {
-	Deadline       string `yaml:"deadline"`
-	AdmissionLimit int    `yaml:"admission_limit"`
+	Endpoint           string `yaml:"endpoint"`
+	HMACSecret         string `yaml:"hmac_secret"`
+	ProtocolVersion    string `yaml:"protocol_version"`
+	AllowInsecureLocal bool   `yaml:"allow_insecure_local"`
+	StartupTimeout     string `yaml:"startup_timeout"`
+	Deadline           string `yaml:"deadline"`
+	AdmissionLimit     int    `yaml:"admission_limit"`
+	MaxRequestBytes    int64  `yaml:"max_request_bytes"`
+	MaxResponseBytes   int64  `yaml:"max_response_bytes"`
 }
 
 type MultimodalJobConfig struct {

@@ -1,11 +1,11 @@
 ## 1. Runtime Configuration and Protocol Types
 
-- [ ] 1.1 Extend multimodal provider configuration with endpoint, HMAC secret, protocol version,
+- [x] 1.1 Extend multimodal provider configuration with endpoint, HMAC secret, protocol version,
   loopback HTTP opt-in, startup timeout, and encoded request/response byte limits while preserving
   disabled defaults and environment interpolation.
 - [ ] 1.2 Define infrastructure-owned readiness, video, query, contract, image, result, and closed
   error envelopes without changing domain/application provider interfaces.
-- [ ] 1.3 Add configuration tests for disabled mode, HTTPS/loopback rules, secret and size bounds,
+- [x] 1.3 Add configuration tests for disabled mode, HTTPS/loopback rules, secret and size bounds,
   partial configuration, and process-scoped provider requirements.
 
 ## 2. Authenticated HTTP Provider Adapter

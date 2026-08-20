@@ -1,7 +1,9 @@
 package infraconfig
 
 import (
+	"encoding/base64"
 	"errors"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -13,9 +15,15 @@ var ErrInvalidMultimodalConfig = errors.New("invalid multimodal config")
 var ErrMissingMultimodalDependency = errors.New("missing multimodal runtime dependency")
 
 const (
+	MultimodalProviderProtocolV1      = "frux-multimodal-v1"
 	defaultMultimodalProviderDeadline = "15s"
+	defaultMultimodalStartupTimeout   = "3s"
 	defaultMultimodalExactDeadline    = "500ms"
 	defaultMultimodalQueryCacheTTL    = "10m"
+	defaultMultimodalMaxRequestBytes  = 24 << 20
+	defaultMultimodalMaxResponseBytes = 2 << 20
+	maxMultimodalRequestBytes         = 96 << 20
+	maxMultimodalResponseBytes        = 8 << 20
 	maxMultimodalImageBytes           = 20 * 1024 * 1024
 	maxMultimodalTotalImageBytes      = 64 * 1024 * 1024
 )
@@ -89,14 +97,55 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		}
 	}
 
+	providerFieldsConfigured := strings.TrimSpace(cfg.Provider.Endpoint) != "" ||
+		strings.TrimSpace(cfg.Provider.HMACSecret) != "" ||
+		strings.TrimSpace(cfg.Provider.ProtocolVersion) != "" ||
+		strings.TrimSpace(cfg.Provider.StartupTimeout) != "" ||
+		cfg.Provider.AllowInsecureLocal || cfg.Provider.MaxRequestBytes != 0 ||
+		cfg.Provider.MaxResponseBytes != 0
+	providerRequired := cfg.VideoJobsEnabled || cfg.QueryEmbeddingEnabled || cfg.HybridSearchEnabled
+	cfg.Provider.Endpoint = strings.TrimRight(strings.TrimSpace(cfg.Provider.Endpoint), "/")
+	cfg.Provider.HMACSecret = strings.TrimSpace(cfg.Provider.HMACSecret)
+	cfg.Provider.ProtocolVersion = strings.ToLower(strings.TrimSpace(cfg.Provider.ProtocolVersion))
+	if cfg.Provider.ProtocolVersion == "" {
+		cfg.Provider.ProtocolVersion = MultimodalProviderProtocolV1
+	}
+	cfg.Provider.StartupTimeout = defaultDuration(cfg.Provider.StartupTimeout, defaultMultimodalStartupTimeout)
 	cfg.Provider.Deadline = defaultDuration(cfg.Provider.Deadline, defaultMultimodalProviderDeadline)
 	if cfg.Provider.AdmissionLimit == 0 {
 		cfg.Provider.AdmissionLimit = 2
 	}
+	if cfg.Provider.MaxRequestBytes == 0 {
+		cfg.Provider.MaxRequestBytes = defaultMultimodalMaxRequestBytes
+	}
+	if cfg.Provider.MaxResponseBytes == 0 {
+		cfg.Provider.MaxResponseBytes = defaultMultimodalMaxResponseBytes
+	}
+	startupTimeout, err := time.ParseDuration(cfg.Provider.StartupTimeout)
+	if err != nil || startupTimeout < 100*time.Millisecond || startupTimeout > 30*time.Second {
+		return ErrInvalidMultimodalConfig
+	}
 	providerDeadline, err := time.ParseDuration(cfg.Provider.Deadline)
 	if err != nil || providerDeadline < 100*time.Millisecond || providerDeadline > 2*time.Minute ||
-		cfg.Provider.AdmissionLimit < 1 || cfg.Provider.AdmissionLimit > 64 {
+		cfg.Provider.AdmissionLimit < 1 || cfg.Provider.AdmissionLimit > 64 ||
+		cfg.Provider.ProtocolVersion != MultimodalProviderProtocolV1 ||
+		cfg.Provider.MaxRequestBytes < 1<<20 || cfg.Provider.MaxRequestBytes > maxMultimodalRequestBytes ||
+		cfg.Provider.MaxResponseBytes < 64<<10 || cfg.Provider.MaxResponseBytes > maxMultimodalResponseBytes {
 		return ErrInvalidMultimodalConfig
+	}
+	if providerRequired || providerFieldsConfigured {
+		if cfg.Provider.Endpoint == "" || len(cfg.Provider.HMACSecret) < 32 || len(cfg.Provider.HMACSecret) > 512 {
+			return ErrInvalidMultimodalConfig
+		}
+		endpoint, parseErr := url.Parse(cfg.Provider.Endpoint)
+		if parseErr != nil || endpoint.Host == "" || endpoint.User != nil ||
+			endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return ErrInvalidMultimodalConfig
+		}
+		if endpoint.Scheme != "https" &&
+			(endpoint.Scheme != "http" || !cfg.Provider.AllowInsecureLocal || !isLocalEndpoint(endpoint.Hostname())) {
+			return ErrInvalidMultimodalConfig
+		}
 	}
 	if cfg.Jobs.MaxAttempts == 0 {
 		cfg.Jobs.MaxAttempts = 5
@@ -146,6 +195,10 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		cfg.Images.MaxBytesEach < 64*1024 || cfg.Images.MaxBytesEach > maxMultimodalImageBytes ||
 		cfg.Images.MaxTotalBytes < cfg.Images.MaxBytesEach || cfg.Images.MaxTotalBytes > maxMultimodalTotalImageBytes ||
 		cfg.Images.MaxPixelsEach < 10_000 || cfg.Images.MaxPixelsEach > 16_000_000 {
+		return ErrInvalidMultimodalConfig
+	}
+	minimumEncodedRequestBytes := int64(base64.StdEncoding.EncodedLen(cfg.Images.MaxTotalBytes)) + 64<<10
+	if cfg.Provider.MaxRequestBytes < minimumEncodedRequestBytes {
 		return ErrInvalidMultimodalConfig
 	}
 	allowedMIMETypes := make([]string, 0, len(cfg.Images.AllowedMIMETypes))

@@ -11,6 +11,9 @@ func validMultimodalConfig() MultimodalConfig {
 	return MultimodalConfig{
 		Enabled: true, VideoJobsEnabled: true, QueryEmbeddingEnabled: true,
 		HybridSearchEnabled: true, SimilarVideosEnabled: true,
+		Provider: MultimodalProviderConfig{
+			Endpoint: "https://multimodal.example.com", HMACSecret: "multimodal-provider-secret-value-123",
+		},
 		Contract: MultimodalContractConfig{
 			ProviderAlias: "provider", ModelAlias: "model", RevisionAlias: "revision",
 			Dimension:                domainembedding.MinMultimodalDimension,
@@ -27,8 +30,12 @@ func TestNormalizeAndValidateMultimodalConfigDisabledDefaults(t *testing.T) {
 	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Enabled || cfg.Provider.Deadline != defaultMultimodalProviderDeadline ||
+	if cfg.Enabled || cfg.Provider.ProtocolVersion != MultimodalProviderProtocolV1 ||
+		cfg.Provider.StartupTimeout != defaultMultimodalStartupTimeout ||
+		cfg.Provider.Deadline != defaultMultimodalProviderDeadline ||
 		cfg.Provider.AdmissionLimit != 2 || cfg.Jobs.MaxAttempts != 5 || cfg.Jobs.LeaseTTL != "45s" ||
+		cfg.Provider.MaxRequestBytes != defaultMultimodalMaxRequestBytes ||
+		cfg.Provider.MaxResponseBytes != defaultMultimodalMaxResponseBytes ||
 		cfg.Jobs.ShutdownTimeout != "15s" ||
 		cfg.MaxVideoTextRunes != 2048 || cfg.Images.MaxCount != 4 ||
 		cfg.Query.MaxRunes != 128 || cfg.Query.CacheEntries != 1000 ||
@@ -74,7 +81,18 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 		{name: "unknown fusion policy", mutate: func(c *MultimodalConfig) { c.Contract.FusionPolicy = "unknown" }},
 		{name: "weak dimension", mutate: func(c *MultimodalConfig) { c.Contract.Dimension = domainembedding.MinMultimodalDimension - 1 }},
 		{name: "weak deadline", mutate: func(c *MultimodalConfig) { c.Provider.Deadline = "10ms" }},
+		{name: "weak startup timeout", mutate: func(c *MultimodalConfig) { c.Provider.StartupTimeout = "10ms" }},
 		{name: "unbounded admission", mutate: func(c *MultimodalConfig) { c.Provider.AdmissionLimit = 65 }},
+		{name: "unknown protocol", mutate: func(c *MultimodalConfig) { c.Provider.ProtocolVersion = "v2" }},
+		{name: "missing endpoint", mutate: func(c *MultimodalConfig) { c.Provider.Endpoint = "" }},
+		{name: "missing secret", mutate: func(c *MultimodalConfig) { c.Provider.HMACSecret = "" }},
+		{name: "short secret", mutate: func(c *MultimodalConfig) { c.Provider.HMACSecret = "short" }},
+		{name: "remote http", mutate: func(c *MultimodalConfig) {
+			c.Provider.Endpoint = "http://multimodal.example.com"
+			c.Provider.AllowInsecureLocal = true
+		}},
+		{name: "request too small", mutate: func(c *MultimodalConfig) { c.Provider.MaxRequestBytes = 1 << 20 }},
+		{name: "response too small", mutate: func(c *MultimodalConfig) { c.Provider.MaxResponseBytes = 1024 }},
 		{name: "unbounded video text", mutate: func(c *MultimodalConfig) { c.MaxVideoTextRunes = 8193 }},
 		{name: "short lease", mutate: func(c *MultimodalConfig) { c.Jobs.LeaseTTL = "1s" }},
 		{name: "slow heartbeat", mutate: func(c *MultimodalConfig) { c.Jobs.HeartbeatInterval = "30s" }},
@@ -100,6 +118,25 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 				t.Fatalf("error = %v, want %v", err, ErrInvalidMultimodalConfig)
 			}
 		})
+	}
+}
+
+func TestNormalizeAndValidateMultimodalConfigAcceptsExplicitLoopbackProvider(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.Provider.Endpoint = "http://127.0.0.1:8099/"
+	cfg.Provider.AllowInsecureLocal = true
+	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Endpoint != "http://127.0.0.1:8099" {
+		t.Fatalf("endpoint = %q", cfg.Provider.Endpoint)
+	}
+}
+
+func TestNormalizeAndValidateMultimodalConfigRejectsPartialDisabledProvider(t *testing.T) {
+	cfg := MultimodalConfig{Provider: MultimodalProviderConfig{Endpoint: "https://multimodal.example.com"}}
+	if err := normalizeAndValidateMultimodalConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidMultimodalConfig)
 	}
 }
 
