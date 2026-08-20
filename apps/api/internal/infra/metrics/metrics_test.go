@@ -52,6 +52,9 @@ func TestObserveProfileWorkerTracksOutcomes(t *testing.T) {
 
 func TestRecommendationMetricsUseBoundedLabels(t *testing.T) {
 	recall := RecommendationRecallCandidatesTotal.WithLabelValues("fresh")
+	providerPool := RecommendationCandidatePoolCandidatesTotal.WithLabelValues("provider_returned", "fresh")
+	unknownPool := RecommendationCandidatePoolCandidatesTotal.WithLabelValues("unknown", "unknown")
+	policyRejection := RecommendationPolicyRejectionsTotal.WithLabelValues("pre_rank_pool")
 	degraded := RecommendationDegradedRequestsTotal.WithLabelValues("unknown", "unknown")
 	snapshot := RecommendationSnapshotOperationsTotal.WithLabelValues("write_failure")
 	maintenance := RecommendationSnapshotOperationsTotal.WithLabelValues("maintenance_failure")
@@ -59,8 +62,11 @@ func TestRecommendationMetricsUseBoundedLabels(t *testing.T) {
 	invalidAttribution := RecommendationInvalidAttributionsTotal.WithLabelValues("follow")
 	logFailure := RecommendationRequestLogFailuresTotal.WithLabelValues("storage")
 	deliveryFailure := RecommendationDeliveryFailuresTotal
-	before := []float64{testutil.ToFloat64(recall), testutil.ToFloat64(degraded), testutil.ToFloat64(snapshot), testutil.ToFloat64(maintenance), testutil.ToFloat64(outcome), testutil.ToFloat64(invalidAttribution), testutil.ToFloat64(logFailure), testutil.ToFloat64(deliveryFailure)}
+	before := []float64{testutil.ToFloat64(recall), testutil.ToFloat64(providerPool), testutil.ToFloat64(unknownPool), testutil.ToFloat64(policyRejection), testutil.ToFloat64(degraded), testutil.ToFloat64(snapshot), testutil.ToFloat64(maintenance), testutil.ToFloat64(outcome), testutil.ToFloat64(invalidAttribution), testutil.ToFloat64(logFailure), testutil.ToFloat64(deliveryFailure)}
 	ObserveRecommendationRecall("fresh", 2)
+	ObserveRecommendationCandidatePool("provider_returned", "fresh", 3)
+	ObserveRecommendationCandidatePool("user-42", "video-99", 5)
+	ObserveRecommendationPolicyRejection("pre_rank_pool")
 	ObserveRecommendationDegraded("unbounded-provider", "unbounded-reason")
 	ObserveRecommendationSnapshot("write_failure")
 	ObserveRecommendationSnapshot("maintenance_failure")
@@ -69,10 +75,12 @@ func TestRecommendationMetricsUseBoundedLabels(t *testing.T) {
 	ObserveRecommendationRequestLogFailure("storage")
 	ObserveRecommendationDeliveryFailure()
 	ObserveRecommendationPolicy("recommend", 7)
-	if testutil.ToFloat64(recall)-before[0] != 2 || testutil.ToFloat64(degraded)-before[1] != 1 ||
-		testutil.ToFloat64(snapshot)-before[2] != 1 || testutil.ToFloat64(maintenance)-before[3] != 1 ||
-		testutil.ToFloat64(outcome)-before[4] != 1 || testutil.ToFloat64(invalidAttribution)-before[5] != 1 ||
-		testutil.ToFloat64(logFailure)-before[6] != 1 || testutil.ToFloat64(deliveryFailure)-before[7] != 1 {
+	if testutil.ToFloat64(recall)-before[0] != 2 || testutil.ToFloat64(providerPool)-before[1] != 3 ||
+		testutil.ToFloat64(unknownPool)-before[2] != 5 || testutil.ToFloat64(policyRejection)-before[3] != 1 ||
+		testutil.ToFloat64(degraded)-before[4] != 1 || testutil.ToFloat64(snapshot)-before[5] != 1 ||
+		testutil.ToFloat64(maintenance)-before[6] != 1 || testutil.ToFloat64(outcome)-before[7] != 1 ||
+		testutil.ToFloat64(invalidAttribution)-before[8] != 1 || testutil.ToFloat64(logFailure)-before[9] != 1 ||
+		testutil.ToFloat64(deliveryFailure)-before[10] != 1 {
 		t.Fatal("recommendation metric observations were not recorded")
 	}
 	if version := testutil.ToFloat64(RecommendationActivePolicyVersion.WithLabelValues("recommend")); version != 7 {

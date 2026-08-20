@@ -2,12 +2,54 @@ package applicationrecommendation
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
+
+type candidatePoolPolicyRepo struct{ created bool }
+
+func (r *candidatePoolPolicyRepo) CreatePolicy(_ context.Context, policy *domainrecommendation.Policy) (*domainrecommendation.Policy, error) {
+	r.created = true
+	return policy, nil
+}
+func (*candidatePoolPolicyRepo) ActivatePolicy(context.Context, string, int) (*domainrecommendation.Policy, error) {
+	return nil, domainrecommendation.ErrPolicyNotFound
+}
+func (*candidatePoolPolicyRepo) RollbackPolicy(context.Context, string, int) (*domainrecommendation.Policy, error) {
+	return nil, domainrecommendation.ErrPolicyNotFound
+}
+func (*candidatePoolPolicyRepo) ListEnabledPolicies(context.Context, string) ([]*domainrecommendation.Policy, error) {
+	return nil, nil
+}
+func (*candidatePoolPolicyRepo) ListPolicies(context.Context, string) ([]*domainrecommendation.Policy, error) {
+	return nil, nil
+}
+
+func TestPolicyServiceObservesOverBoundRecallBudgetRejection(t *testing.T) {
+	repo := &candidatePoolPolicyRepo{}
+	config := defaultRecommendationPolicyConfiguration()
+	config.RecallBudgets[domainrecommendation.RecallProviderFresh]++
+	counter := inframetrics.RecommendationPolicyRejectionsTotal.WithLabelValues("pre_rank_pool")
+	before := testutil.ToFloat64(counter)
+	_, err := NewPolicyService(repo, func() time.Time { return time.Unix(1, 0).UTC() }).Create(context.Background(), PolicyInput{
+		Scene: "recommend", Version: 3, Enabled: true, Config: config,
+	})
+	if !errors.Is(err, domainrecommendation.ErrInvalidPolicyBound) {
+		t.Fatalf("over-bound policy error = %v, want %v", err, domainrecommendation.ErrInvalidPolicyBound)
+	}
+	if repo.created {
+		t.Fatal("invalid over-bound policy reached persistence")
+	}
+	if delta := testutil.ToFloat64(counter) - before; delta != 1 {
+		t.Fatalf("pre-rank pool rejection metric delta = %v, want 1", delta)
+	}
+}
 
 func TestPolicyRecallRanksCompleteFiveProviderPool(t *testing.T) {
 	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)

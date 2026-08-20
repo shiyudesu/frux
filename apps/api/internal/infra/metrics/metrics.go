@@ -154,6 +154,14 @@ var (
 		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_recall_candidates_total", Help: "Candidates retained by bounded recall provider."},
 		[]string{"provider"},
 	)
+	RecommendationCandidatePoolCandidatesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_candidate_pool_candidates_total", Help: "Candidates observed at bounded recommendation pool stages."},
+		[]string{"stage", "provider"},
+	)
+	RecommendationPolicyRejectionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_policy_rejections_total", Help: "Recommendation policies rejected by bounded reason."},
+		[]string{"reason"},
+	)
 	RecommendationDegradedRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_degraded_requests_total", Help: "Degraded recommendation requests by bounded provider reason."},
 		[]string{"provider", "reason"},
@@ -270,6 +278,8 @@ func init() {
 		ProfileWorkerLagSeconds,
 		ProfileWorkerEventsTotal,
 		RecommendationRecallCandidatesTotal,
+		RecommendationCandidatePoolCandidatesTotal,
+		RecommendationPolicyRejectionsTotal,
 		RecommendationDegradedRequestsTotal,
 		RecommendationSnapshotOperationsTotal,
 		RecommendationRequestLogFailuresTotal,
@@ -315,6 +325,16 @@ func ObserveRecommendationRecall(provider string, count int) {
 		RecommendationRecallCandidatesTotal.WithLabelValues(recommendationProviderLabel(provider)).Add(float64(count))
 	}
 }
+func ObserveRecommendationCandidatePool(stage, provider string, count int) {
+	if count > 0 {
+		RecommendationCandidatePoolCandidatesTotal.WithLabelValues(
+			recommendationCandidatePoolStage(stage), recommendationCandidatePoolProvider(provider),
+		).Add(float64(count))
+	}
+}
+func ObserveRecommendationPolicyRejection(reason string) {
+	RecommendationPolicyRejectionsTotal.WithLabelValues(recommendationPolicyRejectionReason(reason)).Inc()
+}
 func ObserveRecommendationDegraded(provider, reason string) {
 	RecommendationDegradedRequestsTotal.WithLabelValues(recommendationProviderLabel(provider), recommendationReasonLabel(reason)).Inc()
 }
@@ -343,6 +363,28 @@ func recommendationProviderLabel(value string) string {
 	switch normalizeLabel(value, "unknown") {
 	case "fresh", "hot", "content_similarity", "followed_author", "session_continuation":
 		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationCandidatePoolProvider(value string) string {
+	if normalizeLabel(value, "unknown") == "all" {
+		return "all"
+	}
+	return recommendationProviderLabel(value)
+}
+func recommendationCandidatePoolStage(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "provider_returned", "unique_merged", "visibility_filtered", "ranker_input":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationPolicyRejectionReason(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "pre_rank_pool":
+		return "pre_rank_pool"
 	default:
 		return "unknown"
 	}

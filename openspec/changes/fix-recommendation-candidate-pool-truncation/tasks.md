@@ -40,11 +40,11 @@
 
 ## 4. Metrics and Documentation
 
-- [ ] 4.1 Add fixed-label observations for Provider-returned, unique-merged,
+- [x] 4.1 Add fixed-label observations for Provider-returned, unique-merged,
   visibility-filtered, and Ranker-input candidate counts plus rejected over-cap policies.
-- [ ] 4.2 Add metrics tests proving candidate/user/request IDs, Provider raw errors, and high-cardinality
+- [x] 4.2 Add metrics tests proving candidate/user/request IDs, Provider raw errors, and high-cardinality
   pool contents do not become labels or normal logs.
-- [ ] 4.3 Update `docs/modules/recommendation.md`, `docs/optimization.md`, and the recommendation
+- [x] 4.3 Update `docs/modules/recommendation.md`, `docs/optimization.md`, and the recommendation
   roadmap to describe complete bounded pre-rank scoring and the separate quota-merge follow-up.
 
 ## 5. Verification

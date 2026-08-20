@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"time"
 )
 
@@ -37,9 +38,26 @@ func (s *PolicyService) Create(ctx context.Context, input PolicyInput) (*domainr
 	}
 	policy, err := domainrecommendation.NewPolicy(input.Scene, input.Version, input.Enabled, input.Config, s.now())
 	if err != nil {
+		if recallBudgetExceedsPreRankPool(input.Config.RecallBudgets) {
+			inframetrics.ObserveRecommendationPolicyRejection("pre_rank_pool")
+		}
 		return nil, err
 	}
 	return s.repo.CreatePolicy(ctx, policy)
+}
+
+func recallBudgetExceedsPreRankPool(budgets map[string]int) bool {
+	total := 0
+	for _, budget := range budgets {
+		if budget <= 0 {
+			continue
+		}
+		if total > domainrecommendation.MaxPolicyPreRankCandidates-budget {
+			return true
+		}
+		total += budget
+	}
+	return total > domainrecommendation.MaxPolicyPreRankCandidates
 }
 
 func (s *PolicyService) Activate(ctx context.Context, scene string, version int) (*domainrecommendation.Policy, error) {

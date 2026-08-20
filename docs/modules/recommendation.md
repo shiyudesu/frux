@@ -146,11 +146,16 @@ deadline 约束。服务实例还以 16 个全局 provider slots 限制忽略取
 标记 degraded，返回前重新验证 `published + public + media ready`。本地 hash n-gram embedding
 是可替换模型接口的保底实现。
 
+Policy 驱动的正常召回以所选 Provider budget 总和作为统一评分前的候选上限，当前绝对上限为500；
+`recommend/v1` 和 `recommend/v2` 的五个 Provider 各100条，因此全部可读唯一候选都会进入统一特征加载和
+Ranker。候选不会再按响应页 `limit × 8` 派生上限，也不会在评分前按 `published_at` 全局排序截断。
+Provider-local budget/order、重复 reason 合并和可见性复检仍然有效。未带 Policy 的兼容调用和 Repository
+Fallback 继续使用响应页派生的有界池。预算总和超过500的策略在 Quota Merge 实施前会被拒绝。
+
 视频发布 intake 当前只条件写入 `hash-ngram-v1`，成功后提交独立 embedding Kafka Group 的 Offset。
 多模态向量、Hybrid Search、Similar Videos、Session Semantic Recall 和 ANN 均尚未实施。当前规划以
 `add-multimodal-video-discovery` 为第一条多模态纵向 Change，只处理新公开视频与显式开发 Fixture，
-使用 Exact Cosine，不要求历史 Backfill 或 HNSW。候选池提前截断修复由
-`fix-recommendation-candidate-pool-truncation` 负责，Provider 配额合并由
+使用 Exact Cosine，不要求历史 Backfill 或 HNSW。Provider 配额合并由
 `add-recommendation-provider-quota-merge` 负责；两者完成后才接入 Session Semantic Recommendation。
 长期画像、历史重建、HNSW、训练数据导出和权重学习均受
 [推荐系统演进路线](../recommendation-roadmap.md)中的后置 Gate 控制。

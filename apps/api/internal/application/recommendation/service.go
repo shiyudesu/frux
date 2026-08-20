@@ -352,6 +352,7 @@ func (s *Service) recommendFreshPage(ctx context.Context, req *domainrecommendat
 			}
 		}
 	}
+	inframetrics.ObserveRecommendationCandidatePool("ranker_input", "all", len(pool))
 
 	ranked, err := s.rankCandidates(ctx, req.UserID, req.Context, pool, policy)
 	if err != nil {

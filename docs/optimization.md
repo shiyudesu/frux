@@ -242,15 +242,17 @@ feed:hot:window:v1:{windowEndUnix}
 
 ## 16. 上下文推荐容量与降级
 
-- 每个 Provider 有独立 deadline 和最多 100 条 bootstrap budget；合并池、snapshot 候选和日志
-  候选均不超过 500。Provider 超时只降低该请求，不能等待全局最长任务。
+- 每个 Provider 有独立 deadline 和最多 100 条 bootstrap budget；当前五个 Provider 的预算总和为500。
+  Policy 路径会让全部可读唯一候选进入统一评分，不按响应页大小或发布时间提前截断；预算总和超过500的
+  策略在 Quota Merge 可用前被拒绝。Snapshot 和日志候选仍不超过500。Provider 超时只降低该请求，
+  不能等待全局最长任务。
 - Redis snapshot 默认 TTL 为 300 秒，每用户最多保留 20 个活动 session；snapshot miss、读写错误
   使用 signed cursor 中的确定性 fallback，不重算已返回页。
 - 请求日志稳定采样 1%，默认保留 30 天；清理使用 `created_at` 索引分批执行。日志只保留
   归一化 context、候选 ID/reason/分量和 degraded 标志。
 - 运行前可执行：
   `cd apps/api && go test ./internal/application/recommendation -run '^$' -bench '^BenchmarkRecommendBoundedPool$' -benchtime=5s`。
-  该基准以 100 候选有界池运行并发 `RunParallel`，用于比较提交前的 allocation 与 ns/op，不能替代
+  该基准以最大500候选有界池运行并发 `RunParallel`，用于比较提交前的 allocation 与 ns/op，不能替代
   含 PostgreSQL/Redis 的容量压测。
 
 ## 17. 私信性能与容量边界

@@ -5,6 +5,7 @@ import (
 	"errors"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 	"math"
 	"sort"
 	"strings"
@@ -462,6 +463,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 			continue
 		}
 		execution.healthy++
+		inframetrics.ObserveRecommendationCandidatePool("provider_returned", result.provider, len(result.candidates))
 		for _, candidate := range result.candidates {
 			mergeRecalledCandidate(merged, candidate)
 		}
@@ -480,6 +482,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 	for _, candidate := range merged {
 		pool = append(pool, candidate)
 	}
+	inframetrics.ObserveRecommendationCandidatePool("unique_merged", "all", len(pool))
 	if !policyDriven {
 		sort.Slice(pool, func(i, j int) bool {
 			if !pool[i].PublishedAt.Equal(pool[j].PublishedAt) {
@@ -512,6 +515,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 		}
 		pool = filtered
 	}
+	inframetrics.ObserveRecommendationCandidatePool("visibility_filtered", "all", len(pool))
 	// Keep direct legacy callers safe while normal recommendation requests
 	// defer suppression to the policy-aware ranker.
 	if len(policies) == 0 && len(pool) > 0 {
