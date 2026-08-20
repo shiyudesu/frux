@@ -70,6 +70,20 @@ func (h *Handler) QueryMine(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, cursorVideoListResponse{Items: items, NextCursor: result.NextCursor, HasMore: result.HasMore})
 }
 
+func (h *Handler) ListArchiveMonths(ctx context.Context, c *app.RequestContext) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		interfaceshttpapierror.WriteInvalidAccessToken(c)
+		return
+	}
+	result, err := h.management.ListCreatorArchiveMonths(ctx, userID, c.Query("visibility"))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, creatorArchiveMonthResponse{Months: result.Months})
+}
+
 func (h *Handler) BatchAction(ctx context.Context, c *app.RequestContext) {
 	userID, ok := userIDFromContext(c)
 	if !ok {

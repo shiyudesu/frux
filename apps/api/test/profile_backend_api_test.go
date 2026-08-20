@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	applicationlibrary "github.com/shiyudesu/frux/internal/application/library"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
@@ -27,6 +28,7 @@ type managementMemoryRepo struct {
 	mu         sync.Mutex
 	videos     map[int64]*domainvideo.Video
 	operations map[string]*domainvideo.BatchOperation
+	archiveErr error
 }
 
 func newManagementMemoryRepo() *managementMemoryRepo {
@@ -72,6 +74,35 @@ func (r *managementMemoryRepo) QueryCreatorVideos(_ context.Context, filter doma
 		items = items[:filter.Limit]
 	}
 	return items, nil
+}
+
+func (r *managementMemoryRepo) ListCreatorArchiveMonths(
+	_ context.Context,
+	authorID int64,
+	visibility string,
+) ([]time.Time, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.archiveErr != nil {
+		return nil, r.archiveErr
+	}
+	months := map[string]time.Time{}
+	for _, video := range r.videos {
+		if video.AuthorID != authorID ||
+			video.Status == domainvideo.StatusDeleted ||
+			video.Visibility != visibility {
+			continue
+		}
+		value := video.CreatedAt.UTC()
+		month := time.Date(value.Year(), value.Month(), 1, 0, 0, 0, 0, time.UTC)
+		months[month.Format("2006-01")] = month
+	}
+	result := make([]time.Time, 0, len(months))
+	for _, month := range months {
+		result = append(result, month)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].After(result[j]) })
+	return result, nil
 }
 
 func (r *managementMemoryRepo) ApplyBatch(_ context.Context, userID int64, action string, videoIDs []int64, key, fingerprint string) (*domainvideo.BatchOperation, bool, error) {
@@ -171,8 +202,52 @@ func TestCreatorManagementAPIFlow(t *testing.T) {
 	handler := interfaceshttpvideo.New(baseService, applicationvideo.NewManagement(repo, nil))
 	users := router.Group("/api/users")
 	users.POST("/me/video-queries", auth, handler.QueryMine)
+	users.GET("/me/video-archive-months", auth, handler.ListArchiveMonths)
 	users.POST("/me/video-batch-actions", auth, handler.BatchAction)
 	token := signTestToken(t, jwtManager, 42)
+
+	publicArchive := performJSONRequest(router, http.MethodGet, "/api/users/me/video-archive-months?visibility=public", "", token)
+	requireStatus(t, publicArchive, http.StatusOK)
+	var archivePayload struct {
+		Months []string `json:"months"`
+	}
+	decodeJSON(t, publicArchive, &archivePayload)
+	if len(archivePayload.Months) != 1 ||
+		archivePayload.Months[0] != repo.videos[1].CreatedAt.UTC().Format("2006-01") {
+		t.Fatalf("unexpected public archive: %s", publicArchive.Body.String())
+	}
+	privateArchive := performJSONRequest(router, http.MethodGet, "/api/users/me/video-archive-months?visibility=private", "", token)
+	requireStatus(t, privateArchive, http.StatusOK)
+	decodeJSON(t, privateArchive, &archivePayload)
+	if len(archivePayload.Months) != 1 ||
+		archivePayload.Months[0] != repo.videos[2].CreatedAt.UTC().Format("2006-01") {
+		t.Fatalf("unexpected private archive: %s", privateArchive.Body.String())
+	}
+	invalidArchive := performJSONRequest(router, http.MethodGet, "/api/users/me/video-archive-months?visibility=followers", "", token)
+	assertAPIError(
+		t,
+		invalidArchive,
+		http.StatusBadRequest,
+		interfaceshttpapierror.CodeVideoValidationFailed,
+		domainvideo.ErrInvalidVisibility.Error(),
+	)
+	otherToken := signTestToken(t, jwtManager, 88)
+	emptyArchive := performJSONRequest(router, http.MethodGet, "/api/users/me/video-archive-months?visibility=public", "", otherToken)
+	requireStatus(t, emptyArchive, http.StatusOK)
+	decodeJSON(t, emptyArchive, &archivePayload)
+	if len(archivePayload.Months) != 0 {
+		t.Fatalf("other user archive leaked: %s", emptyArchive.Body.String())
+	}
+	repo.archiveErr = errors.New("archive database unavailable")
+	failedArchive := performJSONRequest(router, http.MethodGet, "/api/users/me/video-archive-months?visibility=public", "", token)
+	assertAPIError(
+		t,
+		failedArchive,
+		http.StatusInternalServerError,
+		interfaceshttpapierror.CodeInternal,
+		"internal server error",
+	)
+	repo.archiveErr = nil
 
 	query := performJSONRequest(router, http.MethodPost, "/api/users/me/video-queries", `{"visibility":"private","limit":20}`, token)
 	requireStatus(t, query, http.StatusOK)

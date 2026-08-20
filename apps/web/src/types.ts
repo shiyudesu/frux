@@ -182,6 +182,10 @@ export interface CreatorVideoQueryRequest {
 
 export type CreatorVideoPage = CursorPage<Video>;
 
+export interface CreatorArchiveMonthResponse {
+  months: string[];
+}
+
 export interface BatchVideoActionRequest {
   video_ids: number[];
   action: BatchVideoAction;

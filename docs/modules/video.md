@@ -14,6 +14,7 @@
 | GET | `/api/users/{userId}/videos` | 查询用户已发布公开视频 | 可匿名 | 无 |
 | GET | `/api/users/me/videos` | 兼容的我的作品列表 | 登录 | 无 |
 | POST | `/api/users/me/video-queries` | 按可见性、关键词和创建日期查询自己的非删除作品 | 登录 | 无 |
+| GET | `/api/users/me/video-archive-months` | 按可见性查询自己的非删除作品创建月份归档 | 登录 | 无 |
 | POST | `/api/users/me/video-batch-actions` | 批量公开、私密或删除作品 | 登录 | 必须 |
 | POST | `/api/uploads` | 上传媒体文件 | 登录 | 支持 |
 | POST | `/api/upload-sessions` | 创建对象存储直传会话；本地模式返回 multipart 回退 | 登录 | 支持 |
@@ -25,6 +26,8 @@
 | POST | `/api/admin/videos/{videoId}/restoration` | 恢复已批准的下架视频 | `content.enforce` | 无 |
 
 复杂作品查询请求使用 `visibility`、可选 `statuses`、`query`、`created_from`、`created_to`、`cursor`、`limit`，响应为 `items`、`next_cursor`、`has_more`。`statuses` 可筛选草稿、已发布、下架、待审和拒绝，但不查询已删除状态。日期接受 RFC 3339 或 `YYYY-MM-DD`；仅日期形式的结束日期包含当天末尾。默认 `limit=20`，范围 1–100，排序为 `created_at DESC, id DESC`。
+
+作品月份归档接口要求 `visibility=public|private`，作者身份只从消费端 JWT 上下文读取。响应 `months` 为当前作者该可见性下非删除作品的唯一 UTC 创建月份，使用 `YYYY-MM` 并按倒序返回；空归档返回 `{"months":[]}`，持久化失败返回显式服务错误。Web 选择月份后仍复用兼容的日期范围查询，将月份转换成 UTC 月首和月末的 `YYYY-MM-DD`。
 
 批量接口支持 `make_public`、`make_private`、`delete`，先去重并按 ID 排序，最多 100 个正整数 ID。成功返回：
 
@@ -157,6 +160,7 @@ publication outbox 的 pending/oldest 统计查询与 dispatch 操作错误分�
 | 延迟清理 | 删除视频立即移除公开发现，并为原始对象、封面和所有变体创建延迟清理任务 |
 | 旧列表兼容 | `/users/me/videos` 与 `/users/{userId}/videos` 保留 offset 响应 |
 | 创作者查询语义 | `/users/me/videos` 和 `/video-queries` 查询作者自己的所有非删除作品；公开/私密过滤按 `visibility`，`statuses` 可筛选待审与拒绝 |
+| 创作者月份归档 | `/users/me/video-archive-months` 按作者与可见性从 PostgreSQL 事实查询唯一 UTC 创建月份；不从当前游标页推断，不包含删除作品或其他作者作品 |
 | 关键词安全 | 标题和描述使用参数化 `ILIKE`，并转义 `\`、`%`、`_` |
 | 批量原子性 | 事务内锁定全部视频并验证所有权；公开/私密动作拒绝下架或删除视频 |
 | 缓存防泄露 | 可见性、删除和生命周期变化清除视频卡片/统计缓存；Feed 组装还会用数据库重新校验缓存 ID 的公开可读性 |
@@ -203,7 +207,7 @@ publication outbox 的 pending/oldest 统计查询与 dispatch 操作错误分�
 | --- | --- |
 | 发布页 | 生产模式使用预签名直传和独立视频/封面进度，本地模式保留 multipart 回退 |
 | Feed/详情 | 展示已发布公开视频 |
-| 个人主页作品 Tab | “公开作品”按公开可见性查询并展示处理中、审核中、未通过、已发布和已下架标签；“私密作品”对应私密可见性 |
+| 个人主页作品 Tab | “公开作品”按公开可见性查询并展示处理中、审核中、未通过、已发布和已下架标签；“私密作品”对应私密可见性；两者独立维护关键词、月份归档、分页及错误状态 |
 | 消息中心目标 | 已发布/恢复且当前可读时进入详情；其他生命周期状态进入作品页并按认证 `video_id` 跨公开/私密定位 |
 | 公开主页 | 展示已发布公开作品和隐私允许的喜欢列表 |
 | Admin Shell | 按 typed 筛选查询视频；下架/恢复弹窗携带原因、备注、确认和当前 version，只在服务端确认审计提交后报告成功 |
