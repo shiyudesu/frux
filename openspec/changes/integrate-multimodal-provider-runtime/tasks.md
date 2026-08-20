@@ -60,14 +60,14 @@
   without committing an endpoint, secret, model identity, or enabled multimodal flag.
 - [x] 6.2 Document the provider protocol, startup handshake, security boundary, failure mapping,
   process wiring, conformance workflow, activation order, and rollback.
-- [ ] 6.3 Update the recommendation roadmap to mark the transport/runtime prerequisite complete only
+- [x] 6.3 Update the recommendation roadmap to mark the transport/runtime prerequisite complete only
   after implementation, while keeping concrete model selection and semantic quality evaluation next.
 
 ## 7. Verification
 
-- [ ] 7.1 Run targeted config, provider, Worker, query, search, router, metrics, privacy, and race tests.
-- [ ] 7.2 Run `cd apps/api && go test ./...`, `go vet ./...`, and build `./cmd/feed`, `./cmd/worker`,
+- [x] 7.1 Run targeted config, provider, Worker, query, search, router, metrics, privacy, and race tests.
+- [x] 7.2 Run `cd apps/api && go test ./...`, `go vet ./...`, and build `./cmd/feed`, `./cmd/worker`,
   and `./cmd/multimodal-eval`.
-- [ ] 7.3 Validate local/production Compose and deployment manifests without a configured provider,
+- [x] 7.3 Validate local/production Compose and deployment manifests without a configured provider,
   then run `openspec validate --all --strict` and confirm no model runtime, training, historical
   backfill, ANN index, or recommendation activation was added.
