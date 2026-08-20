@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
@@ -50,6 +51,13 @@ type MultimodalHTTPProviderConfig struct {
 	MaxRequestBytes    int64
 	MaxResponseBytes   int64
 	MaxIdleConnections int
+	MaxVideoTextRunes  int
+	MaxQueryRunes      int
+	MaxImages          int
+	MaxImageBytes      int
+	MaxTotalImageBytes int
+	MaxImagePixels     int64
+	AllowedMIMETypes   []string
 	Observer           MultimodalHTTPObserver
 }
 
@@ -64,15 +72,22 @@ func (multimodalHTTPMetricsObserver) ObserveMultimodalHTTP(operation, result str
 }
 
 type HTTPMultimodalProvider struct {
-	endpoint         string
-	secret           []byte
-	protocolVersion  string
-	contract         domainembedding.MultimodalContractIdentity
-	client           *http.Client
-	maxRequestBytes  int64
-	maxResponseBytes int64
-	observer         MultimodalHTTPObserver
-	now              func() time.Time
+	endpoint           string
+	secret             []byte
+	protocolVersion    string
+	contract           domainembedding.MultimodalContractIdentity
+	client             *http.Client
+	maxRequestBytes    int64
+	maxResponseBytes   int64
+	maxVideoTextRunes  int
+	maxQueryRunes      int
+	maxImages          int
+	maxImageBytes      int
+	maxTotalImageBytes int
+	maxImagePixels     int64
+	allowedMIMETypes   map[string]struct{}
+	observer           MultimodalHTTPObserver
+	now                func() time.Time
 }
 
 type multimodalContractEnvelope struct {
@@ -156,11 +171,28 @@ func NewHTTPMultimodalProvider(
 		contract.TextCanonicalizer, contract.FrameSamplingPolicy,
 		contract.ImagePreprocessingPolicy, contract.FusionPolicy,
 	)
+	allowedMIMETypes := make(map[string]struct{}, len(config.AllowedMIMETypes))
+	for _, mimeType := range config.AllowedMIMETypes {
+		mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+		if !supportedMultimodalImageType(mimeType) {
+			return nil, ErrInvalidMultimodalHTTPProvider
+		}
+		allowedMIMETypes[mimeType] = struct{}{}
+	}
+	minimumEncodedRequestBytes := int64(base64.StdEncoding.EncodedLen(config.MaxTotalImageBytes)) + 64<<10
 	if err != nil || !validatedContract.Equal(contract) || endpoint == "" ||
 		len(secret) < 32 || len(secret) > 512 || protocolVersion != MultimodalProviderProtocolV1 ||
 		config.Timeout < 100*time.Millisecond || config.Timeout > 2*time.Minute ||
 		config.MaxRequestBytes < 1<<20 || config.MaxRequestBytes > 96<<20 ||
-		config.MaxResponseBytes < 64<<10 || config.MaxResponseBytes > 8<<20 {
+		config.MaxResponseBytes < 64<<10 || config.MaxResponseBytes > 8<<20 ||
+		config.MaxRequestBytes < minimumEncodedRequestBytes ||
+		config.MaxVideoTextRunes < 1 || config.MaxVideoTextRunes > 8192 ||
+		config.MaxQueryRunes < 1 || config.MaxQueryRunes > 512 ||
+		config.MaxImages < 1 || config.MaxImages > 16 ||
+		config.MaxImageBytes < 64<<10 || config.MaxImageBytes > 20<<20 ||
+		config.MaxTotalImageBytes < config.MaxImageBytes || config.MaxTotalImageBytes > 64<<20 ||
+		config.MaxImagePixels < 10_000 || config.MaxImagePixels > 16_000_000 ||
+		len(allowedMIMETypes) == 0 {
 		return nil, ErrInvalidMultimodalHTTPProvider
 	}
 	parsed, err := url.Parse(endpoint)
@@ -190,7 +222,11 @@ func NewHTTPMultimodalProvider(
 	return &HTTPMultimodalProvider{
 		endpoint: endpoint, secret: []byte(secret), protocolVersion: protocolVersion,
 		contract: contract, maxRequestBytes: config.MaxRequestBytes,
-		maxResponseBytes: config.MaxResponseBytes, observer: observer,
+		maxResponseBytes:  config.MaxResponseBytes,
+		maxVideoTextRunes: config.MaxVideoTextRunes, maxQueryRunes: config.MaxQueryRunes,
+		maxImages: config.MaxImages, maxImageBytes: config.MaxImageBytes,
+		maxTotalImageBytes: config.MaxTotalImageBytes, maxImagePixels: config.MaxImagePixels,
+		allowedMIMETypes: allowedMIMETypes, observer: observer,
 		client: &http.Client{
 			Timeout: config.Timeout, Transport: transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -246,19 +282,24 @@ func (p *HTTPMultimodalProvider) EmbedVideoContent(
 	resultLabel := "success"
 	defer func() { p.observe("video", resultLabel, time.Since(started)) }()
 	if p == nil || !request.Contract.Equal(p.contract) || !validMultimodalSHA256(request.SourceHash) ||
-		strings.TrimSpace(request.Text) == "" || len(request.Images) == 0 || len(request.Images) > 16 {
+		strings.TrimSpace(request.Text) == "" || utf8.RuneCountInString(request.Text) > p.maxVideoTextRunes ||
+		len(request.Images) == 0 || len(request.Images) > p.maxImages {
 		resultLabel = "invalid"
 		return nil, providerTransportError(false, "invalid_request")
 	}
 	images := make([]multimodalImageEnvelope, len(request.Images))
+	totalImageBytes := 0
 	for index, image := range request.Images {
 		digest := sha256.Sum256(image.Content)
 		if image.Width <= 0 || image.Height <= 0 || len(image.Content) == 0 ||
-			!supportedMultimodalImageType(image.MIMEType) ||
+			len(image.Content) > p.maxImageBytes || totalImageBytes > p.maxTotalImageBytes-len(image.Content) ||
+			int64(image.Width) > p.maxImagePixels/int64(image.Height) ||
+			!p.supportsImageType(image.MIMEType) ||
 			!hmac.Equal([]byte(strings.ToLower(strings.TrimSpace(image.Digest))), []byte(hex.EncodeToString(digest[:]))) {
 			resultLabel = "invalid"
 			return nil, providerTransportError(false, "invalid_request")
 		}
+		totalImageBytes += len(image.Content)
 		images[index] = multimodalImageEnvelope{
 			MIMEType: strings.ToLower(strings.TrimSpace(image.MIMEType)), Width: image.Width,
 			Height: image.Height, Digest: strings.ToLower(strings.TrimSpace(image.Digest)),
@@ -291,7 +332,7 @@ func (p *HTTPMultimodalProvider) EmbedQueryText(
 	resultLabel := "success"
 	defer func() { p.observe("query", resultLabel, time.Since(started)) }()
 	if p == nil || !request.Contract.Equal(p.contract) || !validMultimodalSHA256(request.SourceHash) ||
-		strings.TrimSpace(request.Query) == "" {
+		strings.TrimSpace(request.Query) == "" || utf8.RuneCountInString(request.Query) > p.maxQueryRunes {
 		resultLabel = "invalid"
 		return nil, providerTransportError(false, "invalid_request")
 	}
@@ -364,7 +405,7 @@ func (p *HTTPMultimodalProvider) post(
 	request.Header.Set("X-Frux-Operation-ID", operationID)
 	request.Header.Set("X-Frux-Timestamp", timestamp)
 	request.Header.Set("X-Frux-Signature", multimodalRequestSignature(
-		p.secret, p.protocolVersion, request.Method, path, timestamp, operationID, body,
+		p.secret, p.protocolVersion, request.Method, request.URL.EscapedPath(), timestamp, operationID, body,
 	))
 	response, err := p.client.Do(request)
 	if err != nil {
@@ -417,6 +458,14 @@ func (p *HTTPMultimodalProvider) observe(operation, result string, duration time
 	if p != nil && p.observer != nil {
 		p.observer.ObserveMultimodalHTTP(operation, result, duration)
 	}
+}
+
+func (p *HTTPMultimodalProvider) supportsImageType(value string) bool {
+	if p == nil {
+		return false
+	}
+	_, ok := p.allowedMIMETypes[strings.ToLower(strings.TrimSpace(value))]
+	return ok
 }
 
 func multimodalContractToEnvelope(contract domainembedding.MultimodalContractIdentity) multimodalContractEnvelope {

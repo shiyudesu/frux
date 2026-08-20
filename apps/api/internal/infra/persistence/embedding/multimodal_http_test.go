@@ -163,6 +163,9 @@ func TestHTTPMultimodalProviderRejectsInvalidConfiguration(t *testing.T) {
 		Endpoint: "https://provider.example.com", HMACSecret: multimodalTestSecret,
 		ProtocolVersion: MultimodalProviderProtocolV1, Timeout: time.Second,
 		MaxRequestBytes: 2 << 20, MaxResponseBytes: 1 << 20,
+		MaxVideoTextRunes: 128, MaxQueryRunes: 64, MaxImages: 4,
+		MaxImageBytes: 64 << 10, MaxTotalImageBytes: 64 << 10, MaxImagePixels: 4_000_000,
+		AllowedMIMETypes: []string{"image/jpeg"},
 	}
 	tests := []struct {
 		name   string
@@ -270,6 +273,77 @@ func TestHTTPMultimodalProviderRejectsInvalidEmbeddingResponses(t *testing.T) {
 				t.Fatal("expected invalid response error")
 			}
 		})
+	}
+}
+
+func TestHTTPMultimodalProviderRejectsOutOfBoundsInputsBeforeNetwork(t *testing.T) {
+	contract := multimodalHTTPTestContract(t)
+	server := newMultimodalHTTPTestServer(t, multimodalTestSecret, func(_ string, _ string, _ []byte) multimodalTestResponse {
+		t.Error("invalid input reached provider")
+		return multimodalTestResponse{}
+	})
+	defer server.Close()
+	provider := newMultimodalHTTPTestProvider(t, server.URL, contract, nil)
+	content := []byte("image")
+	digest := sha256.Sum256(content)
+	base := applicationembedding.MultimodalVideoEmbeddingRequest{
+		Contract: contract, SourceHash: domainembedding.MultimodalSourceHash([]byte("source")), Text: "public",
+		Images: []applicationembedding.PreparedMultimodalImage{{
+			MIMEType: "image/jpeg", Width: 32, Height: 32,
+			Digest: hex.EncodeToString(digest[:]), Content: content,
+		}},
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*applicationembedding.MultimodalVideoEmbeddingRequest)
+	}{
+		{name: "text", mutate: func(r *applicationembedding.MultimodalVideoEmbeddingRequest) { r.Text = strings.Repeat("字", 129) }},
+		{name: "count", mutate: func(r *applicationembedding.MultimodalVideoEmbeddingRequest) {
+			r.Images = append(r.Images, r.Images[0], r.Images[0], r.Images[0], r.Images[0])
+		}},
+		{name: "bytes", mutate: func(r *applicationembedding.MultimodalVideoEmbeddingRequest) {
+			r.Images[0].Content = bytes.Repeat([]byte{1}, (64<<10)+1)
+			sum := sha256.Sum256(r.Images[0].Content)
+			r.Images[0].Digest = hex.EncodeToString(sum[:])
+		}},
+		{name: "pixels", mutate: func(r *applicationembedding.MultimodalVideoEmbeddingRequest) { r.Images[0].Width = 5_000_000 }},
+		{name: "mime", mutate: func(r *applicationembedding.MultimodalVideoEmbeddingRequest) { r.Images[0].MIMEType = "image/png" }},
+		{name: "digest", mutate: func(r *applicationembedding.MultimodalVideoEmbeddingRequest) {
+			r.Images[0].Digest = strings.Repeat("0", 64)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := base.Clone()
+			test.mutate(&request)
+			if _, err := provider.EmbedVideoContent(context.Background(), request); err == nil {
+				t.Fatal("expected invalid input error")
+			}
+		})
+	}
+	queryRequest, err := applicationembedding.NewMultimodalQueryEmbeddingRequest(contract, strings.Repeat("q", 65), 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.EmbedQueryText(context.Background(), queryRequest); err == nil {
+		t.Fatal("expected oversized query error")
+	}
+}
+
+func TestHTTPMultimodalProviderSignsConfiguredBasePath(t *testing.T) {
+	contract := multimodalHTTPTestContract(t)
+	server := newMultimodalHTTPTestServer(t, multimodalTestSecret, func(path, operationID string, _ []byte) multimodalTestResponse {
+		if path != "/models/frux/v1/ready" {
+			t.Errorf("path=%q", path)
+		}
+		return signedMultimodalTestJSON(http.StatusOK, multimodalReadyResponse{
+			ProtocolVersion: MultimodalProviderProtocolV1, OperationID: operationID, Ready: true,
+			Capabilities: []string{MultimodalProviderCapabilityQuery}, Contract: multimodalContractToEnvelope(contract),
+		})
+	})
+	defer server.Close()
+	provider := newMultimodalHTTPTestProvider(t, server.URL+"/models/frux", contract, nil)
+	if err := provider.CheckReady(context.Background(), MultimodalProviderCapabilityQuery); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -448,7 +522,10 @@ func newMultimodalHTTPTestProviderWithLimits(
 		Endpoint: endpoint, HMACSecret: multimodalTestSecret,
 		ProtocolVersion: MultimodalProviderProtocolV1, AllowInsecureLocal: true,
 		Timeout: timeout, MaxRequestBytes: maxRequestBytes, MaxResponseBytes: maxResponseBytes,
-		Observer: observer,
+		MaxVideoTextRunes: 128, MaxQueryRunes: 64, MaxImages: 4,
+		MaxImageBytes: 64 << 10, MaxTotalImageBytes: 64 << 10, MaxImagePixels: 4_000_000,
+		AllowedMIMETypes: []string{"image/jpeg"},
+		Observer:         observer,
 	}, contract)
 	if err != nil {
 		t.Fatal(err)

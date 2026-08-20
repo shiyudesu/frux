@@ -32,6 +32,13 @@ func NewReadyHTTPMultimodalProvider(
 		Timeout:            deadline, MaxRequestBytes: cfg.Provider.MaxRequestBytes,
 		MaxResponseBytes:   cfg.Provider.MaxResponseBytes,
 		MaxIdleConnections: cfg.Provider.AdmissionLimit,
+		MaxVideoTextRunes:  cfg.MaxVideoTextRunes,
+		MaxQueryRunes:      cfg.Query.MaxRunes,
+		MaxImages:          cfg.Images.MaxCount,
+		MaxImageBytes:      cfg.Images.MaxBytesEach,
+		MaxTotalImageBytes: cfg.Images.MaxTotalBytes,
+		MaxImagePixels:     cfg.Images.MaxPixelsEach,
+		AllowedMIMETypes:   append([]string(nil), cfg.Images.AllowedMIMETypes...),
 	}, contract)
 	if err != nil {
 		return nil, fmt.Errorf("build multimodal HTTP provider: %w", err)
