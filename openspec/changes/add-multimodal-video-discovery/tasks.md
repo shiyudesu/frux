@@ -142,11 +142,11 @@
 - [x] 10.1 Update `docs/modules/embedding.md`, `docs/modules/search.md`, `docs/product.md`, relevant
   architecture/engineering sections, and roadmap status without presenting future Session
   recommendation or ANN work as implemented.
-- [ ] 10.2 Run targeted embedding, publication-consumer, persistence, search, similar-video, router,
+- [x] 10.2 Run targeted embedding, publication-consumer, persistence, search, similar-video, router,
   metrics, and Web tests plus real PostgreSQL integration tests when `FRUX_POSTGRES_TEST_DSN` is
   available.
-- [ ] 10.3 Run `cd apps/api && go test ./...`, compile `./cmd/feed` and `./cmd/worker`, then run Web
+- [x] 10.3 Run `cd apps/api && go test ./...`, compile `./cmd/feed` and `./cmd/worker`, then run Web
   lint/test/build and relevant Compose configuration validation.
-- [ ] 10.4 Run `openspec validate --all --strict` and confirm the implementation adds no historical
+- [x] 10.4 Run `openspec validate --all --strict` and confirm the implementation adds no historical
   scan/backfill, HNSW/ANN index, semantic user profile, recommendation Provider/policy activation,
   training export, learned weights, or model-training runtime requirement.
