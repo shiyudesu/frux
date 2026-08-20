@@ -76,9 +76,13 @@ func (r *Repository) HandoffMultimodalJob(
 		if err := tx.Model(&MultimodalEmbeddingJobModel{}).Where("id = ?", stored.ID).Updates(updates).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("id = ?", stored.ID).Take(&stored).Error; err != nil {
+		// Scan into a fresh value so nullable columns cleared by the refresh do not
+		// retain stale pointers from the previously loaded leased/completed model.
+		var refreshedModel MultimodalEmbeddingJobModel
+		if err := tx.Where("id = ?", stored.ID).Take(&refreshedModel).Error; err != nil {
 			return err
 		}
+		stored = refreshedModel
 		refreshed = true
 		return nil
 	})
