@@ -502,6 +502,12 @@ func (s *Service) recordRequestLog(ctx context.Context, req *domainrecommendatio
 		RequestID: req.RequestID, UserID: req.UserID, Scene: req.Scene, PolicyVersion: policy.Version,
 		Context: req.Context, Candidates: domainrecommendation.LoggedCandidatesFromRanked(candidates),
 		Degraded: degraded, Snapshot: snapshot, DegradedProviders: providers, CreatedAt: s.now(),
+		RecallDiagnostics: func() []domainrecommendation.RecallDiagnostic {
+			if recall == nil {
+				return nil
+			}
+			return append([]domainrecommendation.RecallDiagnostic(nil), recall.quotaDiagnostics...)
+		}(),
 	})
 	if err != nil {
 		inframetrics.ObserveRecommendationRequestLogFailure("validation")

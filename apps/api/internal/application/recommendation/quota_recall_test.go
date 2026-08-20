@@ -237,6 +237,15 @@ func TestQuotaRecallWiderBudgetsSendOnlyMixedPoolToRanker(t *testing.T) {
 	if len(logs.logs) != 1 || loggedCandidates != 500 || len(store.snapshots) != 1 {
 		t.Fatalf("bounded evidence changed: logs=%d logged=%d snapshots=%d", len(logs.logs), loggedCandidates, len(store.snapshots))
 	}
+	selectedDiagnostic := false
+	for _, diagnostic := range logs.logs[0].RecallDiagnostics {
+		if diagnostic.Phase == "final" && diagnostic.Provider == "all" && diagnostic.Result == "selected" && diagnostic.Count == 500 {
+			selectedDiagnostic = true
+		}
+	}
+	if !selectedDiagnostic || len(logs.logs[0].RecallDiagnostics) > domainrecommendation.MaxRequestLogRecallDiagnostics {
+		t.Fatalf("quota diagnostics were missing or unbounded: %#v", logs.logs[0].RecallDiagnostics)
+	}
 	for _, snapshot := range store.snapshots {
 		if len(snapshot.Candidates) != 500 {
 			t.Fatalf("snapshot pool = %d, want 500", len(snapshot.Candidates))

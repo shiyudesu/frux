@@ -218,6 +218,44 @@ func TestRequestLogSamplingAndPayloadBounds(t *testing.T) {
 	if err != nil || len(payload) == 0 {
 		t.Fatalf("compact payload = %q, %v", payload, err)
 	}
+	if strings.Contains(string(payload), "recall_diagnostics") {
+		t.Fatalf("legacy request log unexpectedly changed: %s", payload)
+	}
+	quotaLog, err := NewRecommendationRequestLog(RequestLogInput{
+		RequestID: "quota-r1", UserID: 4, Scene: RecommendationRequestLogScene, PolicyVersion: 3, CreatedAt: now,
+		Candidates: []LoggedCandidate{{VideoID: 8, Reasons: []string{RecallProviderFresh}}},
+		RecallDiagnostics: []RecallDiagnostic{
+			{Phase: " Reservation ", Provider: " Fresh ", Result: " Reserved ", Reason: " none ", Count: 12},
+			{Phase: "final", Provider: "all", Result: "underfill", Reason: "insufficient_readable", Count: 2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create quota request log: %v", err)
+	}
+	quotaPayload, err := quotaLog.CompactPayload()
+	if err != nil || !strings.Contains(string(quotaPayload), `"recall_diagnostics"`) ||
+		strings.Contains(string(quotaPayload), "source_score") || strings.Contains(string(quotaPayload), "provider error") {
+		t.Fatalf("quota diagnostics were not bounded: %s err=%v", quotaPayload, err)
+	}
+	if got := quotaLog.RecallDiagnostics[0]; got.Phase != "reservation" || got.Provider != RecallProviderFresh ||
+		got.Result != "reserved" || got.Reason != "none" || got.Count != 12 {
+		t.Fatalf("quota diagnostic was not normalized: %#v", got)
+	}
+	invalidDiagnostics := []RecallDiagnostic{
+		{Phase: "request-123", Provider: RecallProviderFresh, Result: "selected", Count: 1},
+		{Phase: "final", Provider: "video-99", Result: "selected", Count: 1},
+		{Phase: "final", Provider: RecallProviderFresh, Result: "map[payload:true]", Count: 1},
+		{Phase: "final", Provider: RecallProviderFresh, Result: "underfill", Reason: "raw provider error", Count: 1},
+		{Phase: "final", Provider: RecallProviderFresh, Result: "selected", Count: MaxRequestLogDiagnosticCount + 1},
+	}
+	for _, diagnostic := range invalidDiagnostics {
+		if _, err := NewRecommendationRequestLog(RequestLogInput{
+			RequestID: "invalid-diagnostic", UserID: 4, Scene: RecommendationRequestLogScene, PolicyVersion: 3, CreatedAt: now,
+			RecallDiagnostics: []RecallDiagnostic{diagnostic},
+		}); !errors.Is(err, ErrInvalidRequestLog) {
+			t.Fatalf("invalid diagnostic %#v error = %v, want %v", diagnostic, err, ErrInvalidRequestLog)
+		}
+	}
 	maximumPool := make([]LoggedCandidate, MaxRequestLogCandidates)
 	componentNames := []string{
 		FeatureContentSimilarity,

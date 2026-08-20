@@ -37,6 +37,31 @@ func TestProgressEventWeightUsesBoundedPlaybackProgress(t *testing.T) {
 	}
 }
 
+func TestRequestLogModelRoundTripsQuotaDiagnostics(t *testing.T) {
+	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	log, err := domainrecommendation.NewRecommendationRequestLog(domainrecommendation.RequestLogInput{
+		RequestID: "quota-request", UserID: 9, Scene: domainrecommendation.RecommendationRequestLogScene,
+		PolicyVersion: 3, CreatedAt: now,
+		RecallDiagnostics: []domainrecommendation.RecallDiagnostic{
+			{Phase: "reservation", Provider: domainrecommendation.RecallProviderFresh, Result: "reserved", Reason: "none", Count: 10},
+			{Phase: "final", Provider: "all", Result: "selected", Reason: "none", Count: 50},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := requestLogFromModel(RequestLogModel{
+		RequestID: log.RequestID, UserID: log.UserID, Scene: log.Scene, PolicyVersion: log.PolicyVersion,
+		PayloadJSON: stringPayload(log), CreatedAt: log.CreatedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(restored.RecallDiagnostics, log.RecallDiagnostics) {
+		t.Fatalf("quota diagnostics changed across JSON persistence: got=%#v want=%#v", restored.RecallDiagnostics, log.RecallDiagnostics)
+	}
+}
+
 func TestProfileReconstructionTreatsReduceAuthorAsAuthorOnlyFeedback(t *testing.T) {
 	accumulator := profileReconstruction{
 		authors:         map[int64]float64{},

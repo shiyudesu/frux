@@ -158,6 +158,23 @@ var (
 		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_candidate_pool_candidates_total", Help: "Candidates observed at bounded recommendation pool stages."},
 		[]string{"stage", "provider"},
 	)
+	RecommendationQuotaMergeCandidatesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_quota_merge_candidates_total", Help: "Candidates observed during deterministic quota merge by bounded phase, provider, result, and reason."},
+		[]string{"phase", "provider", "result", "reason"},
+	)
+	RecommendationQuotaMergeDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_quota_merge_duration_seconds", Help: "Quota-merge preparation and selection duration by bounded result.",
+			Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25},
+		},
+		[]string{"result"},
+	)
+	RecommendationQuotaMergeSelectedPoolSize = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_quota_merge_selected_pool_size", Help: "Unique candidates selected by deterministic quota merge.",
+			Buckets: []float64{0, 10, 25, 50, 100, 200, 300, 400, 500},
+		},
+	)
 	RecommendationPolicyRejectionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_policy_rejections_total", Help: "Recommendation policies rejected by bounded reason."},
 		[]string{"reason"},
@@ -279,6 +296,9 @@ func init() {
 		ProfileWorkerEventsTotal,
 		RecommendationRecallCandidatesTotal,
 		RecommendationCandidatePoolCandidatesTotal,
+		RecommendationQuotaMergeCandidatesTotal,
+		RecommendationQuotaMergeDuration,
+		RecommendationQuotaMergeSelectedPoolSize,
 		RecommendationPolicyRejectionsTotal,
 		RecommendationDegradedRequestsTotal,
 		RecommendationSnapshotOperationsTotal,
@@ -332,6 +352,26 @@ func ObserveRecommendationCandidatePool(stage, provider string, count int) {
 		).Add(float64(count))
 	}
 }
+func ObserveRecommendationQuotaMerge(phase, provider, result, reason string, count int) {
+	if count > 0 {
+		RecommendationQuotaMergeCandidatesTotal.WithLabelValues(
+			recommendationQuotaMergePhase(phase), recommendationCandidatePoolProvider(provider),
+			recommendationQuotaMergeResult(result), recommendationQuotaMergeReason(reason),
+		).Add(float64(count))
+	}
+}
+func ObserveRecommendationQuotaMergeDuration(result string, duration time.Duration) {
+	if duration < 0 {
+		duration = 0
+	}
+	RecommendationQuotaMergeDuration.WithLabelValues(recommendationQuotaMergeDurationResult(result)).Observe(duration.Seconds())
+}
+func ObserveRecommendationQuotaMergeSelectedPoolSize(count int) {
+	if count < 0 {
+		count = 0
+	}
+	RecommendationQuotaMergeSelectedPoolSize.Observe(float64(count))
+}
 func ObserveRecommendationPolicyRejection(reason string) {
 	RecommendationPolicyRejectionsTotal.WithLabelValues(recommendationPolicyRejectionReason(reason)).Inc()
 }
@@ -381,6 +421,38 @@ func recommendationCandidatePoolStage(value string) string {
 		return "unknown"
 	}
 }
+func recommendationQuotaMergePhase(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "provider", "normalization", "visibility", "reservation", "fill", "final":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationQuotaMergeResult(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "returned", "local_unique", "readable", "reserved", "fill_selected", "selected", "represented", "overlap", "exhausted", "underfill":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+func recommendationQuotaMergeReason(value string) string {
+	switch normalizeLabel(value, "none") {
+	case "none", "insufficient_readable":
+		return normalizeLabel(value, "none")
+	default:
+		return "unknown"
+	}
+}
+func recommendationQuotaMergeDurationResult(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "success", "error":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
 func recommendationPolicyRejectionReason(value string) string {
 	switch normalizeLabel(value, "unknown") {
 	case "pre_rank_pool":
@@ -391,7 +463,7 @@ func recommendationPolicyRejectionReason(value string) string {
 }
 func recommendationReasonLabel(value string) string {
 	switch normalizeLabel(value, "unknown") {
-	case "timeout", "error", "snapshot_unavailable":
+	case "timeout", "error", "capacity", "snapshot_unavailable":
 		return normalizeLabel(value, "unknown")
 	default:
 		return "unknown"

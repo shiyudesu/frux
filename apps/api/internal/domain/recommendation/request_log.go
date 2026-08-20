@@ -11,10 +11,12 @@ import (
 )
 
 const (
-	MaxRequestLogCandidates      = 500
-	MaxRequestLogReasons         = 8
-	MaxRequestLogReasonLength    = 64
-	MaxRequestLogScoreComponents = 8
+	MaxRequestLogCandidates        = 500
+	MaxRequestLogReasons           = 8
+	MaxRequestLogReasonLength      = 64
+	MaxRequestLogScoreComponents   = 8
+	MaxRequestLogRecallDiagnostics = 64
+	MaxRequestLogDiagnosticCount   = MaxRecallBudget * 16
 	// MaxRequestLogPayloadBytes accommodates every bounded entry in a normal
 	// 500-candidate pool (eight 64-byte reasons and eight score components per
 	// candidate) without compacting its ordered explanation prefix.
@@ -37,6 +39,14 @@ type LoggedCandidate struct {
 	ScoreComponents map[string]float64 `json:"score_components"`
 }
 
+type RecallDiagnostic struct {
+	Phase    string `json:"phase"`
+	Provider string `json:"provider"`
+	Result   string `json:"result"`
+	Reason   string `json:"reason,omitempty"`
+	Count    int    `json:"count"`
+}
+
 type RequestLogInput struct {
 	RequestID         string
 	UserID            int64
@@ -47,6 +57,7 @@ type RequestLogInput struct {
 	Degraded          bool
 	Snapshot          bool
 	DegradedProviders []string
+	RecallDiagnostics []RecallDiagnostic
 	CreatedAt         time.Time
 }
 
@@ -61,6 +72,7 @@ type RecommendationRequestLog struct {
 	Degraded          bool
 	Snapshot          bool
 	DegradedProviders []string
+	RecallDiagnostics []RecallDiagnostic
 	CreatedAt         time.Time
 }
 
@@ -221,10 +233,28 @@ func NewRecommendationRequestLog(input RequestLogInput) (*RecommendationRequestL
 		}
 		candidates = append(candidates, cloned)
 	}
+	if len(input.RecallDiagnostics) > MaxRequestLogRecallDiagnostics {
+		return nil, ErrInvalidRequestLog
+	}
+	diagnostics := make([]RecallDiagnostic, 0, len(input.RecallDiagnostics))
+	for _, diagnostic := range input.RecallDiagnostics {
+		diagnostic.Phase = normalizePolicyToken(diagnostic.Phase)
+		diagnostic.Provider = normalizePolicyToken(diagnostic.Provider)
+		diagnostic.Result = normalizePolicyToken(diagnostic.Result)
+		diagnostic.Reason = normalizePolicyToken(diagnostic.Reason)
+		if !validRecallDiagnosticPhase(diagnostic.Phase) ||
+			(diagnostic.Provider != "all" && !validRecallProvider(diagnostic.Provider)) ||
+			!validRecallDiagnosticResult(diagnostic.Result) ||
+			!validRecallDiagnosticReason(diagnostic.Reason) ||
+			diagnostic.Count < 0 || diagnostic.Count > MaxRequestLogDiagnosticCount {
+			return nil, ErrInvalidRequestLog
+		}
+		diagnostics = append(diagnostics, diagnostic)
+	}
 	log := &RecommendationRequestLog{
 		RequestID: requestID, UserID: input.UserID, Scene: scene, PolicyVersion: input.PolicyVersion,
 		Context: recommendationContext, Candidates: candidates, Degraded: input.Degraded, Snapshot: input.Snapshot,
-		DegradedProviders: append([]string(nil), input.DegradedProviders...), CreatedAt: input.CreatedAt.UTC(),
+		DegradedProviders: append([]string(nil), input.DegradedProviders...), RecallDiagnostics: diagnostics, CreatedAt: input.CreatedAt.UTC(),
 	}
 	if _, err := log.CompactPayload(); err != nil {
 		return nil, err
@@ -242,7 +272,11 @@ func (l *RecommendationRequestLog) CompactPayload() ([]byte, error) {
 		Degraded          bool                   `json:"degraded"`
 		Snapshot          bool                   `json:"snapshot"`
 		DegradedProviders []string               `json:"degraded_providers,omitempty"`
-	}{Context: l.Context.Clone(), Candidates: l.Candidates, Degraded: l.Degraded, Snapshot: l.Snapshot, DegradedProviders: l.DegradedProviders}
+		RecallDiagnostics []RecallDiagnostic     `json:"recall_diagnostics,omitempty"`
+	}{
+		Context: l.Context.Clone(), Candidates: l.Candidates, Degraded: l.Degraded, Snapshot: l.Snapshot,
+		DegradedProviders: l.DegradedProviders, RecallDiagnostics: l.RecallDiagnostics,
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, ErrInvalidRequestLog
@@ -251,4 +285,31 @@ func (l *RecommendationRequestLog) CompactPayload() ([]byte, error) {
 		return nil, ErrRequestLogPayloadTooLarge
 	}
 	return encoded, nil
+}
+
+func validRecallDiagnosticPhase(value string) bool {
+	switch value {
+	case "provider", "normalization", "visibility", "reservation", "fill", "final":
+		return true
+	default:
+		return false
+	}
+}
+
+func validRecallDiagnosticResult(value string) bool {
+	switch value {
+	case "returned", "local_unique", "readable", "reserved", "fill_selected", "selected", "represented", "overlap", "exhausted", "underfill":
+		return true
+	default:
+		return false
+	}
+}
+
+func validRecallDiagnosticReason(value string) bool {
+	switch value {
+	case "", "none", "insufficient_readable":
+		return true
+	default:
+		return false
+	}
 }

@@ -388,9 +388,10 @@ func boundedRecallCandidates(candidates []*domainrecommendation.Candidate, budge
 }
 
 type recallExecution struct {
-	candidates []*domainrecommendation.Candidate
-	degraded   []ProviderDegradation
-	healthy    int
+	candidates       []*domainrecommendation.Candidate
+	degraded         []ProviderDegradation
+	quotaDiagnostics []domainrecommendation.RecallDiagnostic
+	healthy          int
 }
 
 func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendation.CandidateRequest, totalLimit int, policies ...*domainrecommendation.Policy) (*recallExecution, error) {
@@ -453,6 +454,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 	execution := &recallExecution{}
 	merged := map[int64]*domainrecommendation.Candidate{}
 	providerResults := map[string][]*domainrecommendation.Candidate{}
+	healthyProviders := map[string]bool{}
 	for result := range results {
 		if result.err != nil {
 			reason := "error"
@@ -465,6 +467,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 			continue
 		}
 		execution.healthy++
+		healthyProviders[result.provider] = true
 		inframetrics.ObserveRecommendationCandidatePool("provider_returned", result.provider, len(result.candidates))
 		if quotaDriven {
 			providerResults[result.provider] = append(providerResults[result.provider], result.candidates...)
@@ -485,12 +488,18 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 		}
 	}
 	var normalizedProviders map[string][]*domainrecommendation.Candidate
+	quotaMergeStarted := time.Time{}
+	quotaReturned := map[string]int{}
 	if quotaDriven {
+		quotaMergeStarted = time.Now()
 		config := policies[0].Config
 		normalizedProviders = make(map[string][]*domainrecommendation.Candidate, len(config.RecallProviderOrder))
 		for _, provider := range config.RecallProviderOrder {
+			quotaReturned[provider] = len(providerResults[provider])
+			inframetrics.ObserveRecommendationQuotaMerge("provider", provider, "returned", "none", quotaReturned[provider])
 			normalized := normalizeProviderCandidates(provider, providerResults[provider], config.RecallBudgets[provider])
 			normalizedProviders[provider] = normalized
+			inframetrics.ObserveRecommendationQuotaMerge("normalization", provider, "local_unique", "none", len(normalized))
 			for _, candidate := range normalized {
 				mergeRecalledCandidate(merged, candidate)
 			}
@@ -512,6 +521,9 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 	if s.visibility != nil && len(pool) > 0 {
 		visible, err := s.visibility.ListVisibleCandidates(ctx, candidateIDs(pool))
 		if err != nil {
+			if quotaDriven {
+				inframetrics.ObserveRecommendationQuotaMergeDuration("error", time.Since(quotaMergeStarted))
+			}
 			return nil, ErrLoadRecommendationFailed
 		}
 		byID := make(map[int64]*domainrecommendation.Candidate, len(visible))
@@ -553,11 +565,17 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 				filtered = append(filtered, candidate)
 			}
 			readableProviders[provider] = filtered
+			inframetrics.ObserveRecommendationQuotaMerge("visibility", provider, "readable", "none", len(filtered))
 		}
 		mixed, err := mixQuotaCandidates(policies[0].Config, readableProviders)
 		if err != nil {
+			inframetrics.ObserveRecommendationQuotaMergeDuration("error", time.Since(quotaMergeStarted))
 			return nil, ErrLoadRecommendationFailed
 		}
+		execution.quotaDiagnostics = quotaMergeDiagnostics(policies[0].Config, quotaReturned, healthyProviders, mixed)
+		observeQuotaMergeResult(policies[0].Config, healthyProviders, mixed)
+		inframetrics.ObserveRecommendationQuotaMergeDuration("success", time.Since(quotaMergeStarted))
+		inframetrics.ObserveRecommendationQuotaMergeSelectedPoolSize(len(mixed.Candidates))
 		pool = mixed.Candidates
 	}
 	// Keep direct legacy callers safe while normal recommendation requests
@@ -606,6 +624,66 @@ func policyRecallPoolLimit(policy *domainrecommendation.Policy) int {
 		total += budget
 	}
 	return total
+}
+
+func quotaMergeDiagnostics(config domainrecommendation.PolicyConfiguration, returned map[string]int, healthy map[string]bool, result *quotaMergeResult) []domainrecommendation.RecallDiagnostic {
+	if result == nil {
+		return nil
+	}
+	diagnostics := make([]domainrecommendation.RecallDiagnostic, 0, len(config.RecallProviderOrder)*8+2)
+	appendDiagnostic := func(phase, provider, result, reason string, count int) {
+		if count < 0 {
+			count = 0
+		}
+		if count > domainrecommendation.MaxRequestLogDiagnosticCount {
+			count = domainrecommendation.MaxRequestLogDiagnosticCount
+		}
+		diagnostics = append(diagnostics, domainrecommendation.RecallDiagnostic{
+			Phase: phase, Provider: provider, Result: result, Reason: reason, Count: count,
+		})
+	}
+	for _, provider := range config.RecallProviderOrder {
+		if !healthy[provider] {
+			continue
+		}
+		stats := result.Providers[provider]
+		appendDiagnostic("provider", provider, "returned", "none", returned[provider])
+		appendDiagnostic("normalization", provider, "local_unique", "none", stats.LocalUnique)
+		appendDiagnostic("visibility", provider, "readable", "none", stats.Readable)
+		appendDiagnostic("reservation", provider, "reserved", "none", stats.Reserved)
+		appendDiagnostic("fill", provider, "fill_selected", "none", stats.FillSelected)
+		appendDiagnostic("final", provider, "represented", "none", stats.Represented)
+		if stats.Exhausted {
+			appendDiagnostic("final", provider, "exhausted", "none", 1)
+		}
+		if stats.Underfill > 0 {
+			appendDiagnostic("final", provider, "underfill", "insufficient_readable", stats.Underfill)
+		}
+	}
+	appendDiagnostic("final", "all", "overlap", "none", result.Overlap)
+	appendDiagnostic("final", "all", "selected", "none", len(result.Candidates))
+	return diagnostics
+}
+
+func observeQuotaMergeResult(config domainrecommendation.PolicyConfiguration, healthy map[string]bool, result *quotaMergeResult) {
+	if result == nil {
+		return
+	}
+	for _, provider := range config.RecallProviderOrder {
+		if !healthy[provider] {
+			continue
+		}
+		stats := result.Providers[provider]
+		inframetrics.ObserveRecommendationQuotaMerge("reservation", provider, "reserved", "none", stats.Reserved)
+		inframetrics.ObserveRecommendationQuotaMerge("fill", provider, "fill_selected", "none", stats.FillSelected)
+		inframetrics.ObserveRecommendationQuotaMerge("final", provider, "represented", "none", stats.Represented)
+		if stats.Exhausted {
+			inframetrics.ObserveRecommendationQuotaMerge("final", provider, "exhausted", "none", 1)
+		}
+		inframetrics.ObserveRecommendationQuotaMerge("final", provider, "underfill", "insufficient_readable", stats.Underfill)
+	}
+	inframetrics.ObserveRecommendationQuotaMerge("final", "all", "overlap", "none", result.Overlap)
+	inframetrics.ObserveRecommendationQuotaMerge("final", "all", "selected", "none", len(result.Candidates))
 }
 
 var errRecallProviderCapacity = errors.New("recall provider capacity exhausted")

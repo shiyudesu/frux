@@ -51,12 +51,12 @@
 
 ## 5. Observability and Diagnostics
 
-- [ ] 5.1 Add fixed-label metrics for Provider returned, local unique, readable, reserved,
+- [x] 5.1 Add fixed-label metrics for Provider returned, local unique, readable, reserved,
   fill-selected, final represented, overlap, exhausted, and underfill counts plus merge duration and
   selected pool size.
-- [ ] 5.2 Add sampled bounded diagnostic reason/phase summaries to existing recommendation evidence
+- [x] 5.2 Add sampled bounded diagnostic reason/phase summaries to existing recommendation evidence
   or logs only where current schemas allow, without creating a raw candidate-pool persistence table.
-- [ ] 5.3 Add tests proving video/user/request/session IDs, candidate lists, raw source scores, map
+- [x] 5.3 Add tests proving video/user/request/session IDs, candidate lists, raw source scores, map
   payloads, and Provider raw errors never become labels or normal log payloads.
 - [ ] 5.4 Update recommendation module, optimization, monitoring, and roadmap documentation with
   policy fields, deterministic algorithm, compatibility behavior, underfill, and rollback.

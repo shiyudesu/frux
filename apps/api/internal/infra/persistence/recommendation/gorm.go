@@ -1774,13 +1774,15 @@ func requestLogFromModel(model RequestLogModel) (*domainrecommendation.Recommend
 		Degraded          bool                                        `json:"degraded"`
 		Snapshot          bool                                        `json:"snapshot"`
 		DegradedProviders []string                                    `json:"degraded_providers"`
+		RecallDiagnostics []domainrecommendation.RecallDiagnostic     `json:"recall_diagnostics"`
 	}
 	if err := json.Unmarshal([]byte(model.PayloadJSON), &payload); err != nil {
 		return nil, err
 	}
 	return domainrecommendation.NewRecommendationRequestLog(domainrecommendation.RequestLogInput{
 		RequestID: model.RequestID, UserID: model.UserID, Scene: model.Scene, PolicyVersion: model.PolicyVersion,
-		Context: payload.Context, Candidates: payload.Candidates, Degraded: payload.Degraded, Snapshot: payload.Snapshot, DegradedProviders: payload.DegradedProviders, CreatedAt: model.CreatedAt,
+		Context: payload.Context, Candidates: payload.Candidates, Degraded: payload.Degraded, Snapshot: payload.Snapshot,
+		DegradedProviders: payload.DegradedProviders, RecallDiagnostics: payload.RecallDiagnostics, CreatedAt: model.CreatedAt,
 	})
 }
 
