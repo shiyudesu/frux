@@ -14,12 +14,12 @@
 
 ## 2. Provider-local Normalization
 
-- [ ] 2.1 Implement a pure Provider-local normalization helper that filters invalid/nil candidates,
+- [x] 2.1 Implement a pure Provider-local normalization helper that filters invalid/nil candidates,
   deduplicates IDs, canonicalizes that Provider's evidence, stably orders by finite source score/
   publication/video ID, and applies the Provider budget.
-- [ ] 2.2 Preserve all cross-Provider reasons/source scores in a separate global duplicate merge
+- [x] 2.2 Preserve all cross-Provider reasons/source scores in a separate global duplicate merge
   without comparing Provider score scales.
-- [ ] 2.3 Add tests for raw slice permutation, duplicate IDs, invalid scores, missing evidence,
+- [x] 2.3 Add tests for raw slice permutation, duplicate IDs, invalid scores, missing evidence,
   stable ties, budget truncation, and defensive candidate cloning.
 
 ## 3. Readable Superset Preparation
@@ -35,11 +35,11 @@
 
 ## 4. Reservation and Fill Mixer
 
-- [ ] 4.1 Implement a pure reservation phase over normalized readable Provider sequences in explicit
+- [x] 4.1 Implement a pure reservation phase over normalized readable Provider sequences in explicit
   policy order, tracking one global slot per video and represented counts from merged reasons.
-- [ ] 4.2 Implement Provider underfill/exhaustion handling so all usable candidates survive and
+- [x] 4.2 Implement Provider underfill/exhaustion handling so all usable candidates survive and
   unused capacity returns to the common fill phase.
-- [ ] 4.3 Implement deterministic round-robin fill from retained Provider cursors until pool limit or
+- [x] 4.3 Implement deterministic round-robin fill from retained Provider cursors until pool limit or
   global exhaustion, merging duplicates without consuming another slot.
 - [ ] 4.4 Integrate quota merge only when a policy supplies the complete quota contract; retain the
   prerequisite complete-pool path for policies that omit it.
