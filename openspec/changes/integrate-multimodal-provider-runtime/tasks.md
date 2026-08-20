@@ -34,24 +34,24 @@
 
 ## 4. Worker Runtime Wiring
 
-- [ ] 4.1 Add a composition helper that constructs and readiness-validates the provider only when
+- [x] 4.1 Add a composition helper that constructs and readiness-validates the provider only when
   Worker video-job execution is enabled.
-- [ ] 4.2 Construct the FFmpeg multimodal media preparer and existing job worker from repositories,
+- [x] 4.2 Construct the FFmpeg multimodal media preparer and existing job worker from repositories,
   media store, provider, and parsed bounded configuration.
-- [ ] 4.3 Run the multimodal job worker under Worker process cancellation/shutdown, preserve durable
+- [x] 4.3 Run the multimodal job worker under Worker process cancellation/shutdown, preserve durable
   handoff independence, and surface fatal executor startup/runtime errors through supervision.
-- [ ] 4.4 Add composition tests for disabled startup, compatible runtime, contract/capability mismatch,
+- [x] 4.4 Add composition tests for disabled startup, compatible runtime, contract/capability mismatch,
   provider outage, and no job claim before readiness succeeds.
 
 ## 5. API Query and Discovery Wiring
 
-- [ ] 5.1 Construct and readiness-validate the provider only when query embedding or hybrid search is
+- [x] 5.1 Construct and readiness-validate the provider only when query embedding or hybrid search is
   enabled; preserve provider-free similar-video-only mode.
-- [ ] 5.2 Construct the bounded query cache/embedder and install the existing hybrid video-search
+- [x] 5.2 Construct the bounded query cache/embedder and install the existing hybrid video-search
   option with the exact index, readable-video loader, configured merge policy, and shared contract.
-- [ ] 5.3 Keep similar-video construction flag-scoped and ensure disabled/search-fallback behavior
+- [x] 5.3 Keep similar-video construction flag-scoped and ensure disabled/search-fallback behavior
   remains unchanged when runtime inference is unavailable after startup.
-- [ ] 5.4 Add router/API-flow tests for enabled hybrid wiring, first-page lexical degradation,
+- [x] 5.4 Add router/API-flow tests for enabled hybrid wiring, first-page lexical degradation,
   hybrid continuation failure, similar-only startup, and fully disabled startup.
 
 ## 6. Configuration Surfaces and Documentation

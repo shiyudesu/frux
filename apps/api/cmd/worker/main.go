@@ -25,6 +25,7 @@ import (
 	applicationreview "github.com/shiyudesu/frux/internal/application/review"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
@@ -71,11 +72,6 @@ func run() error {
 	cfg, err := infraconfig.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
-	}
-	if err := infraconfig.ValidateMultimodalWorkerRuntime(
-		cfg.Multimodal, nil,
-	); err != nil {
-		return fmt.Errorf("init multimodal runtime: %w", err)
 	}
 	if !cfg.Kafka.Enabled || len(cfg.Kafka.Brokers) == 0 {
 		return errors.New("Kafka brokers are required for worker")
@@ -129,7 +125,7 @@ func run() error {
 		return nil
 	case err := <-runtimeFailures:
 		stop()
-		return fmt.Errorf("fatal Kafka consumer failure: %w", err)
+		return fmt.Errorf("fatal worker runtime failure: %w", err)
 	}
 }
 
@@ -465,6 +461,11 @@ func startWorkers(
 	}
 
 	embeddingRepo := infraembedding.New(gormDB)
+	if err := startMultimodalJobRuntime(
+		ctx, cfg, embeddingRepo, videoRepo, mediaRepo, mediaStore, runtimeFailures,
+	); err != nil {
+		return err
+	}
 	embeddingOptions := []applicationembedding.Option{}
 	if cfg.Multimodal.VideoJobsEnabled {
 		contract, contractErr := cfg.Multimodal.Contract.Identity()
@@ -525,6 +526,135 @@ func startWorkers(
 		runtimeFailures,
 		kafkaStarter,
 	)
+}
+
+func startMultimodalJobRuntime(
+	ctx context.Context,
+	cfg *infraconfig.Config,
+	repository applicationembedding.MultimodalWorkerRepository,
+	videos applicationembedding.MultimodalVideoReader,
+	assets applicationembedding.MultimodalMediaAssetReader,
+	mediaStore domainmedia.MediaObjectStore,
+	runtimeFailures chan<- error,
+) error {
+	return startMultimodalJobRuntimeWithProvider(
+		ctx, cfg, repository, videos, assets, mediaStore, runtimeFailures,
+		func(
+			providerContext context.Context,
+			multimodalConfig infraconfig.MultimodalConfig,
+			capability string,
+		) (workerReadyMultimodalProvider, error) {
+			return infraembedding.NewReadyHTTPMultimodalProvider(
+				providerContext, multimodalConfig, capability,
+			)
+		},
+	)
+}
+
+type workerReadyMultimodalProvider interface {
+	applicationembedding.MultimodalEmbeddingProvider
+	Contract() domainembedding.MultimodalContractIdentity
+}
+
+type workerMultimodalProviderFactory func(
+	context.Context,
+	infraconfig.MultimodalConfig,
+	string,
+) (workerReadyMultimodalProvider, error)
+
+func startMultimodalJobRuntimeWithProvider(
+	ctx context.Context,
+	cfg *infraconfig.Config,
+	repository applicationembedding.MultimodalWorkerRepository,
+	videos applicationembedding.MultimodalVideoReader,
+	assets applicationembedding.MultimodalMediaAssetReader,
+	mediaStore domainmedia.MediaObjectStore,
+	runtimeFailures chan<- error,
+	providerFactory workerMultimodalProviderFactory,
+) error {
+	if cfg == nil {
+		return infraconfig.ErrInvalidMultimodalConfig
+	}
+	if !cfg.Multimodal.VideoJobsEnabled {
+		return infraconfig.ValidateMultimodalWorkerRuntime(cfg.Multimodal, nil)
+	}
+	if providerFactory == nil {
+		return infraconfig.ErrMissingMultimodalDependency
+	}
+	provider, err := providerFactory(
+		ctx, cfg.Multimodal, infraembedding.MultimodalProviderCapabilityVideo,
+	)
+	if err != nil {
+		return fmt.Errorf("init multimodal provider: %w", err)
+	}
+	contract := provider.Contract()
+	if err := infraconfig.ValidateMultimodalWorkerRuntime(cfg.Multimodal, &contract); err != nil {
+		return fmt.Errorf("validate multimodal worker runtime: %w", err)
+	}
+	leaseTTL, err := time.ParseDuration(cfg.Multimodal.Jobs.LeaseTTL)
+	if err != nil {
+		return err
+	}
+	heartbeatInterval, err := time.ParseDuration(cfg.Multimodal.Jobs.HeartbeatInterval)
+	if err != nil {
+		return err
+	}
+	pollInterval, err := time.ParseDuration(cfg.Multimodal.Jobs.PollInterval)
+	if err != nil {
+		return err
+	}
+	providerDeadline, err := time.ParseDuration(cfg.Multimodal.Provider.Deadline)
+	if err != nil {
+		return err
+	}
+	retryBase, err := time.ParseDuration(cfg.Multimodal.Jobs.RetryBase)
+	if err != nil {
+		return err
+	}
+	retryMax, err := time.ParseDuration(cfg.Multimodal.Jobs.RetryMax)
+	if err != nil {
+		return err
+	}
+	shutdownTimeout, err := time.ParseDuration(cfg.Multimodal.Jobs.ShutdownTimeout)
+	if err != nil {
+		return err
+	}
+	worker, err := applicationembedding.NewMultimodalJobWorker(
+		repository,
+		videos,
+		assets,
+		inframedia.NewFFmpegMultimodalMediaPreparer(mediaStore, ""),
+		provider,
+		applicationembedding.MultimodalJobWorkerConfig{
+			Contract: contract, MaxAttempts: cfg.Multimodal.Jobs.MaxAttempts,
+			MaxVideoTextRunes: cfg.Multimodal.MaxVideoTextRunes,
+			LeaseTTL:          leaseTTL, HeartbeatInterval: heartbeatInterval,
+			PollInterval: pollInterval, ProviderDeadline: providerDeadline,
+			AdmissionLimit: cfg.Multimodal.Provider.AdmissionLimit,
+			RetryBase:      retryBase, RetryMax: retryMax, ShutdownTimeout: shutdownTimeout,
+			MaxImages:          cfg.Multimodal.Images.MaxCount,
+			MaxImageBytes:      cfg.Multimodal.Images.MaxBytesEach,
+			MaxTotalImageBytes: cfg.Multimodal.Images.MaxTotalBytes,
+			MaxImagePixels:     cfg.Multimodal.Images.MaxPixelsEach,
+			AllowedMIMETypes:   append([]string(nil), cfg.Multimodal.Images.AllowedMIMETypes...),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("build multimodal job worker: %w", err)
+	}
+	owner, err := newWorkerOwner("multimodal")
+	if err != nil {
+		return err
+	}
+	go func() {
+		if runErr := worker.Run(ctx, owner); runErr != nil && ctx.Err() == nil && runtimeFailures != nil {
+			select {
+			case runtimeFailures <- fmt.Errorf("multimodal job worker: %w", runErr):
+			default:
+			}
+		}
+	}()
+	return nil
 }
 
 func superviseBehaviorKafkaConsumers(

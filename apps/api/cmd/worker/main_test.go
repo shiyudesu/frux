@@ -4,14 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	applicationaccount "github.com/shiyudesu/frux/internal/application/account"
+	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmessage "github.com/shiyudesu/frux/internal/application/message"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
@@ -237,6 +242,190 @@ func TestModerationWorkerOwnerIsUniquePerProcessStart(t *testing.T) {
 	if first == second || len(first) > 128 || len(second) > 128 {
 		t.Fatalf("owners first=%q second=%q", first, second)
 	}
+}
+
+type workerMultimodalProviderStub struct {
+	contract domainembedding.MultimodalContractIdentity
+}
+
+func (s *workerMultimodalProviderStub) Contract() domainembedding.MultimodalContractIdentity {
+	return s.contract
+}
+
+func (*workerMultimodalProviderStub) EmbedVideoContent(
+	context.Context,
+	applicationembedding.MultimodalVideoEmbeddingRequest,
+) (*applicationembedding.MultimodalEmbeddingResult, error) {
+	return nil, errors.New("unused")
+}
+
+func (*workerMultimodalProviderStub) EmbedQueryText(
+	context.Context,
+	applicationembedding.MultimodalQueryEmbeddingRequest,
+) (*applicationembedding.MultimodalEmbeddingResult, error) {
+	return nil, errors.New("unused")
+}
+
+type workerMultimodalRepositoryStub struct {
+	claims  atomic.Int32
+	claimed chan struct{}
+	err     error
+}
+
+func (*workerMultimodalRepositoryStub) HandoffMultimodalJob(
+	context.Context,
+	*domainembedding.MultimodalEmbeddingJob,
+) (*domainembedding.MultimodalEmbeddingJob, bool, bool, error) {
+	return nil, false, false, nil
+}
+
+func (s *workerMultimodalRepositoryStub) ClaimMultimodalJobs(
+	context.Context,
+	string,
+	time.Duration,
+	int,
+) ([]*domainembedding.MultimodalEmbeddingJob, error) {
+	if s.claims.Add(1) == 1 && s.claimed != nil {
+		close(s.claimed)
+	}
+	return nil, s.err
+}
+
+func (*workerMultimodalRepositoryStub) HeartbeatMultimodalJob(context.Context, int64, string, time.Duration) (bool, error) {
+	return false, nil
+}
+
+func (*workerMultimodalRepositoryStub) RetryMultimodalJob(context.Context, int64, string, string, time.Duration) (bool, error) {
+	return false, nil
+}
+
+func (*workerMultimodalRepositoryStub) CompleteMultimodalJob(context.Context, int64, string, *domainembedding.MultimodalVectorFact) (bool, error) {
+	return false, nil
+}
+
+func (*workerMultimodalRepositoryStub) TerminalMultimodalJob(context.Context, int64, string, string) (bool, error) {
+	return false, nil
+}
+
+type workerMultimodalVideoReaderStub struct{}
+
+func (*workerMultimodalVideoReaderStub) FindByIDAnyStatus(context.Context, int64) (*domainvideo.Video, error) {
+	return nil, domainvideo.ErrVideoNotFound
+}
+
+type workerMultimodalAssetReaderStub struct{}
+
+func (*workerMultimodalAssetReaderStub) FindAssetByID(context.Context, int64) (*domainmedia.MediaAsset, error) {
+	return nil, domainmedia.ErrMediaAssetNotFound
+}
+
+func TestMultimodalJobRuntimeDoesNotConstructProviderWhenDisabled(t *testing.T) {
+	calls := 0
+	err := startMultimodalJobRuntimeWithProvider(
+		context.Background(), &infraconfig.Config{}, nil, nil, nil, nil, nil,
+		func(context.Context, infraconfig.MultimodalConfig, string) (workerReadyMultimodalProvider, error) {
+			calls++
+			return nil, errors.New("must not be called")
+		},
+	)
+	if err != nil || calls != 0 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}
+
+func TestMultimodalJobRuntimeWaitsForReadinessBeforeClaiming(t *testing.T) {
+	cfg, contract := workerMultimodalRuntimeConfig(t)
+	repository := &workerMultimodalRepositoryStub{
+		claimed: make(chan struct{}), err: errors.New("stop after first claim"),
+	}
+	readinessStarted := make(chan struct{})
+	releaseReadiness := make(chan struct{})
+	runtimeFailures := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan error, 1)
+	go func() {
+		started <- startMultimodalJobRuntimeWithProvider(
+			ctx, cfg, repository, &workerMultimodalVideoReaderStub{},
+			&workerMultimodalAssetReaderStub{}, nil, runtimeFailures,
+			func(context.Context, infraconfig.MultimodalConfig, string) (workerReadyMultimodalProvider, error) {
+				close(readinessStarted)
+				<-releaseReadiness
+				return &workerMultimodalProviderStub{contract: contract}, nil
+			},
+		)
+	}()
+	<-readinessStarted
+	if repository.claims.Load() != 0 {
+		t.Fatal("job was claimed before readiness completed")
+	}
+	close(releaseReadiness)
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-repository.claimed:
+	case <-time.After(time.Second):
+		t.Fatal("multimodal worker did not claim after readiness")
+	}
+	select {
+	case err := <-runtimeFailures:
+		if err == nil || !strings.Contains(err.Error(), "multimodal job worker") {
+			t.Fatalf("runtime error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("multimodal worker failure was not supervised")
+	}
+}
+
+func TestMultimodalJobRuntimeStopsBeforeClaimOnReadinessFailure(t *testing.T) {
+	cfg, _ := workerMultimodalRuntimeConfig(t)
+	repository := &workerMultimodalRepositoryStub{}
+	want := errors.New("provider unavailable")
+	err := startMultimodalJobRuntimeWithProvider(
+		context.Background(), cfg, repository, &workerMultimodalVideoReaderStub{},
+		&workerMultimodalAssetReaderStub{}, nil, nil,
+		func(context.Context, infraconfig.MultimodalConfig, string) (workerReadyMultimodalProvider, error) {
+			return nil, want
+		},
+	)
+	if !errors.Is(err, want) || repository.claims.Load() != 0 {
+		t.Fatalf("claims=%d err=%v", repository.claims.Load(), err)
+	}
+}
+
+func workerMultimodalRuntimeConfig(t testing.TB) (*infraconfig.Config, domainembedding.MultimodalContractIdentity) {
+	t.Helper()
+	contract, err := domainembedding.NewMultimodalContractIdentity(
+		"provider", "model", "revision", domainembedding.MinMultimodalDimension,
+		domainembedding.MultimodalTextCanonicalizerV1,
+		domainembedding.MultimodalFrameSamplingPolicyV1,
+		domainembedding.MultimodalImagePreprocessingV1,
+		domainembedding.MultimodalFusionPolicyV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &infraconfig.Config{Multimodal: infraconfig.MultimodalConfig{
+		Enabled: true, VideoJobsEnabled: true, MaxVideoTextRunes: 2048,
+		Contract: infraconfig.MultimodalContractConfig{
+			ProviderAlias: contract.ProviderAlias, ModelAlias: contract.ModelAlias,
+			RevisionAlias: contract.RevisionAlias, Dimension: contract.Dimension,
+			TextCanonicalizer:        contract.TextCanonicalizer,
+			FrameSamplingPolicy:      contract.FrameSamplingPolicy,
+			ImagePreprocessingPolicy: contract.ImagePreprocessingPolicy,
+			FusionPolicy:             contract.FusionPolicy,
+		},
+		Provider: infraconfig.MultimodalProviderConfig{Deadline: "1s", AdmissionLimit: 1},
+		Jobs: infraconfig.MultimodalJobConfig{
+			MaxAttempts: 3, LeaseTTL: "5s", HeartbeatInterval: "1s", PollInterval: "100ms",
+			RetryBase: "1s", RetryMax: "10s", ShutdownTimeout: "1s",
+		},
+		Images: infraconfig.MultimodalImageConfig{
+			MaxCount: 2, MaxBytesEach: 64 << 10, MaxTotalBytes: 128 << 10,
+			MaxPixelsEach: 10_000, AllowedMIMETypes: []string{"image/jpeg"},
+		},
+	}}, contract
 }
 
 func TestBehaviorKafkaConsumersStartViewBeforeAction(t *testing.T) {

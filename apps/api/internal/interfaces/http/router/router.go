@@ -432,13 +432,14 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		cfg.Security.HMACSecret,
 	)
 	mediaAdminHandler := interfaceshttpmedia.NewAdmin(mediaAdminService)
-	if err := infraconfig.ValidateMultimodalAPIRuntime(
-		cfg.Multimodal,
-		infraconfig.MultimodalRuntimeDependencies{ExactRetrieval: true},
-	); err != nil {
+	multimodalRepository := infraembedding.New(gormDB)
+	searchService, err := newMultimodalSearchService(
+		context.Background(), cfg.Multimodal, videoRepo, accountRepo,
+		multimodalRepository, newReadyMultimodalProvider,
+	)
+	if err != nil {
 		return err
 	}
-	searchService := applicationsearch.New(videoRepo, accountRepo)
 	searchHandlerOptions := []interfaceshttpsearch.Option{}
 	if cfg.Multimodal.SimilarVideosEnabled {
 		contract, err := cfg.Multimodal.Contract.Identity()
@@ -450,7 +451,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			return err
 		}
 		similarService, err := applicationsearch.NewSimilarVideoService(
-			infraembedding.New(gormDB), videoRepo, contract,
+			multimodalRepository, videoRepo, contract,
 			cfg.Multimodal.Exact.MaxLimit, cursorTTL,
 		)
 		if err != nil {
