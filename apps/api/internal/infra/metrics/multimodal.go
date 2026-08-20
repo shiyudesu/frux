@@ -35,6 +35,18 @@ var (
 		prometheus.HistogramOpts{Namespace: "frux", Name: "multimodal_provider_transport_duration_seconds", Help: "Multimodal provider HTTP transport duration by bounded operation and result."},
 		[]string{"operation", "result"},
 	)
+	TongyiProviderOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "tongyi_provider_operations_total", Help: "Tongyi multimodal adapter operations by bounded operation and result."},
+		[]string{"operation", "result"},
+	)
+	TongyiProviderDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Namespace: "frux", Name: "tongyi_provider_duration_seconds", Help: "Tongyi multimodal upstream duration by bounded operation and result."},
+		[]string{"operation", "result"},
+	)
+	TongyiProviderTokensTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "tongyi_provider_tokens_total", Help: "Tongyi multimodal token usage by bounded operation and token type."},
+		[]string{"operation", "token_type"},
+	)
 	MultimodalCoverageVideos = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Namespace: "frux", Name: "multimodal_coverage_videos", Help: "Readable videos by bounded multimodal coverage result."},
 		[]string{"result"},
@@ -78,6 +90,9 @@ func init() {
 		MultimodalProviderAdmissionTotal,
 		MultimodalProviderTransportTotal,
 		MultimodalProviderTransportDuration,
+		TongyiProviderOperationsTotal,
+		TongyiProviderDuration,
+		TongyiProviderTokensTotal,
 		MultimodalCoverageVideos,
 		MultimodalProjectionTotal,
 		MultimodalExactQueryDuration,
@@ -116,6 +131,24 @@ func ObserveMultimodalProviderTransport(operation, result string, duration time.
 	result = multimodalProviderResult(result)
 	MultimodalProviderTransportTotal.WithLabelValues(operation, result).Inc()
 	MultimodalProviderTransportDuration.WithLabelValues(operation, result).Observe(max(duration.Seconds(), 0))
+}
+
+func ObserveTongyiProvider(operation, result string, duration time.Duration) {
+	operation = tongyiOperation(operation)
+	result = multimodalProviderResult(result)
+	TongyiProviderOperationsTotal.WithLabelValues(operation, result).Inc()
+	TongyiProviderDuration.WithLabelValues(operation, result).Observe(max(duration.Seconds(), 0))
+}
+
+func ObserveTongyiUsage(operation string, input, image, text, output int64) {
+	operation = tongyiOperation(operation)
+	for tokenType, value := range map[string]int64{
+		"input": input, "image": image, "text": text, "output": output,
+	} {
+		if value > 0 {
+			TongyiProviderTokensTotal.WithLabelValues(operation, tokenType).Add(float64(value))
+		}
+	}
 }
 
 func ObserveMultimodalProjection(result string, count int) {
@@ -171,6 +204,15 @@ func multimodalOperation(value string) string {
 func multimodalTransportOperation(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "readiness", "video", "query":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "unknown"
+	}
+}
+
+func tongyiOperation(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "startup", "video", "query":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "unknown"

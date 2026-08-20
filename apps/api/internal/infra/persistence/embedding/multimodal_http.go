@@ -513,15 +513,30 @@ func verifyMultimodalResponseSignature(
 	body []byte,
 	provided string,
 ) bool {
+	expected := multimodalResponseSignature(secret, protocolVersion, statusCode, operationID, body)
+	return secureMultimodalSignatureEqual(provided, expected)
+}
+
+func multimodalResponseSignature(
+	secret []byte,
+	protocolVersion string,
+	statusCode int,
+	operationID string,
+	body []byte,
+) string {
 	digest := sha256.Sum256(body)
 	message := strings.Join([]string{
 		protocolVersion, strconv.Itoa(statusCode), operationID, hex.EncodeToString(digest[:]),
 	}, "\n")
 	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write([]byte(message))
-	expected := mac.Sum(nil)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func secureMultimodalSignatureEqual(provided, expected string) bool {
 	decoded, err := hex.DecodeString(strings.TrimSpace(provided))
-	return err == nil && hmac.Equal(decoded, expected)
+	expectedBytes, expectedErr := hex.DecodeString(expected)
+	return err == nil && expectedErr == nil && hmac.Equal(decoded, expectedBytes)
 }
 
 func newMultimodalOperationID() (string, error) {

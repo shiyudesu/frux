@@ -1,42 +1,42 @@
 ## 1. Fixed Model Contract and Adapter Configuration
 
-- [ ] 1.1 Define the immutable Tongyi Flash model/profile constants and contract constructor.
-- [ ] 1.2 Add strict environment configuration for listen address, shared HMAC secret, DashScope
+- [x] 1.1 Define the immutable Tongyi Flash model/profile constants and contract constructor.
+- [x] 1.2 Add strict environment configuration for listen address, shared HMAC secret, DashScope
   endpoint/API key, upstream timeout, body limits, and graceful shutdown.
-- [ ] 1.3 Add configuration tests proving secrets are required, endpoints are HTTPS, limits are
+- [x] 1.3 Add configuration tests proving secrets are required, endpoints are HTTPS, limits are
   bounded, and the selected model/dimension/resolution cannot drift.
 
 ## 2. DashScope Client
 
-- [ ] 2.1 Implement a reusable non-redirecting Bearer-authenticated HTTP client for the native
+- [x] 2.1 Implement a reusable non-redirecting Bearer-authenticated HTTP client for the native
   multimodal-embedding endpoint with one attempt and bounded response reads.
-- [ ] 2.2 Translate query requests to one text content item and video requests to one fused
+- [x] 2.2 Translate query requests to one text content item and video requests to one fused
   `text + multi_images` content object using validated Base64 Data URIs.
-- [ ] 2.3 Validate upstream status, exact result count/index/type, 768 finite non-zero components,
+- [x] 2.3 Validate upstream status, exact result count/index/type, 768 finite non-zero components,
   normalize the vector, and parse bounded usage counters.
-- [ ] 2.4 Map timeout/network/408/429/5xx failures to retryable errors and all other upstream or
+- [x] 2.4 Map timeout/network/408/429/5xx failures to retryable errors and all other upstream or
   validation failures to terminal closed errors without exposing raw bodies.
 
 ## 3. Frux Provider Server
 
-- [ ] 3.1 Implement strict signed request verification, clock-skew/replay-envelope checks, body
+- [x] 3.1 Implement strict signed request verification, clock-skew/replay-envelope checks, body
   limits, contract/source/image validation, and signed closed error responses.
-- [ ] 3.2 Implement `/v1/ready`, `/v1/embed/video`, `/v1/embed/query`, and a detail-free `/health`
+- [x] 3.2 Implement `/v1/ready`, `/v1/embed/video`, `/v1/embed/query`, and a detail-free `/health`
   liveness endpoint using the fixed contract and capabilities.
-- [ ] 3.3 Run a real bounded text probe before listening so invalid API keys, endpoint/model failures,
+- [x] 3.3 Run a real bounded text probe before listening so invalid API keys, endpoint/model failures,
   and incompatible vectors prevent readiness.
-- [ ] 3.4 Add fixed-cardinality adapter operation/result metrics and aggregate text/image/input token
+- [x] 3.4 Add fixed-cardinality adapter operation/result metrics and aggregate text/image/input token
   counters without content, identifiers, endpoint, model, or error labels.
 
 ## 4. Tests and Process Lifecycle
 
-- [ ] 4.1 Add fake-DashScope tests for query translation, fused multi-image translation, Bearer auth,
+- [x] 4.1 Add fake-DashScope tests for query translation, fused multi-image translation, Bearer auth,
   fixed parameters, valid vectors, normalization, digest, and usage accounting.
-- [ ] 4.2 Add tests for Frux HMAC validation, stale timestamps, contract/source/image rejection,
+- [x] 4.2 Add tests for Frux HMAC validation, stale timestamps, contract/source/image rejection,
   signed responses, and readiness behavior.
-- [ ] 4.3 Add tests for redirects, timeouts, cancellation, oversized/malformed responses, wrong result
+- [x] 4.3 Add tests for redirects, timeouts, cancellation, oversized/malformed responses, wrong result
   type/count/index/dimension, non-finite/zero vectors, and upstream status mapping.
-- [ ] 4.4 Add the standalone command with startup probe, signal-aware server lifecycle, bounded
+- [x] 4.4 Add the standalone command with startup probe, signal-aware server lifecycle, bounded
   shutdown, and no credential/content logging.
 
 ## 5. Packaging and Documentation
