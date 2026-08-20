@@ -24,10 +24,10 @@
   normalization tolerance, input hash, and digest with bounded closed failure codes.
 - [x] 2.4 Implement bounded normalized public-video text and public-query canonicalization without
   persisting raw canonical text or attaching identity/session/request metadata.
-- [ ] 2.5 Add a media preparation port and Infrastructure adapter that selects and prepares bounded
+- [x] 2.5 Add a media preparation port and Infrastructure adapter that selects and prepares bounded
   cover/keyframe inputs under the configured frame/preprocessing policy with deterministic hashes
   and cleanup.
-- [ ] 2.6 Add provider adapter test doubles and contract tests proving video/query vectors share one
+- [x] 2.6 Add provider adapter test doubles and contract tests proving video/query vectors share one
   model space, provider implementations are replaceable, and ineligible/private inputs never cross
   the application boundary.
 

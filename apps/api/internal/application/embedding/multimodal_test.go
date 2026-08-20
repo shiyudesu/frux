@@ -2,6 +2,9 @@ package applicationembedding
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"reflect"
 	"slices"
 	"testing"
@@ -13,6 +16,18 @@ type replaceableMultimodalProvider struct {
 	videoRequest MultimodalVideoEmbeddingRequest
 	queryRequest MultimodalQueryEmbeddingRequest
 	result       *MultimodalEmbeddingResult
+}
+
+type alternateMultimodalProvider struct {
+	result *MultimodalEmbeddingResult
+}
+
+func (p alternateMultimodalProvider) EmbedVideoContent(context.Context, MultimodalVideoEmbeddingRequest) (*MultimodalEmbeddingResult, error) {
+	return p.result.Clone(), nil
+}
+
+func (p alternateMultimodalProvider) EmbedQueryText(context.Context, MultimodalQueryEmbeddingRequest) (*MultimodalEmbeddingResult, error) {
+	return p.result.Clone(), nil
 }
 
 func (p *replaceableMultimodalProvider) EmbedVideoContent(_ context.Context, request MultimodalVideoEmbeddingRequest) (*MultimodalEmbeddingResult, error) {
@@ -40,9 +55,19 @@ func TestMultimodalProviderOperationsShareOneValidatedContract(t *testing.T) {
 	values[0] = 1
 	provider := &replaceableMultimodalProvider{}
 	var _ MultimodalEmbeddingProvider = provider
+	imageContent := []byte{1, 2}
+	imageDigest := sha256.Sum256(imageContent)
 	videoRequest, err := NewMultimodalVideoEmbeddingRequest(
-		contract, " public ", " video ", 64,
-		[]PreparedMultimodalImage{{MIMEType: " IMAGE/JPEG ", Width: 2, Height: 2, Digest: "digest", Content: []byte{1, 2}}},
+		contract,
+		MultimodalPublicVideoContent{
+			Title: " public ", Description: " video ",
+			Published: true, Public: true, MediaReady: true, SourceCurrent: true,
+		},
+		64,
+		[]PreparedMultimodalImage{{
+			MIMEType: " IMAGE/JPEG ", Width: 2, Height: 2,
+			Digest: hex.EncodeToString(imageDigest[:]), Content: imageContent,
+		}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +119,30 @@ func TestMultimodalProviderRequestsExposeOnlyBoundedPublicInputs(t *testing.T) {
 	}
 }
 
+func TestIneligibleVideoCannotBuildProviderRequest(t *testing.T) {
+	contract, err := domainembedding.NewMultimodalContractIdentity(
+		"provider", "model", "revision", domainembedding.MinMultimodalDimension,
+		domainembedding.MultimodalTextCanonicalizerV1,
+		domainembedding.MultimodalFrameSamplingPolicyV1,
+		domainembedding.MultimodalImagePreprocessingV1,
+		domainembedding.MultimodalFusionPolicyV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := []MultimodalPublicVideoContent{
+		{Title: "private", Published: true, Public: false, MediaReady: true, SourceCurrent: true},
+		{Title: "draft", Published: false, Public: true, MediaReady: true, SourceCurrent: true},
+		{Title: "processing", Published: true, Public: true, MediaReady: false, SourceCurrent: true},
+		{Title: "stale", Published: true, Public: true, MediaReady: true, SourceCurrent: false},
+	}
+	for _, content := range states {
+		if _, err := NewMultimodalVideoEmbeddingRequest(contract, content, 64, nil); !errors.Is(err, ErrIneligibleMultimodalContent) {
+			t.Fatalf("ineligible content %#v error = %v", content, err)
+		}
+	}
+}
+
 func fieldNames(value reflect.Type) []string {
 	fields := make([]string, 0, value.NumField())
 	for index := 0; index < value.NumField(); index++ {
@@ -107,5 +156,44 @@ func TestValidateMultimodalEmbeddingResultRejectsMissingResult(t *testing.T) {
 	_, err := ValidateMultimodalEmbeddingResult(domainembedding.MultimodalContractIdentity{}, "", nil)
 	if domainembedding.MultimodalFailureCode(err) != domainembedding.MultimodalValidationMissingResult {
 		t.Fatalf("missing result error = %v", err)
+	}
+}
+
+func TestMultimodalProviderImplementationIsReplaceableUnderSameContract(t *testing.T) {
+	contract, err := domainembedding.NewMultimodalContractIdentity(
+		"provider", "model", "revision", domainembedding.MinMultimodalDimension,
+		domainembedding.MultimodalTextCanonicalizerV1,
+		domainembedding.MultimodalFrameSamplingPolicyV1,
+		domainembedding.MultimodalImagePreprocessingV1,
+		domainembedding.MultimodalFusionPolicyV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := NewMultimodalQueryEmbeddingRequest(contract, "query", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make([]float64, contract.Dimension)
+	values[0] = 1
+	result := &MultimodalEmbeddingResult{
+		Identity: domainembedding.MultimodalVectorIdentity{
+			Contract: contract, SourceHash: request.SourceHash,
+			VectorDigest: domainembedding.MultimodalVectorDigest(values),
+		},
+		Vector: values,
+	}
+	providers := []MultimodalEmbeddingProvider{
+		&replaceableMultimodalProvider{result: result},
+		alternateMultimodalProvider{result: result},
+	}
+	for _, provider := range providers {
+		provided, err := provider.EmbedQueryText(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ValidateMultimodalEmbeddingResult(contract, request.SourceHash, provided); err != nil {
+			t.Fatalf("replaceable provider result failed the shared contract: %v", err)
+		}
 	}
 }

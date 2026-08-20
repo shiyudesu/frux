@@ -2,11 +2,17 @@ package applicationembedding
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 )
+
+var ErrIneligibleMultimodalContent = errors.New("ineligible multimodal content")
+var ErrInvalidMultimodalMediaPreparation = errors.New("invalid multimodal media preparation")
 
 type MultimodalEmbeddingProvider interface {
 	EmbedVideoContent(context.Context, MultimodalVideoEmbeddingRequest) (*MultimodalEmbeddingResult, error)
@@ -20,16 +26,30 @@ type MultimodalVideoEmbeddingRequest struct {
 	Images     []PreparedMultimodalImage
 }
 
+type MultimodalPublicVideoContent struct {
+	Title         string
+	Description   string
+	Published     bool
+	Public        bool
+	MediaReady    bool
+	SourceCurrent bool
+}
+
 func NewMultimodalVideoEmbeddingRequest(
 	contract domainembedding.MultimodalContractIdentity,
-	title string,
-	description string,
+	content MultimodalPublicVideoContent,
 	maxTextRunes int,
 	images []PreparedMultimodalImage,
 ) (MultimodalVideoEmbeddingRequest, error) {
-	text, err := domainembedding.CanonicalizePublicVideoText(title, description, maxTextRunes)
+	if !content.Published || !content.Public || !content.MediaReady || !content.SourceCurrent {
+		return MultimodalVideoEmbeddingRequest{}, ErrIneligibleMultimodalContent
+	}
+	text, err := domainembedding.CanonicalizePublicVideoText(content.Title, content.Description, maxTextRunes)
 	if err != nil {
 		return MultimodalVideoEmbeddingRequest{}, err
+	}
+	if len(images) == 0 || len(images) > 16 {
+		return MultimodalVideoEmbeddingRequest{}, ErrInvalidMultimodalMediaPreparation
 	}
 	clonedImages := make([]PreparedMultimodalImage, len(images))
 	parts := make([][]byte, 0, len(images)*5+2)
@@ -37,6 +57,12 @@ func NewMultimodalVideoEmbeddingRequest(
 	for index := range images {
 		clonedImages[index] = images[index].Clone()
 		image := clonedImages[index]
+		digest := sha256.Sum256(image.Content)
+		if image.Width <= 0 || image.Height <= 0 || len(image.Content) == 0 ||
+			(image.MIMEType != "image/jpeg" && image.MIMEType != "image/png" && image.MIMEType != "image/webp") ||
+			image.Digest != hex.EncodeToString(digest[:]) {
+			return MultimodalVideoEmbeddingRequest{}, ErrInvalidMultimodalMediaPreparation
+		}
 		parts = append(parts,
 			[]byte(image.MIMEType),
 			[]byte(strconv.Itoa(image.Width)),
@@ -90,6 +116,37 @@ type PreparedMultimodalImage struct {
 	Height   int
 	Digest   string
 	Content  []byte
+}
+
+type MultimodalMediaPreparationRequest struct {
+	VideoObjectKey           string
+	CoverObjectKey           string
+	FrameSamplingPolicy      string
+	ImagePreprocessingPolicy string
+	MaxImages                int
+	MaxBytesEach             int
+	MaxTotalBytes            int
+	MaxPixelsEach            int64
+	AllowedMIMETypes         []string
+}
+
+type PreparedMultimodalMedia struct {
+	Images []PreparedMultimodalImage
+}
+
+func (m *PreparedMultimodalMedia) Clone() *PreparedMultimodalMedia {
+	if m == nil {
+		return nil
+	}
+	cloned := &PreparedMultimodalMedia{Images: make([]PreparedMultimodalImage, len(m.Images))}
+	for index := range m.Images {
+		cloned.Images[index] = m.Images[index].Clone()
+	}
+	return cloned
+}
+
+type MultimodalMediaPreparer interface {
+	PrepareMultimodalMedia(context.Context, MultimodalMediaPreparationRequest) (*PreparedMultimodalMedia, error)
 }
 
 func (i PreparedMultimodalImage) Clone() PreparedMultimodalImage {
