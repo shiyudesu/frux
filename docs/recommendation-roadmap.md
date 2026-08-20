@@ -296,7 +296,7 @@ Shadow
 | --- | --- | --- |
 | `add-multimodal-video-discovery` | 当前 Active | 新视频、Exact、Hybrid Search、Similar Videos |
 | `fix-recommendation-candidate-pool-truncation` | 已完成并归档 | 当前策略预算内的完整有界候选集进入统一评分，已移除 response-limit 派生的 recency 截断 |
-| `add-recommendation-provider-quota-merge` | 实现完成，待归档 | 预算总和可高于 pool；显式 Provider Order、Reservation、可见性优先和 Round-Robin Fill 保证至多500条确定输入 |
+| `add-recommendation-provider-quota-merge` | 已完成并归档 | 预算总和可高于 pool；显式 Provider Order、Reservation、可见性优先和 Round-Robin Fill 保证至多500条确定输入 |
 | `add-semantic-embedding-service` | 被替代 | 外部文本-only 合同被环境无关多模态合同替代 |
 | `integrate-semantic-video-embeddings` | 被替代 | Durable Job 原则已吸收到新多模态 Change |
 | `backfill-semantic-video-embeddings` | 后置 | 开发阶段不处理历史；存在真实迁移需求时重新提案 |
