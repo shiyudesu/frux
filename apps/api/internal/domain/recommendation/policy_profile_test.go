@@ -36,6 +36,51 @@ func TestPolicyValidationAndDeterministicStagedSelection(t *testing.T) {
 	if _, err := NewPolicy("feed", 3, true, invalid, now); !errors.Is(err, ErrInvalidPolicyBound) {
 		t.Fatalf("overflow deadline error = %v, want %v", err, ErrInvalidPolicyBound)
 	}
+
+	exactBound := validPolicyConfig(100)
+	exactBound.RecallBudgets = map[string]int{
+		RecallProviderFresh:               100,
+		RecallProviderHot:                 100,
+		RecallProviderContentSimilarity:   100,
+		RecallProviderFollowedAuthor:      100,
+		RecallProviderSessionContinuation: 100,
+	}
+	exactBound.ProviderDeadlinesMS = map[string]int{
+		RecallProviderFresh:               100,
+		RecallProviderHot:                 100,
+		RecallProviderContentSimilarity:   100,
+		RecallProviderFollowedAuthor:      100,
+		RecallProviderSessionContinuation: 100,
+	}
+	policy, err := NewPolicy("feed", 3, true, exactBound, now)
+	if err != nil {
+		t.Fatalf("exact pre-rank budget bound was rejected: %v", err)
+	}
+	if got := totalRecallBudget(policy.Config.RecallBudgets); got != MaxPolicyPreRankCandidates {
+		t.Fatalf("normalized total recall budget = %d, want %d", got, MaxPolicyPreRankCandidates)
+	}
+	exactBound.RecallBudgets[RecallProviderFresh]++
+	if _, err := NewPolicy("feed", 4, true, exactBound, now); !errors.Is(err, ErrInvalidPolicyBound) {
+		t.Fatalf("over-bound recall budget error = %v, want %v", err, ErrInvalidPolicyBound)
+	}
+
+	defensive := validPolicyConfig(100)
+	policy, err = NewPolicy("feed", 5, true, defensive, now)
+	if err != nil {
+		t.Fatalf("create defensive policy: %v", err)
+	}
+	defensive.RecallBudgets[RecallProviderFresh] = MaxRecallBudget
+	if policy.Config.RecallBudgets[RecallProviderFresh] != 50 {
+		t.Fatalf("policy recall budgets were aliased: %#v", policy.Config.RecallBudgets)
+	}
+}
+
+func totalRecallBudget(budgets map[string]int) int {
+	total := 0
+	for _, budget := range budgets {
+		total += budget
+	}
+	return total
 }
 
 func TestProfileEventBoundsNormalizationAndApplication(t *testing.T) {

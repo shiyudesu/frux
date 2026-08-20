@@ -1,12 +1,12 @@
 ## 1. Policy Bounds
 
-- [ ] 1.1 Add a single domain constant for the absolute policy pre-rank pool maximum of 500 and
+- [x] 1.1 Add a single domain constant for the absolute policy pre-rank pool maximum of 500 and
   reuse the existing request-log/Snapshot ceiling where ownership allows without circular imports.
-- [ ] 1.2 Extend policy normalization to sum every selected valid Provider budget and reject zero,
+- [x] 1.2 Extend policy normalization to sum every selected valid Provider budget and reject zero,
   overflow, or totals above 500 until quota merge is supported.
-- [ ] 1.3 Add domain tests for exact-bound acceptance, over-bound rejection, unknown/disabled
+- [x] 1.3 Add domain tests for exact-bound acceptance, over-bound rejection, unknown/disabled
   Provider handling, defensive map copies, and unchanged existing field validation.
-- [ ] 1.4 Add exact serialization/seed regressions proving bootstrap `recommend/v1` and
+- [x] 1.4 Add exact serialization/seed regressions proving bootstrap `recommend/v1` and
   `recommend/v2` remain byte-for-byte unchanged and each selected budget sum remains 500.
 
 ## 2. Complete Policy Recall Pool

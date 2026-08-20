@@ -9,22 +9,23 @@ import (
 )
 
 const (
-	MaxPolicyVersion          = 1_000_000_000
-	MaxFeatureWeight          = 100
-	MaxTotalFeatureWeight     = 1_000
-	MaxRecallBudget           = 500
-	MaxProviderDeadlineMS     = 30_000
-	MaxFreshnessHalfLifeHours = 8_760
-	MaxProfileHalfLifeHours   = 8_760
-	MaxExposureWindowHours    = 8_760
-	MaxSnapshotTTLSeconds     = 86_400
-	MaxRetentionDays          = 3_650
-	MaxSamplingRatePPM        = 1_000_000
-	MaxDiversityPerAuthor     = 100
-	MaxDiversityAuthorGap     = 100
-	MaxDiversityContentGap    = 100
-	MaxMinimumFallbackPool    = 500
-	MaxSuppressionHours       = 8_760
+	MaxPolicyVersion           = 1_000_000_000
+	MaxFeatureWeight           = 100
+	MaxTotalFeatureWeight      = 1_000
+	MaxRecallBudget            = 500
+	MaxPolicyPreRankCandidates = MaxRequestLogCandidates
+	MaxProviderDeadlineMS      = 30_000
+	MaxFreshnessHalfLifeHours  = 8_760
+	MaxProfileHalfLifeHours    = 8_760
+	MaxExposureWindowHours     = 8_760
+	MaxSnapshotTTLSeconds      = 86_400
+	MaxRetentionDays           = 3_650
+	MaxSamplingRatePPM         = 1_000_000
+	MaxDiversityPerAuthor      = 100
+	MaxDiversityAuthorGap      = 100
+	MaxDiversityContentGap     = 100
+	MaxMinimumFallbackPool     = 500
+	MaxSuppressionHours        = 8_760
 )
 
 const (
@@ -229,6 +230,7 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 	if totalWeight > MaxTotalFeatureWeight {
 		return PolicyConfiguration{}, ErrInvalidPolicyBound
 	}
+	totalRecallBudget := 0
 	for provider, budget := range config.RecallBudgets {
 		provider = normalizePolicyToken(provider)
 		if !validRecallProvider(provider) {
@@ -237,7 +239,14 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 		if budget <= 0 || budget > MaxRecallBudget {
 			return PolicyConfiguration{}, ErrInvalidPolicyBound
 		}
+		if totalRecallBudget > MaxPolicyPreRankCandidates-budget {
+			return PolicyConfiguration{}, ErrInvalidPolicyBound
+		}
+		totalRecallBudget += budget
 		normalized.RecallBudgets[provider] = budget
+	}
+	if totalRecallBudget <= 0 || totalRecallBudget > MaxPolicyPreRankCandidates {
+		return PolicyConfiguration{}, ErrInvalidPolicyBound
 	}
 	if len(config.ProviderDeadlinesMS) != len(normalized.RecallBudgets) {
 		return PolicyConfiguration{}, ErrInvalidPolicyConfiguration
