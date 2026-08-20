@@ -52,8 +52,8 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Run targeted adapter, provider-protocol, configuration, Worker, router, privacy, and race tests.
-- [ ] 6.2 Run the complete Go tests, vet, command builds, Compose/deployment validation, and strict
+- [x] 6.1 Run targeted adapter, provider-protocol, configuration, Worker, router, privacy, and race tests.
+- [x] 6.2 Run the complete Go tests, vet, command builds, Compose/deployment validation, and strict
   OpenSpec validation.
-- [ ] 6.3 Confirm all default multimodal flags remain disabled and no API key, generated vector,
+- [x] 6.3 Confirm all default multimodal flags remain disabled and no API key, generated vector,
   source content, raw upstream body, historical backfill, ANN index, or recommendation activation is committed.
