@@ -1,4 +1,4 @@
-## 1. Fixed Model Contract and Adapter Configuration
+## 1. Initial Dated Model Contract and Adapter Configuration
 
 - [x] 1.1 Define the immutable Tongyi Flash model/profile constants and contract constructor.
 - [x] 1.2 Add strict environment configuration for listen address, shared HMAC secret, DashScope
@@ -57,3 +57,14 @@
   OpenSpec validation.
 - [x] 6.3 Confirm all default multimodal flags remain disabled and no API key, generated vector,
   source content, raw upstream body, historical backfill, ANN index, or recommendation activation is committed.
+
+## 7. Configurable Tongyi Model Profiles
+
+- [ ] 7.1 Replace the hard-coded model contract with one shared allowlisted profile resolver for the
+  dated and undated Tongyi Flash model IDs, including a distinct local-fusion policy identity.
+- [ ] 7.2 Keep native fusion for the dated snapshot and implement strict independent-result validation
+  plus deterministic normalized-mean fusion for the undated model.
+- [ ] 7.3 Make the profile selectable through configuration, update inactive environment examples and
+  operator documentation, and keep all multimodal feature flags disabled by default.
+- [ ] 7.4 Add profile, payload, response, fusion, contract-isolation, configuration, and regression tests;
+  then rerun targeted and complete Go validation before marking the change complete again.

@@ -12,3 +12,7 @@ continue to depend only on the signed provider protocol and SHALL NOT receive th
 #### Scenario: Upstream credentials are invalid
 - **WHEN** the adapter cannot authenticate its startup probe
 - **THEN** it fails startup and Frux processes cannot mistake configuration-only readiness for model availability
+
+#### Scenario: Shared model profile resolves a different contract
+- **WHEN** the selected allowlisted profile changes in both adapter and Frux runtime configuration
+- **THEN** readiness is checked against the newly resolved exact contract and vectors from the previous contract remain isolated
