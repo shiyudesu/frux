@@ -1,13 +1,60 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Frux is a short-video Feed system and a practical engineering baseline for account, video
+  publishing, Feed delivery, recommendation, interaction, relation, governance, monitoring, and
+  Web client workflows.
+
+  Technology:
+  - Go API and Worker with Hertz and GORM.
+  - PostgreSQL for durable business facts and long-running task state.
+  - Redis for Feed caches, hot ranking, counters, and other rebuildable short-lived state.
+  - Kafka for retained behavior/domain events and short-lived wakeup commands.
+  - JWT for API authentication.
+  - React, TypeScript, and Vite for the Web client.
+  - MinIO/S3 and FFmpeg for media storage and processing.
+  - OpenSpec for change proposals and long-lived capability specifications.
+
+  Backend architecture:
+  - Backend code lives in `apps/api`.
+  - `domain/{module}` owns entities, business invariants, domain errors, and repository interfaces.
+  - `application/{module}` owns use cases, cursors, idempotency, and cross-entity workflows.
+  - `infra` owns PostgreSQL, Redis, Kafka, JWT, configuration, and persistence implementations.
+  - `interfaces/http` owns HTTP handlers, DTOs, middleware, and route registration.
+  - The dependency assembly order is Config -> DB/Redis/Kafka/JWT -> Repository -> Service ->
+    Handler -> Router.
+  - PostgreSQL is the source of truth. Redis is an acceleration layer, and Kafka does not replace
+    durable leases, retries, task state, or reconciliation.
+
+  Documentation map:
+  - `README.md`: project entry, startup commands, and documentation map.
+  - `docs/product.md`: product scope, module map, and P0/P1 status.
+  - `docs/quickread.md`: newcomer code-reading guide.
+  - `docs/architecture.md`: system diagrams and core flows.
+  - `docs/engineering.md`: engineering standards.
+  - `docs/optimization.md`: Feed performance and stability strategy.
+  - `docs/uiux.md`: Web UI/UX specification.
+  - `docs/modules/*.md`: module-level designs.
+
+  Conventions:
+  - New backend modules follow Domain -> Application -> Infrastructure -> Interfaces.
+  - New APIs use REST resource paths and cursor pagination for ordered lists.
+  - Write APIs use `Idempotency-Key` when repeat submission is realistic.
+  - API flow tests live under `apps/api/test`; package tests stay with their owning packages.
+  - Web changes preserve the current React/Vite structure unless page growth requires a split.
+  - Documentation updates are part of feature delivery.
+  - Do not describe roadmap-only work, unconfigured third-party moderation models, or inactive
+    semantic ANN changes as already implemented.
+
+  Verification commands, used when relevant:
+  - `openspec validate --all --strict`
+  - `cd apps/api && go test ./...`
+  - `cd apps && docker compose config`
+  - `kubectl apply --dry-run=client -f apps/deploy.yaml`
+  - `cd apps/web && pnpm run build`
+
+  Real PostgreSQL integration tests use `FRUX_POSTGRES_TEST_DSN`, create isolated schemas, and skip
+  with an explicit message when the variable is absent.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
