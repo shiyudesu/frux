@@ -1,204 +1,214 @@
 ## ADDED Requirements
 
-### Requirement: Fixed Dependency and Model Contract
-The historical backfill SHALL depend on the completed `add-semantic-embedding-service` and narrowed `integrate-semantic-video-embeddings` changes. It SHALL use only the authenticated fixed semantic service contract, canonical title/description hashing, validated client, finite 384-dimensional vector construction, and versioned persistence key `semantic-minilm-l12-v2@e8f8c211226b894f` defined by those changes.
+### Requirement: Shared Fixed Provider Contract
+Backfill SHALL depend on completed `add-semantic-embedding-service` and
+`integrate-semantic-video-embeddings` and SHALL use their exact
+provider/model/revision/dimension/`semantic-text-v1` identity, privacy boundary, validated adapter,
+cache, cost/quota controls, and conditional persistence. It MUST NOT host/train a model or select a
+different provider contract.
 
-#### Scenario: Dependency contracts are available
-- **WHEN** the backfill command starts
-- **THEN** it validates the exact semantic model metadata and uses the shared integration primitives before scanning any video
+#### Scenario: Dependencies match
+- **WHEN** the command starts
+- **THEN** it validates the complete contract and pricing revision before scanning
 
-#### Scenario: Dependency contract is unavailable or mismatched
-- **WHEN** the service metadata, model key, dimension, normalization, or required client/repository capability differs from the dependent contracts
-- **THEN** the command fails before scanning or persisting and reports only a bounded dependency error class
+#### Scenario: Identity differs
+- **WHEN** provider, model, revision, dimension, or canonicalizer is incompatible
+- **THEN** the run fails before provider access or mutation
 
-### Requirement: Dedicated Bounded Operator Command
-Frux SHALL provide a one-shot operator command separate from the API and worker. The command SHALL require positive bounded page size, service batch size, concurrency, maximum rows, and maximum runtime; SHALL reject unlimited values; and SHALL initialize PostgreSQL and the semantic client without requiring Redis or Kafka.
+### Requirement: Mandatory Dry-Run Estimate
+Before billable execution, a dry-run SHALL freeze an eligible horizon and report candidate classes,
+unique text hashes, validated cache hits, expected provider items and API calls, billable units,
+estimated cost, row/runtime/QPS/cost bounds, pricing revision, environment, full identity, refresh
+mode, and horizon. Dry-run SHALL make no provider call and SHALL write no vector or quarantine.
+Execution SHALL require the deterministic estimate digest and SHALL recompute its bound inputs
+before the first provider call.
 
-#### Scenario: Valid bounded command starts
-- **WHEN** an operator supplies valid configuration and options
-- **THEN** the command starts with page size 1–1,000, batch size 1–32, concurrency 1–2, maximum rows 1–1,000,000, and maximum runtime 1 minute–24 hours
+#### Scenario: Dry-run completes
+- **WHEN** an operator evaluates a bounded horizon
+- **THEN** calls equal the configured batching estimate over unique cache misses and cost uses the fixed pricing revision
 
-#### Scenario: Bound is invalid
-- **WHEN** an option is zero, negative, above its maximum, or requests an unlimited run
-- **THEN** the command exits before opening a scan or calling the semantic service
+#### Scenario: Execution lacks approval
+- **WHEN** no matching estimate digest is supplied
+- **THEN** the command exits before provider access
 
-#### Scenario: Redis or Kafka is absent
-- **WHEN** PostgreSQL and the semantic service are available but Redis or Kafka is not
-- **THEN** the backfill can run because it does not initialize or use those dependencies
+#### Scenario: Estimate bindings changed
+- **WHEN** environment, contract, canonicalizer, pricing, mode, horizon, row bound, or cost bound differs
+- **THEN** execution fails closed and requires another dry-run
 
 ### Requirement: Eligible Stable Historical Selection
-The repository SHALL scan only videos that are published, public, media-ready with status `legacy_ready` or `ready`, and have a non-null publication time. A new run SHALL freeze the greatest eligible `(published_at, id)` tuple as its horizon and SHALL return stable bounded pages ordered by `(published_at ASC, id ASC)`, strictly after the checkpoint tuple and no later than the frozen horizon.
+The repository SHALL scan only published, public, media-ready (`legacy_ready` or `ready`) videos
+with non-null `published_at`. It SHALL freeze the greatest eligible `(published_at, id)` tuple and
+page ascending strictly after the checkpoint and no later than that horizon. Default mode SHALL
+select missing exact-contract rows; `stale` and `force` SHALL require exact full-identity
+confirmation and MUST NOT select another identity or `hash-ngram-v1` for replacement.
 
 #### Scenario: Missing-only page is read
-- **WHEN** the default mode requests a page
-- **THEN** the repository returns only eligible videos with no row for the exact semantic model in deterministic tuple order
+- **WHEN** default mode requests candidates
+- **THEN** only eligible rows lacking the exact full contract are returned in stable tuple order
 
-#### Scenario: Catalog changes while scanning
-- **WHEN** videos are inserted, gain embeddings, or become ineligible after the horizon is captured
-- **THEN** offset shifts do not affect the run, no tuple beyond the horizon is read, and final eligibility is checked before persistence
+#### Scenario: Catalog changes during the run
+- **WHEN** rows are inserted or change eligibility
+- **THEN** no row beyond the horizon extends the run and persistence revalidates current state
 
-#### Scenario: Equal publication times occur
-- **WHEN** multiple eligible videos share the same `published_at`
-- **THEN** ascending video ID breaks ties and the opaque cursor resumes strictly after the last completed tuple
+### Requirement: Environment and Model Scoped Advisory Lock
+The command SHALL acquire and hold one PostgreSQL session advisory lock derived from environment,
+provider, model, revision, dimension, and canonicalizer before scanning. Failure to acquire SHALL
+exit before provider or mutation work. Live semantic jobs MUST NOT acquire or wait on this lock.
 
-### Requirement: Exact-Model Refresh Safeguards
-The command SHALL support refresh modes `none`, `stale`, and `force`. Mode `none` SHALL skip every existing exact-model row. Modes `stale` and `force` MUST require `--confirm-model` to equal `semantic-minilm-l12-v2@e8f8c211226b894f`; no other confirmation value SHALL authorize refresh. Refresh and persistence MUST NOT delete, select for replacement, or update `hash-ngram-v1` or another model.
+#### Scenario: Another identical backfill runs
+- **WHEN** the advisory lock is held
+- **THEN** the second command exits with a bounded lock-conflict result
 
-#### Scenario: Existing exact-model row is encountered by default
-- **WHEN** refresh mode is `none`
-- **THEN** the row is skipped without a semantic request even if its stored text hash is old
+#### Scenario: The run ends or is canceled
+- **WHEN** its database session closes
+- **THEN** the lock is released without affecting live jobs
 
-#### Scenario: Stale refresh is confirmed
-- **WHEN** refresh mode is `stale`, exact-model confirmation matches, and the current canonical source hash differs from the stored exact-model hash
-- **THEN** the row is eligible for semantic regeneration and conditional exact-model replacement
+### Requirement: Fully Bound Atomic Checkpoint
+The opaque checkpoint SHALL bind format version, environment, full provider identity,
+canonicalizer, pricing revision, approved estimate digest, refresh mode, frozen horizon, run ID,
+completed tuple, row/cost counters, and corruption checksum. It SHALL contain no text, credential,
+URL, payload, vector, or business ID beyond the ordering cursor required for resume. Replacement
+SHALL use mode 0600, file flush, atomic rename, and parent-directory flush only after a complete
+durable page prefix.
 
-#### Scenario: Force refresh is confirmed
-- **WHEN** refresh mode is `force` and exact-model confirmation matches
-- **THEN** every scanned eligible row may be regenerated while identical persisted facts remain no-op writes
+#### Scenario: A page completes
+- **WHEN** every row has a durable terminal page outcome
+- **THEN** the checkpoint advances after the page's final tuple
 
-#### Scenario: Refresh confirmation is unsafe
-- **WHEN** confirmation is missing, names another model, uses a prefix or wildcard, or names `hash-ngram-v1`
-- **THEN** the command fails before scanning and no embedding is changed
+#### Scenario: A page is interrupted
+- **WHEN** cancellation, pause, provider failure, or persistence failure occurs
+- **THEN** the prior checkpoint remains authoritative and restart replays at most one page
 
-### Requirement: Dry-Run and Bounded Stop Conditions
-Dry-run SHALL perform the same bounded selection, canonical source hashing, refresh classification, and progress accounting without calling the semantic service, persisting an embedding, or creating or replacing a checkpoint. Non-dry runs SHALL stop on the frozen horizon, maximum scanned rows, maximum runtime, cancellation, or a terminal error.
+#### Scenario: Binding is wrong or corrupt
+- **WHEN** environment, identity, canonicalizer, pricing, estimate, mode, horizon, or checksum fails
+- **THEN** the command fails before provider access
 
-#### Scenario: Dry-run identifies work
-- **WHEN** an operator runs with `--dry-run`
-- **THEN** the summary reports scanned, already-current, and would-generate counts without a service request, database mutation, or checkpoint mutation
+### Requirement: Low Concurrency and Real-Time Job Priority
+Defaults SHALL be page size 128, provider batch size at most 16, concurrency 1, and backfill QPS at
+most 20% of configured provider QPS; maximum concurrency SHALL be 2. A shared PostgreSQL capacity
+coordinator SHALL reserve provider/database tokens for real-time jobs first. Backfill SHALL pause
+before a batch when claimable live jobs exist or oldest live backlog age exceeds five minutes.
 
-#### Scenario: Maximum rows is reached
-- **WHEN** scanned rows reach the configured maximum before the horizon
-- **THEN** the command stops without fetching another row and reports `max_rows_reached`
+#### Scenario: Live work is available
+- **WHEN** pending/retry live jobs can run
+- **THEN** backfill yields provider and database capacity without advancing its incomplete page
 
-#### Scenario: Maximum runtime is reached
-- **WHEN** the runtime deadline expires
-- **THEN** new work stops, in-flight work is canceled, only fully checkpointed page progress is resumable, and the command reports `max_runtime_reached`
+#### Scenario: Live backlog is healthy and surplus exists
+- **WHEN** reserved live tokens are unused
+- **THEN** backfill may consume only bounded surplus capacity
 
-### Requirement: Bounded Ordered Batch Processing and Retry
-The runner SHALL split classified work into consecutive batches of at most the configured size, preserve candidate and request item order, and execute no more than the configured concurrency. Retryable timeout, over-capacity, and unavailable results SHALL receive at most three total attempts with cancellation-aware bounded delays; authentication, metadata, contract, invalid-input, and local configuration failures MUST NOT be retried.
+### Requirement: Automatic Provider Budget Database WAL and Replication Pauses
+The runner SHALL sample provider QPS/token availability and bounded `Retry-After`, approved spend,
+database p95 latency, WAL generation, replica replay lag, and replica byte backlog before reads,
+calls, and writes. Default pause thresholds SHALL be 200 ms database p95, 64 MiB/min WAL,
+30 seconds replay lag, and 256 MiB byte backlog. Bounded configuration MAY lower them. Database,
+WAL, and replication pressure SHALL resume only after five healthy 10-second samples and at least a
+30-second cooldown. Budget exhaustion SHALL stop as `budget_reached` and require new approval.
 
-#### Scenario: Multiple batches run
-- **WHEN** a page contains more work than one service batch
-- **THEN** batches preserve stable item identity and order while no more than two requests are in flight
+#### Scenario: Provider QPS is exhausted
+- **WHEN** no backfill token is available or bounded `Retry-After` applies
+- **THEN** the run pauses without consuming live reserved capacity
 
-#### Scenario: Service is temporarily unavailable
-- **WHEN** a batch returns a retryable timeout, over-capacity, or unavailable result
-- **THEN** the runner waits according to the bounded retry schedule and performs no more than three total attempts
+#### Scenario: Database or replication is unhealthy
+- **WHEN** any accepted threshold is exceeded
+- **THEN** new scan/call/write work pauses until healthy hysteresis is satisfied
 
-#### Scenario: Service contract is invalid
-- **WHEN** authentication, metadata, identity, order, dimension, finiteness, or normalization validation fails
-- **THEN** the run stops without persisting any item from that invalid response or advancing the current page checkpoint
+#### Scenario: Approved cost is reached
+- **WHEN** estimated plus actual spend reaches the budget
+- **THEN** the run stops cleanly without another provider call or automatic resume
 
-#### Scenario: Cancellation occurs during work
-- **WHEN** SIGINT, SIGTERM, or the runtime context cancels an in-flight request or retry delay
-- **THEN** no new batch is scheduled, all goroutines exit, and the current incomplete page remains replayable
+### Requirement: Deterministic Bad-Row Quarantine
+Canonicalization failures and structurally invalid source rows SHALL be quarantined before provider
+access by video, full contract, and source version with only a bounded reason, source-version
+surrogate, ordering tuple, and timestamps. Quarantine MUST NOT contain raw/canonical text,
+credentials, URLs, vectors, or provider responses. Unchanged quarantined sources SHALL be skipped
+deterministically; changed source or authenticated operator clear SHALL allow reevaluation.
 
-### Requirement: Transactional Freshness and Eligibility Revalidation
-Before writing each generated vector, the versioned embedding repository SHALL lock and re-read the current video inside the persistence transaction, recompute the canonical title/description hash, and verify published, public, media-ready eligibility. It SHALL persist only when the current hash equals the hash used for generation and the exact-model compare-and-set policy still permits the write.
+#### Scenario: A row is deterministically invalid
+- **WHEN** canonical source cannot satisfy `semantic-text-v1`
+- **THEN** no provider call occurs and one idempotent quarantine record accounts for it
+
+#### Scenario: The source is repaired
+- **WHEN** source version changes or quarantine is cleared
+- **THEN** the row may be scanned again
+
+#### Scenario: Provider contract fails
+- **WHEN** authentication or response validation fails
+- **THEN** the run stops or retries according to provider policy and does not quarantine otherwise valid rows
+
+### Requirement: Privacy-Bounded Batch and Conditional Persistence
+Backfill SHALL send only canonical published/public title/description text through the shared
+adapter. Before persistence, it SHALL lock/re-read eligibility, recompute text hash, and apply
+missing/stale/force compare-and-set rules only to the exact full identity. Concurrent live writes
+SHALL win safely; identical facts SHALL be no-op writes.
 
 #### Scenario: Source remains current
-- **WHEN** the video remains eligible and its canonical source hash matches the generated item
-- **THEN** the repository conditionally inserts or updates only the exact semantic model and commits before reporting `persisted`
+- **WHEN** eligibility and hash match generation input
+- **THEN** the exact semantic fact may be conditionally persisted
 
-#### Scenario: Title or description changes during inference
-- **WHEN** the canonical source hash differs at persistence time
-- **THEN** no embedding is written and the item is reported as `source_changed`
+#### Scenario: Source or eligibility changes
+- **WHEN** text changes or video becomes ineligible
+- **THEN** no stale vector is written and the row receives a bounded page outcome
 
-#### Scenario: Visibility, lifecycle, or media readiness changes
-- **WHEN** the video becomes private, non-published, deleted, or non-ready before persistence
-- **THEN** no embedding is written and the item is reported as `ineligible`
+#### Scenario: Live worker writes first
+- **WHEN** the matching/newer exact fact already exists
+- **THEN** backfill does not overwrite or churn it
 
-#### Scenario: Concurrent exact-model write wins
-- **WHEN** live processing or another backfill persists a newer or identical exact-model fact first
-- **THEN** the backfill does not overwrite the newer fact and reports `already_current` or a safe compare-and-set skip
+### Requirement: Cancellation and Resume
+SIGINT, SIGTERM, runtime expiry, provider/resource pause, and operator cancellation SHALL stop new
+scheduling, cancel in-flight work, wait for goroutines, and preserve the last complete-page
+checkpoint. Compatible restart SHALL resume strictly after that tuple and replay at most one page.
+Paused time SHALL count toward maximum runtime.
 
-### Requirement: Idempotent Side-by-Side Versioned Persistence
-Backfill writes SHALL use the same `(video_id, model)` versioned embedding repository contract as live semantic integration. Replaying completed or partially completed work MUST NOT create duplicate rows or churn timestamps for an identical model, dimension, text hash, and serialized vector. The repository MUST NOT read-modify-write another model as part of a backfill save.
+#### Scenario: Cancellation occurs mid-page
+- **WHEN** some writes completed but the page did not
+- **THEN** restart safely no-ops completed facts and processes the remainder
 
-#### Scenario: Interrupted page is replayed
-- **WHEN** some vectors were committed before failure but the page checkpoint was not advanced
-- **THEN** restart safely skips or no-ops those facts and completes the remaining candidates
+#### Scenario: A resumable bound is reached
+- **WHEN** max rows, runtime, or budget ends the run
+- **THEN** a bounded stop reason and usable checkpoint are emitted
 
-#### Scenario: Hash and semantic rows coexist
-- **WHEN** a video has `hash-ngram-v1` and receives the fixed semantic backfill
-- **THEN** both rows remain present and only the fixed semantic row is inserted or conditionally updated
+### Requirement: Zero Hash Mutation
+Backfill code and repositories MUST NOT insert, update, or delete `hash-ngram-v1`. Operations SHALL
+capture count and deterministic aggregate digest of all hash rows, including vector content and
+timestamps, before first write and after completion. Acceptance SHALL require identical values and
+zero hash mutation metrics/tests.
 
-#### Scenario: Identical forced result is persisted
-- **WHEN** force mode regenerates a vector identical to the current exact-model fact
-- **THEN** persistence is a no-op and the existing update timestamp is preserved
+#### Scenario: Semantic facts are written
+- **WHEN** backfill completes any number of rows
+- **THEN** every pre-existing hash row remains byte-and-timestamp unchanged and no new hash row is created by backfill
 
-### Requirement: Opaque Atomic Checkpoint and Restart
-A non-dry run SHALL require a checkpoint file. Its opaque cursor SHALL bind a format version, run ID, exact model key, refresh mode, frozen horizon, and last fully completed ordering tuple, and SHALL include corruption detection. The command SHALL replace the checkpoint only after every candidate in a page has a durable terminal outcome, using a mode-0600 sibling file, file flush, atomic rename, and parent-directory flush.
+#### Scenario: Hash verification differs
+- **WHEN** count or digest changes
+- **THEN** acceptance fails regardless of semantic coverage
 
-#### Scenario: Page completes
-- **WHEN** every candidate in the page is durably persisted or classified as already current, ineligible, or source changed
-- **THEN** the checkpoint is atomically replaced with a cursor after that page’s final tuple
+### Requirement: Historical Coverage Acceptance
+For the active frozen horizon, acceptance SHALL require at least 99.5% exact-contract coverage,
+every remaining currently eligible row represented by one deterministic quarantine so
+`covered + quarantined = 100%`, actual provider cost within approved budget, zero hash changes, and
+no unresolved checkpoint/lock/resource incident. Passing this gate MUST NOT enable recommendation
+consumption.
 
-#### Scenario: Page fails partway
-- **WHEN** cancellation, service failure, persistence failure, or runtime expiry interrupts a page
-- **THEN** the previous checkpoint remains intact and restart replays at most that incomplete page
+#### Scenario: Coverage gate passes
+- **WHEN** all thresholds and accounting hold
+- **THEN** historical producer coverage is accepted
 
-#### Scenario: Checkpoint is incompatible or corrupt
-- **WHEN** the file is truncated, fails its checksum, uses an unsupported version, or binds another model, mode, or inconsistent horizon
-- **THEN** the command fails closed before scanning or calling the semantic service
+#### Scenario: An eligible row is unexplained
+- **WHEN** it has neither exact semantic fact nor deterministic quarantine
+- **THEN** acceptance fails
 
-#### Scenario: Restart changes safe execution bounds
-- **WHEN** an operator resumes with a different page size, batch size, concurrency, row budget, runtime budget, or progress interval
-- **THEN** the original model, mode, horizon, and completed tuple remain authoritative while the safe execution bounds may change
+### Requirement: Safe Metrics Summary and Operator Boundary
+The command SHALL expose bounded metrics and summaries for estimates, provider items/calls/units/
+cost, cache, pages, outcomes, quarantine, checkpoint, advisory lock, pause reasons/duration,
+resource samples, live-priority yielding, and coverage. They MUST NOT include IDs, text, hashes,
+provider/model strings, credentials, URLs, paths, checkpoint tokens, payloads, raw errors, or retry
+numbers. The command SHALL require PostgreSQL and the configured provider only, with no public port,
+Kafka, or Redis dependency.
 
-### Requirement: Safe Metrics, Progress, and Final Summary
-The command SHALL expose bounded-cardinality metrics for row outcomes, batch results and duration, in-flight batches, checkpoint replacement results, and last progress time. It SHALL emit periodic structured progress and exactly one final summary. Metrics and output MUST NOT contain video IDs, title/description text, vectors, source hashes, tokens, URLs, checkpoint tokens or paths, arbitrary model labels, raw infrastructure errors, or retry-number labels.
-
-#### Scenario: Work progresses
-- **WHEN** pages and batches complete
-- **THEN** fixed-label metrics and progress summaries report bounded counts, elapsed time, completed pages, service attempts, and last completed publication time
-
-#### Scenario: Run stops
-- **WHEN** the horizon, row limit, runtime limit, cancellation, or an error ends the command
-- **THEN** the final summary reports one bounded stop reason and safe error class without exposing source or infrastructure details
-
-#### Scenario: Metrics endpoint is enabled
-- **WHEN** the configured internal metrics listener is active
-- **THEN** it exposes only health and Prometheus metrics, has no public Compose port, and shuts down with the command
-
-### Requirement: Container Entry Point and Operator Documentation
-The API container build SHALL include the backfill binary. Compose SHALL provide a manually invoked backfill profile/service with PostgreSQL and semantic-service dependencies, no Redis or Kafka dependency, no public port, and a persistent checkpoint mount. Operational documentation SHALL cover prerequisites, exact bounded commands, dry-run, refresh confirmation, metrics, progress, checkpoint durability, cancellation/restart, failure classes, verification, and rollback.
-
-#### Scenario: Container image is built
-- **WHEN** the API image build completes
-- **THEN** it contains the API, worker, and semantic backfill binaries with the existing configuration files
-
-#### Scenario: Manual Compose backfill runs
-- **WHEN** an operator invokes the backfill profile with a mounted checkpoint directory
-- **THEN** the one-shot command can reach PostgreSQL and the internal semantic service without starting a public endpoint or requiring Redis/Kafka
-
-#### Scenario: Operator follows rollback procedure
-- **WHEN** a run must be stopped or rolled back
-- **THEN** cancellation stops further work, the last completed-page checkpoint remains usable, and already stored versioned semantic facts are retained
-
-### Requirement: Verification Across Unit and Integration Boundaries
-The implementation SHALL include unit tests for options, confirmation, cursor integrity, ordering, classification, retries, cancellation, metrics, summaries, and checkpoint replacement; PostgreSQL tests for horizon pagination, eligibility, source changes, compare-and-set persistence, coexistence, and replay; live semantic-service contract tests; command interruption/restart tests; and container/Compose entrypoint tests.
-
-#### Scenario: Concurrent catalog changes are tested
-- **WHEN** integration tests change source text, visibility, lifecycle, media readiness, or exact-model rows during a run
-- **THEN** only current eligible exact-model facts are persisted and deterministic checkpoint progress is preserved
-
-#### Scenario: Resume matrix is tested
-- **WHEN** tests interrupt missing, stale, and force runs before and after partial page writes
-- **THEN** restart resumes from the last complete page, produces no duplicate facts, and never changes another model
+#### Scenario: A run pauses or ends
+- **WHEN** it reaches a stop condition
+- **THEN** exactly one bounded final summary reports estimate/actual counts, cost, coverage, quarantine, pause time, and safe stop class
 
 #### Scenario: Strict validation runs
-- **WHEN** proposal artifacts are complete
-- **THEN** `openspec validate --all --strict` succeeds without modifying main specifications
-
-### Requirement: No Live, Retrieval, Profile, Policy, or Training Changes
-This capability SHALL NOT change live Kafka event processing, consumer groups or acknowledgements, pgvector or ANN schema, semantic retrieval, user-interest profile construction, recommendation providers, ranking or policy behavior, online request-path inference, or model training. It SHALL add no public API or Web behavior.
-
-#### Scenario: Backfill is deployed
-- **WHEN** the operator command and container entrypoint are available
-- **THEN** existing API, worker, Feed, recommendation, profile, and Web behavior remain unchanged
-
-#### Scenario: Semantic rows are backfilled
-- **WHEN** historical videos receive the fixed semantic row
-- **THEN** no recommendation component consumes those rows unless a separate accepted change explicitly adds that behavior
+- **WHEN** tests and `openspec validate --all --strict` complete
+- **THEN** no live Kafka, retrieval, profile, ranking, Web, training, or local model behavior is added

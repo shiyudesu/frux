@@ -1,23 +1,24 @@
 ## Why
 
-Frux needs production-shaped evidence about the bounded semantic ANN provider before any policy activates it, but evaluating it on live recommendation context must not alter user-visible or recorded production behavior. This change adds disabled-by-default, capacity-safe shadow execution and operator acceptance criteria without treating overlap as proof of relevance lift.
+Frux needs low-volume, production-shaped and human-reviewed evidence about the registered semantic provider before any policy activates it. Evaluation must remain disabled by default, must not alter user-visible or recorded production behavior, and must not claim causal lift from observational retrieval data.
 
 ## What Changes
 
 - Deterministically sample a bounded subset of recommendation requests by user, request, and scene using configurable parts-per-million sampling with a default of `0`.
-- Run the existing semantic ANN provider asynchronously alongside or after active recall, but never merge its candidates or change degraded output, ranking, snapshots, request logs, evidence, attribution, or response latency.
+- Run the existing semantic ANN provider asynchronously alongside or after active recall, but never merge its candidates or change degraded output, ranking, snapshots, recommendation request logs, evidence, attribution, or response latency.
 - Reuse the provider's global capacity and deadline controls and add a process-local no-queue shadow admission bound so calls that ignore cancellation cannot create unbounded goroutines or database queries.
-- Compare ANN IDs only in memory against bounded existing content-similarity and session-continuation candidate sets.
-- Record bounded candidate count, latency, result class, profile availability, intersection, Jaccard, and coverage histograms using fixed labels; never persist candidate IDs, vectors, or high-cardinality dimensions.
-- Add an operator-readable acceptance report/runbook with minimum sample and profile coverage, p95 latency, error/capacity, and overlap observations. The report does not activate policies or claim online relevance lift.
+- Compare ANN IDs only in memory against bounded baseline sets and run an isolated simulation of the planned provider reservations, pre-rank pool cap, and explicit semantic ranking.
+- Record bounded latency, error, capacity, profile/index coverage, profile/projection staleness, unique contribution, pool-truncation survival, simulated rank survival, author/topic diversity, and Fresh/Hot displacement using fixed labels; never persist candidate IDs or vectors.
+- Add a small golden semantic-relevance set and human-review workflow that can operate without large traffic samples.
+- Add an operator-readable report/runbook that states denominators and uncertainty, treats insufficient evidence as inconclusive, does not activate policies, and does not claim causal online lift.
 - Add cancellation, shutdown, capacity, failure, metric-bound, and production-result invariance tests.
-- Explicitly exclude pgvector migrations/projection changes, provider scoring changes, policy activation, ranking or training changes, an A/B framework, and Web changes.
+- Explicitly exclude pgvector migrations/projection changes, production provider scoring/policy activation/ranking changes, model training, an A/B framework, causal-lift claims, and Web changes.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `semantic-ann-shadow-evaluation`: Defines deterministic bounded sampling, isolated asynchronous ANN shadow execution, no-queue admission, in-memory bounded overlap evaluation, fixed-label observability, acceptance reporting, shutdown, and verification.
+- `semantic-ann-shadow-evaluation`: Defines deterministic bounded sampling, isolated asynchronous ANN shadow execution, no-queue admission, in-memory retrieval/mixing/ranking simulation, operational/coverage/staleness/diversity metrics, small golden/human relevance review, acceptance reporting, shutdown, and verification.
 
 ### Modified Capabilities
 
@@ -26,5 +27,5 @@ Frux needs production-shaped evidence about the bounded semantic ANN provider be
 ## Impact
 
 - Depends explicitly on `enable-pgvector-recommendation-index` for the bounded ANN interface and index controls, `project-semantic-user-interest` for compatible profile reads, and the narrowed `add-pgvector-recommendation-recall` for the existing provider and its capacity/deadline behavior.
-- Affects recommendation application orchestration, API composition/configuration, bounded metrics, focused tests, and the recommendation operator documentation/report template.
+- Affects recommendation application orchestration, API composition/configuration, bounded metrics, golden/human evaluation tooling and fixtures within existing artifacts, focused tests, and the recommendation operator documentation/report template.
 - Adds no public API, persistence schema, vector/profile projection, ANN scoring, active policy, ranking feature, training path, experiment framework, or Web behavior.

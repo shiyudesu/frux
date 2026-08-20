@@ -1,23 +1,23 @@
 ## ADDED Requirements
 
-### Requirement: Validated Versioned Dataset Input
-Frux SHALL evaluate only a supported versioned recommendation export whose manifest, compressed bytes, and rows pass strict integrity and compatibility validation.
+### Requirement: Validated Low-Data Evaluation Inputs
+Frux SHALL evaluate only supported versioned replay bundles, blinded human golden sets, and optional observational bundles whose hashes, manifests, rows, and privacy bounds pass strict validation.
 
-#### Scenario: Valid export is supplied
-- **WHEN** the operator supplies a supported manifest and its matching gzip JSONL dataset within configured row and line bounds
-- **THEN** the evaluator verifies manifest and dataset hashes, compressed size, filename, row count, schema/version sets, canonical fields, and gzip/JSONL completeness before computing metrics
+#### Scenario: Valid replay and golden inputs are supplied
+- **WHEN** the operator supplies bounded replay cases and a matching versioned human golden set
+- **THEN** the evaluator verifies hashes, counts, schemas, generation identity, canonical fields, annotation rubric/provenance, privacy exclusions, and completeness before computing metrics
 
-#### Scenario: Dataset integrity is corrupted
-- **WHEN** the dataset is truncated, contains trailing invalid bytes, has a checksum or size mismatch, disagrees with manifest counts, or contains malformed or duplicate rows
+#### Scenario: Input integrity is corrupted
+- **WHEN** an input is truncated, has a checksum/count mismatch, contains malformed or duplicate cases/candidates, or violates identity or annotation invariants
 - **THEN** evaluation fails without publishing a report and identifies the bounded integrity category without echoing row payloads
 
-#### Scenario: Dataset semantics are unsupported
-- **WHEN** the manifest or a row declares an unknown dataset, label, record, feature, source-model, or pseudonymization version
+#### Scenario: Input semantics are unsupported
+- **WHEN** a manifest, case, candidate, annotation, or optional observation declares an unknown replay, rubric, label, record, feature, source-model, or pseudonymization version
 - **THEN** evaluation fails explicitly rather than guessing, coercing, or partially evaluating mixed semantics
 
-#### Scenario: Dataset exceeds the configured bound
-- **WHEN** the manifest row count exceeds the validated evaluator limit
-- **THEN** the command fails before decompression and does not sample or silently truncate the dataset
+#### Scenario: Input exceeds the configured bound
+- **WHEN** case, candidate, annotation, or observation counts exceed validated limits
+- **THEN** the command fails before evaluation and does not sample or silently truncate the input
 
 ### Requirement: Production-Compatible Policy Validation
 The evaluator SHALL load exactly one named baseline and one or more named candidate `PolicyConfiguration` JSON files and validate them with the same supported names, normalization, and bounds as production.
@@ -32,7 +32,7 @@ The evaluator SHALL load exactly one named baseline and one or more named candid
 
 #### Scenario: Policy contains non-replayable differences
 - **WHEN** a candidate differs from the baseline in recall, feature-generation, exposure, suppression, fallback, rollout, sampling, retention, snapshot, or other settings not represented by logged components
-- **THEN** the evaluator validates the configuration but lists those fields as non-replayable and does not claim to have evaluated their effects
+- **THEN** the evaluator rejects comparative evaluation by default; an explicit diagnostic-only mode may list those fields but emits no winner, promotion decision, or comparative policy metric
 
 ### Requirement: Deterministic Linear Score Replay
 The evaluator SHALL recompute scores from logged normalized components using a versioned fixed feature order and replay production stable ordering over each exported request candidate set.
@@ -47,7 +47,7 @@ The evaluator SHALL recompute scores from logged normalized components using a v
 
 #### Scenario: Baseline replay differs from logged order
 - **WHEN** the recomputed baseline ordering does not match exported absolute positions over comparable rows
-- **THEN** the evaluator counts and warns about the disagreement before reporting policy metrics
+- **THEN** any mismatch on canonical production replay fixtures fails evaluation, while diagnostic-subset mismatch is counted and prevents claims of exact parity
 
 ### Requirement: Deterministic Diversity Replay
 The evaluator SHALL reproduce production author and recall-content diversity over the available sorted candidate set.
@@ -71,6 +71,10 @@ The evaluator SHALL distinguish observed served-subset replay from exact full-po
 - **WHEN** the supported dataset schema is evaluated
 - **THEN** the report sets full-pool replay availability to false, labels results `served_subset_replay`, and reports candidate counts, absolute-position gaps, delivered-page coverage, and baseline-order agreement
 
+#### Scenario: Complete frozen replay fixture is supplied
+- **WHEN** a replay manifest proves that its candidate pool is complete and records the expected production order
+- **THEN** the evaluator may label the case `full_pool_fixture_replay` and requires exact baseline-order parity before comparing candidates
+
 #### Scenario: Candidate policy changes ordering
 - **WHEN** a candidate moves an observed item into top K
 - **THEN** the evaluator uses only that item's observed label and states that the result does not estimate the outcome that would have occurred under the new position
@@ -79,8 +83,23 @@ The evaluator SHALL distinguish observed served-subset replay from exact full-po
 - **WHEN** a request cannot support deterministic score, tie-break, diversity, or identity checks
 - **THEN** it is excluded with a bounded reason and its count appears in both reports
 
-### Requirement: Versioned Composite Observational Label
-The evaluator SHALL define and report `observational-utility/v1` as a bounded relevance label derived from watch ratio, effective watch, completion, like, favorite, follow, quick skip, and eligible explicit feedback.
+### Requirement: Blinded Human Semantic Golden Set
+The evaluator SHALL use a versioned, privacy-reviewed, blinded human golden set as the primary low-data relevance evidence.
+
+#### Scenario: Candidate is judged
+- **WHEN** an annotator reviews a context/candidate pair without policy name or rank
+- **THEN** the annotator assigns the versioned 0-3 semantic relevance rubric and the input retains only bounded privacy-approved context
+
+#### Scenario: Case receives annotations
+- **WHEN** a golden case is accepted
+- **THEN** every candidate has at least two independent judgments, disagreements of two or more points are adjudicated, and the report includes judge counts, adjudicated labels, and agreement statistics when defined
+
+#### Scenario: Semantic metrics are computed
+- **WHEN** adjudicated labels exist for a replayed case
+- **THEN** the evaluator reports semantic NDCG@K, thresholded precision/recall, and pairwise preference accuracy with explicit case and candidate denominators
+
+### Requirement: Optional Versioned Observational Label
+When eligible observations are supplied, the evaluator SHALL define and report `observational-utility/v1` as a bounded diagnostic label derived from watch ratio, effective watch, completion, like, favorite, follow, quick skip, and eligible explicit feedback.
 
 #### Scenario: Eligible observed row is labeled
 - **WHEN** a row has an observed exposure or positive engagement
@@ -98,28 +117,32 @@ The evaluator SHALL define and report `observational-utility/v1` as a bounded re
 - **WHEN** a delivered row has neither exposure nor positive engagement
 - **THEN** it remains unlabeled rather than becoming a zero-relevance negative
 
-### Requirement: Deterministic Observational Metrics
-The evaluator SHALL compute deterministic policy metrics over identical exported request groups and SHALL label every estimate observational.
+### Requirement: Deterministic Replay, Semantic, Diversity, and Optional Observational Metrics
+The evaluator SHALL compute deterministic replay, semantic, recall, diversity, and optional observational metrics over identical cases.
 
 #### Scenario: Ranking metrics are computed
-- **WHEN** every replayed top-K row for a request has an eligible label
-- **THEN** the evaluator includes complete-label NDCG@K using graded gain `2^relevance - 1`, average utility, and the request in the corresponding denominator
+- **WHEN** every replayed top-K candidate for a golden case has an adjudicated semantic label
+- **THEN** the evaluator includes semantic NDCG@K using graded gain `2^relevance - 1` and the case in the corresponding denominator
 
 #### Scenario: Top-K labels are incomplete
-- **WHEN** any replayed top-K row is unlabeled
-- **THEN** the evaluator excludes that request from NDCG@K, retains it for applicable non-label metrics, and reports complete-label coverage
+- **WHEN** any replayed top-K candidate lacks an adjudicated semantic label
+- **THEN** the evaluator excludes that case from semantic NDCG@K, retains it for replay/diversity metrics, and reports complete-label coverage
 
 #### Scenario: Engagement metrics are computed
-- **WHEN** eligible top-K rows exist
+- **WHEN** eligible optional observed top-K rows exist
 - **THEN** the evaluator reports effective watch, known watch ratio, completion, quick-skip, explicit-feedback, like, favorite, and follow rates with explicit denominators
 
+#### Scenario: Engagement sample is absent
+- **WHEN** no eligible observed sample exists for quick skip, explicit negative feedback, or another behavior rate
+- **THEN** the metric is `unavailable` with denominator zero and is not serialized as numeric zero
+
 #### Scenario: Coverage and concentration are computed
-- **WHEN** selected top-K rows contain video and pseudonymous author keys
-- **THEN** the evaluator reports distinct observed content/author coverage, content/author HHI concentration, and largest-author share against the observed candidate-set universe
+- **WHEN** selected top-K candidates contain video, pseudonymous author, and bounded topic keys
+- **THEN** the evaluator reports distinct content/author/topic coverage, author/topic concentration, largest-group share, and repeated-group runs against the frozen candidate-set universe
 
 #### Scenario: Recall-source mix is computed
 - **WHEN** selected rows contain one or more bounded recall reasons
-- **THEN** each item contributes equal fractional credit across its reasons and the evaluator reports provider shares and the multi-source item rate
+- **THEN** each item contributes equal fractional credit across its reasons and the evaluator reports provider shares, multi-source rate, and coverage of adjudicated relevant items overall and by source
 
 ### Requirement: Policy, Position, Degraded, and Schema Slices
 The evaluator SHALL emit bounded sample and metric slices needed to identify observational composition differences.
@@ -143,27 +166,31 @@ The evaluator SHALL reconcile and report the usable observational sample and all
 - **WHEN** duplicate request/video membership, contradictory author/video metadata, invalid absolute positions, or impossible canonical ordering is detected
 - **THEN** evaluation fails for structural corruption rather than selecting one conflicting value
 
-### Requirement: Deterministic Bootstrap Confidence Intervals
-The evaluator SHALL provide deterministic user-clustered bootstrap confidence intervals only for statistically valid additive observational estimates.
+### Requirement: Optional Sample-Appropriate Uncertainty
+The evaluator SHALL run without a large user population or bootstrap and SHALL emit uncertainty only when a preregistered method is valid for the available sample.
 
-#### Scenario: Metric has adequate clustered samples
-- **WHEN** an additive mean, rate, NDCG, or paired candidate-minus-baseline delta has at least 30 eligible pseudonymous user clusters and finite non-degenerate values
-- **THEN** the evaluator reports a deterministic percentile 95% interval using the configured bounded replicate count and a seed derived from input, policy, label, metric, and slice hashes
+#### Scenario: Point estimate is available
+- **WHEN** a metric has at least one eligible case or row
+- **THEN** the evaluator reports the deterministic point estimate, numerator/denominator, and sample count without requiring an interval
+
+#### Scenario: Preregistered uncertainty is valid
+- **WHEN** a case-level bootstrap, exact/binomial interval, or optional user-cluster bootstrap meets its declared independence and minimum-sample assumptions
+- **THEN** the evaluator emits a deterministic interval and records the method, assumptions, seed where applicable, and sample count
 
 #### Scenario: Metric is unsuitable or undersampled
-- **WHEN** a metric is a global unique count/concentration diagnostic or lacks adequate clusters or variance
-- **THEN** no interval is emitted and the machine-readable report states the unavailable reason
+- **WHEN** assumptions or minimum samples are not met
+- **THEN** no interval is emitted, the point estimate remains available, and the report states the unavailable reason
 
 #### Scenario: Evaluation is repeated
 - **WHEN** identical inputs, policies, tool version, options, and output paths are used
-- **THEN** bootstrap samples, estimates, intervals, and report bytes are identical
+- **THEN** any uncertainty samples, estimates, intervals, and report bytes are identical
 
 ### Requirement: Observational and Non-Causal Interpretation
 The evaluator SHALL clearly state that results are observational and SHALL not implement propensity estimators without a future validated propensity contract.
 
 #### Scenario: Reports are rendered
 - **WHEN** evaluation succeeds
-- **THEN** JSON and Markdown state that logged outcomes are position-biased, served-subset reordering is not causal lift, and confidence intervals describe only the observed export
+- **THEN** JSON and Markdown state that optional logged outcomes are position-biased, served-subset reordering is not causal lift, and confidence intervals describe only the sampled golden cases or observations
 
 #### Scenario: Current dataset lacks randomized propensities
 - **WHEN** candidate-minus-baseline differences are computed
@@ -178,7 +205,7 @@ The evaluator SHALL atomically produce deterministic canonical JSON and concise 
 
 #### Scenario: Evaluation succeeds
 - **WHEN** all inputs validate and metrics complete
-- **THEN** JSON and Markdown contain dataset/manifest/policy hashes, tool/replay/label/report versions, policy differences, metric definitions, sample counts, exclusions, warnings, slices, estimates, confidence intervals, and replay/causal limitations
+- **THEN** JSON and Markdown contain input-manifest/policy hashes, tool/replay/rubric/label/report versions, policy differences, annotation agreement, metric definitions, sample counts, exclusions, warnings, slices, estimates, confidence intervals, and replay/causal limitations
 
 #### Scenario: Same evaluation is repeated
 - **WHEN** identical inputs and options are evaluated again
@@ -188,12 +215,16 @@ The evaluator SHALL atomically produce deterministic canonical JSON and concise 
 - **WHEN** rendering, writing, syncing, or final publication fails
 - **THEN** partial files are removed, existing final reports remain untouched, and no input file is modified
 
-### Requirement: Downstream Learned-Weight Boundary
-The evaluator SHALL expose a versioned report contract that a later `learn-recommendation-policy-weights` change can consume without incorporating training into this capability.
+### Requirement: Deferred Learned-Weight Independence
+The evaluator SHALL remain fully usable while `learn-recommendation-policy-weights` is indefinitely and conditionally deferred.
 
-#### Scenario: Learned-weight work is introduced later
-- **WHEN** `learn-recommendation-policy-weights` evaluates generated candidate configurations
-- **THEN** it may invoke or consume this evaluator's report but owns optimization, training, candidate generation, and any promotion decision
+#### Scenario: Semantic roadmap proceeds
+- **WHEN** Frux evaluates semantic relevance, recall, or diversity
+- **THEN** no weight-learning artifact, sample-size gate, optimizer, or training export is required
+
+#### Scenario: Learned-weight work is activated later
+- **WHEN** a separately approved learner evaluates generated candidate configurations
+- **THEN** it may consume this evaluator's report but owns optimization, training, candidate generation, and any promotion decision
 
 #### Scenario: Evaluator runs
 - **WHEN** a policy comparison is requested

@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
-### Requirement: Evaluator-Compatible Replay Metadata
-Supported recommendation training datasets SHALL contain the minimum trusted, privacy-bounded metadata required to reproduce production tie-breaking, author diversity, and degraded slices without querying live services.
+### Requirement: Optional Evaluator Interoperability
+If the future recommendation training dataset exporter is activated, its supported versions SHALL be able to provide the minimum trusted, privacy-bounded metadata needed for evaluator interoperability, but the evaluator SHALL NOT depend on that exporter.
 
 #### Scenario: Candidate row is exported
 - **WHEN** the exporter serializes a supported delivered recommendation impression
-- **THEN** the row includes canonical candidate `published_at`, a stable domain-separated HMAC `author_key`, bounded `degraded_state` as `healthy`, `degraded`, or `unknown`, and a sorted bounded list of degraded provider identifiers when available
+- **THEN** the row includes immutable generation, generation-relative position, canonical candidate `published_at`, stable domain-separated HMAC `author_key`, bounded topic/source identifiers, `degraded_state` as `healthy`, `degraded`, or `unknown`, and sorted bounded degraded providers when available
 
 #### Scenario: Author grouping key is derived
 - **WHEN** the source candidate has an author
@@ -17,8 +17,12 @@ Supported recommendation training datasets SHALL contain the minimum trusted, pr
 
 #### Scenario: Manifest describes replay metadata
 - **WHEN** the dataset is published
-- **THEN** its versioned manifest enumerates the replay fields, timestamp semantics, author pseudonymization version, degraded-provider bounds, and supported source versions
+- **THEN** its versioned manifest enumerates replay fields, occurred/recorded timestamp semantics, all source watermarks, author pseudonymization version, degraded-provider bounds, and supported source versions
 
 #### Scenario: Dataset is exported repeatedly
 - **WHEN** source facts, HMAC key, exporter version, and inputs are identical
 - **THEN** publication time, author key, degraded fields, row bytes, gzip bytes, and manifest bytes are identical
+
+#### Scenario: Dataset exporter remains inactive
+- **WHEN** low-data offline evaluation is run before exporter activation
+- **THEN** replay bundles and human golden sets provide the required metadata directly and evaluation remains fully supported

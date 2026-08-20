@@ -1,177 +1,217 @@
 ## Context
 
-The active `add-semantic-embedding-service` change defines the fixed authenticated semantic API. The narrowed `integrate-semantic-video-embeddings` change defines the Go-side model identity, canonical title/description hashing, bounded validated client, finite 384-component vector construction, conditional `(video_id, model)` persistence, and live-event coverage metrics. It intentionally excludes historical scans and names this change as their future owner.
+The live integration creates durable semantic jobs for new public videos and persists vectors under
+the complete provider/model/revision/dimension/`semantic-text-v1` identity. Historical videos and
+missed cohorts still need repair. The same external API can be rate-limited and billable, while
+backfill database scans and writes can increase query latency, WAL generation, and replica lag.
 
-Historical catalog repair has different failure and safety requirements from live Kafka delivery. It must operate on PostgreSQL source-of-truth facts, tolerate interruption and replay, avoid unbounded service/database load, and never rewrite `hash-ngram-v1` or another model. The operator entrypoint must also handle videos whose title, description, visibility, lifecycle, or media readiness changes between candidate selection and persistence.
-
-This proposal depends explicitly on both predecessor changes. Implementation must not begin until their fixed service and narrowed integration contracts are available and strictly validated.
+The backfill must use the shared canonicalizer, privacy boundary, cache, adapter, response
+validation, cost/quota controls, and conditional vector repository. It must never mutate
+`hash-ngram-v1`, outrank live jobs, or make recommendation components consume semantic rows.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Provide a one-shot operator command for bounded, deterministic, resumable historical semantic embedding coverage.
-- Reuse the exact semantic model/client/canonicalization/vector/repository primitives owned by the predecessor changes.
-- Select only published, public, media-ready videos and persist only when the selected source is still current and eligible.
-- Make default missing-row processing and guarded stale/forced exact-model refresh safe under retries, cancellation, concurrent live processing, and multiple operator attempts.
-- Provide dry-run, checkpoint, row/runtime, concurrency, batch, retry, metrics, progress, container, documentation, and test contracts that are ready to implement.
+- Estimate candidate count, provider calls, billable units, and cost before execution.
+- Scan a frozen eligible historical horizon deterministically.
+- Enforce one active run per environment and semantic contract.
+- Bind resumability to the exact environment/model/canonicalizer/pricing decision.
+- Use low default concurrency and only surplus capacity after real-time jobs.
+- Auto-pause on provider, budget, database, WAL, and replication pressure.
+- Quarantine deterministic bad rows without provider calls or raw text persistence.
+- Cancel and resume safely with bounded replay.
+- Prove zero hash-row changes and accepted semantic coverage.
 
 **Non-Goals:**
 
-- Changing live video-published event handling, Kafka consumer groups, or live retry behavior.
-- Adding pgvector, ANN indexes, vector retrieval, profile rebuilds, recommendation providers, ranking/policy fields, or training.
-- Selecting arbitrary models, refreshing all models, deleting embeddings, or replacing `hash-ngram-v1`.
-- Adding a public/admin HTTP API, scheduler, recurring job, Web UI, or distributed work queue.
+- Changing live Kafka handoff, live retry state, or publication behavior.
+- Running a scheduler, distributed queue, public/admin HTTP API, or Web UI.
+- Hosting/training a model or adding Python/PyTorch/model containers.
+- pgvector/ANN, semantic retrieval, profiles, ranking/policy changes, or training.
+- Deleting or refreshing arbitrary models or `hash-ngram-v1`.
 
 ## Decisions
 
-### 1. Add a dedicated one-shot Go command over the shared integration primitives
+### 1. Use a dedicated one-shot Go command
 
-Add `cmd/backfill-semantic-video-embeddings` as a separate binary. It loads the existing database and semantic integration configuration, opens PostgreSQL, validates the exact service metadata once, composes an application-owned backfill runner, optionally starts a bounded metrics endpoint, runs until a configured stop condition, writes a final summary, and exits.
+`cmd/backfill-semantic-video-embeddings` opens PostgreSQL, loads the same fixed provider contract,
+validates the adapter and pricing revision, acquires the advisory lock, runs a dry-run or approved
+execution, emits one final summary, and exits. It does not initialize Kafka or Redis and does not
+run schema migration.
 
-The command does not initialize Redis or Kafka and does not run schema migration. It requires the schema and semantic integration delivered by its dependencies. This keeps an operator repair tool isolated from continuously running workers and prevents a backfill failure from affecting live consumers.
+Provider calls occur only inside this resumable backfill process. No API/Feed/publication handler
+can invoke the runner.
 
-The API image will build and copy the binary. Compose will add a manually invoked profile/service entrypoint with PostgreSQL and `semantic-embedding` dependencies, no public port, and a mounted checkpoint directory. Operators may also run the binary directly from `apps/api`.
+### 2. Require dry-run estimation before billable execution
 
-Alternative considered: add a mode to `cmd/worker`. Rejected because a one-shot catalog mutation should not share lifecycle, cancellation, required Redis/Kafka dependencies, or automatic startup with live workers.
+A dry-run captures a stable eligible horizon and performs the same candidate scan, canonicalization,
+text-hash deduplication, exact-contract row classification, cache lookup, and pricing estimation as
+execution, but makes no provider call and writes no vector or quarantine.
 
-### 2. Use fixed bounded options with no unlimited mode
+It reports:
 
-The command accepts flags, with configuration-file defaults, for:
+- eligible/scanned candidate count by missing, stale, current, and deterministic-bad class;
+- unique canonical text hashes and validated cache hits;
+- expected provider items and API calls using the configured batch size;
+- estimated provider billable units and cost under the configured pricing revision;
+- approved maximum rows, runtime, QPS, and cost;
+- environment, complete semantic identity, refresh mode, and frozen horizon.
 
-- `--page-size`: default 256, range 1–1,000;
-- `--batch-size`: default 32, range 1–32 and no greater than the dependent service limit;
-- `--concurrency`: default 2, range 1–2;
-- `--max-rows`: default 10,000, range 1–1,000,000;
-- `--max-runtime`: default 30 minutes, range 1 minute–24 hours;
-- `--checkpoint-file`: required for non-dry runs;
-- `--dry-run`;
-- `--refresh`: `none` (default), `stale`, or `force`;
-- `--confirm-model`: empty by default and required to equal `semantic-minilm-l12-v2@e8f8c211226b894f` for `stale` or `force`;
-- progress interval: default 10 seconds, range 1 second–5 minutes;
-- metrics listen address: optional, with the Compose entrypoint using internal-only `:9092`.
+The summary produces a deterministic estimate digest. A non-dry run requires that digest and
+recomputes the bound estimate before the first provider call. A mismatch in environment, identity,
+canonicalizer, pricing revision, refresh mode, horizon, row bound, or cost bound fails closed. The
+run never exceeds approved rows or cost; newly discovered cost pressure stops cleanly.
 
-`max-rows` counts rows returned by the stable catalog scan, including same-hash rows inspected in refresh modes. There is no zero, negative, or “unlimited” value. Effective batch size is also clamped by remaining row budget.
+### 3. Freeze a stable eligible horizon and page by tuple
 
-Alternative considered: unbounded defaults with operator discipline. Rejected because accidental catalog-wide load is precisely the failure this command must prevent.
+Eligible videos are published, public, media-ready (`legacy_ready` or `ready`), and have non-null
+`published_at`. A fresh estimate captures the greatest eligible `(published_at, id)` tuple in the
+same snapshot as its initial classification. Pages are ordered ascending by that tuple, strictly
+after the checkpoint and no later than the horizon.
 
-### 3. Freeze a stable scan horizon and use tuple keyset pagination
+Default mode selects rows missing the exact full contract. `stale` includes exact-contract rows
+whose stored text hash differs; `force` includes all eligible exact-contract rows. Stale/force
+requires exact full-identity confirmation. Other semantic identities and `hash-ngram-v1` never
+participate in replacement decisions.
 
-At a fresh non-checkpoint run, the repository captures the greatest eligible tuple `(published_at, id)` under the same transaction snapshot used to establish the first page. Candidates are ordered by `(published_at ASC, id ASC)`, constrained to tuples at or below that horizon, and paged strictly after the last completed tuple.
+### 4. Serialize runs with an environment-and-model advisory lock
 
-Eligibility is:
+Before scanning, the command obtains a PostgreSQL session advisory lock derived from
+`(environment, provider, model, revision, dimension, canonicalizer)`. Only one run for that exact
+scope may proceed. Failure to acquire exits before provider or mutation work. The session holds the
+lock through pauses and releases it on completion, cancellation, or failure.
 
-- lifecycle is published;
-- visibility is public;
-- media status is `legacy_ready` or `ready`;
-- `published_at` is non-null.
+This prevents duplicate operator runs for one contract. Live jobs are not blocked by the advisory
+lock and remain higher priority.
 
-Default mode adds `NOT EXISTS` for the exact semantic model. Refresh modes left-join only that exact model and return its text hash/vector metadata for application classification. `stale` scans eligible rows and calls the service only for missing rows or rows whose stored text hash differs from the current canonical source hash. `force` calls the service for every scanned eligible row. Other model rows do not participate in selection.
+### 5. Bind checkpoints to the approved execution contract
 
-The frozen horizon prevents newly published rows from extending a run indefinitely. Rows that become eligible behind the cursor are handled by a later run; rows that become ineligible are rejected during final persistence.
+The opaque versioned checkpoint contains:
 
-Alternative considered: offset pagination. Rejected because inserting or removing exact-model rows while the scan runs would shift offsets and cause omissions or duplicates.
+- environment;
+- provider, model, revision, dimension, and canonicalizer;
+- pricing revision and approved estimate digest;
+- refresh mode and frozen horizon;
+- last fully completed `(published_at, id)` tuple;
+- run ID, counters needed for row/cost limits, and corruption checksum.
 
-### 4. Keep refresh explicit and exact-model scoped
+The checkpoint is mode 0600 and atomically replaced only after a complete durable page prefix:
+write sibling, flush file, rename, flush directory. It never contains raw/canonical text,
+credentials, URLs, provider payloads, or vectors. Any wrong environment/identity/canonicalizer/
+pricing/mode/horizon/estimate or corrupt checkpoint fails before provider access.
 
-`refresh=none` skips every existing exact-model row, including one with an older text hash. `refresh=stale` and `refresh=force` fail before scanning unless `--confirm-model` exactly names the fixed persistence key. Unknown model keys, the full upstream model name, prefixes, wildcard values, and confirmation of `hash-ngram-v1` are rejected.
+### 6. Use low defaults and give real-time jobs strict priority
 
-The refresh policy is carried into candidate classification, checkpoint compatibility, metrics, and conditional persistence. Persistence statements always constrain `model` to the fixed semantic key and never delete rows. A forced request may recompute a same-hash vector, but the repository remains a no-op when model, dimension, text hash, and serialized vector are already identical.
+Defaults are page size 128, provider batch size no greater than 16, concurrency 1, and backfill QPS
+no greater than 20% of configured provider QPS. Maximum concurrency is 2.
 
-Alternative considered: a generic `--overwrite` flag. Rejected because it is too easy to misapply to another model or to interpret as permission to delete side-by-side facts.
+A shared PostgreSQL capacity coordinator reserves tokens for real-time semantic jobs first.
+Backfill receives only surplus provider-call and database-write tokens. Before every batch it checks
+available live `pending`/`retry` jobs and oldest live backlog age. If live work is available or its
+oldest age exceeds five minutes, backfill pauses without advancing the current page checkpoint.
+Backfill cannot consume reserved live budget even when it could issue a provider request directly.
 
-### 5. Process complete pages with bounded concurrent service batches
+### 7. Auto-pause on provider, budget, database, WAL, and replication pressure
 
-Each page is normalized and classified in stable candidate order, then work items are split into consecutive batches. At most two batches execute concurrently. Request items retain stable `video:<id>` identities and request order; results are associated by the validated client contract, not by completion order.
+The runner samples bounded controls before page reads, provider batches, and writes:
 
-Retryable `timeout`, `over_capacity`, and `unavailable` results receive at most three total attempts with cancellation-aware delays of 1, 5, and 15 seconds; a bounded `Retry-After` may raise a delay up to 30 seconds. Authentication, metadata, contract, invalid-input, and local configuration failures are terminal. Exhausted retries stop the run and leave the current page checkpoint unadvanced.
+- provider token/QPS availability and bounded `Retry-After`;
+- estimated plus actual run spend against approved budget;
+- database p95 operation latency, default pause threshold 200 ms;
+- primary WAL generation, default pause threshold 64 MiB/min;
+- replica replay lag, default pause threshold 30 seconds;
+- replica byte backlog, default pause threshold 256 MiB.
 
-Cancellation stops new scheduling, cancels in-flight requests and retry waits, waits for goroutines to exit, and emits a final canceled summary. Partial successful writes from an uncheckpointed page are safe: replay uses missing/same-hash checks and conditional persistence.
+Thresholds are bounded configuration and recorded in the approved estimate. QPS/`Retry-After`,
+database, WAL, and replication pressure enter `paused` operation without losing lock/checkpoint.
+Database/WAL/replication resume only after five consecutive healthy 10-second samples and a
+minimum 30-second cooldown. Budget exhaustion stops cleanly as `budget_reached` and requires a new
+dry-run/approval; it does not auto-resume. Paused time counts toward maximum runtime.
 
-Alternative considered: enqueue historical work into Kafka. Rejected because it would change live event processing, weaken operator row/runtime controls, and require a second resumability protocol.
+### 8. Quarantine deterministic bad rows
 
-### 6. Revalidate source hash and eligibility inside the persistence transaction
+Canonicalization failures and structurally invalid source rows are quarantined before provider
+access. The quarantine key is
+`(video_id, provider, model, revision, dimension, canonicalizer, source_version)` and stores only a
+bounded reason code, source `updated_at`/hash surrogate, ordering tuple, and timestamps. It stores no
+raw text, credential, URL, vector, or provider response.
 
-Candidates carry video ID, raw source fields, canonical source hash, source `updated_at`, ordering tuple, and the observed exact-model state. After semantic generation, the extended versioned embedding repository starts a transaction and locks the current video row. It:
+The same unchanged source is deterministically skipped on resume and included in coverage
+accounting. A changed source version becomes eligible for reevaluation. An operator command may
+clear selected quarantines after repair. Provider authentication, contract, or outage failures are
+run-level/job retry concerns, not per-row quarantine reasons.
 
-1. verifies published/public/media-ready eligibility;
-2. canonicalizes the current title/description using the shared integration function;
-3. requires the current hash to equal the generated item’s source hash;
-4. locks the exact semantic embedding row, if present;
-5. applies the selected missing/stale/force compare-and-set policy;
-6. persists through the same finite, normalized, versioned `(video_id, model)` repository path;
-7. commits before reporting the item complete.
+### 9. Revalidate and conditionally persist through shared primitives
 
-If source or eligibility changed, the item is classified `source_changed` or `ineligible` and is not persisted. If a concurrent live worker or another backfill already stored the same fact, the outcome is `already_current`. In stale/force mode, an update proceeds only when the current exact-model row still matches the state observed or is already the generated fact; this prevents overwriting a newer concurrent semantic row. No transaction reads or writes another model.
+Work items use the shared `semantic-text-v1` canonicalizer and cache. Provider payloads contain only
+canonical public title/description text and fixed model selection. Before saving, the repository
+locks/re-reads the video, rechecks published/public/media-ready eligibility, recomputes the hash,
+and applies missing/stale/force compare-and-set rules to only the exact full semantic identity.
 
-Alternative considered: re-read and save in separate calls. Rejected because visibility or text could change in the race between validation and upsert.
+A source change or ineligibility becomes a durable page outcome without a stale write. Concurrent
+live completion wins safely. Identical facts are no-op writes with unchanged timestamps. No query or
+write path updates `hash-ngram-v1` or another semantic identity.
 
-### 7. Checkpoint only fully completed page prefixes
+### 10. Cancel and resume at complete page prefixes
 
-The checkpoint cursor is an opaque, versioned, URL-safe token containing a format version, run ID, fixed model key, refresh mode, frozen horizon, and last fully completed ordering tuple, plus a checksum for corruption detection. The command never logs the raw token.
+SIGINT, SIGTERM, runtime expiry, provider failure, pressure pause, or operator cancellation stops new
+scheduling and cancels in-flight calls. The runner waits for goroutines, persists only already
+fenced item outcomes, and leaves the previous complete-page checkpoint authoritative if the page is
+incomplete. Restart replays at most one bounded page.
 
-For a non-dry run, the checkpoint file is replaced only after every candidate in the page has reached a durable terminal outcome (`persisted`, `already_current`, `ineligible`, or `source_changed`). Replacement writes a mode-0600 sibling file, flushes it, atomically renames it over the target, and flushes the parent directory. Invalid, truncated, unsupported-version, wrong-model, wrong-mode, or horizon-inconsistent checkpoints fail closed before scanning.
+Normal resumable stop reasons include `horizon_complete`, `max_rows_reached`,
+`max_runtime_reached`, `budget_reached`, and `canceled`. A new run can continue only with compatible
+checkpoint/estimate bindings or a new dry-run and horizon.
 
-Cancellation, runtime expiry, service failure, or persistence failure in the middle of a page leaves the previous file intact. Restart replays at most one page. Page size, batch size, concurrency, progress interval, and remaining row/runtime limits may change on restart; model, refresh mode, and horizon may not.
+### 11. Define acceptance around coverage and zero hash changes
 
-Dry-run never creates or replaces a checkpoint because it has not completed durable work.
+Before the first write, operations capture a count and deterministic aggregate digest of all
+`hash-ngram-v1` rows, including vector content and timestamps. The same query runs after completion.
+Acceptance requires identical count/digest and tests/audit metrics showing zero hash insert/update/
+delete operations by the backfill.
 
-Alternative considered: checkpoint after each concurrent batch. Rejected because out-of-order batch completion would require a more complex contiguous-range journal and would not materially improve safety for bounded pages.
+Historical acceptance for the active frozen horizon requires:
 
-### 8. Treat limits and completion as resumable outcomes
+- exact-contract semantic coverage of at least 99.5% of currently eligible rows;
+- every remaining eligible row represented by one deterministic quarantine, so
+  `covered + quarantined = 100%` with no unexplained gap;
+- actual provider cost at or below the approved budget;
+- no hash digest/count change;
+- no unresolved checkpoint corruption, advisory-lock conflict, or resource-pressure incident.
 
-The runner derives one context from OS cancellation and `max-runtime`. It stops before fetching another page when no row or runtime budget remains. If the budget expires during a page, in-flight work is canceled and the previous page checkpoint remains authoritative.
+This gate validates stored producer coverage only and does not enable recommendation use.
 
-Normal completed states are `horizon_complete`, `max_rows_reached`, and `max_runtime_reached`; all preserve a usable checkpoint and return success after completed-page progress is flushed. Operator cancellation returns a distinct canceled exit status. Invalid configuration/checkpoint, dependency contract failure, and exhausted operational errors return distinct non-zero classes without raw infrastructure details.
-
-A restarted command resumes strictly after the checkpoint tuple and preserves the original horizon. Starting without the checkpoint begins a new run and captures a new horizon.
-
-### 9. Provide bounded metrics, progress, and safe summaries
-
-The command registers:
-
-- `frux_semantic_embedding_backfill_rows_total{outcome}`;
-- `frux_semantic_embedding_backfill_batches_total{result}`;
-- `frux_semantic_embedding_backfill_batch_duration_seconds{result}`;
-- `frux_semantic_embedding_backfill_inflight_batches`;
-- `frux_semantic_embedding_backfill_checkpoint_writes_total{result}`;
-- `frux_semantic_embedding_backfill_last_progress_unixtime`.
-
-Allowed row outcomes are `scanned`, `would_generate`, `persisted`, `already_current`, `ineligible`, and `source_changed`. Batch results are `success`, `canceled`, `timeout`, `over_capacity`, `auth`, `unavailable`, `contract`, and `internal`; checkpoint results are `success` and `failure`. Labels never contain video IDs, model strings, cursor values, paths, text, hashes, URLs, tokens, raw errors, or retry numbers.
-
-Periodic structured progress and the final summary include only run ID, mode, elapsed time, bounded counts, completed pages, service attempts, last completed publication time, stop reason, and safe error class. They exclude title/description, vectors, video IDs, checkpoint contents, secrets, and raw database/HTTP errors. The optional metrics server exposes only health and Prometheus metrics and shuts down with the run.
-
-### 10. Verify the operator boundary at unit, persistence, service, cancellation, and container levels
-
-Unit tests cover option bounds, confirmation, cursor round trips/corruption, deterministic ordering, classification, retry delays, page-prefix checkpointing, cancellation, summaries, and metric label allowlists. PostgreSQL tests cover eligibility, tuple pagination/horizon behavior, concurrent inserts and visibility/lifecycle/source changes, exact-model compare-and-set outcomes, coexistence with hash/other models, and idempotent replay.
-
-Contract tests use the semantic service from `add-semantic-embedding-service` and the client/vector/repository code from `integrate-semantic-video-embeddings`. End-to-end tests interrupt and restart the command, exercise missing/stale/force and dry-run modes, enforce row/runtime limits, and verify atomic checkpoint replacement. Container tests build the binary into the API image and run the manual Compose entrypoint with a checkpoint mount and no Redis/Kafka dependency.
-
-Documentation will add an operator runbook covering prerequisites, exact command examples, dry-run, bounded rollout, refresh confirmation, checkpoint backup/mounting, progress/metrics, cancellation/restart, failure classes, verification queries, and rollback. Rollback stops the command; already persisted exact-model facts remain valid and side-by-side with all other models.
+Metrics and summaries cover estimates, calls/items/cost, cache, pages, outcomes, quarantine,
+checkpoint, advisory lock, pause reason/duration, resource samples, live-priority yielding, and
+coverage. Labels exclude IDs, text, hashes, provider/model strings, credentials, URLs, paths,
+checkpoint tokens, raw errors, and retry numbers.
 
 ## Risks / Trade-offs
 
-- [The two predecessor changes are active and may evolve] → Treat their accepted fixed contracts as hard dependencies and block implementation/validation until both are available without broadening this change.
-- [A failure after some writes but before page checkpoint replacement repeats service calls] → Keep pages bounded and repository writes idempotent; default and stale replay skip current facts.
-- [Force mode can intentionally recompute many current rows] → Require exact-model confirmation, fixed row/runtime defaults, dry-run, and no unlimited mode.
-- [Stale mode must scan eligible rows to compute canonical hashes] → Count scanned rows against `max-rows`, use stable pages, and expose would-generate/current outcomes before a larger run.
-- [A video can become ineligible immediately after a committed embedding write] → Lock and revalidate before write; downstream visibility remains source-of-truth and later runs skip ineligible rows.
-- [Checkpoint files can be lost with ephemeral containers] → Require a mounted checkpoint path for non-dry Compose runs and document backup/restart procedures.
-- [Two operators can run overlapping backfills] → Compare-and-set persistence makes data safe, while duplicated inference remains bounded; the runbook recommends one active run per model/mode.
-- [Metrics disappear when a one-shot process exits] → Emit periodic and final structured summaries in addition to scrape-time metrics.
+- [Estimate differs from actual usage] -> Recompute before calls, cap approved rows/cost, and stop
+  at budget.
+- [Backfill harms live freshness] -> Shared priority capacity, low defaults, and five-minute live
+  backlog yielding.
+- [Database load increases WAL/replica lag] -> Automatic pressure pause with healthy hysteresis.
+- [Bad source rows stall completion] -> Deterministic privacy-safe quarantine and complete
+  coverage accounting.
+- [Cancellation repeats provider calls] -> Page-prefix checkpointing, cache reuse, and idempotent
+  conditional persistence bound replay.
 
 ## Migration Plan
 
-1. Complete and strictly validate `add-semantic-embedding-service`.
-2. Complete and strictly validate the narrowed `integrate-semantic-video-embeddings` change, including exact model identity, canonical hashing, client validation, and conditional persistence.
-3. Add the backfill application runner, stable candidate/checkpoint contracts, and repository transaction extensions with unit and PostgreSQL tests.
-4. Add the dedicated command, bounded metrics/progress, signal/runtime handling, and safe exit classes.
-5. Build the binary into the API container and add the manual Compose profile/entrypoint plus persistent checkpoint mount.
-6. Run dry-run against a bounded catalog slice, then a small missing-only run, cancel/restart it, and verify exact-model coverage without changes to hash or other models.
-7. Enable larger bounded runs only after service/database metrics remain healthy. Use stale/force modes only with explicit exact-model confirmation.
-
-Rollback stops or cancels the one-shot command. No live component needs rollback. Persisted semantic rows are valid versioned facts and are not deleted; a later missing-only run skips them.
+1. Complete and validate both predecessor changes.
+2. Add estimate, advisory-lock, checkpoint, quarantine, capacity, and stable-scan contracts.
+3. Add the low-concurrency runner and conditional repository integration.
+4. Run dry-run, review calls/units/cost/resource thresholds, and approve the estimate digest.
+5. Run a small bounded execution, cancel/resume it, then expand only while live and resource gates
+   remain healthy.
+6. Verify 99.5% coverage, complete quarantine accounting, approved cost, and zero hash changes.
+7. Rollback by canceling the command; checkpoint, quarantine, semantic facts, and hash facts remain
+   valid.
 
 ## Open Questions
 
-None. Dependencies, model scope, eligibility, ordering, bounds, refresh confirmation, retry policy, transactional freshness checks, checkpoint durability, observability, container entrypoint, and exclusions are fixed by this proposal.
+None. Estimation, advisory locking, bindings, priority, pressure gates, quarantine, resumability,
+hash invariance, and acceptance thresholds are fixed.

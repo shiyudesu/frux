@@ -37,8 +37,8 @@ An enabled deployment SHALL use a supported pgvector PostgreSQL 17 image, SHALL 
 - **WHEN** pgvector is enabled against a PostgreSQL server whose major version is not 17
 - **THEN** startup fails with a bounded prerequisite error and performs no projection work
 
-### Requirement: Additive Advisory-Locked Vector Migration
-Enabled schema initialization SHALL run inside the existing PostgreSQL advisory-locked migration flow and SHALL add the extension, projection table, constraints, supporting indexes, and exact-model HNSW index idempotently. It MUST NOT rewrite or delete `video_embedding`, video facts, or another model.
+### Requirement: Additive Bounded Vector Migration Without HNSW Rebuild
+Enabled schema initialization SHALL run inside the existing PostgreSQL advisory-locked migration flow and SHALL add only the extension, projection table, constraints, and small supporting indexes idempotently under bounded lock and statement timeouts. Startup migration MUST NOT create, rebuild, drop, or repair HNSW and MUST NOT rewrite or delete `video_embedding`, video facts, or another model.
 
 #### Scenario: Multiple processes initialize an empty enabled database
 - **WHEN** API and worker start enabled migrations concurrently
@@ -48,12 +48,16 @@ Enabled schema initialization SHALL run inside the existing PostgreSQL advisory-
 - **WHEN** schema initialization runs again against the complete vector schema
 - **THEN** migration validates existing definitions and completes without destructive changes or duplicate indexes
 
+#### Scenario: Large projection already exists
+- **WHEN** enabled startup sees a large populated projection with no HNSW index or a stale HNSW index
+- **THEN** migration completes without starting an automatic index build/rebuild inside the shared migration lock
+
 #### Scenario: Disabled migration runs
 - **WHEN** the same migration entrypoint runs with pgvector disabled
 - **THEN** it skips extension catalogs and every vector-specific statement
 
 ### Requirement: Rebuildable Exact-Model Vector Projection
-Frux SHALL store the derived ANN representation in `semantic_video_ann_projection` with primary key `(video_id, model)`, a foreign key to `video(id)` with delete cascade, `vector(384)` embedding, source text hash, source embedding update time, and projection time. Durable `video_embedding.embedding_json` SHALL remain the source of truth, and the projection SHALL be disposable and rebuildable.
+Frux SHALL store the derived search representation in `semantic_video_ann_projection` with primary key `(video_id, model)`, a foreign key to `video(id)` with delete cascade, embedding provider/model/revision, `vector(384)` embedding, source text hash, source vector digest, source embedding update time, and projection time. Durable versioned `video_embedding.embedding_json` SHALL remain the source of truth, and the projection SHALL be disposable and rebuildable.
 
 #### Scenario: Eligible semantic source is projected
 - **WHEN** an exact-model durable row has dimension 384, exactly 384 finite components, unit norm within `1e-4`, and belongs to a readable video
@@ -67,19 +71,31 @@ Frux SHALL store the derived ANN representation in `semantic_video_ann_projectio
 - **WHEN** the durable exact-model text hash or update time changes
 - **THEN** reconciliation replaces only that model's derived projection and preserves every durable embedding row
 
-### Requirement: Explicit Cosine HNSW and Supporting Indexes
-The projection SHALL have an exact-model partial HNSW index using `vector_cosine_ops`, `m=16`, and `ef_construction=64`. Supporting B-tree indexes SHALL cover model/source update reconciliation and readable-video eligibility using schema-unique names.
+### Requirement: Exact-First Search and Capacity-Gated Cosine HNSW
+The repository SHALL use exact cosine search while eligible exact-model projection rows are below a configured positive `hnsw_min_rows` threshold or no accepted HNSW index exists. A model-specific partial HNSW index using `vector_cosine_ops`, `m=16`, and `ef_construction=64` MAY be created only by guarded operator maintenance after row-count, free-disk, WAL-budget, CPU-headroom, connection, concurrency, lock-timeout, and statement-timeout gates pass. Supporting B-tree indexes SHALL cover exact source-identity reconciliation and readable-video eligibility using schema-unique names.
 
 #### Scenario: Vector schema is inspected
-- **WHEN** migration verification reads PostgreSQL catalog definitions
-- **THEN** the named HNSW index is partial to `semantic-minilm-l12-v2@e8f8c211226b894f`, uses cosine operators, and records the explicit HNSW parameters
+- **WHEN** operator-built HNSW catalog definitions are inspected
+- **THEN** the named index is partial to `semantic-minilm-l12-v2@e8f8c211226b894f`, uses cosine operators, and records the explicit HNSW parameters
 
 #### Scenario: Another model row exists
 - **WHEN** a projection row for another model is present
 - **THEN** it is outside this capability's HNSW index, reconciliation, purge, rebuild, and query scope
 
+#### Scenario: Catalog is below threshold
+- **WHEN** current eligible projection rows are fewer than `hnsw_min_rows`
+- **THEN** exact cosine remains active and no automatic HNSW creation is attempted
+
+#### Scenario: Capacity gate fails
+- **WHEN** disk, WAL, CPU, maintenance connection, concurrency, or timeout headroom is below its configured bound
+- **THEN** concurrent HNSW build/reindex does not start and exact cosine remains the healthy query mode
+
+#### Scenario: Concurrent index build fails
+- **WHEN** cancellation, timeout, or database failure leaves an invalid index
+- **THEN** the operator reports a bounded failure, cleans or marks the invalid object safely, and queries continue in exact mode
+
 ### Requirement: Bounded Idempotent Projection Reconciliation
-An enabled worker SHALL supervise a projection reconciler with bounded interval, batch size, rows per cycle, and cycle deadline. A cycle SHALL use a projection-specific advisory lock, idempotently upsert missing or changed exact-model rows, and delete bounded exact-model rows that are stale, source-missing, private, unpublished, deleted, or media-unready.
+An enabled worker SHALL supervise a projection reconciler with bounded interval, batch size, rows per cycle, cycle deadline, dedicated low-concurrency connection pool, and transaction-local lock/statement timeouts. A cycle SHALL use a projection-specific advisory lock, idempotently upsert rows only when provider/model/revision/text-hash/vector-digest/update-time metadata differs from the authoritative source, and delete bounded exact-model rows that are stale, source-missing, private, unpublished, deleted, or media-unready.
 
 #### Scenario: Reconciler catches up missing coverage
 - **WHEN** eligible exact-model JSON rows lack current projections
@@ -93,6 +109,10 @@ An enabled worker SHALL supervise a projection reconciler with bounded interval,
 - **WHEN** the exact-model durable embedding no longer exists
 - **THEN** bounded reconciliation deletes the corresponding exact-model projection without changing other projection or embedding models
 
+#### Scenario: Projection metadata is stale
+- **WHEN** any provider, model, revision, text hash, vector digest, or source update time differs from the authoritative versioned embedding row
+- **THEN** reconciliation replaces or removes the projection before it can be treated as current
+
 #### Scenario: Another reconciler holds the lock
 - **WHEN** a worker or operator already owns the projection advisory lock
 - **THEN** the new cycle performs no mutation, reports a healthy skipped-lock result, and retries on a later interval
@@ -102,7 +122,7 @@ An enabled worker SHALL supervise a projection reconciler with bounded interval,
 - **THEN** in-flight SQL is canceled, completed transactions remain idempotent, and unfinished rows are eligible for a later cycle
 
 ### Requirement: Guarded Operator Projection Management
-Frux SHALL provide a PostgreSQL-only one-shot operator command for bounded reconcile, dry-run, exact-model purge, exact-model rebuild, and named HNSW reindex. Every destructive mode MUST require exact model confirmation, reindex MUST additionally require exact index confirmation, and all page, row, and runtime limits MUST reject zero or unlimited values.
+Frux SHALL provide a PostgreSQL-only one-shot operator command for bounded reconcile, dry-run, exact-model purge, exact-model projection rebuild, capacity-gated concurrent HNSW build, and named HNSW reindex. Every destructive mode MUST require exact model confirmation, HNSW maintenance MUST additionally require exact index confirmation, and all page, row, runtime, lock-timeout, statement-timeout, and maintenance-concurrency limits MUST reject zero or unlimited values.
 
 #### Scenario: Dry-run is requested
 - **WHEN** an operator runs a bounded dry-run
@@ -110,7 +130,7 @@ Frux SHALL provide a PostgreSQL-only one-shot operator command for bounded recon
 
 #### Scenario: Exact-model rebuild is confirmed
 - **WHEN** `--rebuild-model` is accompanied by the exact fixed model confirmation
-- **THEN** the command purges and repopulates only that model's projection under the advisory lock and within configured bounds
+- **THEN** the command purges and repopulates only that model's projection under the advisory lock and within configured bounds without automatically rebuilding HNSW
 
 #### Scenario: Destructive confirmation is unsafe
 - **WHEN** model or index confirmation is missing, partial, wildcarded, or names another object
@@ -119,6 +139,10 @@ Frux SHALL provide a PostgreSQL-only one-shot operator command for bounded recon
 #### Scenario: Model purge is performed for rollback
 - **WHEN** an operator confirms exact-model purge
 - **THEN** only derived rows for that model are deleted and durable JSON embeddings, other models, the table, and the extension remain intact
+
+#### Scenario: HNSW maintenance is accepted
+- **WHEN** the eligible row threshold and every documented capacity gate pass with exact model/index confirmation
+- **THEN** the command uses an independent connection and one maintenance permit to run concurrent index creation/reindex outside migration and reconciliation transactions
 
 ### Requirement: Projection Coverage and Operation Metrics
 Frux SHALL expose bounded-cardinality metrics for eligible/current/missing/stale/ineligible projection coverage, reconciliation row outcomes, cycle results and duration, ANN query results and duration, and returned result counts. Metrics and normal logs MUST NOT contain model strings, video IDs, vectors, exclusions, SQL, operator confirmations, or raw infrastructure errors.
@@ -161,8 +185,8 @@ The ANN repository SHALL require exactly 384 finite input components with L2 nor
 - **WHEN** top-K is zero or greater than 100, exclusions exceed 20, an exclusion is non-positive or duplicated, or the context lacks a deadline
 - **THEN** the repository rejects the query before SQL
 
-### Requirement: Exact-Model Readable Cosine Query Semantics
-The ANN SQL SHALL bind the fixed model internally, apply exclusions in SQL, join current video facts, and return only published, public, media-ready videos with finite positive cosine similarity. It SHALL order by cosine distance ascending and `video_id ASC` as a deterministic tie-break and SHALL never return more than requested top-K.
+### Requirement: Exact-Model Current Readable Cosine Query Semantics
+Both exact and HNSW SQL SHALL bind provider/model/revision internally, apply exclusions in SQL, join current video facts and the authoritative versioned embedding row, require exact projection equality on text hash, vector digest, and source update time, and return only published, public, media-ready videos with finite positive cosine similarity. Both modes SHALL order by cosine distance ascending and `video_id ASC` as a deterministic tie-break and SHALL never return more than requested top-K.
 
 #### Scenario: Eligible neighbors exist
 - **WHEN** the index contains matching readable exact-model projections
@@ -176,12 +200,16 @@ The ANN SQL SHALL bind the fixed model internally, apply exclusions in SQL, join
 - **WHEN** another model has a projection with a smaller cosine distance
 - **THEN** it cannot participate in or affect the exact-model result
 
+#### Scenario: Projection is stale
+- **WHEN** a projected row no longer equals the authoritative provider/model/revision/text-hash/vector-digest metadata
+- **THEN** neither exact nor HNSW query returns that video
+
 #### Scenario: Cosine distances tie
 - **WHEN** two eligible rows have equal cosine distance
 - **THEN** the lower video ID appears first
 
 ### Requirement: Bounded ANN Execution and Cancellation
-Each ANN query SHALL cap its child deadline at 500 milliseconds, set transaction-local `statement_timeout`, use `hnsw.ef_search=100`, `hnsw.iterative_scan='strict_order'`, and `hnsw.max_scan_tuples=10000`, and honor caller cancellation. A timeout or cancellation MUST return no partial neighbor set.
+Each query SHALL cap its child deadline at 500 milliseconds, set transaction-local `lock_timeout` and `statement_timeout`, and honor caller cancellation. Exact mode SHALL run only below the configured size gate. HNSW mode SHALL use `hnsw.ef_search=100`, `hnsw.iterative_scan='strict_order'`, and `hnsw.max_scan_tuples=10000`. A timeout or cancellation MUST return no partial neighbor set.
 
 #### Scenario: Caller deadline is shorter than the cap
 - **WHEN** the caller supplies a deadline under 500 milliseconds
@@ -195,16 +223,24 @@ Each ANN query SHALL cap its child deadline at 500 milliseconds, set transaction
 - **WHEN** the context is canceled during ANN execution
 - **THEN** database work is canceled promptly and no detached query continues
 
-### Requirement: Real PostgreSQL Plan, Recall, and Performance Acceptance
-Implementation verification SHALL use real PostgreSQL 17 with pgvector at least `0.8.0`. Tests SHALL cover disabled and enabled migration, projection lifecycle, query semantics, query cancellation, and exact schema definitions. A seeded fixture of at least 10,000 vectors SHALL prove HNSW plan use, recall@20 of at least `0.90` across at least 100 deterministic queries, and a documented modest warm performance gate.
+### Requirement: Real PostgreSQL Exact, Filtered-Fill, Recall, and Capacity Acceptance
+Implementation verification SHALL use real PostgreSQL 17 with pgvector at least `0.8.0`. Tests SHALL cover disabled and enabled migration, no startup HNSW rebuild, projection equality lifecycle, exact-mode semantics, HNSW semantics, query cancellation, maintenance timeouts/concurrency, and exact schema definitions. A below-threshold fixture SHALL prove exact cosine correctness. An above-threshold fixture SHALL prove accepted HNSW plan use, recall@20 of at least `0.90` against exact eligible ground truth, documented filtered-fill/survival under readability predicates and exclusions, and a modest warm performance gate.
 
 #### Scenario: Query plan acceptance runs
 - **WHEN** the seeded projection is analyzed and `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` runs for the production query shape
 - **THEN** the plan uses the named HNSW index and does not sequentially scan the projection table
 
+#### Scenario: Small catalog acceptance runs
+- **WHEN** eligible rows remain below the configured HNSW threshold
+- **THEN** exact cosine returns deterministic current readable results without requiring the HNSW index
+
 #### Scenario: Recall-quality acceptance runs
 - **WHEN** ANN top-20 results are compared with exact cosine ground truth for at least 100 seeded queries
 - **THEN** aggregate recall@20 is at least `0.90` while exclusions and readability filters remain enforced
+
+#### Scenario: Filtered fill acceptance runs
+- **WHEN** public/published/media-ready predicates and exclusions remove near neighbors
+- **THEN** the report records requested and returned K plus pre/post-filter survival and rejects HNSW activation when fill or recall materially trails exact eligible search
 
 #### Scenario: Modest performance gate runs
 - **WHEN** 100 warmed top-20 repository queries run over at least 10,000 rows in the documented local or CI PostgreSQL container

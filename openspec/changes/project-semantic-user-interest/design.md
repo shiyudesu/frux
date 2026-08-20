@@ -7,21 +7,21 @@ This change depends on:
 - `add-semantic-embedding-service`, which fixes the immutable MiniLM service contract.
 - `integrate-semantic-video-embeddings`, which persists a normalized 384-dimensional video vector under `semantic-minilm-l12-v2@e8f8c211226b894f`, keyed by `(video_id, model)`.
 
-The semantic user profile must be a new live projection. Reusing the hash profile would mix incompatible dimensions and incorrectly turn author affinity into content vectors. Reusing the existing applied-event ledger would make an event applied to one profile appear applied to every semantic model.
+The semantic user profile must be a new live projection. Reusing the hash profile would mix incompatible dimensions and incorrectly turn author affinity into content vectors. Reusing the existing applied-event ledger would make an event applied to one profile appear applied to every semantic model. The confirmed low-data route also makes it practical to retain immutable per-user semantic event evidence and rematerialize one user's profile deterministically rather than train or maintain a population model.
 
 This revision deliberately removes historical reconstruction. Only eligible source events processed through live handoff after this capability is enabled can populate semantic profiles. Facts already dispatched before deployment, or accepted while handoff is disabled, are not scanned or recovered here. Existing users may therefore remain without semantic profiles until the future `rebuild-semantic-user-interest` change.
 
-No semantic profile consumer is introduced. The stored profile is an inert prerequisite for a later semantic recall change.
+No semantic profile consumer is introduced. The stored profile is an inert prerequisite for a later semantic recall change. Its absence is expected and later consumers must preserve the existing hash/non-vector fallback.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Persist one semantic profile per exact `(user_id, model)` with long-term, recent, and negative vectors plus explicit schema/dimension metadata.
+- Persist one semantic profile per user and exact provider/model/revision identity with long-term, recent, and negative vectors plus explicit schema/dimension metadata.
 - Project eligible live content-bearing positive and negative video facts while preserving the existing hash profile and author-affinity ownership.
-- Deduplicate independently for each embedding model and source namespace.
-- Hand semantic work off durably from existing profile outboxes and retry missing video embeddings through a bounded leased queue.
-- Preserve deterministic event-time decay and safe concurrent application.
+- Deduplicate independently for each embedding revision and source namespace while recording event-time text hash and vector digest.
+- Hand semantic work off durably from existing profile outboxes and retry missing exact event-time embeddings through a bounded leased queue.
+- Preserve deterministic event-time decay through canonical per-user reduction and safe concurrent rematerialization.
 - Define migrations, worker composition, bounded observability, tests, and documentation.
 
 **Non-Goals:**
@@ -34,16 +34,16 @@ No semantic profile consumer is introduced. The stored profile is an inert prere
 - Replacing, deleting, or changing the meaning of `user_interest_profile`, its hash vectors, or its author affinities.
 - Projecting follow/unfollow or `reduce_author` as semantic content.
 - Calling the Python embedding service from the profile worker; this change reads only persisted semantic video embeddings.
-- Training, fine-tuning, dynamic model selection, or arbitrary runtime model/dimension configuration.
+- Training, fine-tuning, group/cohort modeling, dynamic model selection, or arbitrary runtime model/dimension configuration.
 
 ## Decisions
 
-### 1. Add a separate model-versioned semantic profile
+### 1. Add a separate pretrained-model-versioned semantic profile
 
 The recommendation domain will add `SemanticUserInterestProfile` with:
 
 - `user_id`;
-- exact revision-bearing `model`;
+- immutable embedding `provider`, `model`, and `revision`, with the existing revision-bearing persistence key retained for lookup;
 - `profile_schema`, initially `semantic-interest-v1`;
 - fixed `dimension`, initially 384;
 - `long_term_vector`;
@@ -52,21 +52,23 @@ The recommendation domain will add `SemanticUserInterestProfile` with:
 - monotonic `version`;
 - `materialized_at` and database `updated_at`.
 
-PostgreSQL table `recommendation_semantic_user_interest_profile` uses `(user_id, model)` as its primary key and JSONB arrays for the vectors. Vectors must have exactly the declared dimension and finite bounded components. Aggregate vectors are weighted sums and are not required to have unit norm; source video embeddings must satisfy the exact model's dimension and normalization contract.
+PostgreSQL table `recommendation_semantic_user_interest_profile` uses `(user_id, provider, model, revision)` as its identity and JSONB arrays for the vectors. Vectors must have exactly the declared dimension and finite bounded components. Aggregate vectors are weighted sums and are not required to have unit norm; source video embeddings must satisfy the exact model's dimension and normalization contract.
 
 A schema mismatch is never silently reinterpreted. Incremental projection leaves the event unapplied, reports a bounded invalid-profile result, and retains the work for later correction. Historical reconstruction or schema conversion belongs to `rebuild-semantic-user-interest`.
 
 Alternative considered: add semantic columns to `user_interest_profile`. Rejected because that table is one hash-profile aggregate with author affinities and no model key.
 
-### 2. Use a separate model-scoped applied-event ledger
+### 2. Use an immutable model-scoped semantic event ledger
 
-`recommendation_semantic_applied_profile_event` identifies an application by:
+`recommendation_semantic_profile_event` identifies an application by:
 
-`(user_id, model, source_kind, source_event_id)`.
+`(user_id, provider, model, revision, source_kind, source_event_id)`.
 
-`source_kind` is one of `behavior`, `action`, or `feedback`, preventing unrelated durable ID namespaces from colliding. The row also stores `profile_schema`, a stable source payload hash, source occurrence time, and applied time. The payload hash excludes lease attempts, processing time, and embedding availability.
+`source_kind` is one of `behavior`, `action`, or `feedback`, preventing unrelated durable ID namespaces from colliding. The row also stores `profile_schema`, stable source payload hash, source occurrence time, canonical event-order fields, canonical semantic text hash, embedding provider/model/revision, vector digest, and the validated normalized event-time vector snapshot. These fields are immutable after first binding and exclude lease attempts, processing time, and embedding availability.
 
-Applying an event and updating or creating its profile occur in one transaction. A duplicate with the same payload hash succeeds without changing profile version or timestamps. A duplicate identity with another payload hash is a terminal conflict and changes neither row.
+The source-owned handoff records the semantic text hash visible when the durable fact is accepted. The semantic worker may bind it only to a persisted embedding with the same provider/model/revision and text hash. If the video's canonical text changes before that embedding is available, the old event remains deferred rather than being rebound; later events use the new text hash. Once bound, the vector snapshot and digest preserve the event-time meaning even if the video's current embedding later changes.
+
+Inserting an event and rematerializing its profile occur in one transaction. A duplicate with the same payload and embedding identity succeeds without changing profile version or timestamps. A duplicate identity with another payload hash, text hash, or vector digest is a terminal conflict and changes neither row.
 
 Alternative considered: prefix semantic IDs and reuse `recommendation_applied_profile_event`. Rejected because it couples incompatible profile and model lifecycles.
 
@@ -90,20 +92,26 @@ Follow/unfollow remains an author relation feature in the existing profile. `red
 
 Alternative considered: average an author's videos. Rejected because it invents a content preference and creates unstable fan-out.
 
-### 4. Preserve event-time decay
+### 4. Canonically rematerialize one user's profile
 
-The semantic aggregate uses:
+For one exact user/model revision, every materialization reads the immutable semantic event rows in canonical order:
+
+`(occurred_at ASC, source_kind_rank ASC, source_event_id ASC)`.
+
+The reducer uses:
 
 - a 30-day long-term half-life;
 - a 24-hour recent and negative half-life;
-- materialization at `max(profile.materialized_at, event.occurred_at)`;
-- decay of existing components to that time;
-- decay of delayed event contributions from occurrence time to that same time before addition;
-- deterministic component clamping.
+- materialization at the greatest included source occurrence time;
+- direct decay of every event-time vector contribution from occurrence time to that common materialization time;
+- fixed source-kind ranking and stable identifiers for exact floating-point order;
+- one deterministic component clamp after the complete ordered reduction, never arrival-order per-event clamping.
 
-Weights and half-lives are fixed by `semantic-interest-v1`. Processing time, lease attempts, and delivery order do not enter source identity. A future rules change requires a new profile schema rather than mutating existing rows in place.
+Weights and half-lives are fixed by `semantic-interest-v1`. Processing time, lease attempts, worker delivery order, and current video content do not enter source identity. Live projection and optional rebuild call the same reducer over the same event-time embedding identity, so delayed delivery and reconstruction cannot diverge because of per-event clamp order. A future rules change requires a new profile schema rather than mutating existing rows in place.
 
-Alternative considered: normalize aggregate profiles after every event. Rejected because normalization destroys magnitude and age confidence.
+This is intentionally a low-data design: only one affected user's bounded event ledger is reread. If a configured finite per-user event safety limit is exceeded, the event remains durable and the profile update defers with bounded diagnostics; online recommendation remains on the hash/non-vector path.
+
+Alternative considered: incrementally clamp after each arrival. Rejected because out-of-order delivery and rebuild order can produce different vectors.
 
 ### 5. Add durable live handoff after existing profile work
 
@@ -111,10 +119,10 @@ Existing source-owned profile outboxes remain the first handoff. For an eligible
 
 1. persist recommendation outcome attribution as it does today;
 2. apply existing hash/author profile behavior;
-3. upsert one `recommendation_semantic_profile_outbox` row for each enabled statically supported semantic model;
+3. upsert one `recommendation_semantic_profile_outbox` row for each enabled statically supported semantic model, including the event-time canonical text hash and exact provider/model/revision target;
 4. mark the source-owned outbox dispatched only after the semantic row is durable.
 
-The semantic row contains bounded projection fields: model, profile schema, source kind/ID, user/video IDs, event type, occurrence time, signal weight/destination, stable payload hash, attempts, availability time, lease, last result, and dispatch time. Its unique key is `(user_id, model, source_kind, source_event_id)`.
+The semantic row contains bounded projection fields: provider/model/revision, profile schema, source kind/ID, user/video IDs, event type, occurrence time, canonical text hash, signal weight/destination, stable payload hash, attempts, availability time, lease, last result, and dispatch time. Its unique key is `(user_id, provider, model, revision, source_kind, source_event_id)`.
 
 If semantic handoff insertion fails, the source row remains pending. Reprocessing is safe because existing hash projection and semantic handoff are independently idempotent. The originating API has already committed and remains unaffected.
 
@@ -126,17 +134,17 @@ Alternative considered: make each source owner write semantic rows in its HTTP t
 
 A dedicated worker claims bounded batches using `FOR UPDATE SKIP LOCKED`, a bounded lease, stable owner identity, and cancellation-aware polling. Models are statically registered; configuration may enable supported descriptors but cannot define arbitrary model keys or dimensions.
 
-For each row, the worker loads `video_embedding(video_id, model)`. A missing exact-model row is a retryable `missing_embedding` result. The event is not marked applied or dispatched. Retry delays are 5 seconds, 30 seconds, 2 minutes, 10 minutes, and then a repeating 30-minute cap.
+For each row, the worker loads a persisted pretrained embedding matching video, provider, model, revision, and the handoff's event-time text hash. A missing exact-identity row is a retryable `missing_embedding` result. A current embedding for a newer text hash is not a substitute. The event is not bound or dispatched. Retry delays are 5 seconds, 30 seconds, 2 minutes, 10 minutes, and then a repeating 30-minute cap.
 
-Invalid embedding/model/dimension/profile data also changes no profile or ledger row and emits only a bounded result class. Once a valid vector exists, repository application and applied-ledger insertion are transactional. The semantic outbox is marked dispatched only after that transaction commits. A crash before dispatch marking causes a duplicate application attempt, which the ledger absorbs.
+Invalid embedding identity/model/dimension/profile data also changes no profile or event row and emits only a bounded result class. Once a valid vector exists, repository event insertion and canonical per-user rematerialization are transactional. The semantic outbox is marked dispatched only after that transaction commits. A crash before dispatch marking causes a duplicate application attempt, which the ledger absorbs.
 
 Pending rows are not age-deleted. Dispatched rows may be cleaned after seven days in stable bounded batches. Last-result text is bounded and excludes vectors, titles, URLs, arbitrary database errors, and tokens.
 
 Alternative considered: call the embedding HTTP service when a vector is missing. Rejected because video embedding generation has its own owner and retry lifecycle.
 
-### 7. Serialize live apply by `(user_id, model)`
+### 7. Serialize live rematerialization by exact user/model revision
 
-Repository application takes a PostgreSQL transaction-scoped advisory lock derived from a fixed namespace plus `(user_id, model)`, then checks the applied ledger and locks or upserts the profile row. Multiple workers may process unrelated users/models concurrently. Unique constraints and payload-hash checks remain authoritative if advisory-lock keys collide.
+Repository application takes a PostgreSQL transaction-scoped advisory lock derived from a fixed namespace plus `(user_id, provider, model, revision)`, then checks/inserts the semantic event row, loads that user's bounded exact-model event ledger in canonical order, and replaces or upserts the materialized profile. Multiple workers may process unrelated users/models concurrently. Unique constraints and payload/embedding-identity checks remain authoritative if advisory-lock keys collide.
 
 The lock contract is intentionally reusable by the future `rebuild-semantic-user-interest` change, but this change adds no rebuild finalization or historical race protocol.
 
@@ -175,7 +183,9 @@ Rollback disables new handoff and claiming. Already persisted profiles remain in
 - [Disabled intervals create durable-history gaps] → Document the gap; do not imply automatic recovery or completeness metrics.
 - [Long embedding outages grow pending rows] → Use capped retry, bounded claims, pending count/age metrics, and no age deletion.
 - [Semantic outbox duplicates source metadata] → Store only bounded projection fields and clean dispatched rows after seven days.
-- [Current video embedding may change before a delayed retry] → The exact persisted `(video_id, model)` row is the available contract; historical embedding-version replay is outside this change.
+- [A video's content changes before an old event can bind] → Keep the event's text hash immutable, reject the newer embedding as a substitute, and retry the exact identity without calling an API.
+- [Per-event vector snapshots increase ledger storage] → Accept the bounded per-user storage cost for the confirmed low-data route, page ledger reads, and expose event-count safety limits.
+- [One user exceeds the rematerialization safety bound] → Retain the event and queue row, defer profile mutation, expose bounded diagnostics, and preserve hash fallback.
 - [JSONB aggregate vectors are unsuitable for ANN] → This change only materializes profiles; a later recall change owns query storage/index decisions.
 - [Profile schema mismatch blocks live work] → Reject mutation, retain the row, emit bounded diagnostics, and handle conversion in the future rebuild change.
 - [Multiple future models multiply queue/storage cost] → Permit only a small statically supported configured set.
@@ -186,11 +196,11 @@ Rollback disables new handoff and claiming. Already persisted profiles remain in
 2. Add domain/application types, static model registry, persistence models, indexes, and advisory-locked migrations without enabling projection.
 3. Add live semantic handoff after existing hash projection and deploy disabled; verify existing outcome/profile behavior is unchanged.
 4. Add the leased semantic worker, retry, cleanup, metrics, and worker composition.
-5. Enable the fixed model in shadow mode and monitor live projection. Do not assert historical completeness.
+5. Enable the fixed model in projection-only shadow mode and monitor live projection. Do not assert historical completeness.
 6. Keep semantic profiles unconsumed until a later accepted change adds semantic recall/ranking.
 
 Rollback disables handoff and claiming without dropping tables. Pending rows and profiles remain inert. Re-enabling resumes already queued rows only; reconstruction of missed historical intervals requires `rebuild-semantic-user-interest`.
 
 ## Open Questions
 
-None. Historical rebuild/backfill and operator-command behavior are explicitly deferred to `rebuild-semantic-user-interest`.
+None. Historical rebuild/backfill and operator-command behavior are explicitly deferred to the optional `rebuild-semantic-user-interest`; small deployments may skip it and form profiles from new behavior.

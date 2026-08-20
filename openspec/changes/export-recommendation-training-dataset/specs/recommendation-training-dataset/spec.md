@@ -1,7 +1,22 @@
 ## ADDED Requirements
 
+### Requirement: Conditional Future Activation
+The recommendation training dataset exporter SHALL remain inactive and outside the current low-data roadmap until a reviewed activation record satisfies every gate.
+
+#### Scenario: Activation is requested
+- **WHEN** an owner proposes implementing the exporter
+- **THEN** the record names the exact training decision, supplies preregistered numeric row/user/request/split and exposure/label coverage thresholds, records privacy/security approval for deletion and opt-out handling, and assigns database/runtime/storage budgets and owners with no unresolved values
+
+#### Scenario: Any activation gate is missing
+- **WHEN** training purpose, evidence threshold, label coverage, privacy approval, or resource budget is absent or unapproved
+- **THEN** implementation remains indefinitely deferred and no exporter command, repository, migration, or scheduled job is introduced
+
+#### Scenario: Offline evaluation is planned
+- **WHEN** Frux performs low-data scorer replay, human golden-set evaluation, or optional observational diagnosis
+- **THEN** that work proceeds without requiring this exporter or treating evaluation approval as exporter activation
+
 ### Requirement: Bounded Read-Only Operator Export
-Frux SHALL provide an operator-only command that exports recommendation training rows for a required half-open UTC served-time window and label horizon without modifying source facts, policies, evidence, or retention.
+After activation, Frux SHALL provide an operator-only command that exports recommendation training rows for a required half-open UTC served-time window and label horizon without modifying source facts, policies, evidence, or retention.
 
 #### Scenario: Operator exports a valid closed window
 - **WHEN** the operator supplies valid `from`, `to`, `as-of`, label-horizon, output, split, and HMAC-key inputs within configured maximum bounds
@@ -31,11 +46,11 @@ The exporter SHALL depend on the durable facts planned by `persist-recommendatio
 - **THEN** preflight fails with an actionable dependency error before output publication
 
 ### Requirement: Deterministic Privacy-Bounded Row Schema
-Dataset schema version 1 SHALL emit only an enumerated deterministic row schema with pseudonymous stable account identity and bounded ranking, delivery, behavior, and label fields.
+Dataset schema version 1 SHALL emit only an enumerated deterministic row schema with pseudonymous stable account identity, immutable generation identity, and bounded ranking, delivery, behavior, and label fields.
 
 #### Scenario: Row is serialized
 - **WHEN** an eligible impression is exported
-- **THEN** the row contains dataset/source schema versions, a domain-separated HMAC-SHA-256 user key, a domain-separated request grouping key, video ID, scene, absolute rank position, policy and source-model versions, bounded reasons and score components, served/exposed/engagement facts, bounded watch fields, label booleans and times, primary label, and split
+- **THEN** the row contains dataset/source schema versions, a domain-separated HMAC-SHA-256 user key, a domain-separated request grouping key, immutable generation, video ID, scene, generation-relative absolute rank position, policy and source-model versions, bounded reasons and score components, served/exposed/engagement facts, bounded watch fields, label booleans and times, primary label, and split
 
 #### Scenario: HMAC key is invalid or unavailable
 - **WHEN** the required operator key is missing, shorter than 32 bytes, unreadable, or supplied through an unsupported insecure input
@@ -74,6 +89,14 @@ The dataset SHALL distinguish delivered, exposed, and engaged states and SHALL t
 
 ### Requirement: Deterministic Label and Watch Aggregation
 Dataset schema version 1 SHALL define deterministic aggregation, label precedence, and bounded watch calculations over validated outcomes and their linked rich behavior facts.
+
+#### Scenario: Outcome time is evaluated
+- **WHEN** an outcome has both `occurred_at` and `recorded_at`
+- **THEN** `occurred_at` determines behavioral ordering and inclusion in the delivery label horizon, while `recorded_at` determines visibility under `as_of` and the captured source watermark
+
+#### Scenario: Late fact is recorded
+- **WHEN** an event occurred inside the label horizon but was recorded after `as_of` or above the captured source watermark
+- **THEN** the event is excluded from this deterministic snapshot and the manifest exposes the applicable watermark and late-arrival semantics
 
 #### Scenario: Multiple label classes are present
 - **WHEN** a row has several eligible outcomes
@@ -115,7 +138,7 @@ The exporter SHALL stream canonical JSON Lines through deterministic gzip encodi
 
 #### Scenario: Export completes
 - **WHEN** all pages are written successfully
-- **THEN** the command closes and syncs the gzip JSONL file, computes its SHA-256 checksum and byte size, atomically renames final files, and writes a canonical manifest containing dataset schema/tool versions, requested and effective windows, label definitions and bounds, split policy, pseudonymization version, row/state/label/split counts, excluded counts, source policy/model/schema versions, file checksum, and file size
+- **THEN** the command closes and syncs the gzip JSONL file, computes its SHA-256 checksum and byte size, reconciles privacy and every source watermark, and atomically publishes the dataset plus a canonical manifest containing dataset schema/tool versions, requested and effective windows, label definitions and bounds, split policy, pseudonymization version, row/state/label/split counts, excluded counts, source policy/model/schema versions, complete source watermarks, file checksum, and file size
 
 #### Scenario: Same snapshot and inputs are exported again
 - **WHEN** source facts, exporter/tool version, HMAC key, page size, compression settings, and command inputs are identical
@@ -137,7 +160,7 @@ The exporter SHALL use stable keyset pagination, bounded memory, cancellation-aw
 - **THEN** the command stops new reads, closes resources, leaves no final artifact, and may retain only an explicitly resumable private partial file and checkpoint at the last fsynced page boundary
 
 #### Scenario: Operator resumes an interrupted export
-- **WHEN** the partial file and checkpoint match the change-independent configuration fingerprint, tool/dataset versions, HMAC key identifier, source window, split configuration, page size, and committed byte offset
+- **WHEN** the partial file and checkpoint match the configuration fingerprint, tool/dataset versions, HMAC key identifier, source window, complete source-watermark set, split configuration, page size, and committed byte offset
 - **THEN** the exporter truncates to the committed offset, continues after the saved keyset cursor, and produces the same ordered final artifact without duplicates
 
 #### Scenario: Export fails validation, query, serialization, write, sync, or checksum
@@ -162,6 +185,10 @@ The export implementation SHALL provide indexes and query-plan verification for 
 ### Requirement: Privacy, Retention, and Consumer Documentation
 Frux SHALL document the dataset contract, privacy boundary, retention responsibility, operational use, and downstream dependency without expanding this change into training or evaluation.
 
+#### Scenario: Privacy state is captured
+- **WHEN** an export snapshot is created
+- **THEN** the exporter captures a privacy deletion/opt-out watermark, excludes ineligible users, and aborts publication if a later privacy state invalidates selected rows before atomic publication
+
 #### Scenario: Operator reviews export documentation
 - **WHEN** preparing an export
 - **THEN** documentation explains key custody, pseudonym stability, enumerated fields, source and output retention, secure file permissions, transfer/deletion responsibilities, unsupported-version failure, cancellation/resume behavior, and that source retention is unchanged
@@ -170,6 +197,6 @@ Frux SHALL document the dataset contract, privacy boundary, retention responsibi
 - **WHEN** automated coverage runs
 - **THEN** CLI validation, version rejection, deterministic serialization/checksum, label precedence, unexposed handling, watch bounds, split leakage controls, pagination/resume, cancellation/cleanup, privacy exclusions, indexed PostgreSQL joins, and realistic mixed-event fixtures are tested
 
-#### Scenario: Offline evaluation is introduced later
-- **WHEN** `evaluate-recommendation-policies-offline` is planned or implemented
-- **THEN** it consumes this versioned export and manifest rather than adding policy scoring, model training, embeddings, exploration, learned weights, or online-serving behavior to this capability
+#### Scenario: Future training consumes an export
+- **WHEN** a separately activated training capability uses this versioned export
+- **THEN** it validates generation identity, occurred/recorded semantics, all source watermarks, privacy eligibility, and the atomic manifest without adding training behavior to this exporter

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
-### Requirement: Dependent Model-Versioned Semantic Input
-Semantic user-interest projection SHALL consume only persisted semantic video embeddings produced under the contracts of `add-semantic-embedding-service` and `integrate-semantic-video-embeddings`. The initial supported model SHALL be `semantic-minilm-l12-v2@e8f8c211226b894f`, with profile dimension 384 and finite L2-normalized source video vectors. The projector MUST NOT call the semantic embedding service directly or accept an arbitrary runtime model, revision, or dimension.
+### Requirement: Dependent Pretrained Model-Versioned Semantic Input
+Semantic user-interest projection SHALL consume only persisted pretrained semantic video embeddings produced under the contracts of `add-semantic-embedding-service` and `integrate-semantic-video-embeddings`. The initial supported identity SHALL bind the configured embedding provider, model `semantic-minilm-l12-v2`, revision `e8f8c211226b894f`, dimension 384, canonical semantic text hash, and finite L2-normalized vector digest. The projector MUST NOT call the semantic embedding service directly, train a group model, or accept an arbitrary runtime provider, model, revision, or dimension.
 
 #### Scenario: Exact semantic video embedding is available
 - **WHEN** an eligible live source event references a video with a valid row for `semantic-minilm-l12-v2@e8f8c211226b894f`
@@ -15,8 +15,12 @@ Semantic user-interest projection SHALL consume only persisted semantic video em
 - **WHEN** the Python semantic service is stopped but the required persisted video embedding exists
 - **THEN** semantic profile projection proceeds without making an inference request
 
+#### Scenario: Video content changes after an event
+- **WHEN** an eligible event recorded one canonical semantic text hash and the video's current embedding later has another text hash
+- **THEN** the projector does not reinterpret the old event with the newer embedding and waits for or uses only the immutable event-time identity
+
 ### Requirement: Separate Semantic Interest Profile
-Frux SHALL persist a semantic user-interest profile separately from `user_interest_profile`, keyed by `(user_id, model)`. Each row SHALL contain an explicit profile schema, exact dimension, long-term vector, recent vector, negative vector, monotonic version, materialization time, and update time. The initial profile schema SHALL be `semantic-interest-v1`. All three vectors SHALL have exactly the declared dimension and finite bounded components.
+Frux SHALL persist a semantic user-interest profile separately from `user_interest_profile`, isolated by user and exact embedding provider/model/revision. Each row SHALL contain an explicit profile schema, exact dimension, long-term vector, recent vector, negative vector, monotonic version, materialization time, and update time. The initial profile schema SHALL be `semantic-interest-v1`. All three vectors SHALL have exactly the declared dimension and finite bounded components; recent and long-term SHALL remain separately available for explicit later fusion.
 
 #### Scenario: First live semantic event is applied
 - **WHEN** a user has no semantic profile for the exact model and a valid eligible live event is applied
@@ -34,8 +38,12 @@ Frux SHALL persist a semantic user-interest profile separately from `user_intere
 - **WHEN** a stored semantic row has another schema, wrong dimension, or malformed vector
 - **THEN** incremental projection rejects the update, leaves the source event unapplied, and records a bounded invalid-profile result
 
-### Requirement: Model-Scoped Applied Event Idempotency
-Frux SHALL maintain a semantic applied-event ledger scoped by `(user_id, model, source_kind, source_event_id)`, where source kind is bounded to `behavior`, `action`, or `feedback`. Applying the ledger row and materializing the semantic profile SHALL occur atomically. The semantic ledger SHALL be independent of `recommendation_applied_profile_event`.
+#### Scenario: Semantic profile is absent
+- **WHEN** a user has no compatible semantic profile
+- **THEN** current recommendation remains available through the existing hash and non-vector paths without treating absence as an error
+
+### Requirement: Model-Scoped Immutable Semantic Event Ledger
+Frux SHALL maintain a semantic event ledger scoped by user, embedding provider/model/revision, source kind, and source event ID, where source kind is bounded to `behavior`, `action`, or `feedback`. Each row SHALL record profile schema, stable source payload hash, occurrence time, canonical event-order fields, event-time semantic text hash, vector digest, and the validated normalized event-time vector snapshot. Inserting the event and canonically rematerializing the semantic profile SHALL occur atomically. The semantic ledger SHALL be independent of `recommendation_applied_profile_event`.
 
 #### Scenario: Same event is redelivered for one model
 - **WHEN** the same normalized source event and payload hash are projected more than once for one user and model
@@ -50,12 +58,16 @@ Frux SHALL maintain a semantic applied-event ledger scoped by `(user_id, model, 
 - **THEN** their bounded source-kind identities remain distinct
 
 #### Scenario: Duplicate identity carries another payload
-- **WHEN** the same user, model, source kind, and source event ID is presented with a different stable source payload hash
+- **WHEN** the same user, exact embedding identity, source kind, and source event ID is presented with a different source payload hash, text hash, or vector digest
 - **THEN** projection fails with a terminal conflict and does not alter the existing profile or ledger row
 
 #### Scenario: Transaction fails during apply
-- **WHEN** profile persistence fails after the applied-event insert is attempted
+- **WHEN** profile persistence fails after semantic event insertion is attempted
 - **THEN** both changes roll back and a retry can apply the event normally
+
+#### Scenario: Content is edited after binding
+- **WHEN** a bound event's video later receives a new semantic text hash or vector digest
+- **THEN** the event ledger and its contribution remain unchanged while later events may bind the new content identity
 
 ### Requirement: Semantic Positive Signal Projection
 The `semantic-interest-v1` projector SHALL add completion, sustained progress, accepted active LIKE, and accepted active FAVORITE facts to both long-term and recent semantic vectors. Completion SHALL use weight `1.0`, sustained progress at ratio at least `0.5` SHALL use `0.5`, LIKE SHALL use `1.0`, and FAVORITE SHALL use `1.25`. Completion classification SHALL take precedence over progress or skip classification.
@@ -70,7 +82,7 @@ The `semantic-interest-v1` projector SHALL add completion, sustained progress, a
 
 #### Scenario: Progress is below threshold
 - **WHEN** a progress event has a ratio below `0.5`
-- **THEN** no semantic handoff or applied-event row is created for that fact
+- **THEN** no semantic handoff or semantic event row is created for that fact
 
 #### Scenario: Active like or favorite is projected
 - **WHEN** an accepted active LIKE or FAVORITE event is consumed
@@ -104,7 +116,7 @@ Follow, unfollow, and author-scoped `reduce_author` facts SHALL remain in the ex
 
 #### Scenario: User follows an author
 - **WHEN** a durable follow event is consumed
-- **THEN** the existing author-affinity projection may update, but no semantic outbox or semantic applied-event row is created
+- **THEN** the existing author-affinity projection may update, but no semantic outbox or semantic event row is created
 
 #### Scenario: User selects reduce author
 - **WHEN** durable feedback has author suppression scope and type `reduce_author`
@@ -114,27 +126,31 @@ Follow, unfollow, and author-scoped `reduce_author` facts SHALL remain in the ex
 - **WHEN** an author-only fact references an author whose videos have semantic embeddings
 - **THEN** those embeddings are not loaded or combined for that fact
 
-### Requirement: Deterministic Time-Decay Semantics
-Semantic profiles SHALL use a 30-day long-term half-life and a 24-hour recent/negative half-life under `semantic-interest-v1`. Materialization SHALL decay existing components to the later of the profile materialization time and source occurrence time, decay delayed source contributions from occurrence time to that materialization time, and then add the bounded contribution. Processing time, lease attempts, and delivery order MUST NOT change source identity.
+### Requirement: Canonical Single-User Reduction and Time Decay
+Semantic profiles SHALL use a 30-day long-term half-life and a 24-hour recent/negative half-life under `semantic-interest-v1`. Every live materialization SHALL load only that user's exact-model semantic event rows, order them by `(occurred_at ASC, source_kind_rank ASC, source_event_id ASC)`, decay each event-time vector directly to the greatest included occurrence time, sum with the fixed signal weights, and clamp once after the complete ordered reduction. Live delivery order, processing time, lease attempts, and current video content MUST NOT change the materialized result.
 
 #### Scenario: Newer event is applied
-- **WHEN** an event occurs after the profile materialization time
-- **THEN** existing vectors decay to the event occurrence time before the new contribution is added
+- **WHEN** an event occurs after all existing semantic events
+- **THEN** canonical rematerialization uses that occurrence time as the common decay anchor and reduces every event in the fixed order
 
 #### Scenario: Older live event arrives late
 - **WHEN** an event occurred before the current profile materialization time
-- **THEN** its contribution is decayed to the current materialization time and the profile does not move backward
+- **THEN** it is inserted at its canonical position and the entire user profile is deterministically rematerialized without moving the anchor backward
 
 #### Scenario: Delivery order differs
 - **WHEN** eligible events arrive out of occurrence order
-- **THEN** each contribution uses occurrence-time decay without retry-time aging
+- **THEN** the resulting vectors equal materialization from canonical order and do not depend on arrival-order per-event clamping
 
 #### Scenario: Aggregate magnitude grows
 - **WHEN** repeated valid signals would exceed the configured component magnitude bound
-- **THEN** components are clamped deterministically without normalizing away age or confidence magnitude
+- **THEN** components are clamped once after the complete canonical reduction without normalizing away age or confidence magnitude
+
+#### Scenario: Per-user event safety bound is exceeded
+- **WHEN** one user's exact-model event ledger exceeds the configured finite rematerialization bound
+- **THEN** the new event remains durable, profile mutation defers with a bounded result, and online recommendation preserves hash/non-vector fallback
 
 ### Requirement: Durable Live Semantic Projection Handoff
-For an eligible content-bearing source event and each enabled supported semantic model, the existing profile worker SHALL durably upsert a semantic projection outbox row after existing outcome/hash-profile work succeeds and before marking the source-owned profile outbox dispatched. Semantic handoff identity SHALL be unique by user, model, source kind, and source event ID.
+For an eligible content-bearing source event and each enabled supported semantic model, the existing profile worker SHALL durably upsert a semantic projection outbox row after existing outcome/hash-profile work succeeds and before marking the source-owned profile outbox dispatched. The handoff SHALL preserve the event-time canonical semantic text hash and target embedding provider/model/revision. Semantic handoff identity SHALL be unique by user, exact embedding identity, source kind, and source event ID.
 
 #### Scenario: Existing profile work and semantic handoff succeed
 - **WHEN** an eligible source outbox item is processed while semantic projection is enabled
@@ -157,11 +173,11 @@ For an eligible content-bearing source event and each enabled supported semantic
 - **THEN** the source outbox completes through its current path without semantic handoff
 
 ### Requirement: Bounded Leased Projection and Missing-Embedding Deferral
-Semantic projection SHALL use a dedicated PostgreSQL leased worker with bounded batch size, poll interval, lease, run duration, and concurrency. Missing required video embeddings and retryable persistence failures SHALL retain the model-specific row without marking it applied or dispatched. Retry delays SHALL be 5 seconds, 30 seconds, 2 minutes, 10 minutes, and a repeating 30-minute cap.
+Semantic projection SHALL use a dedicated PostgreSQL leased worker with bounded batch size, poll interval, lease, run duration, concurrency, and per-user event safety limit. Missing required event-time embeddings and retryable persistence failures SHALL retain the model-specific row without binding the event or marking it dispatched. A current embedding with another text hash or digest MUST NOT be substituted. Retry delays SHALL be 5 seconds, 30 seconds, 2 minutes, 10 minutes, and a repeating 30-minute cap.
 
 #### Scenario: Required embedding is missing
 - **WHEN** a claimed semantic row references a video without the exact model embedding
-- **THEN** no semantic profile or applied-event row is written, the outbox remains pending with a bounded delayed retry, and the original API/source outbox remains independent
+- **THEN** no semantic profile or semantic event row is written, the outbox remains pending with a bounded delayed retry, and the original API/source outbox remains independent
 
 #### Scenario: Embedding appears later
 - **WHEN** `integrate-semantic-video-embeddings` later persists the exact valid video embedding
@@ -173,7 +189,7 @@ Semantic projection SHALL use a dedicated PostgreSQL leased worker with bounded 
 
 #### Scenario: Process crashes after profile commit
 - **WHEN** the semantic profile transaction commits before outbox dispatch marking
-- **THEN** redelivery observes the applied-event ledger and completes without changing the profile again
+- **THEN** redelivery observes the semantic event ledger and completes without changing the profile again
 
 #### Scenario: Pending work is old
 - **WHEN** a semantic row remains blocked by missing coverage longer than completed-row retention
@@ -185,10 +201,10 @@ Semantic projection SHALL use a dedicated PostgreSQL leased worker with bounded 
 
 #### Scenario: Completed outbox cleanup runs
 - **WHEN** dispatched semantic rows are older than seven days
-- **THEN** a bounded stable-order cleanup may remove them without deleting pending rows, profiles, or applied-event identities
+- **THEN** a bounded stable-order cleanup may remove them without deleting pending rows, profiles, or semantic event identities
 
 ### Requirement: Per-User Model Concurrency Safety
-Live semantic application SHALL serialize on a transaction-scoped `(user_id, model)` advisory lock. Profile and ledger unique constraints SHALL remain authoritative, while unrelated users or models MAY be processed concurrently. The lock namespace SHALL be stable so the future `rebuild-semantic-user-interest` change can coordinate with live projection.
+Live semantic application SHALL serialize on a transaction-scoped lock for user and exact provider/model/revision. Under the lock, event insertion and canonical single-user rematerialization SHALL be atomic. Profile and ledger unique constraints SHALL remain authoritative, while unrelated users or models MAY be processed concurrently. The lock namespace SHALL be stable so the optional `rebuild-semantic-user-interest` change can coordinate with live projection.
 
 #### Scenario: Two workers apply different events concurrently
 - **WHEN** two semantic events for the same user and model are claimed concurrently
@@ -203,7 +219,7 @@ Live semantic application SHALL serialize on a transaction-scoped `(user_id, mod
 - **THEN** those transactions may progress concurrently
 
 ### Requirement: Live-Only Population Boundary
-This change SHALL populate semantic profiles only from eligible events that pass through live semantic handoff. It SHALL NOT scan historical behavior, action, or feedback facts; create rebuild or staging state; expose historical backfill, checkpoint, repair, or purge commands; or guarantee profile completeness. Historical reconstruction SHALL be deferred to the future `rebuild-semantic-user-interest` change.
+This change SHALL populate semantic profiles only from eligible events that pass through live semantic handoff. It SHALL NOT scan historical behavior, action, or feedback facts; create rebuild or staging state; expose historical backfill, checkpoint, repair, or purge commands; or guarantee profile completeness. Historical reconstruction SHALL remain an optional operator capability in `rebuild-semantic-user-interest`; low-volume deployments MAY skip it and allow profiles to form naturally from new behavior.
 
 #### Scenario: User has only pre-deployment facts
 - **WHEN** an existing user has eligible durable facts but no eligible event passes through live semantic handoff
@@ -245,7 +261,7 @@ Frux SHALL expose bounded-cardinality metrics for live semantic projection outco
 - **THEN** those values do not appear in metric labels or normal operational logs
 
 ### Requirement: Migrations, Configuration, and Worker Composition
-API and worker migrations SHALL register the semantic profile, applied-event, and outbox models under the existing advisory-locked migration flow. Worker configuration SHALL default semantic user projection to disabled, validate bounded batch/lease/poll/retry/cleanup settings, and permit only statically supported model descriptors. Invalid local configuration SHALL fail startup before semantic workers begin, while a missing video embedding SHALL remain a runtime deferred condition. No rebuild or staging tables SHALL be introduced.
+API and worker migrations SHALL register the semantic profile, immutable semantic event, and outbox models under the existing advisory-locked migration flow. Worker configuration SHALL default semantic user projection to disabled, validate bounded batch/lease/poll/retry/cleanup/rematerialization settings, and permit only statically supported model descriptors. Invalid local configuration SHALL fail startup before semantic workers begin, while a missing video embedding SHALL remain a runtime deferred condition. No rebuild or staging tables SHALL be introduced.
 
 #### Scenario: Migrations run concurrently
 - **WHEN** API and worker start against a database without semantic profile tables
@@ -265,10 +281,10 @@ API and worker migrations SHALL register the semantic profile, applied-event, an
 
 #### Scenario: Account is erased
 - **WHEN** existing account-erasure processing removes a user's recommendation data
-- **THEN** that user's semantic profiles, applied-event rows, and pending semantic outbox rows are also removed
+- **THEN** that user's semantic profiles, semantic event rows, and pending semantic outbox rows are also removed
 
 ### Requirement: Verification and Documentation
-Implementation SHALL include domain, persistence, handoff, worker, migration, concurrency, metrics, configuration, dependency-integration, outage, and recommendation-regression tests. Documentation SHALL describe dependencies, exact model/schema identity, signal rules, author exclusions, decay, retry, races, live-only population, metrics, rollout, rollback, and the explicit deferral to `rebuild-semantic-user-interest`.
+Implementation SHALL include domain, persistence, handoff, worker, migration, concurrency, metrics, configuration, dependency-integration, outage, and recommendation-regression tests. Documentation SHALL describe dependencies, exact provider/model/revision/schema identity, event-time text-hash/vector-digest semantics, fixed signal rules, canonical reduction, author exclusions, decay, retry, races, live-only population, hash fallback, metrics, rollout, rollback, and optional `rebuild-semantic-user-interest`.
 
 #### Scenario: Dependency integration is tested
 - **WHEN** a real persisted semantic video row from `integrate-semantic-video-embeddings` passes through live handoff
@@ -287,7 +303,7 @@ Implementation SHALL include domain, persistence, handoff, worker, migration, co
 - **THEN** `openspec validate --all --strict` succeeds without implementation-code or main-spec changes
 
 ### Requirement: No Online Semantic Recommendation Consumption
-This capability SHALL NOT add pgvector, ANN queries, a semantic recall provider, ranking features, policy weights, online semantic-profile reads, request-path inference, model training, or historical rebuild commands. It SHALL NOT remove or reinterpret the local hash embedding, `user_interest_profile`, or author-affinity behavior. A later accepted change MAY consume the model-versioned semantic profile.
+This capability SHALL NOT add pgvector, ANN queries, a semantic recall provider, ranking features, policy weights, online semantic-profile reads, request-path inference, individual or group model training, or historical rebuild commands. It SHALL NOT remove or reinterpret the local hash embedding, `user_interest_profile`, or author-affinity behavior. A later accepted change MAY consume the model-versioned semantic profile only with explicit recent/long-term fusion and safe hash/non-vector fallback when the profile is absent.
 
 #### Scenario: Semantic profiles exist
 - **WHEN** valid semantic profiles have been populated from live events

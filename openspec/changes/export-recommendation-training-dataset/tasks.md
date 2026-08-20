@@ -1,47 +1,54 @@
-## 1. Dependency and Dataset Contract
+## 1. Activation Gate
 
-- [ ] 1.1 Verify `persist-recommendation-training-impressions` is implemented with final record/feature version constants, immutable scene/policy metadata, request linkage, and the `(served_at, id)` export index; block exporter implementation if the dependency schema or a stable source-model version cannot be resolved without guessing.
-- [ ] 1.2 Add `recommendationdataset` domain types and unit-tested validation for dataset-v1 rows/manifests, source-version sets, delivery states, labels, splits, event times, watch bounds, cursors, typed errors, half-open UTC windows, the 31-day window limit, the 7-day label-horizon limit, closed `as-of`, page-size bounds, output/resume/overwrite modes, and dataset schema selection.
-- [ ] 1.3 Implement and test domain-separated HMAC-SHA-256 user/request/split derivation and non-secret key identifiers, including stability, cross-domain and cross-user isolation, minimum 32-byte keys, and exclusion of raw identity or key material from errors.
+- [ ] 1.1 Keep this change inactive until a reviewed activation record names the exact training use and explains why low-data replay and human evaluation are insufficient.
+- [ ] 1.2 Require preregistered numeric minimum rows, users, requests, per-split counts, validated exposure coverage, positive/negative label coverage, and maximum missing-label rate; reject `TBD` thresholds.
+- [ ] 1.3 Obtain privacy/security approval for allowed fields, HMAC custody, deletion, training opt-out, export retention/transfer, and incident ownership.
+- [ ] 1.4 Approve PostgreSQL query, maximum window/page/runtime, output storage/retention, operator ownership, and abort budgets. Do not begin sections 2-9 unless tasks 1.1-1.4 are complete.
 
-## 2. Read-Only Persistence and Query Plans
+## 2. Dependency and Dataset Contract
 
-- [ ] 2.1 Define narrow application repository contracts for dependency preflight, source-boundary capture, policy/version loading, and keyset-paged impression/outcome/behavior reads without exposing GORM types.
-- [ ] 2.2 Implement the PostgreSQL read repository with read-only transactions, captured maximum impression ID, `(served_at, id)` pagination, page-scoped set-based joins on exact user/request/video identity, `as-of` and label-horizon filters, stable event tie data, cancellation, and bounded query count.
-- [ ] 2.3 Add the measured covering composite indexes for request-linked outcome and behavior reads, registering them through the shared advisory-locked migration conventions.
-- [ ] 2.4 Add PostgreSQL repository, migration, realistic skewed-fixture, and `EXPLAIN (FORMAT JSON)` tests covering boundaries and later pages, equal timestamps, snapshot limits, unsupported facts, rich-event linkage, duplicates, cancellation, read-only enforcement, keyset/index access, page-scoped joins, and absence of application N+1 queries or unbounded sequential scans.
+- [ ] 2.1 Verify `persist-recommendation-training-impressions` is implemented with final record/feature versions, immutable `(user_id, request_id, generation, video_id)` identity, generation-relative position, author/publication/policy/degraded metadata, served/recorded semantics, privacy boundaries, and export/watermark indexes.
+- [ ] 2.2 Add `recommendationdataset` domain types and validation for dataset-v1 rows/manifests, source-version and watermark sets, delivery states, labels, splits, occurred/recorded event times, watch bounds, cursors, half-open UTC windows, label horizons, closed `as-of`, page-size bounds, output/resume/overwrite modes, and dataset schema selection.
+- [ ] 2.3 Implement and test domain-separated HMAC-SHA-256 user/request/split derivation and non-secret key identifiers, including stability, isolation, minimum 32-byte keys, and exclusion of raw identity or key material from errors.
 
-## 3. Version Registry and Deterministic Rows
+## 3. Read-Only Persistence, Watermarks, and Query Plans
 
-- [ ] 3.1 Implement the dataset-v1 compatibility registry from the dependency's final constants, supported score-component schema, immutable policy configuration, and bounded source-model identifiers; fail on missing policy, malformed configuration, unknown components, or unsupported record/feature/model versions.
-- [ ] 3.2 Implement canonical row assembly and encoding with fixed JSON field order, UTC RFC3339Nano timestamps, preserved bounded reason order, name-sorted finite score components, explicit delivery/engagement times and facts, and no arbitrary source payloads.
-- [ ] 3.3 Implement deterministic outcome/behavior deduplication, delivery-state derivation, exposure-gated negative eligibility, primary-label precedence, stable event tie rules, and bounded per-session watch aggregation with six-hour caps, nullable ratios, validated completion, and meaningful-watch semantics.
-- [ ] 3.4 Add table-driven aggregation fixtures and serialized-artifact privacy tests covering all delivery states, playback lifecycles and sessions, duplicates/out-of-order/equal-time events, invalid durations and cap overflow, conflicting labels, later-page rank gaps, supported/unsupported versions, and exclusion of raw identities, secrets, URLs, vectors, embeddings, arbitrary context, event/session IDs, policy JSON, and raw errors from rows, manifests, checkpoints, progress, and failures.
+- [ ] 3.1 Define narrow application repository contracts for dependency preflight, complete source-watermark capture, policy/video/privacy version loading, and keyset-paged impression/outcome/behavior reads without exposing GORM types.
+- [ ] 3.2 Implement read-only PostgreSQL queries with frozen impression, outcome, behavior, privacy, policy, and video metadata watermarks; paginate `(served_at, id)` and join exact user/request/generation/video identity.
+- [ ] 3.3 Apply `occurred_at` to behavioral ordering/horizons and `recorded_at` plus `as-of`/watermarks to snapshot visibility; cover late-arriving in-window events explicitly.
+- [ ] 3.4 Add measured covering indexes and PostgreSQL query-plan tests for bounded page-scoped joins without N+1 queries or unbounded sequential scans.
 
-## 4. Leakage-Safe Split Assignment
+## 4. Version Registry and Deterministic Rows
 
-- [ ] 4.1 Implement deterministic pseudonymous-user splitting over 10,000 HMAC buckets and deterministic time splitting with ordered cutoffs, embargoes at least as large as the label horizon, boundary exclusion, and manifest exclusion counts; reject mixed, incomplete, or unsafe configurations.
-- [ ] 4.2 Add split tests proving repeatability, exactly one train/validation/test assignment per emitted row, no user crossing for user splits, no emitted label window crossing a later time split, exact cutoff/embargo handling, and validation of basis-point totals and boundaries.
+- [ ] 4.1 Implement the dataset-v1 compatibility registry from final dependency constants, supported score components, immutable policy configuration, and bounded source-model identifiers; fail on missing or unsupported semantics.
+- [ ] 4.2 Implement canonical rows with fixed JSON order, generation identity, UTC timestamps, preserved reasons, sorted finite score components, explicit occurred/recorded facts, and no arbitrary payloads.
+- [ ] 4.3 Implement deterministic deduplication, exposure-gated negative eligibility, label precedence, stable event ties, and bounded watch aggregation.
+- [ ] 4.4 Add aggregation, late-arrival, generation, unsupported-version, and serialized-artifact privacy fixtures.
 
-## 5. Streaming Output, Resume, and Publication
+## 5. Leakage-Safe Split Assignment
 
-- [ ] 5.1 Implement the canonical JSONL encoder and deterministic one-member-per-page gzip writer with fixed headers/settings/newlines, `0600` files, bounded buffers, fsynced page boundaries, streaming counts, and checkpoints containing cursor, committed offset, source boundaries, counts, versions, fingerprint, page/compression settings, and HMAC key identifier.
-- [ ] 5.2 Implement resume validation and truncation to the last committed gzip-member boundary, plus page-boundary cancellation that retains private partial state only when explicit resume is enabled.
-- [ ] 5.3 Implement non-resumable failure cleanup, final data sync, compressed-byte SHA-256 and size calculation, count reconciliation, canonical manifest generation, atomic publication, safe overwrite behavior, and checkpoint removal while preserving existing final files on failure.
-- [ ] 5.4 Add filesystem integration tests for empty and multi-page exports, deterministic and resumed byte equality, concatenated-gzip readability, checksum/size/count accuracy, existing destinations, cancellation, fingerprint/key mismatch, injected query/encode/write/sync/checksum failures, cleanup, and final-file atomicity.
+- [ ] 5.1 Implement deterministic pseudonymous-user splitting and deterministic time splitting with ordered cutoffs, embargoes at least as large as the label horizon, boundary exclusion, and manifest counts.
+- [ ] 5.2 Prove repeatability, exactly one split per row, no user crossing, and no emitted label window crossing a later time split.
 
-## 6. Operator Command
+## 6. Streaming Output, Resume, and Publication
 
-- [ ] 6.1 Add `apps/api/cmd/recommendation-dataset-export` with build-injected tool version, existing config/PostgreSQL setup, read-only connection/session safeguards, signal cancellation, bounded identity-safe progress, and no HTTP, Redis, Kafka, worker, or source-write wiring.
-- [ ] 6.2 Add strict CLI parsing and preflight for required UTC window, `as-of`, label horizon, output, permission-restricted HMAC key file, dataset schema, page size, exactly one split strategy, resume, and safe overwrite, ensuring preflight finishes before final output creation.
-- [ ] 6.3 Add command and end-to-end PostgreSQL tests covering help/usage, malformed flags, insecure or short key files, dependency/version failures, split validation, existing outputs, signals and exit codes, identity-safe stderr, and a repeatable mixed-user/request/video export whose decompressed rows, labels, splits, privacy bounds, ordering, checksum, and manifest are verified.
+- [ ] 6.1 Implement canonical deterministic gzip JSONL with `0600` files, bounded buffers, fsynced page boundaries, and checkpoints containing cursors, committed offsets, complete source watermarks, counts, versions, fingerprint, and HMAC key identifier.
+- [ ] 6.2 Implement resume validation and page-boundary cancellation.
+- [ ] 6.3 Reconcile privacy, every source watermark, counts, checksum, and size before atomically publishing dataset and manifest together; preserve existing finals on failure.
+- [ ] 6.4 Add filesystem tests for deterministic/resumed bytes, watermark accuracy, privacy races, cancellation, cleanup, and atomicity.
 
-## 7. Documentation and Downstream Contract
+## 7. Operator Command
 
-- [ ] 7.1 Document prerequisites, closed-window and settle-lag selection, flags/examples, secure key custody and rotation, `0600` artifacts, resume/cleanup, checksum verification, unsupported-version/query failures, source joins, dataset-v1 fields/labels, indexes/query expectations, and operator responsibility for exported-file transfer, retention, and deletion without changing source retention or evidence.
-- [ ] 7.2 Document the implementation sequence on `persist-recommendation-training-impressions` and preserve the versioned JSONL/manifest contract for the future `evaluate-recommendation-policies-offline` consumer, explicitly keeping training, policy scoring/evaluation, embeddings, pgvector, learned weights, exploration, and online serving out of scope.
+- [ ] 7.1 After activation, add `apps/api/cmd/recommendation-dataset-export` with read-only PostgreSQL, signal cancellation, bounded identity-safe progress, and no HTTP, Redis, Kafka, worker, or source-write wiring.
+- [ ] 7.2 Add strict CLI and preflight for UTC window, `as-of`, label horizon, output, restricted HMAC key, dataset schema, page size, one split strategy, resume, and overwrite.
+- [ ] 7.3 Add command and PostgreSQL end-to-end tests covering malformed inputs, dependency/version/watermark failures, privacy changes, signals, and deterministic mixed-user/request/generation/video output.
 
-## 8. Validation
+## 8. Documentation and Future Consumer Contract
 
-- [ ] 8.1 Run the targeted recommendation-dataset domain/application, PostgreSQL repository/query-plan, migration, filesystem, command, privacy, split, and end-to-end fixture tests.
-- [ ] 8.2 Run `cd apps/api && go test ./...`, `cd apps/api && go build ./cmd/feed ./cmd/worker ./cmd/recommendation-dataset-export`, and `openspec validate --all --strict`; confirm proposal, design, spec, dependency statements, downstream-consumer contract, and the consolidated task list remain consistent without modifying application code or main specs.
+- [ ] 8.1 Document activation prerequisites, closed-window/settle-lag selection, occurred/recorded semantics, all-source watermarks, key custody, `0600` artifacts, resume/cleanup, checksum verification, privacy handling, and output retention/deletion.
+- [ ] 8.2 Document that low-data offline evaluation does not depend on this exporter and that any future training consumer needs separate approval.
+
+## 9. Validation
+
+- [ ] 9.1 Run targeted dataset, PostgreSQL/query-plan, migration, filesystem, command, privacy, generation, occurred/recorded, watermark, split, and end-to-end tests.
+- [ ] 9.2 Run the relevant Go suite/builds and `openspec validate --all --strict`; confirm future-only status, activation gates, identity/time contract, all-source watermarks, atomic manifest, and evaluation independence remain coherent.

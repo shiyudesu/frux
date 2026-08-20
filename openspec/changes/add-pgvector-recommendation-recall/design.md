@@ -1,132 +1,108 @@
 ## Context
 
-Frux already executes bounded application-level `RecallProvider` implementations through policy budgets, per-provider deadlines, a shared process-wide concurrency limit, duplicate merge, visibility revalidation, unchanged ranking, and degraded-provider recording. Bootstrap `recommend/v1` and `recommend/v2` contain only the existing providers.
+Frux executes bounded `RecallProvider` implementations through policy budgets/deadlines, duplicate merge, visibility revalidation, ranking, and degraded-provider recording. Bootstrap `recommend/v1` and `recommend/v2` contain only existing providers. The current multi-provider path may globally order the merged pool by `published_at` and truncate before ranking, which can erase a provider's candidates before its ranking signal is evaluated.
 
-This change adds only the active `semantic_ann` provider and policy opt-in behavior. It assumes two separately delivered prerequisites:
-
-- `enable-pgvector-recommendation-index` owns pgvector deployment, extension/schema/projection/index lifecycle, reconciliation/backfill, query validation, exclusions inside the query, and query-plan/performance acceptance. It exposes a validated bounded semantic ANN query interface without pgvector types.
-- `project-semantic-user-interest` owns semantic profile persistence/projection and exposes compatible recent and long-term profile reads without requiring this provider to understand storage.
-
-The provider must not make either prerequisite a Feed correctness dependency. Disabled composition and policies that omit `semantic_ann` preserve existing behavior.
+This change registers a dormant `semantic_ann` provider and fixes the future candidate-mixing and ranking contract. `enable-pgvector-recommendation-index` owns exact/HNSW search infrastructure; `project-semantic-user-interest` owns immutable per-user recent/long-term profiles. Provider registration must not make either prerequisite a Feed correctness dependency, and no active semantic policy or gray rollout is introduced here. `shadow-semantic-ann-recall` must precede any later activation.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Add the `semantic_ann` provider token and application-level interfaces.
-- Select recent semantic interest first and long-term interest only as fallback.
-- Bound execution by policy budget, executor deadline, shared concurrency, and bounded session exclusions.
-- Annotate candidates with finite cosine recall reason/source scores.
-- Preserve normal merge, visibility filtering, ranking, snapshots, attribution, and degradation.
-- Allow only explicit future policies to activate the provider while keeping bootstrap v1/v2 unchanged.
-- Compose behind disabled-by-default enablement and expose bounded active-provider metrics.
-- Document policy-based rollout and rollback.
+- Add the `semantic_ann` provider token and narrow application interfaces.
+- Build one query vector by fixed explicit fusion of available session, recent, and long-term pretrained semantic vectors.
+- Bound semantic execution with a separate no-queue capacity slot, policy budget/deadline, and bounded exclusions.
+- Replace premature global recency truncation with deterministic provider reservations and mixing before ranking.
+- Expose cosine as both recall metadata and an explicit `semantic_similarity` ranking component.
+- Validate future semantic policies while preserving at least one baseline provider and keeping bootstrap v1/v2 unchanged.
+- Compose and register the provider disabled by default, then stop before active policy rollout.
 
 **Non-Goals:**
 
-- Installing or configuring pgvector or PostgreSQL.
-- Adding migrations, projection/index schema, reconciliation, backfill, rebuild, purge, or model lifecycle operations.
-- Defining ANN SQL, HNSW parameters, query plans, retrieval-quality thresholds, or performance acceptance.
-- Adding shadow execution, sampling, overlap metrics, or shadow acceptance gates; those belong to future `shadow-semantic-ann-recall`.
-- Changing semantic video embedding or semantic user-interest normative requirements.
-- Adding ranking features or weights, changing final scoring, training models, or changing bootstrap policies.
+- Installing/configuring pgvector, adding migrations, or owning projection/index lifecycle.
+- Changing semantic embedding/profile persistence rules.
+- Training individual, cohort, or population models.
+- Creating, selecting, or canarying an active semantic policy.
+- Changing bootstrap `recommend/v1` or `recommend/v2`.
+- Implementing shadow evaluation; that is the mandatory next change.
 
 ## Decisions
 
 ### 1. Depend on narrow prerequisite interfaces
 
-The recommendation application owns two interfaces:
+The recommendation application owns:
 
-- `SemanticANNProfileSource`, which loads one compatible profile containing recent and long-term vectors for a user.
-- `SemanticANNIndex`, which accepts a normalized query vector, budget, and bounded excluded video IDs and returns readable candidate facts with cosine similarity.
+- `SemanticANNProfileSource`, returning compatible recent, long-term, and negative vectors;
+- `SemanticSessionVectorSource`, building a bounded request-session vector from persisted exact-model embeddings for current/recent session videos;
+- `SemanticANNIndex`, accepting a normalized query vector, budget, and exclusions and returning readable candidate facts with cosine similarity.
 
-The interfaces use application/domain values only. They do not expose SQL, pgvector values, projection rows, index settings, or profile persistence models. The index prerequisite remains responsible for validating its descriptor, bounding the physical query, honoring cancellation, applying exclusions, and returning no more than the requested budget.
+The interfaces expose no SQL, pgvector, projection, persistence, provider/model metadata, or embedding-service client. Enabled composition fails closed when implementations are absent or incompatible; missing user data is a healthy runtime absence.
 
-Composition supplies both implementations for the same supported semantic contract. When semantic ANN is enabled but either prerequisite is unavailable or incompatible, API startup fails with a bounded configuration/prerequisite error rather than silently registering a partial provider. Missing data for an individual user or video remains a runtime empty result.
+### 2. Fuse session, recent, and long-term interest explicitly
 
-Alternative considered: let the provider query PostgreSQL/profile repositories directly. Rejected because it would recouple this change to the infrastructure scope deliberately moved into the prerequisites.
+`semantic-query-v1` uses fixed weights: session `0.50`, recent `0.30`, long-term `0.20`. A component is usable only when finite, compatible, and norm at least `1e-6`. Missing components contribute zero and remaining configured weights are renormalized to one. Thus usable recent interest never completely replaces usable long-term interest.
 
-### 2. Keep profile selection inside the active provider
+The weighted sum is normalized on a defensive request-local copy. If no component is usable, semantic recall returns healthy empty and existing hash/non-vector providers remain the fallback. The provider does not call an embedding API, mutate profile data, or train a model. Negative interest remains available for a future explicitly specified rule and is not silently mixed into `semantic-query-v1`.
 
-For each request, the provider loads the user's compatible semantic profile and:
+### 3. Give semantic recall separate bounded capacity
 
-1. uses a finite recent vector whose norm is at least `1e-6`;
-2. otherwise uses a finite long-term vector whose norm is at least `1e-6`;
-3. otherwise returns a successful empty candidate list.
+Semantic calls use a dedicated process-local non-blocking semaphore, default 2 and bounded `1..16`, acquired before profile/session/index work. It never consumes the baseline provider permit pool. The provider still uses a future policy budget `1..100`, deadline `25..500ms`, at most 20 session exclusions, one profile/session read phase, and at most one index query. It never queues, retries, scans the corpus itself, or continues detached after cancellation.
 
-The provider normalizes a defensive request-local copy before querying the index. It does not mutate the profile, combine recent and long-term vectors, use the negative vector, fall back to the hash profile internally, or call an embedding service. A missing profile or two empty positive vectors is healthy absence. An error or incompatible payload from the profile source is provider degradation.
+### 4. Make semantic similarity a ranking component
 
-Alternative considered: blend recent and long-term interests. Rejected because that would introduce a new preference formula outside the accepted profile contract.
+Each valid neighbor contributes exactly one `semantic_ann` recall reason and matching source score. The finite positive cosine is clamped to `[0,1]` and exposed to candidate feature extraction as `semantic_similarity`.
 
-### 3. Use existing provider execution bounds
+A future policy containing `semantic_ann` is valid only when it assigns a positive finite weight to `semantic_similarity`. This prevents semantic candidates from being recalled and then ordered only by hash/recency features. v1/v2 omit both provider and feature and remain byte-for-byte unchanged.
 
-`semantic_ann` implements the existing `RecallProvider` contract. Its budget comes from the selected policy and is restricted to `1..100`. Its context is already capped by the selected policy deadline, restricted to `25..500ms`, and admitted through the existing shared provider-concurrency limit.
+### 5. Reserve provider contributions before global ranking
 
-The provider copies at most 20 current/recent session video IDs from the bounded recommendation context and passes them as exclusions to `SemanticANNIndex`. It performs one profile read and at most one ANN query. It never retries, widens the budget, scans candidates itself, or starts detached work after the provider context ends.
+Provider-local outputs remain bounded and stably ordered. Before ranking, the service:
 
-Alternative considered: add a semantic-specific executor or concurrency pool. Rejected because the existing executor already supplies the required deadline, admission, cancellation, and degradation semantics.
+1. merges duplicate IDs while retaining all reasons/scores;
+2. satisfies each selected provider's validated unique-candidate reservation, including a separate semantic reservation and at least one baseline reservation;
+3. fills remaining pool capacity by deterministic round-robin over fixed provider order and provider-local order;
+4. only then computes features and ranks the bounded pool.
 
-### 4. Treat cosine similarity as recall metadata only
+The service does not globally sort all provider outputs by `published_at` and truncate before this step. Duplicates occupy one global slot; if a provider returns fewer unique candidates than reserved, unused capacity returns to deterministic fill.
 
-Each returned neighbor becomes one candidate with:
+### 6. Validate future policy opt-in without activating it
 
-- exactly one `RecallReason{Provider: "semantic_ann", Score: cosine}`;
-- `SourceScores["semantic_ann"] = cosine`.
+Configuration adds `recommendation.semantic_ann.enabled`, default `false`. Disabled composition constructs nothing. Enabled composition validates the three interfaces and registers the provider.
 
-The score must be finite and is defensively clamped to `[0,1]`; non-positive or invalid scores are omitted. No vector, distance, profile source, model metadata, or index metadata is attached to the candidate or exposed in responses.
+A future policy may reference semantic ANN only when budget `1..100`, deadline `25..500ms`, reservation `1..budget`, and positive `semantic_similarity` weight are present together. It must also retain at least one baseline provider from Fresh, Hot, content similarity, followed author, or session continuation with non-zero budget and reservation.
 
-Normal duplicate merge retains semantic and existing-provider reasons on one candidate. The unchanged ranker may consume only its existing feature set; this change adds no semantic feature or weight.
+`InitialRecommendationPolicies` and `EnsureInitialPolicies` remain free of `semantic_ann`, `semantic_similarity`, and semantic reservations. This change creates, selects, or rolls out no semantic policy.
 
-### 5. Make activation require both enablement and policy opt-in
+### 7. Preserve failure isolation and hash fallback
 
-Configuration adds `recommendation.semantic_ann.enabled`, default `false`.
+Missing semantic profile/session data and empty search results are healthy empty outcomes. Profile, session-vector, index, timeout, cancellation, invalid-result, or semantic-capacity failures produce no partial semantic set and do not reduce baseline-provider capacity. Existing hash/non-vector fallback, final readability checks, suppression, snapshots, evidence, attribution, and response contracts remain available.
 
-- Disabled: do not construct or register the provider and do not require either prerequisite at API startup.
-- Enabled: validate and compose both prerequisite interfaces, then register `semantic_ann`.
-- Active: the selected policy must also contain both `recall_budgets.semantic_ann` and `provider_deadlines_ms.semantic_ann`.
+### 8. Observe bounded dormant-provider behavior
 
-Policy normalization recognizes `semantic_ann` only as a recall provider. Budget must be `1..100`; deadline must be `25..500ms`; both entries must be present together. There is no `semantic_ann` feature-weight key.
+Metrics cover provider attempts, duration, result, candidate count, fusion-component availability, semantic capacity, reservation survival, and selected physical query mode using fixed enums. User/video/request IDs, vectors, model strings, candidate lists, SQL/index details, and raw errors never appear in labels or normal logs.
 
-`InitialRecommendationPolicies` and `EnsureInitialPolicies` remain byte-for-byte free of `semantic_ann`. Provider registration alone therefore cannot change production ordering. A selected policy that references an unavailable provider follows the existing missing/failing-provider degradation path; rollout procedures prevent this state by enabling composition before policy activation.
+### 9. Stop at registration and hand off to shadow
 
-### 6. Preserve merge and degradation semantics
+Deployment may enable and verify provider composition while selected policies remain v1/v2 or otherwise omit `semantic_ann`. `shadow-semantic-ann-recall` then invokes the registered provider outside production merge and evaluates safety/usefulness. Any active gray rollout requires shadow completion and a separate accepted change.
 
-Healthy semantic candidates enter the existing candidate pool, duplicate merge, final readability check, suppression, ranking, snapshot, evaluation, and attribution flows. Empty profile or empty neighbors is a healthy empty result.
-
-Profile-source errors, ANN errors, deadline expiry, cancellation, or shared-capacity rejection produce no partial semantic candidates and use the existing bounded provider degradation reason. Healthy providers continue. Existing hash and non-vector fallbacks are unchanged.
-
-### 7. Observe only active provider behavior
-
-Metrics cover active provider attempts, duration, result, candidate count, and selected profile source. Labels use fixed enums only:
-
-- result: `success`, `empty`, `no_profile`, `timeout`, `capacity`, `invalid_profile`, `index_error`;
-- profile source: `recent`, `long_term`, `none`.
-
-Metrics and normal logs exclude user/video/request IDs, vectors, candidate lists, model strings, SQL/index details, and raw errors. Shadow, overlap, projection, reconciliation, backfill, HNSW, and query-plan metrics belong to other changes.
-
-### 8. Roll out and roll back through policy selection
-
-Deployment first enables and verifies provider composition while the selected policy remains v1/v2 or another policy without `semantic_ann`. Operators then create a new validated policy version with explicit semantic budget/deadline and use existing rollout percentage controls.
-
-Rollback selects a policy without `semantic_ann`; new requests stop executing it without a redeploy. Configuration may be disabled after no selected policy references the provider. Rollback does not alter prerequisite data or index state.
+Rollback disables provider composition. Because this change activates no policy, no semantic request traffic or data rollback is required.
 
 ## Risks / Trade-offs
 
-- [The prerequisite interfaces may evolve independently] → Keep contracts narrow, require compatible composition, and cover adapters with contract tests.
-- [A malformed profile or invalid score could reach ranking] → Validate selection inputs and defensively reject non-finite/non-positive output before candidate annotation.
-- [Semantic ANN can consume shared provider capacity] → Reuse policy deadlines and the existing global admission bound; do not add retries or background work.
-- [Enabling composition without policy activation can be mistaken for rollout] → Keep bootstrap policies unchanged and document that both enablement and explicit policy selection are required.
-- [An active policy can outlive provider enablement] → Roll back policy first and retain existing degraded-provider behavior as a safety net.
+- [Semantic calls consume baseline capacity] → Use a separate bounded no-queue semantic semaphore.
+- [Global recency truncation hides semantic contribution] → Reserve and deterministically mix provider outputs before ranking.
+- [Semantic candidates are ranked only by hash features] → Require explicit positive `semantic_similarity` policy weight.
+- [Fusion rules drift] → Version fixed weights as `semantic-query-v1` and test missing-component renormalization.
+- [Registration is mistaken for rollout] → Keep v1/v2 unchanged and require shadow plus a separate activation change.
 
 ## Migration Plan
 
 1. Complete and validate `enable-pgvector-recommendation-index` and `project-semantic-user-interest`.
-2. Add the application interfaces, provider token, provider, policy validation, metrics, and composition switch with semantic ANN disabled.
-3. Verify bootstrap v1/v2 serialization and existing recommendation behavior are unchanged.
-4. Enable provider composition in a prepared environment while the selected policy omits `semantic_ann`.
-5. Create and gradually roll out a new policy version with explicit semantic budget/deadline.
-6. Roll back by selecting a policy without `semantic_ann`; disable composition only after active references are removed.
+2. Add application interfaces, fixed fusion, provider token, separate semantic admission, deterministic pool mixing, semantic feature extraction, future-policy validation, metrics, and disabled composition.
+3. Prove bootstrap v1/v2 serialization and existing recommendation behavior remain unchanged.
+4. Enable provider registration in a prepared environment while every selected policy omits `semantic_ann`.
+5. Implement and run `shadow-semantic-ann-recall`.
+6. Do not create, select, or roll out an active semantic policy in this change.
 
 ## Open Questions
 
-None. Infrastructure acceptance is owned by `enable-pgvector-recommendation-index`, and shadow evaluation is deferred to future `shadow-semantic-ann-recall`.
+None. Infrastructure is owned by `enable-pgvector-recommendation-index`; this change ends at safe provider registration, and shadow must precede a separate active-rollout proposal.

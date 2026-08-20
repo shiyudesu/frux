@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
-### Requirement: Explicit Dependency and Exact-Model Gate
-Semantic user-interest rebuild SHALL require the implemented contracts of `integrate-semantic-video-embeddings`, `backfill-semantic-video-embeddings`, and the narrowed `project-semantic-user-interest`. It SHALL accept only a statically supported exact semantic model/profile-schema descriptor. The initial descriptor SHALL be model `semantic-minilm-l12-v2@e8f8c211226b894f`, profile schema `semantic-interest-v1`, and dimension 384.
+### Requirement: Optional Operations Capability and Exact-Model Gate
+Semantic user-interest rebuild SHALL be an explicitly invoked, optional operations capability. Normal API/worker startup and deployments MUST NOT require or automatically execute it, and small-user deployments MAY skip it while profiles form from new live behavior. When invoked, rebuild SHALL require the implemented contracts of `integrate-semantic-video-embeddings` and `project-semantic-user-interest`, use `backfill-semantic-video-embeddings` only where exact historical identities can be reproduced, and accept only a statically supported provider/model/revision/profile-schema descriptor. The initial descriptor SHALL use model `semantic-minilm-l12-v2`, revision `e8f8c211226b894f`, profile schema `semantic-interest-v1`, and dimension 384.
 
 #### Scenario: All dependency contracts are available
 - **WHEN** the rebuild command validates its dependencies before creating or resuming a run
@@ -14,6 +14,10 @@ Semantic user-interest rebuild SHALL require the implemented contracts of `integ
 #### Scenario: Video backfill is incomplete
 - **WHEN** the dependent video backfill has not produced every exact-model vector needed by selected facts
 - **THEN** the rebuild may start but affected users are handled by the missing-vector deferral requirement rather than by inference
+
+#### Scenario: Deployment skips historical rebuild
+- **WHEN** operators accept natural profile growth from new behavior for a small user population
+- **THEN** API, worker, current recommendation, and live semantic projection operate without the rebuild command, run tables, or scheduled execution
 
 ### Requirement: Stable Snapshot-Fenced User and Fact Selection
 A fresh non-dry rebuild SHALL capture, in one repeatable-read transaction, a versioned high-water fence over immutable durable `behavior`, `action`, and `feedback` source IDs plus the greatest candidate user ID. Candidate users SHALL be selected as distinct positive user IDs at or below those fences, ordered by `user_id ASC`, and read in bounded keyset pages. One user's normalized facts SHALL be read in bounded pages ordered by `(occurred_at ASC, source_kind_rank ASC, source_event_id ASC)` using the fixed `semantic-interest-v1` source-kind rank.
@@ -34,8 +38,8 @@ A fresh non-dry rebuild SHALL capture, in one repeatable-read transaction, a ver
 - **WHEN** the command resumes from its stored user cursor
 - **THEN** it selects users strictly after the last atomically completed user ID under the original source and user fences
 
-### Requirement: Live-Equivalent Eligibility, Identity, Weights, Ordering, and Decay
-Rebuild SHALL call the same semantic classifier, stable payload-hash function, applied-event identity, vector destinations, fixed signal weights, canonical ordering, half-lives, delayed-event decay, monotonic materialization, component clamping, and dimension validation used by live `semantic-interest-v1` projection. It MUST NOT maintain an independently configurable reconstruction rule set.
+### Requirement: Live-Equivalent Event Identity, Canonical Ordering, and Reduction
+Rebuild SHALL call the same semantic classifier, stable payload-hash function, immutable provider/model/revision/text-hash/vector-digest event identity, vector destinations, fixed signal weights, canonical ordering, half-lives, common materialization anchor, one-final-clamp reducer, and dimension validation used by live `semantic-interest-v1` projection. It MUST NOT maintain an independently configurable reconstruction rule set or replay arrival-order per-event clamps.
 
 #### Scenario: Positive historical facts are reconstructed
 - **WHEN** selected facts contain eligible completion, sustained progress, active LIKE, or active FAVORITE events
@@ -47,18 +51,22 @@ Rebuild SHALL call the same semantic classifier, stable payload-hash function, a
 
 #### Scenario: Author-only facts are selected from durable history
 - **WHEN** history contains follow, unfollow, `reduce_author`, unsupported, inactive, malformed, or below-threshold facts
-- **THEN** they create no semantic contribution, semantic applied-event row, or synthetic author vector
+- **THEN** they create no semantic contribution, semantic event row, or synthetic author vector
 
 #### Scenario: Events arrive out of order
 - **WHEN** the same eligible facts are reconstructed in canonical order and applied live in delayed or shuffled delivery order
-- **THEN** both paths produce equivalent bounded long-term, recent, and negative vectors, materialization time, and applied identities
+- **THEN** live rematerialization and rebuild reduce the same immutable event rows in canonical order and produce equivalent bounded long-term, recent, and negative vectors, materialization time, and event identities
 
 #### Scenario: Command restarts later
 - **WHEN** an interrupted run resumes at a later processing time
 - **THEN** processing time and retry age do not alter event identity, occurrence-time decay, or reconstructed vector values
 
-### Requirement: Complete Exact-Model Vector Validation and Deferral
-Rebuild SHALL load persisted video embeddings only for the selected exact model and SHALL validate model identity, dimension, component finiteness, and normalization before reduction. If any contributing fact for a user lacks a valid exact-model embedding, the user SHALL be durably deferred without replacing the profile, advancing rebuild coverage, or inserting an applied-event identity for any newly reconstructed fact.
+#### Scenario: Per-event clamping would differ by arrival order
+- **WHEN** signed vector components would produce another result if clamped after each arrival
+- **THEN** both live and rebuild sum the complete canonical event set and clamp once at the deterministic materialization boundary
+
+### Requirement: Complete Event-Time Embedding Validation and Deferral
+Rebuild SHALL use a bound live semantic event row when available and otherwise load a persisted video embedding only when the selected provider/model/revision, event-time canonical text hash, and vector digest can be proven. It SHALL validate dimension, component finiteness, normalization, and digest before reduction. If any contributing fact lacks an unambiguous valid event-time embedding identity, the user SHALL be durably deferred without replacing the profile, advancing rebuild coverage, or inserting a semantic event identity for any newly reconstructed fact.
 
 #### Scenario: All contributing embeddings are valid
 - **WHEN** every eligible contributing fact for a user resolves to a valid dimension-384 exact-model vector
@@ -80,8 +88,12 @@ Rebuild SHALL load persisted video embeddings only for the selected exact model 
 - **WHEN** the required video has a hash embedding or a semantic row for another model but lacks the selected exact model
 - **THEN** those other rows are ignored and the selected user remains deferred
 
+#### Scenario: Video content changed after the historical event
+- **WHEN** only a newer semantic text hash or vector digest is available for the video
+- **THEN** rebuild defers the user as `missing_embedding_identity` and does not reinterpret the old event from current content
+
 ### Requirement: Bounded Live Catch-Up and Newer-Version Protection
-Finalization SHALL use the shared transaction-scoped `(user_id, model)` advisory lock. After acquiring it, rebuild SHALL lock and inspect the current exact-model profile and ledger, capture current per-source catch-up maxima, and include every resolvable eligible user fact after the run fence through those maxima plus every existing exact-model applied identity not represented by the baseline. Catch-up SHALL be bounded and SHALL abort without mutation when completeness cannot be proven.
+Finalization SHALL use the shared transaction-scoped `(user_id, model)` advisory lock. After acquiring it, rebuild SHALL lock and inspect the current exact-model profile and immutable semantic event ledger, capture current per-source catch-up maxima, and include every resolvable eligible user fact after the run fence through those maxima plus every existing exact-model event identity not represented by the baseline. Catch-up SHALL be bounded and SHALL abort without mutation when completeness cannot be proven.
 
 #### Scenario: Live event committed before rebuild lock
 - **WHEN** live projection applied an eligible exact-model event before rebuild acquires the shared lock
@@ -92,11 +104,11 @@ Finalization SHALL use the shared transaction-scoped `(user_id, model)` advisory
 - **THEN** rebuild commits first and the live projector subsequently applies the event once to the rebuilt profile
 
 #### Scenario: Catch-up exceeds its bound
-- **WHEN** facts or unresolved applied identities after the run fence exceed the configured per-user catch-up limit or remaining event budget
+- **WHEN** facts or unresolved semantic event identities after the run fence exceed the configured per-user catch-up limit or remaining event budget
 - **THEN** the user is durably deferred as `catch_up_limit` and the current profile version is not changed
 
-#### Scenario: Existing applied identity cannot be resolved
-- **WHEN** the current exact-model ledger contains an identity whose durable source fact cannot be loaded and validated
+#### Scenario: Existing semantic event identity cannot be resolved
+- **WHEN** the current exact-model event ledger contains an identity whose durable source fact cannot be loaded and validated
 - **THEN** finalization fails closed for that user and does not replace the current profile
 
 #### Scenario: Current version advanced after baseline computation
@@ -104,7 +116,7 @@ Finalization SHALL use the shared transaction-scoped `(user_id, model)` advisory
 - **THEN** rebuild computes from durable baseline plus bounded catch-up and writes only from the locked current version rather than restoring an older version
 
 ### Requirement: One-User Atomic Replace, Ledger Upsert, and Embedding Revalidation
-For one user/model, final profile replace or insert, matching applied-event ledger upserts, rebuild coverage, deferral clearing, and resulting profile version SHALL commit in one PostgreSQL transaction. The transaction SHALL stable-order and lock every referenced exact-model embedding row, verify the vectors used for reduction remain current, validate existing ledger payload hashes, and conditionally write profile version `locked_current_version + 1`. It SHALL never delete applied-event rows.
+For one user/model revision, final profile replace or insert, matching immutable semantic event upserts, rebuild coverage, deferral clearing, and resulting profile version SHALL commit in one PostgreSQL transaction. The transaction SHALL stable-order and lock every referenced event-time embedding identity, verify provider/model/revision/text hash/vector digest, validate existing ledger payload hashes, and conditionally write profile version `locked_current_version + 1`. It SHALL never delete semantic event rows.
 
 #### Scenario: User has no semantic profile
 - **WHEN** a complete valid user is finalized for the first time
@@ -123,7 +135,7 @@ For one user/model, final profile replace or insert, matching applied-event ledg
 - **THEN** the complete user transaction rolls back with bounded `conflict` status
 
 #### Scenario: Embedding changes during computation
-- **WHEN** an exact-model embedding digest differs when stable-ordered rows are locked for finalization
+- **WHEN** an event-time embedding text hash or digest differs when stable-ordered evidence is locked for finalization
 - **THEN** the transaction rolls back and the user is retried or deferred without committing a mixed-version profile
 
 #### Scenario: Transaction fails after profile write begins
@@ -204,7 +216,7 @@ Dry-run SHALL perform bounded selection, normalization, exact-model vector valid
 
 #### Scenario: Dry-run finds missing vectors
 - **WHEN** selected facts lack valid exact-model embeddings
-- **THEN** missing and deferred counts are reported without writing deferral or applied-event rows
+- **THEN** missing and deferred counts are reported without writing deferral or semantic event rows
 
 #### Scenario: Force confirmation is absent or imprecise
 - **WHEN** `--force` is supplied without the complete exact model key, or with a prefix, alias, wildcard, upstream model name, or another model
@@ -234,7 +246,7 @@ Rebuild SHALL expose bounded-cardinality metrics for users and facts scanned, co
 - **THEN** those values do not appear in metric labels or normal periodic/final summaries
 
 ### Requirement: Dedicated Operator Composition and Model Isolation
-Frux SHALL provide `cmd/rebuild-semantic-user-interest` as a one-shot operator command and a manual container/Compose entrypoint. It SHALL use PostgreSQL and the existing static semantic contracts only, SHALL NOT call the embedding service, and SHALL NOT require Redis or Kafka. Every scan and mutation SHALL be constrained to the selected exact model and profile schema.
+Frux SHALL provide `cmd/rebuild-semantic-user-interest` only as an optional one-shot operator command and optional manual container/Compose entrypoint. It SHALL use PostgreSQL and existing static semantic contracts only, SHALL NOT call the embedding service, and SHALL NOT require Redis or Kafka. Every scan and mutation SHALL be constrained to the selected exact provider/model/revision and profile schema.
 
 #### Scenario: Command runs with the semantic service stopped
 - **WHEN** all required exact-model vectors already exist in PostgreSQL
@@ -246,14 +258,18 @@ Frux SHALL provide `cmd/rebuild-semantic-user-interest` as a one-shot operator c
 
 #### Scenario: Hash profile and author affinities exist
 - **WHEN** reconstruction commits for a user with existing non-semantic recommendation state
-- **THEN** `user_interest_profile`, hash vectors, author affinities, and their applied-event ledger remain unchanged
+- **THEN** `user_interest_profile`, hash vectors, author affinities, and their existing non-semantic applied-event ledger remain unchanged
 
 #### Scenario: Manual container entrypoint is not invoked
 - **WHEN** the normal API, worker, and Compose stack starts
 - **THEN** no historical semantic user-interest rebuild starts automatically
 
+#### Scenario: Rebuild binary is omitted
+- **WHEN** a deployment chooses the low-data natural-growth route
+- **THEN** omission of the optional command does not make API, worker, or live semantic projection unhealthy
+
 ### Requirement: Verification, Documentation, and Scope Boundary
-Implementation SHALL include unit, PostgreSQL, concurrency, cancellation, restart, metrics, command, container, and dependency-integration tests. Tests SHALL cover delayed and out-of-order events, live races on both sides of the shared lock, missing vectors that later appear, decay equivalence, cursor replay, force guards, exact-model isolation, and unchanged recommendation behavior. Documentation SHALL define prerequisites, bounds, dry-run, force confirmation, coverage repair, cancellation/restart, metrics, summaries, rollout, and rollback.
+Implementation SHALL include unit, PostgreSQL, concurrency, cancellation, restart, metrics, command, optional-container, and dependency-integration tests. Tests SHALL cover delayed and out-of-order events, event-time content identity, canonical final-clamp equivalence, live races on both sides of the shared lock, missing identities/vectors that later appear, cursor replay, force guards, exact-model isolation, optional deployment, and unchanged recommendation behavior. Documentation SHALL define optional/skippable status, prerequisites, bounds, dry-run, force confirmation, coverage repair, cancellation/restart, metrics, summaries, rollout, and rollback.
 
 #### Scenario: Delayed and out-of-order equivalence suite runs
 - **WHEN** identical eligible facts are reconstructed and projected live under canonical, reversed, and delayed delivery schedules

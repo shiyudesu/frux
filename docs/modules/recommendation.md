@@ -147,8 +147,13 @@ deadline 约束。服务实例还以 16 个全局 provider slots 限制忽略取
 是可替换模型接口的保底实现。
 
 视频发布 intake 当前只条件写入 `hash-ngram-v1`，成功后提交独立 embedding Kafka Group 的 Offset。
-语义服务、新视频实时语义接入、历史回填、语义画像和 ANN 召回尚未实施，必须按
-`docs/recommendation-roadmap.md` 的步骤 1-12 顺序推进。
+多模态向量、Hybrid Search、Similar Videos、Session Semantic Recall 和 ANN 均尚未实施。当前规划以
+`add-multimodal-video-discovery` 为第一条多模态纵向 Change，只处理新公开视频与显式开发 Fixture，
+使用 Exact Cosine，不要求历史 Backfill 或 HNSW。候选池提前截断修复由
+`fix-recommendation-candidate-pool-truncation` 负责，Provider 配额合并由
+`add-recommendation-provider-quota-merge` 负责；两者完成后才接入 Session Semantic Recommendation。
+长期画像、历史重建、HNSW、训练数据导出和权重学习均受
+[推荐系统演进路线](../recommendation-roadmap.md)中的后置 Gate 控制。
 
 观看行为 Worker 通过 `frux.recommendation.consume-view.v1` 在 raw fact 与 profile/outcome
 handoff 同事务提交后才允许 Kafka offset commit；不等待 embedding 或后续画像投影。Worker

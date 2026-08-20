@@ -1,54 +1,44 @@
 ## 1. Recommendation Roadmap Gate
 
-- [ ] 1.1 Verify `persist-recommendation-training-impressions` is implemented, reviewed, archived, and its trusted-impression acceptance gate is met.
-- [ ] 1.2 Verify `export-recommendation-training-dataset` is implemented, reviewed, archived, and deterministic/privacy acceptance gates are met.
-- [ ] 1.3 Verify `evaluate-recommendation-policies-offline` is implemented, reviewed, archived, and observational-evaluation acceptance gates are met.
-- [ ] 1.4 Verify `learn-recommendation-policy-weights` is implemented, reviewed, archived, and produces only disabled candidate policies.
-- [ ] 1.5 Add a documented preflight proving this semantic-service change cannot be applied before all four prerequisites.
+- [ ] 1.1 Verify the four prerequisite recommendation changes are implemented, accepted, and archived.
+- [ ] 1.2 Add a preflight proving this provider-adapter change cannot be applied before those gates.
 
-## 2. Standalone Runtime and Fixed Model
+## 2. Neutral Contract and Canonicalizer
 
-- [ ] 2.1 Create an independent `apps/semantic-embedding` Python 3.12 app with no dependency on `apps/api` or `apps/web`.
-- [ ] 2.2 Add a hash-locked dependency file and digest-pinned multi-stage image.
-- [ ] 2.3 Fix model name, immutable revision, dimension 384, sequence length 128, dtype, normalization, CPU/thread controls, and request bounds as constants.
-- [ ] 2.4 Download and verify only the fixed model revision at image build time; prohibit runtime model downloads and selection.
-- [ ] 2.5 Implement killable process-isolated inference workers that receive only immutable model/fixture paths, never a loaded Torch/model object.
-- [ ] 2.6 Apply one 180-second deadline across preload, fixture validation, and complete pool initialization with sanitized failure categories.
+- [ ] 2.1 Define the narrow Go `SemanticEmbedder` port, neutral batch/result types, fixed contract identity, and bounded error taxonomy without provider SDK types.
+- [ ] 2.2 Implement `semantic-text-v1` NFKC/whitespace/control handling, composition, exact bounds, and versioned SHA-256 text hashing.
+- [ ] 2.3 Add contract constants/config validation for fixed provider, model, immutable revision, dimension, canonicalizer, timeout, batch, QPS, concurrency, pricing revision, quota, and budget.
+- [ ] 2.4 Add tests proving requests cannot select another provider/model/revision/dimension/canonicalizer and any identity change requires a new rebuild scope.
 
-## 3. Internal HTTP Contract and Security
+## 3. Privacy and Secret Boundary
 
-- [ ] 3.1 Expose only liveness, readiness, fixed model metadata, and bounded batch embedding routes; disable docs, CORS, cookies, redirects, and host exposure.
-- [ ] 3.2 Authenticate protected routes before body parsing with the shared printable-ASCII strong internal-token contract and constant-time comparison.
-- [ ] 3.3 Enforce strict body, batch, item, ID, title, description, aggregate-codepoint, and exact JSON-shape bounds.
-- [ ] 3.4 Implement exact NFKC/Unicode-whitespace/control normalization and deterministic `title` or `title + \"\\n\" + description` composition.
-- [ ] 3.5 Return only bounded stable error envelopes without paths, raw exceptions, dependency details, tokens, text, IDs, vectors, or URLs.
+- [ ] 3.1 Define an eligibility boundary that allows only currently published/public title and description to become `CanonicalText`.
+- [ ] 3.2 Ensure outbound payloads contain only canonical text and fixed model selection, with no user/video/business/request/trace IDs, behavior data, URLs, drafts, tokens, or arbitrary metadata.
+- [ ] 3.3 Load provider credentials only from approved secret/config injection and add tests proving no credential/header/derived value enters jobs, vectors, cache, Kafka, checkpoints, logs, traces, metrics, or errors.
+- [ ] 3.4 Disable provider SDK payload/debug logging and add redaction tests for all success and failure paths.
 
-## 4. Deterministic Bounded Inference
+## 4. Provider Adapter, Cache, and Validation
 
-- [ ] 4.1 Implement fixed sequential chunks of eight, ordered identity-preserving responses, finite 384-component `float32` vectors, and final unit-normalization validation.
-- [ ] 4.2 Reserve two active and eight waiting request slots before body parsing and configure a bounded Uvicorn connection limit.
-- [ ] 4.3 Apply one 15-second deadline to receive, parse, authenticate, queue, infer, and send; apply a two-second queue wait.
-- [ ] 4.4 Terminate and replace hung/disconnected inference workers, release capacity, and recover readiness only after full live capacity returns.
-- [ ] 4.5 Emit only bounded route/status/duration/result/capacity operational logs with raw Uvicorn access logs disabled.
+- [ ] 4.1 Implement one configured provider adapter with bounded transport and exactly one network attempt per call.
+- [ ] 4.2 Add full-contract text-hash batch deduplication and a narrow cache port that stores no raw text or credentials.
+- [ ] 4.3 Validate response bounds, complete positional order/count, exact dimension, finite values, positive norm, deterministic L2 normalization, and unit tolerance atomically.
+- [ ] 4.4 Add provider sandbox/fixture tests for valid, partial, extra, reordered, malformed, wrong-model, wrong-dimension, NaN, infinity, zero-vector, cancellation, and oversized responses.
 
-## 5. Tests and Fixtures
+## 5. Rate Limits, Gate, Cost, and Quota
 
-- [ ] 5.1 Commit Chinese and multilingual 384-component deterministic fixtures for the exact model revision and tolerances.
-- [ ] 5.2 Add settings, token, normalization, schema, boundary, authentication-before-parse, safe-error, and log-redaction tests.
-- [ ] 5.3 Add real-model metadata/vector/order/repeatability/chunk/finite/norm fixture tests.
-- [ ] 5.4 Add concurrency, queue, overload, slow-upload, stalled-send, timeout, disconnect, replacement, readiness-loss/recovery, and shutdown tests.
-- [ ] 5.5 Add startup tests for missing/corrupt model, metadata mismatch, fixture mismatch, timeout, spawn/bootstrap failure, and bind failure without traceback leakage.
+- [ ] 5.1 Enforce timeout, maximum batch, in-flight, QPS, and burst limits before payload construction.
+- [ ] 5.2 Parse bounded `Retry-After` and classify timeout/network/429/5xx as retryable while auth/input/model/contract/config failures remain operator-actionable.
+- [ ] 5.3 Implement the replica-local circuit/gate with bounded open/half-open behavior and tests proving it affects asynchronous semantic work only.
+- [ ] 5.4 Implement local billable-unit/cost estimation bound to a pricing revision, actual usage capture when available, quota/budget gates, and bounded-cardinality metrics.
 
-## 6. Independent Compose Service
+## 6. Asynchronous-Only Composition and Documentation
 
-- [ ] 6.1 Add an internal-only `semantic-embedding` Compose service with shared token, readiness healthcheck, read-only root/model, bounded tmpfs, non-root user, dropped capabilities, and CPU/memory limits.
-- [ ] 6.2 Keep API and Worker free of semantic configuration, dependency, health gate, Go client, database table, queue, or service call.
-- [ ] 6.3 Add image and Compose contract tests for offline startup, immutable artifacts, non-root/read-only execution, internal-only exposure, resource limits, and forbidden dependencies.
+- [ ] 6.1 Wire the adapter only for durable semantic job and resumable backfill callers; add dependency tests preventing API, publication, Feed, ranking, profile, and Kafka-handler inference calls.
+- [ ] 6.2 Document the managed-provider contract, privacy boundary, secret handling, canonicalizer, identity/rebuild policy, cache, retry ownership, cost/quota operations, and permanent `hash-ngram-v1` fallback.
+- [ ] 6.3 Remove all obsolete local Python/MiniLM, PyTorch, model artifact, inference process, CPU worker, model container, and Compose model-service requirements.
 
-## 7. Documentation and Validation
+## 7. Validation
 
-- [ ] 7.1 Add semantic-service module documentation and update architecture, engineering, deployment, module index, and setup docs.
-- [ ] 7.2 Explicitly document that the capability is roadmap step 5, is not part of Kafka migration, and has no Go caller until `integrate-semantic-video-embeddings`.
-- [ ] 7.3 Run the frozen Python suites, live pinned-model fixtures, image build/offline contract, Compose service health/contract, and security/resource tests.
-- [ ] 7.4 Confirm no Go API/Worker/Web, PostgreSQL, Redis, Kafka, persisted embedding, backfill, profile, pgvector, ANN, policy, or training changes are introduced.
-- [ ] 7.5 Run `docker compose config` and `openspec validate --all --strict`.
+- [ ] 7.1 Run targeted Go tests for canonicalization, identity, config, adapter, cache, validation, redaction, metrics, circuit, cost, and quota behavior.
+- [ ] 7.2 Run provider contract fixtures without real credentials in committed test data and verify no synchronous product path depends on provider availability.
+- [ ] 7.3 Build the Go entrypoints affected by shared interfaces, run the complete Go suite, and run `openspec validate --all --strict`.

@@ -1,21 +1,21 @@
-## 1. Prerequisite Contracts and Offline Boundaries
+## 1. Activation Gate and Offline Boundaries
 
-- [ ] 1.1 Verify that the implemented impression, export, and evaluator prerequisites provide the required versioned fields and reusable integrity, label, replay, metric, and bootstrap APIs; add focused compatibility tests that fail closed when any contract is absent or unsupported.
-- [ ] 1.2 Expose one shared strict path for `PolicyConfiguration` decoding, normalization, cloning, validation, and canonical hashing, and verify production, evaluator, and learner callers produce identical normalized results.
-- [ ] 1.3 After 1.1-1.2, create the learner packages and fixed eight-feature/compatibility/sampler/optimizer/report registries; enforce with dependency tests that they cannot initialize or import database, cache, broker, HTTP, embedding, or model-serving infrastructure.
+- [ ] 1.1 Keep this change indefinitely deferred until a reviewed activation record preregisters the learning hypothesis, primary metric/MPE, sample-size calculation with alpha at most 0.05 and power at least 0.80, independent units, multiplicity, and numeric split/label/exposure/feature thresholds.
+- [ ] 1.2 Require preregistered stability across non-overlapping time windows, relevant slices, and multiple seeds/resamples, plus privacy/security approval for purpose, deletion, opt-out, access, retention, and disposal.
+- [ ] 1.3 Require approved compute/memory/runtime/storage budgets, owners, and abort thresholds; confirm semantic replay/golden evaluation remains independent. Do not begin sections 2-8 unless tasks 1.1-1.3 are complete.
 
-## 2. Command and Preflight Validation
+## 2. Conditional Prerequisite Contracts and Preflight
 
-- [ ] 2.1 After 1.3, add `cmd/recommendation-policy-learn` with manifest, dataset, baseline, candidate/report output, seed, bounded optimization/coverage/evaluator-gate, and safe-overwrite options; test required flags, relationships, finite bounds, path separation, and existing-output rejection.
-- [ ] 2.2 Implement strict baseline loading plus export manifest/dataset integrity validation, including input and normalized hashes, filename/size/SHA-256 checks, gzip/JSONL completeness, canonical ordering, row limits, duplicate detection, and count reconciliation; validate with valid and corrupted fixtures.
-- [ ] 2.3 Enforce exact supported contract versions and exactly the eight finite bounded score components, rejecting missing, duplicate, unknown, mixed-version, non-finite, or out-of-range input without coercion, imputation, or skipped structural errors.
+- [ ] 2.1 After activation, verify approved impression/export/evaluator contracts and expose one strict shared path for `PolicyConfiguration` decoding, normalization, cloning, validation, and hashing.
+- [ ] 2.2 Add `cmd/recommendation-policy-learn` with activation-record reference, manifest/dataset/baseline, candidate/report output, seed, bounded optimization/coverage/improvement gates, and safe overwrite.
+- [ ] 2.3 Implement strict artifact integrity/version validation and exactly eight finite bounded score components; fail closed on any mismatch.
 
 ## 3. Exposure, Splits, Sampling, and Coverage
 
 - [ ] 3.1 After preflight succeeds, derive `observational-utility/v1` only through the shared evaluator implementation, admit only validated exposed rows, exclude every delivered/engaged-unexposed row from both pair sides, and test all eligibility and bounded exclusion categories.
 - [ ] 3.2 Independently validate pseudonymous-user and temporal split contracts, including request ownership, ordered boundaries, label-horizon closure, embargo reconciliation, and cross-split leakage; prove by tests that test groups remain inaccessible until final evaluation.
 - [ ] 3.3 Build canonical split-local request groups and deterministic label-gap preference pairs with fixed utility strata, seed-derived SHA-256 row/pair priority, canonical tie-breaking, and all per-request/per-split caps; verify row-order invariance and exact retained identities.
-- [ ] 3.4 Compute split and per-feature coverage statistics, freeze sparse or constant features exactly at normalized baseline values, and enforce exposed-row/user/request/pair/trainable-feature gates before optimization; cover each freeze reason and failed aggregate gate with tests.
+- [ ] 3.4 Compute split and per-feature coverage statistics, freeze sparse or constant features at baseline, and enforce the stricter of preregistered thresholds and operational floors; production runs may not lower activation gates.
 
 ## 4. Constrained Deterministic Optimizer
 
@@ -27,12 +27,12 @@
 ## 5. Candidate Assembly and Held-Out Evaluation
 
 - [ ] 5.1 After checkpoint selection, deep-clone the normalized baseline, replace only the eight `feature_weights`, and revalidate the complete candidate; canonically prove every non-weight field is unchanged and render no policy ID, version, enabled state, activation request, or rollout instruction.
-- [ ] 5.2 Evaluate baseline and candidate exactly once on identical untouched test request groups through the shared evaluator, preserving served-subset replay, observational labels, production ordering/diversity, complete-label eligibility, clustering, exclusions, warnings, and metric definitions.
-- [ ] 5.3 Apply held-out coverage/interval and NDCG, utility, quick-skip, and explicit-negative non-regression gates; test every unavailable-metric, integrity, coverage, new-exclusion, and regression failure before making artifacts publishable.
+- [ ] 5.2 Evaluate baseline and candidate exactly once on identical untouched preregistered test groups, preserving baseline parity, replay scope, observational limits, exclusions, warnings, and metric definitions.
+- [ ] 5.3 Require primary improvement at least the preregistered MPE with adjusted 95% lower bound above zero, every guardrail confidence bound on the safe side of zero, and stability across required windows/slices/seeds; reject any degradation tolerance.
 
 ## 6. Deterministic Reporting and Atomic Local Publication
 
-- [ ] 6.1 After all gates pass, render a versioned canonical report containing input/configuration hashes, versions, split/sampling counts, hyperparameters, convergence, coverage/freezes, baseline/learned weights, constraints, candidate hash, evaluator comparison, warnings, and inactive candidate-only status; verify byte determinism.
+- [ ] 6.1 After all gates pass, render a versioned canonical report containing activation-record/preregistered thresholds, hashes, versions, counts, hyperparameters, convergence, coverage/freezes, baseline/learned weights, strict-improvement/stability results, warnings, and inactive candidate-only status.
 - [ ] 6.2 Implement permission-restricted sibling partial files, sync and cross-hash verification, atomic candidate/report publication, safe replacement, cleanup, and preservation of existing outputs; inject render/write/sync/rename/overwrite failures to verify fail-closed behavior.
 - [ ] 6.3 Add an integration boundary test proving successful and failed runs only read local inputs and write requested local artifacts, never modify inputs or policy state, and never open database, cache, broker, HTTP, embedding, or model-server connections.
 
@@ -44,6 +44,6 @@
 
 ## 8. Documentation and Final Validation
 
-- [ ] 8.1 After behavior stabilizes, document prerequisite order, compatible inputs, exposure/split rules, objective and sampling, defaults/bounds/resource caps, convergence, evaluator gates, deterministic outputs, permissions, failure recovery, and observational limitations.
-- [ ] 8.2 Document and verify the narrow scope: only the existing eight linear weights may change; database writes, persistence/activation, online inference, A/B systems, other policy fields, embeddings, vector stores, neural models, and production runtime dependencies remain excluded.
-- [ ] 8.3 Run focused learner/evaluator/policy tests, the relevant Go package suite and both Go builds, then run `openspec validate --all --strict`; reconcile any failure with the proposal, design, specification, and this checklist before implementation is considered complete.
+- [ ] 8.1 Document indefinite deferral, activation prerequisites, preregistration, power/label/stability/privacy/resource gates, objective/sampling, strict improvement, deterministic outputs, permissions, failure recovery, and observational limitations.
+- [ ] 8.2 Verify the narrow scope: semantic evaluation has no learner dependency; only eight weights may change after activation; database writes, auto-activation, online inference, A/B systems, other fields, embeddings, vector stores, neural models, and runtime dependencies remain excluded.
+- [ ] 8.3 After activation and implementation only, run focused learner/evaluator/policy tests, relevant Go suites/builds, and `openspec validate --all --strict`; before activation, validation checks planning coherence only.

@@ -1,140 +1,140 @@
 ## ADDED Requirements
 
-### Requirement: Application-Level Semantic ANN Contracts
-Frux SHALL define `semantic_ann` as an application-level recommendation `RecallProvider`. The provider SHALL depend only on a compatible semantic recent/long-term profile source supplied by `project-semantic-user-interest` and a validated bounded semantic ANN query interface supplied by `enable-pgvector-recommendation-index`; neither interface SHALL expose pgvector, SQL, projection, index, or persistence types to the recommendation application.
+### Requirement: Dormant Application-Level Semantic Contracts
+Frux SHALL define `semantic_ann` as an application-level recommendation `RecallProvider` backed only by compatible profile, bounded session-vector, and semantic-neighbor interfaces from the prerequisite changes. Those interfaces MUST NOT expose pgvector, SQL, projection, index, persistence, or embedding-service client types. Provider composition SHALL default disabled, and registration SHALL NOT create, select, or activate a semantic policy.
 
 #### Scenario: Compatible prerequisites are composed
-- **WHEN** semantic ANN enablement is true and both compatible prerequisite interfaces are available
-- **THEN** the API registers one `semantic_ann` recall provider without constructing projection, index, backfill, or reconciliation infrastructure in this capability
+- **WHEN** semantic ANN enablement is true and all compatible prerequisite interfaces are available
+- **THEN** the API registers one dormant `semantic_ann` provider without changing selected policies or constructing infrastructure owned by another capability
 
 #### Scenario: Enabled prerequisite is unavailable
-- **WHEN** semantic ANN enablement is true but either prerequisite interface is missing or incompatible
-- **THEN** API startup fails with a bounded prerequisite/configuration error before registering a partial provider
+- **WHEN** enablement is true but a compatible profile, session-vector, or index interface is missing
+- **THEN** API startup fails with a bounded prerequisite error before partial registration
 
 #### Scenario: Semantic ANN is disabled
-- **WHEN** semantic ANN enablement is false
-- **THEN** the provider is not registered, prerequisite interfaces are not required by recommendation composition, and existing recommendation behavior remains available
+- **WHEN** enablement is false
+- **THEN** the provider is not registered, prerequisites are not required by recommendation composition, and existing recommendation remains available
 
-### Requirement: Recent-Then-Long-Term Profile Selection
-The `semantic_ann` provider SHALL load one compatible semantic profile for the authenticated user, select a finite recent vector with norm at least `1e-6` before considering long-term interest, select a finite long-term vector with norm at least `1e-6` only when recent interest is unusable, and normalize a defensive request-local copy. It MUST NOT combine vectors, use a negative vector, mutate stored profile data, call an embedding service, or reinterpret the hash profile.
+### Requirement: Fixed Session Recent Long-Term Fusion
+The provider SHALL implement `semantic-query-v1` by combining usable finite compatible vectors with fixed weights session `0.50`, recent `0.30`, and long-term `0.20`. Missing components SHALL contribute zero and remaining configured weights SHALL be renormalized to one. A usable recent vector MUST NOT completely replace a usable long-term vector. The final request-local sum SHALL be normalized before search.
 
-#### Scenario: Recent interest is usable
-- **WHEN** the compatible profile contains a usable recent vector
-- **THEN** the provider normalizes a copy of the recent vector and does not use the long-term vector
+#### Scenario: All components are usable
+- **WHEN** session, recent, and long-term vectors are valid with norm at least `1e-6`
+- **THEN** the query vector uses the documented `0.50/0.30/0.20` blend
 
-#### Scenario: Recent interest is empty
-- **WHEN** recent interest is unusable and the compatible long-term vector is usable
-- **THEN** the provider normalizes a copy of the long-term vector for the ANN query
+#### Scenario: Session is absent
+- **WHEN** recent and long-term are usable but session is absent
+- **THEN** their weights renormalize from `0.30/0.20` and both contribute
 
-#### Scenario: Profile is absent or empty
-- **WHEN** no compatible profile exists or both positive vectors are unusable
-- **THEN** the provider returns a successful empty candidate list without querying the ANN index
+#### Scenario: Only long-term is usable
+- **WHEN** session and recent are absent or unusable
+- **THEN** a normalized defensive copy of long-term is used
 
-#### Scenario: Profile read is invalid
-- **WHEN** the profile source returns malformed, non-finite, incompatible, or failed data
-- **THEN** the provider returns no semantic candidates and reports normal bounded provider degradation
+#### Scenario: No semantic component is usable
+- **WHEN** profile is absent and no bounded session vector can be built
+- **THEN** semantic recall returns healthy empty and existing hash/non-vector providers remain the fallback
 
-### Requirement: Bounded Active Semantic ANN Execution
-An active `semantic_ann` provider SHALL perform one profile read and at most one ANN query. The ANN query SHALL use the selected policy budget from 1 to 100, the existing provider context with a selected policy deadline from 25 to 500 milliseconds, and at most 20 bounded current/recent session video exclusions. The provider SHALL use the existing shared provider-concurrency admission and MUST NOT retry, widen its budget, scan the corpus, or continue detached work after cancellation.
+### Requirement: Separate Bounded Semantic Capacity
+Semantic execution SHALL use a dedicated process-local non-blocking no-queue capacity bound from 1 through 16 and MUST NOT consume or reduce baseline-provider permits. A future invocation SHALL use budget 1 through 100, deadline 25 through 500 milliseconds, at most 20 exclusions, and at most one neighbor query. It MUST NOT retry, widen bounds, scan the corpus itself, or continue detached after cancellation.
 
-#### Scenario: Active provider is selected
-- **WHEN** the selected policy contains valid `semantic_ann` budget and deadline entries and shared admission succeeds
-- **THEN** one bounded ANN query receives the normalized selected vector, policy budget, bounded exclusions, and cancellable provider context
+#### Scenario: Semantic capacity is available
+- **WHEN** an invocation acquires a semantic permit
+- **THEN** bounded profile/session preparation and at most one query execute under the provider context
 
-#### Scenario: Session exclusions exceed the provider bound
+#### Scenario: Semantic capacity is exhausted
+- **WHEN** no semantic permit is immediately available
+- **THEN** no semantic work starts and baseline-provider admission remains unchanged
+
+#### Scenario: Session exclusions exceed the bound
 - **WHEN** recommendation context contains more than 20 current/recent video IDs
-- **THEN** the provider copies at most 20 IDs into the ANN query without unbounded allocation or query input
+- **THEN** the provider copies at most 20 deterministic positive IDs
 
-#### Scenario: Deadline or capacity is exhausted
-- **WHEN** the provider deadline expires or shared provider capacity is unavailable
-- **THEN** no partial semantic candidate set is merged and existing provider degradation behavior applies
+### Requirement: Deterministic Provider Reservation and Mixing
+Before ranking a multi-provider pool, Frux SHALL merge duplicates, satisfy validated per-provider unique-candidate reservations, and fill remaining capacity by deterministic round-robin over fixed provider order and provider-local order. A future semantic policy SHALL have a separate semantic reservation and retain at least one baseline provider reservation. The service MUST NOT globally order all provider outputs by `published_at` and truncate before this mixing.
 
-### Requirement: Cosine Recall Annotation and Merge
-Every accepted semantic ANN neighbor SHALL become one recommendation candidate with exactly one `RecallReason` whose provider is `semantic_ann` and one `SourceScores["semantic_ann"]` value equal to finite positive cosine similarity clamped to `[0,1]`. Vectors, distances, profile source, model metadata, and index metadata MUST NOT become response fields or ranking features.
+#### Scenario: Provider outputs exceed pool capacity
+- **WHEN** total bounded outputs exceed the pre-rank pool cap
+- **THEN** provider reservations are satisfied before deterministic fill and ranking
+
+#### Scenario: Semantic candidates are older than Fresh candidates
+- **WHEN** semantic candidates would have been removed by global `published_at` truncation
+- **THEN** their configured reservation gives bounded candidates a chance to enter ranking
+
+#### Scenario: Duplicate satisfies multiple providers
+- **WHEN** one video is recalled by semantic ANN and a baseline provider
+- **THEN** it occupies one global slot, retains all reasons/scores, and does not consume duplicate slots
+
+#### Scenario: Provider underfills reservation
+- **WHEN** a provider returns fewer unique candidates than reserved
+- **THEN** unused capacity returns to deterministic round-robin fill
+
+### Requirement: Explicit Semantic Similarity Ranking Component
+Every accepted semantic neighbor SHALL receive one `semantic_ann` recall reason, one matching source score, and a candidate feature `semantic_similarity` equal to finite positive cosine similarity clamped to `[0,1]`. A future policy containing `semantic_ann` MUST assign a positive finite weight to `semantic_similarity`; semantic candidates MUST NOT be recalled and then ranked only by hash/recency features.
 
 #### Scenario: Valid neighbor is returned
-- **WHEN** the ANN interface returns a readable neighbor with finite positive cosine similarity
-- **THEN** the candidate receives matching bounded `semantic_ann` reason and source scores
+- **WHEN** the semantic-neighbor interface returns a readable video with finite positive cosine
+- **THEN** reason, source score, and ranking feature carry the same bounded value
 
 #### Scenario: Neighbor score is invalid
-- **WHEN** a returned cosine score is non-finite or non-positive
-- **THEN** the neighbor is omitted and no invalid score reaches merge, ranking, metrics, or logs
+- **WHEN** cosine is non-finite or non-positive
+- **THEN** the neighbor is omitted before mixing, ranking, metrics, or logs
 
-#### Scenario: Existing provider returns the same video
-- **WHEN** semantic ANN and another provider recall one video
-- **THEN** the normal merge keeps one candidate with both applicable provider reasons and source scores
+#### Scenario: Future semantic policy lacks semantic weight
+- **WHEN** a policy contains `semantic_ann` without a positive `semantic_similarity` feature weight
+- **THEN** policy validation rejects it
 
-### Requirement: Healthy Empty and Failure Isolation
-Missing profiles and empty ANN results SHALL be healthy empty outcomes. Profile-source errors, ANN-interface errors, cancellation, timeout, or capacity exhaustion SHALL produce no semantic candidates and SHALL use the existing bounded degraded-provider path. Semantic ANN failure MUST NOT make Feed, attribution, snapshots, healthy providers, or hash/non-vector fallback unavailable.
+### Requirement: Future Policy Baseline Preservation
+Future policy validation MAY recognize `semantic_ann` only when budget, deadline, reservation, and positive semantic feature weight are present together and at least one baseline provider has non-zero budget and reservation. Bootstrap `recommend/v1` and `recommend/v2` SHALL remain byte-for-byte free of `semantic_ann`, `semantic_similarity`, and semantic reservations.
 
-#### Scenario: ANN has no neighbors
-- **WHEN** the selected profile is valid but the bounded ANN query returns no candidates
-- **THEN** semantic ANN completes as healthy empty and recommendation continues normally
+#### Scenario: Complete future policy is validated
+- **WHEN** a later policy includes all semantic fields and retains Fresh, Hot, content similarity, followed author, or session continuation
+- **THEN** it may be stored for a later accepted rollout
 
-#### Scenario: ANN query fails
-- **WHEN** the ANN interface returns an error or exceeds its context
-- **THEN** healthy providers continue and the request records only the bounded semantic provider degradation
-
-#### Scenario: All semantic data is absent
-- **WHEN** the user has no compatible profile or the index has no matching videos
-- **THEN** existing cold-start, hash, and non-vector recommendation paths retain their prior behavior
-
-### Requirement: Explicit Policy Opt-In
-Policy validation SHALL recognize `semantic_ann` only as an optional recall provider. Its recall budget SHALL be 1 to 100 and its matching provider deadline SHALL be 25 to 500 milliseconds; both entries MUST be present together. `semantic_ann` SHALL NOT be a feature-weight key. Bootstrap `recommend/v1` and `recommend/v2` SHALL remain byte-for-byte free of `semantic_ann`.
-
-#### Scenario: New policy opts in
-- **WHEN** operators create and select a valid policy containing matching `semantic_ann` budget and deadline entries
-- **THEN** the registered provider may contribute candidates through the existing provider executor
-
-#### Scenario: Policy omits semantic ANN
-- **WHEN** the provider is registered but the selected policy has no `semantic_ann` entries
-- **THEN** semantic ANN does not run or affect candidate ordering
-
-#### Scenario: Semantic policy configuration is invalid
-- **WHEN** a policy has only one semantic entry, an out-of-range budget or deadline, or a `semantic_ann` feature weight
-- **THEN** the policy cannot become active
+#### Scenario: Semantic policy removes every baseline
+- **WHEN** a policy selects semantic ANN without a non-zero baseline provider reservation
+- **THEN** it cannot become active
 
 #### Scenario: Bootstrap policies are ensured
-- **WHEN** initial policy creation or migration runs after this capability is deployed
-- **THEN** serialized `recommend/v1` and `recommend/v2` provider budgets, deadlines, features, weights, and rollout remain unchanged
+- **WHEN** initial policy creation or migration runs
+- **THEN** v1/v2 serialized budgets, deadlines, reservations, features, weights, and rollout remain unchanged
 
-### Requirement: Unchanged Ranking and Recommendation Semantics
-Semantic ANN candidates SHALL pass through the existing visibility recheck, suppression, duplicate merge, ranking, diversity, snapshot, evaluation, and attribution behavior. This capability SHALL NOT add or change ranking features or weights, train a model, invoke request-path inference, remove hash behavior, or automatically activate a policy.
+### Requirement: Healthy Absence and Failure Isolation
+Missing semantic profiles, missing session vectors, and empty search results SHALL be healthy empty outcomes. Profile/session/index errors, cancellation, timeout, invalid results, or semantic-capacity exhaustion SHALL produce no partial semantic candidates and MUST NOT make Feed, baseline providers, snapshots, evidence, attribution, or hash/non-vector fallback unavailable.
 
-#### Scenario: Semantic candidates are merged
-- **WHEN** an active policy receives semantic ANN candidates
-- **THEN** the unchanged ranker orders them using only the existing policy feature set and weights
+#### Scenario: All semantic data is absent
+- **WHEN** a user has no compatible semantic profile and no usable session vector
+- **THEN** existing cold-start, hash, Fresh, Hot, and other baseline paths retain their prior behavior
+
+#### Scenario: Semantic query fails
+- **WHEN** a prerequisite returns an error or exceeds context
+- **THEN** baseline providers continue and only bounded semantic degradation is observed
 
 #### Scenario: Candidate becomes unreadable
-- **WHEN** a semantic candidate is no longer public, published, or media-ready before response assembly
-- **THEN** the existing final visibility check removes it
+- **WHEN** a semantic candidate is no longer published, public, or media-ready before response assembly
+- **THEN** the existing final readability check removes it
 
-#### Scenario: Provider support is deployed
-- **WHEN** code and enablement support exist but no new policy is selected
-- **THEN** production ranking, bootstrap rollout, snapshots, attribution, and hash fallback remain unchanged
+### Requirement: Bounded Registration Observability
+Semantic provider support SHALL expose bounded metrics for invocation result/duration, fusion component availability, candidate count, semantic-capacity result, provider-reservation survival, and query mode. Labels SHALL use fixed enums only and MUST NOT contain user/video/request IDs, vectors, candidate lists, model strings, SQL/index details, or raw errors.
 
-### Requirement: Bounded Active Provider Observability
-Semantic ANN SHALL expose bounded-cardinality metrics for active provider attempts, duration, result, candidate count, and selected profile source. Result labels SHALL be limited to `success`, `empty`, `no_profile`, `timeout`, `capacity`, `invalid_profile`, and `index_error`; profile-source labels SHALL be limited to `recent`, `long_term`, and `none`.
+#### Scenario: Provider support is observed
+- **WHEN** direct shadow or future active invocation completes
+- **THEN** metrics use only documented fixed result, component, capacity, survival, and query-mode labels
 
-#### Scenario: Active provider completes
-- **WHEN** semantic ANN succeeds, returns empty, times out, reaches capacity, or fails a prerequisite call
-- **THEN** active-provider metrics use only the fixed result and profile-source labels
-
-#### Scenario: Sensitive or high-cardinality data exists
-- **WHEN** provider work involves user, video, request, vector, candidate, model, SQL/index, or raw error data
+#### Scenario: Sensitive values exist
+- **WHEN** semantic work handles user context, vectors, IDs, policies, or infrastructure failures
 - **THEN** those values do not appear in metric labels or normal logs
 
-### Requirement: Policy-Controlled Rollout, Rollback, and Verification
-Semantic ANN rollout SHALL enable and verify compatible provider composition before selecting a policy that contains `semantic_ann`. Rollback SHALL select a policy without `semantic_ann` before disabling provider composition. Implementation SHALL include focused provider, policy, composition, merge/degradation, metrics, regression, and documentation verification without adding pgvector infrastructure or shadow acceptance tests.
+### Requirement: Registration Only and Shadow-First Activation
+This change SHALL stop after disabled-by-default provider registration, future-policy validation, mixing/ranking support, tests, and documentation. It SHALL NOT create, select, or gray-rollout a semantic policy. `shadow-semantic-ann-recall` SHALL complete before any later active rollout proposal.
 
-#### Scenario: Provider is prepared before rollout
-- **WHEN** semantic ANN composition is enabled while the selected policy omits the provider
-- **THEN** prerequisite compatibility can be verified without executing semantic ANN for production requests
+#### Scenario: Provider composition is enabled
+- **WHEN** compatible provider support is registered while selected policies omit `semantic_ann`
+- **THEN** production recommendation does not execute semantic recall
 
-#### Scenario: Active rollout is rolled back
-- **WHEN** operators select a valid policy without `semantic_ann`
-- **THEN** new requests stop executing the provider without changing prerequisite data or redeploying the API
+#### Scenario: Active gray rollout is requested
+- **WHEN** operators want semantic ANN to affect production candidates
+- **THEN** they first complete shadow evaluation and use a separate accepted rollout change
 
 #### Scenario: Focused validation runs
-- **WHEN** implementation validation is executed
-- **THEN** tests prove recent-then-long selection, bounds, exclusions, scores, merge, degradation, policy validation, unchanged bootstrap policies/ranking, enablement, metrics, and rollback behavior
+- **WHEN** implementation verification executes
+- **THEN** it proves fixed fusion, separate capacity, deterministic mixing, pool survival, explicit semantic ranking, policy guards, unchanged v1/v2, healthy fallback, registration-only behavior, and strict OpenSpec validation

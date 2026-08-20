@@ -1,26 +1,30 @@
 ## ADDED Requirements
 
-### Requirement: Durable Delivered-Card Impression Facts
-Frux SHALL persist a compact training impression for every final hydrated and readable recommendation card actually delivered by Feed.
+### Requirement: Durable Delivered-Card Diagnostic Facts
+Frux SHALL persist a compact diagnostic impression for 100% of final hydrated and readable recommendation cards actually delivered by Feed, without asserting that the retained population is currently suitable for training.
 
 #### Scenario: Ranked card is delivered
 - **WHEN** Feed completes card hydration and readability filtering for a recommendation page
-- **THEN** each returned card produces a durable fact containing stable user, request, and video identity, zero-based absolute rank position in the ranked session, normalized scene, policy version, served time, and explicit record and feature-schema versions
+- **THEN** each returned card produces a durable fact containing stable user, request, generation, and video identity, zero-based absolute rank position within the generation, trusted author ID and publication time, normalized scene, policy/version, degraded state/providers, served and recorded times, and explicit record and feature-schema versions
 
 #### Scenario: Ranked candidate is not delivered
 - **WHEN** a ranked or snapshotted candidate is missing a card, unreadable, suppressed, or otherwise omitted from the final Feed response
-- **THEN** Frux does not create a training impression for that candidate and preserves any resulting gaps in absolute rank positions
+- **THEN** Frux does not create a diagnostic impression for that candidate and preserves any resulting gaps in absolute rank positions
 
 #### Scenario: Later page is delivered
 - **WHEN** a snapshot or deterministic degraded-cursor page returns candidates from later in the same ranked session
-- **THEN** each fact retains its position in the complete post-ranking and post-diversity ordering rather than restarting rank at the page boundary
+- **THEN** each fact retains its generation and position in the complete post-ranking and post-diversity ordering rather than restarting rank at the page boundary
 
-### Requirement: Bounded Training Feature Payload
-Training impressions SHALL retain only bounded server-derived ranking explanations needed by later dataset construction.
+#### Scenario: Ranking is recomputed
+- **WHEN** Feed creates a new complete ordering rather than continuing the prior snapshot generation
+- **THEN** Frux assigns a new immutable generation and positions remain unique and interpretable within that generation
+
+### Requirement: Bounded Diagnostic Payload
+Diagnostic impressions SHALL retain only enumerated, bounded server-derived delivery and ranking facts needed for diagnosis and possible future approved reuse.
 
 #### Scenario: Candidate has ranking explanations
 - **WHEN** a delivered candidate carries recall reasons and score components from recommendation ranking
-- **THEN** the impression stores at most 8 normalized recall reasons of at most 64 characters and at most 8 finite, supported score components under a versioned feature schema
+- **THEN** the impression stores at most 8 normalized recall reasons of at most 64 characters, at most 8 finite supported score components, and bounded normalized degraded metadata under versioned schemas
 
 #### Scenario: Delivery is recorded
 - **WHEN** Frux creates the durable handoff
@@ -28,7 +32,7 @@ Training impressions SHALL retain only bounded server-derived ranking explanatio
 
 #### Scenario: Client submits recommendation data
 - **WHEN** a client supplies Feed context, feedback, exposure, or playback fields
-- **THEN** those fields cannot directly create or alter a training impression because impression contents come only from server ranking state and final Feed assembly
+- **THEN** those fields cannot directly create or alter a diagnostic impression because impression contents come only from server ranking state and final Feed assembly
 
 ### Requirement: Atomic Trusted Handoff
 Frux SHALL commit the short-lived served-candidate evidence and a durable training-impression outbox item in the same database transaction for each newly delivered card.
@@ -46,7 +50,7 @@ Frux SHALL commit the short-lived served-candidate evidence and a durable traini
 - **THEN** the Feed response remains valid and the durable pending item is available for later replay
 
 ### Requirement: Idempotent Leased Persistence
-A bounded leased worker SHALL persist training impressions idempotently from the durable handoff.
+A bounded leased worker SHALL persist diagnostic impressions idempotently from the durable handoff.
 
 #### Scenario: Worker processes a pending item
 - **WHEN** an available outbox item is claimed
@@ -64,11 +68,15 @@ A bounded leased worker SHALL persist training impressions idempotently from the
 - **WHEN** a claimed item cannot be persisted
 - **THEN** Frux retains it, clears or expires the lease, records a bounded error, and retries with capped backoff without allowing one item to make a worker run unbounded
 
-### Requirement: Security Attribution Separation
-Training impressions SHALL NOT replace or extend served-candidate evidence for feedback or outcome authorization.
+### Requirement: Delivery, Exposure, and Security Separation
+Diagnostic impressions SHALL NOT replace or extend served-candidate evidence for feedback or outcome authorization.
+
+#### Scenario: Card is delivered without exposure
+- **WHEN** Feed returns a card but no validated exposure outcome exists
+- **THEN** the diagnostic fact records delivery only and any future consumer MUST treat the card as unobserved rather than as a negative example
 
 #### Scenario: Short-lived evidence expires
-- **WHEN** a training impression remains after its `recommendation_served_candidate` evidence expires
+- **WHEN** a diagnostic impression remains after its `recommendation_served_candidate` evidence expires
 - **THEN** feedback and outcome attribution continue to fail unless the existing served-candidate validity checks independently succeed
 
 #### Scenario: Training row is present
@@ -80,10 +88,10 @@ Training impressions SHALL NOT replace or extend served-candidate evidence for f
 - **THEN** existing feedback and outcome attribution behavior is unchanged
 
 ### Requirement: Retention and Cleanup
-Frux SHALL retain training impressions longer than security evidence under an independently configured bounded retention policy and SHALL clean facts and completed handoffs in bounded batches.
+Frux SHALL retain diagnostic impressions longer than security evidence under an independently configured bounded retention policy and SHALL clean facts and completed handoffs in bounded batches.
 
 #### Scenario: Impression reaches retention cutoff
-- **WHEN** a training impression's trusted served time is older than the configured retention period
+- **WHEN** a diagnostic impression's trusted served time is older than the configured retention period
 - **THEN** a cleanup worker deletes it in bounded ordered batches without modifying outcomes, behavior events, request logs, or served-candidate evidence
 
 #### Scenario: Handoff is complete
@@ -94,8 +102,34 @@ Frux SHALL retain training impressions longer than security evidence under an in
 - **WHEN** an outbox item is undispatched regardless of age
 - **THEN** routine cleanup retains it for recovery and exposes the backlog through metrics
 
+### Requirement: Privacy Deletion and Training Opt-Out
+Frux SHALL provide bounded, auditable privacy handling for account deletion and SHALL define a durable exclusion boundary for any future training use.
+
+#### Scenario: Account deletion is accepted
+- **WHEN** a user deletion request reaches the recommendation privacy boundary
+- **THEN** Frux idempotently deletes or schedules deletion of that user's pending handoffs and materialized diagnostic facts and reconciles until no account-linked row remains
+
+#### Scenario: User opts out of training
+- **WHEN** a user has an effective training opt-out
+- **THEN** operational diagnostic recording may continue within its approved retention, but every future export or learner MUST exclude the user's facts using a captured privacy watermark
+
+#### Scenario: Privacy state changes after delivery
+- **WHEN** deletion or opt-out becomes effective after an impression was recorded
+- **THEN** the later privacy state supersedes row presence and prevents future training eligibility
+
+### Requirement: Unified Identity and Time Contract
+Frux SHALL expose one immutable identity and time contract to all future diagnostic consumers.
+
+#### Scenario: Fact identity is read
+- **WHEN** a downstream consumer identifies an impression
+- **THEN** it uses `(user_id, request_id, generation, video_id)` with zero-based generation-relative absolute position, while `source_served_candidate_id` remains the persistence idempotency key
+
+#### Scenario: Fact times are interpreted
+- **WHEN** delivery and later outcome facts are reconciled
+- **THEN** `served_at`/`occurred_at` determine event ordering and behavioral windows, while `recorded_at` determines durable snapshot watermarks and late-arrival completeness
+
 ### Requirement: Operational Observability
-Frux SHALL expose bounded operational metrics for training-impression handoff, persistence, lag, replay, failure, and cleanup.
+Frux SHALL expose bounded operational metrics for diagnostic-impression handoff, persistence, lag, replay, failure, and cleanup.
 
 #### Scenario: Worker handles a batch
 - **WHEN** the worker persists, replays, retries, or rejects work
@@ -104,6 +138,25 @@ Frux SHALL expose bounded operational metrics for training-impression handoff, p
 #### Scenario: Cleanup runs
 - **WHEN** training facts or completed handoffs are deleted
 - **THEN** Frux records bounded deletion counts and worker duration/success using the existing worker observability conventions
+
+### Requirement: Rollout Acceptance Thresholds
+Frux SHALL block broad rollout until compactness, Feed latency, backlog recovery, and reconciliation thresholds pass on representative load.
+
+#### Scenario: Storage is measured
+- **WHEN** representative impression fixtures and indexes are measured
+- **THEN** p95 logical payload is at most 2 KiB and table-plus-index storage is at most 4 KiB per materialized fact
+
+#### Scenario: Feed latency is compared
+- **WHEN** the same release is load-tested with diagnostic handoff enabled and disabled
+- **THEN** enabled Feed delivery p99 increases by no more than both 5 ms and 5%
+
+#### Scenario: Backlog behavior is tested
+- **WHEN** steady load and a simulated 10-minute worker outage are exercised
+- **THEN** 99.99% of committed handoffs materialize within 5 minutes during steady load, oldest pending age stays below 15 minutes, and the outage backlog drains within 60 minutes
+
+#### Scenario: Daily reconciliation runs
+- **WHEN** committed delivered evidence is reconciled against pending handoffs and facts
+- **THEN** 100% has exactly one recoverable handoff or fact within 24 hours and there are zero unexplained missing or duplicate downstream identities
 
 ### Requirement: Additive API-Compatible Migration
 The capability SHALL use additive persistence changes without altering public Feed or feedback request and response schemas.
@@ -119,4 +172,3 @@ The capability SHALL use additive persistence changes without altering public Fe
 #### Scenario: Existing API client continues requests
 - **WHEN** a client uses the current Feed, feedback, exposure, or playback contracts
 - **THEN** request and response payloads remain compatible and no client-visible training endpoint is introduced
-

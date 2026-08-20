@@ -1,35 +1,39 @@
 ## Why
 
-After recommendation-roadmap steps 1-5 are complete, Frux needs to generate semantic vectors for
-newly published videos without weakening the existing hash fallback or coupling remote inference
-retries to Kafka delivery. The video Kafka migration provides the replayable publication stream;
-this roadmap step adds a durable, failure-isolated semantic projection on top of it.
+Frux needs semantic embeddings for newly published public videos, but a managed Embedding API is a
+remote, rate-limited, billable dependency. Publication, Feed, Kafka progress, and
+`hash-ngram-v1` must remain available when that provider is slow, unavailable, over quota, or
+misconfigured. The integration therefore needs a durable handoff and independently retryable job
+lifecycle rather than any online provider call.
 
 ## What Changes
 
-- Require recommendation-roadmap steps 1-5 and `migrate-video-workflows-to-kafka` to be completed
-  and archived before implementation starts.
-- Add a bounded authenticated Go client for the fixed contract provided by
-  `add-semantic-embedding-service`.
-- Extend the existing Kafka `frux.video.published.v1` hash-embedding intake so it persists
-  `hash-ngram-v1` first, then durably upserts a PostgreSQL semantic job before committing the Kafka
-  offset.
-- Execute semantic jobs through bounded PostgreSQL leases and database-owned retry timing; Kafka is
-  the publication source, not the semantic retry scheduler.
-- Persist fixed-version 384-dimensional semantic vectors beside `hash-ngram-v1` in the existing
-  video embedding store.
-- Add bounded configuration, observability, Compose wiring, tests, rollout, and rollback behavior
-  that isolate semantic-service outages from hash generation and unrelated workers.
-- Explicitly exclude additional Kafka retry topics or compatibility headers, historical backfill, semantic user profiles,
-  pgvector/ANN recall, recommendation ranking changes, and media lifecycle work.
+- Depend on the provider-agnostic adapter, fixed
+  `(provider, model, revision, dimension, semantic-text-v1)` contract, validation, privacy, cache,
+  cost/quota, and circuit behavior from `add-semantic-embedding-service`.
+- Keep publication/hash intake limited to idempotently creating or refreshing a PostgreSQL semantic
+  job after the existing hash fact is safe; no provider API call occurs in the Kafka handler.
+- Allow the Kafka source record to commit after durable semantic handoff. Provider API failure
+  occurs later and never blocks publish, Feed, hash generation, or Kafka source progress.
+- Define explicit `pending`, `leased`, `retry`, `succeeded`, and `terminal` states, stable claims,
+  lease fencing, heartbeat/reclaim, bounded backoff plus `Retry-After`, manual requeue, and cleanup.
+- Define source/retry/DLQ publication and commit boundaries so poison records and transient durable
+  handoff failures remain replay-safe without coupling remote API retries to Kafka.
+- Persist the complete provider, model, revision, dimension, canonicalizer, and canonical text hash
+  on both jobs and semantic vector facts; credentials and raw canonical text are never persisted.
+- Re-read and revalidate published/public source text immediately before provider access, then
+  conditionally persist only the matching text hash and fenced lease generation.
+- Keep `hash-ngram-v1` as the permanent fallback and preserve current recommendation behavior.
+- Add a new-public-video availability SLA and rollout coverage gate with bounded backlog, terminal,
+  provider cost/quota, and semantic coverage metrics.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `semantic-video-embeddings`: Defines roadmap-gated Kafka intake, hash-first durable handoff,
-  PostgreSQL semantic jobs, fixed-model persistence, failure isolation, and verification for new
-  video semantic embeddings.
+- `semantic-video-embeddings`: Defines hash-safe Kafka handoff, durable semantic job execution,
+  provider-contract persistence, failure isolation, lease/retry/requeue/cleanup operations, and
+  live semantic SLA/coverage acceptance for new public videos.
 
 ### Modified Capabilities
 
@@ -37,20 +41,11 @@ None.
 
 ## Impact
 
-- Depends on archived recommendation changes
-  `persist-recommendation-training-impressions`,
-  `export-recommendation-training-dataset`,
-  `evaluate-recommendation-policies-offline`,
-  `learn-recommendation-policy-weights`, and
-  `add-semantic-embedding-service`.
-- Also depends on archived `migrate-video-workflows-to-kafka` and its retained
-  `frux.video.published.v1` topic, independent Feed/hash consumer groups, and durable publication
-  recovery boundary.
-- Affects the Go embedding application/domain code, semantic HTTP client, Kafka embedding handler,
-  PostgreSQL embedding and semantic-job persistence, worker composition, configuration, metrics,
-  Compose, tests, and embedding/video operational documentation.
-- Uses model `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` at revision
-  `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`, with persistence key
-  `semantic-minilm-l12-v2@e8f8c211226b894f`.
-- Adds no public API or Web behavior and does not change recommendation recall, ranking, policies,
-  training, or the `hash-ngram-v1` fallback.
+- Depends on archived recommendation prerequisites,
+  `add-semantic-embedding-service`, and `migrate-video-workflows-to-kafka`.
+- Affects Go embedding application/domain code, Kafka hash/publication handling, PostgreSQL job and
+  vector persistence, worker composition, configuration, metrics, tests, and operational docs.
+- Adds no public API, Web behavior, online Feed inference, model runtime/training, vector search,
+  semantic profile, ranking/policy consumption, or historical scan.
+- Provider outage changes semantic freshness only. Hash rows and existing product behavior remain
+  independent.

@@ -1,23 +1,25 @@
 ## Why
 
-Frux will have durable fixed-model semantic video embeddings, but JSONB is unsuitable for bounded approximate-nearest-neighbor retrieval. A separately deployable pgvector projection is needed so later recommendation providers can query semantic neighbors without making pgvector mandatory for ordinary PostgreSQL environments or replacing the durable JSON source of truth.
+Frux will have durable versioned semantic video embeddings whose JSON representation remains authoritative. The confirmed low-data route should use exact cosine search for a small eligible catalog and add HNSW only after configurable row-count and database-capacity gates are satisfied, without making pgvector mandatory for ordinary PostgreSQL environments.
 
 ## What Changes
 
 - Add disabled-by-default pgvector configuration so ordinary deployments retain the existing PostgreSQL image, startup, and migrations without extension checks.
 - For enabled deployments, use a supported pgvector PostgreSQL 17 image and validate database extension/version plus the exact semantic model and 384-dimensional normalized-vector prerequisites.
-- Add an additive, advisory-locked migration for a rebuildable exact-model semantic video vector projection, cosine HNSW index with explicit parameters, and supporting eligibility/reconciliation indexes.
-- Reconcile the projection from durable semantic JSON rows through bounded, idempotent backfill and stale-row deletion, excluding private, deleted, unpublished, and media-unready videos.
+- Add an additive, advisory-locked migration only for the extension, rebuildable exact-model vector projection, and small supporting indexes; never build or rebuild a large HNSW index inside the startup migration lock.
+- Reconcile the projection from authoritative versioned semantic JSON rows through bounded, idempotent equality-checked upserts and stale-row deletion, excluding private, deleted, unpublished, and media-unready videos.
+- Query exact cosine while eligible projection size is below the configured HNSW threshold or no accepted HNSW index exists.
+- Permit guarded concurrent HNSW creation/reindex only when row-count, free disk, WAL budget, CPU headroom, lock/statement-timeout, and maintenance-concurrency gates pass.
 - Add coverage metrics and guarded dry-run, rebuild, purge, rollback, and model-isolated operator procedures.
-- Expose only an infrastructure-owned narrow ANN query interface with validated normalized input, top-K at most 100, at most 20 exclusions, exact-model isolation, readable-video filtering, positive cosine scores, deterministic tie-breaking, and context deadline/cancellation.
-- Add real PostgreSQL migration, query-plan, recall-quality, reconciliation, and modest performance-gate tests.
+- Expose only an infrastructure-owned narrow semantic-neighbor query interface with validated normalized input, top-K at most 100, at most 20 exclusions, exact-model isolation, authoritative-projection equality checks, published/public/media-ready filtering, positive cosine scores, deterministic tie-breaking, and context deadline/cancellation.
+- Add real PostgreSQL migration, exact-query, HNSW-plan, filtered-fill, recall-quality, reconciliation, and modest performance/capacity-gate tests.
 - Explicitly exclude the application `RecallProvider`, policy token, semantic user-profile loading, shadow mode, ranking changes, training, and external vector databases.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `pgvector-recommendation-index`: Defines optional pgvector deployment prerequisites, rebuildable exact-model semantic video projection and HNSW lifecycle, bounded reconciliation and operator controls, observability, a narrow infrastructure ANN query contract, and PostgreSQL acceptance tests.
+- `pgvector-recommendation-index`: Defines optional pgvector deployment prerequisites, authoritative versioned-embedding projection, exact-first query behavior, capacity-gated HNSW lifecycle, bounded reconciliation and operator controls, observability, a narrow infrastructure query contract, and PostgreSQL acceptance tests.
 
 ### Modified Capabilities
 

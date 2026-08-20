@@ -1,6 +1,8 @@
 ## Context
 
-The active planned changes `persist-recommendation-training-impressions`, `export-recommendation-training-dataset`, and `evaluate-recommendation-policies-offline` form a strict dependency chain. They respectively define trusted delivered-card facts, a deterministic privacy-bounded gzip JSONL export, and observational replay/evaluation of existing `PolicyConfiguration` files. This change is sequenced after all three and consumes only their local artifacts and reusable validation/evaluation contracts.
+The current roadmap prioritizes trusted diagnostic impressions, deterministic production-scorer replay, and blinded human semantic evaluation. Broad training export and learned weights are not required for that route. Existing observational data is delivered-card-only, position-biased, sparse, and not yet proven adequate for stable optimization.
+
+This change is an indefinitely deferred conditional design. It becomes implementable only after a separate dated activation record proves, with preregistered numeric thresholds and approvals, that the evidence is sufficient and that learning addresses a decision the low-data route cannot answer.
 
 Production ranking is already a linear sum over eight normalized components: content similarity, session similarity, hotness, freshness, author affinity, follow relation, negative penalty, and exposure penalty. Production policy validation currently caps each absolute feature weight at `MaxFeatureWeight` and total absolute weight at `MaxTotalFeatureWeight`. The first six weights are beneficial signals; the final two are penalties. The learner must improve only these coefficients without changing recall, feature generation, diversity, suppression, retention, rollout, deadlines, or serving.
 
@@ -10,6 +12,7 @@ The exported data is observational and includes only delivered cards. A delivere
 
 **Goals:**
 
+- Keep implementation inactive until sample-size, label-coverage, power, stability, privacy, and resource gates are approved with no unresolved values.
 - Learn only the eight existing linear feature weights from compatible versioned export artifacts.
 - Reuse production policy validation and the evaluator's `observational-utility/v1` label and replay/metric semantics.
 - Use deterministic request-local pairwise optimization with bounded data, sampling, memory, iterations, and output.
@@ -17,11 +20,12 @@ The exported data is observational and includes only delivered cards. A delivere
 - Verify time- or user-safe split integrity, keep test data untouched until final comparison, and fail on leakage.
 - Handle sparse and constant features explicitly, report coverage, and fail when aggregate evidence is inadequate.
 - Emit a complete candidate `PolicyConfiguration` that differs from the baseline only in `feature_weights`.
-- Publish candidate and report atomically only after convergence, integrity, coverage, and evaluator non-regression gates pass.
+- Publish candidate and report atomically only after convergence, integrity, coverage, and strict evaluator improvement gates pass.
 - Use the existing Go toolchain and standard library with no production runtime dependency changes.
 
 **Non-Goals:**
 
+- Acting as a prerequisite for semantic relevance, recall coverage, author/topic diversity, or deterministic scorer replay.
 - Learning or changing recall budgets, provider deadlines, diversity, half-lives, exposure windows, suppression, fallback, rollout, sampling, retention, snapshot settings, or any other policy field.
 - Writing a policy to PostgreSQL, enabling it, assigning a version, activating it, scheduling it, or implementing an A/B system.
 - Causal-lift claims, propensity estimators, exploration, or imputing outcomes for unobserved positions.
@@ -31,7 +35,20 @@ The exported data is observational and includes only delivered cards. A delivere
 
 ## Decisions
 
-### 1. Add a small standalone Go learner after the three prerequisite changes
+### 0. Require preregistered activation before any implementation
+
+The change remains inactive unless a reviewed activation record includes:
+
+- a precise learning hypothesis, primary metric, minimum practically meaningful effect, and why human/replay diagnostics are insufficient;
+- a prospective sample-size calculation with significance level at most 0.05, power at least 0.80, independent-unit definition, train/validation/test counts, and multiplicity handling;
+- minimum validated exposure coverage, positive and negative label counts/rates, maximum missing-label rate, and per-feature variation thresholds;
+- stability requirements across at least two non-overlapping time windows, relevant user/content slices, and multiple fixed seeds or resamples;
+- privacy/security approval for training purpose, deletion, opt-out, pseudonymization, retention, access, and artifact disposal;
+- bounded compute/memory/runtime/storage budgets, owners, and abort thresholds.
+
+Thresholds must be numeric and preregistered before inspecting the activation dataset. If any gate fails, the deferral remains indefinite. Offline semantic evaluation proceeds independently.
+
+### 1. After activation, add a small standalone Go learner after the prerequisite changes
 
 Add `apps/api/cmd/recommendation-policy-learn`. Its required inputs are:
 
@@ -117,18 +134,18 @@ The best checkpoint is the lowest finite validation pairwise loss. Ties within `
 
 Alternative considered: unconstrained optimization followed by final clamping. Rejected because it evaluates and selects infeasible intermediate models and can distort the optimum. Alternative considered: stochastic Adam. Rejected because fixed-order full-batch projected descent is easier to make byte-deterministic in only eight dimensions.
 
-### 7. Freeze sparse or constant features and gate aggregate coverage
+### 7. Freeze sparse or constant features and gate preregistered coverage
 
 Every feature receives training coverage statistics: finite count, zero/nonzero count, minimum, maximum, mean, and pairwise nonzero-difference count. A feature is trainable only when it has at least 100 nonzero rows, at least 1% nonzero coverage, range greater than `1e-9`, and at least 100 training pairs with a nonzero difference. Otherwise it remains exactly at the normalized baseline weight and its freeze reason is recorded.
 
-Default publication coverage gates are:
+Any activated implementation must use the stricter of the preregistered power/coverage plan and these operational floors:
 
 - train: at least 1,000 exposed labeled rows, 100 requests, 30 users, 5,000 pairs;
 - validation: at least 250 exposed labeled rows, 30 requests, 30 users, 1,000 pairs;
 - test: at least 250 exposed labeled rows, 30 requests, 30 users, 1,000 pairs;
 - at least four trainable features, including at least one penalty feature.
 
-Tests may lower thresholds through bounded flags, and every effective threshold is recorded. Structural absence of a component is never treated as sparsity; it is an input error.
+Production candidate publication tests may not lower activation thresholds. Unit fixtures may use explicitly test-only thresholds. Every effective threshold is recorded, and structural absence of a component is never treated as sparsity.
 
 Alternative considered: zero-impute or drop sparse features from the candidate. Rejected because rows are required to have complete components and the output must remain a complete baseline-derived production configuration.
 
@@ -142,22 +159,20 @@ The file is not a policy record: it contains no ID, version, `enabled` flag, act
 
 Alternative considered: set rollout to zero to signal disabled. Rejected because that would violate the invariant that only feature weights differ from the baseline. Inactivity is guaranteed by the local artifact boundary and absence of all persistence/activation behavior.
 
-### 9. Gate publication with the evaluator on the untouched test split
+### 9. Require genuine held-out improvement over baseline
 
 After checkpoint selection, the learner uses the evaluator packages to replay the normalized baseline and candidate over exactly the held-out test request groups. It inherits `served_subset_replay`, `observational-utility/v1`, production tie-breaking/diversity, complete-label metric eligibility, user-cluster bootstrap, and non-causal warnings.
 
-Default required gates at `K=10` are:
+The preregistered primary metric must show both:
 
-- at least 30 eligible user clusters and an available paired interval;
-- candidate-minus-baseline NDCG lower 95% bound at least `-0.005`;
-- average utility delta at least `-0.005`;
-- quick-skip-rate delta at most `+0.005`;
-- combined explicit-negative-feedback-rate delta at most `+0.005`;
-- no evaluator integrity error or new required exclusion category.
+- a point improvement at least as large as the preregistered minimum practically meaningful effect; and
+- a multiplicity-adjusted 95% confidence lower bound strictly greater than zero.
 
-Thresholds are bounded command options and recorded verbatim. These are non-regression gates, not proof of improvement or causal lift. A missing required estimate/interval, inadequate test coverage, or any regression blocks both final artifacts.
+Every preregistered guardrail must be no worse than baseline with a confidence bound on the safe side of zero; quick-skip and explicit-negative rates therefore require an upper bound at or below zero, not a positive tolerance. Improvement must repeat in the required non-overlapping time windows and stability slices, and candidate direction must remain stable across the preregistered seeds/resamples.
 
-Alternative considered: gate only on training/validation loss. Rejected because surrogate pairwise loss can improve while replay metrics regress. Alternative considered: require statistically significant improvement. Rejected because observational served-subset data cannot justify a promotion claim; this change requires only conservative non-regression before producing an inactive candidate.
+Any missing estimate, inadequate power/coverage, instability, baseline parity failure, integrity error, new exclusion category, or tolerated degradation blocks candidate and report publication. Passing is still observational evidence, not causal lift or activation approval.
+
+Alternative considered: gate only on training/validation loss. Rejected because surrogate pairwise loss can improve while replay metrics regress. Alternative considered: allow small degradation margins to produce more candidates. Rejected because a deferred optional learner has no roadmap justification unless it demonstrates real held-out improvement over the production baseline.
 
 ### 10. Produce deterministic atomic artifacts
 
@@ -195,13 +210,13 @@ Additional tests cover row-order invariance, repeated-run bytes, hash pair caps,
 
 ## Migration Plan
 
-1. Implement and validate `persist-recommendation-training-impressions`.
-2. Implement and validate `export-recommendation-training-dataset`, including evaluator replay metadata and deterministic safe splits.
-3. Implement and validate `evaluate-recommendation-policies-offline`, including reusable policy validation, label, replay, metrics, and report packages.
-4. Add the learner command, deterministic optimizer/sampler, artifact writer, fixtures, tests, and operator documentation.
-5. Run synthetic and golden fixtures, then trial the command only on copied local exports; review reports without activating candidates.
+1. Keep the change deferred while the low-data semantic and diagnostic route proceeds.
+2. Create and approve the preregistered activation record before implementing or inspecting an activation dataset.
+3. If activated, validate compatible impression, export, and evaluator contracts and their privacy boundaries.
+4. Add the learner command, deterministic optimizer/sampler, strict-improvement gates, artifact writer, fixtures, tests, and operator documentation.
+5. Trial only on copied local artifacts; review inactive candidates without activation.
 6. Roll back by removing access to the standalone learner binary and deleting local candidate/report files. No database, policy, export, service, or runtime state requires migration or rollback.
 
 ## Open Questions
 
-None. Implementation must preserve the prerequisite contracts and fail closed if their final versions differ from the compatibility registry assumed by this design.
+Activation thresholds and approvals are intentionally unresolved. That is the reason this change remains indefinitely deferred. They must be preregistered and approved before implementation; prerequisite contract mismatches remain fail-closed after activation.

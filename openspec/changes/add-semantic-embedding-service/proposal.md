@@ -1,27 +1,45 @@
 ## Why
 
-After Frux completes the trusted-impression, dataset-export, offline-evaluation, and linear-weight
-learning stages, it needs a reproducible semantic representation of Chinese video titles and
-descriptions before later recommendation work can safely depend on learned text embeddings. This
-roadmap step isolates the Python/model runtime and fixes a standalone bounded contract without
-coupling it to the Go worker, persistence, Kafka, or recommendation policy.
+Frux needs higher-quality semantic text vectors without operating or training a model runtime. The
+previous plan for a local Python/MiniLM service would add model images, PyTorch processes, CPU
+capacity management, and model-artifact lifecycle that Frux does not need to own. This change
+instead establishes a provider-agnostic adapter contract for a managed external Embedding API while
+keeping provider calls out of every synchronous API and Feed path.
 
 ## What Changes
 
-- Add a separately deployable, CPU-oriented Python semantic embedding service under its own app/module with locked dependencies and an immutable, revision-pinned multilingual sentence model.
-- Define authenticated internal endpoints for liveness/readiness, fixed model metadata, and bounded batch embedding only.
-- Define strict normalized title/description input limits, deterministic item ordering and batching, L2-normalized finite-vector output, safe errors, request timeouts, concurrency limits, and overload backpressure.
-- Preload and validate the fixed model before readiness; prohibit request-time downloads, arbitrary model selection, mutable model switching, browser exposure, and raw token or URL storage.
-- Add a container image, Compose/configuration wiring, healthcheck, resource guidance, tests, and service documentation.
-- Explicitly defer all Go recommendation/worker integration, queues, databases, persisted video embeddings, backfills, vector indexes, recommendation policy changes, and model training to later changes, including `integrate-semantic-video-embeddings`.
-- Require `learn-recommendation-policy-weights` to be completed and archived before this change is
-  implemented, preserving the strict sequence in `docs/recommendation-roadmap.md`.
+- Replace the local Python/model-serving plan with a provider-agnostic external Embedding API
+  adapter exposed to Go callers through a narrow application interface.
+- Pin one deployment contract consisting of provider, model, immutable revision, output dimension,
+  and canonicalizer `semantic-text-v1`; requests cannot select or override those values.
+- Define `semantic-text-v1` independently from provider tokenization so normalized public video
+  title/description input and its SHA-256 text hash remain stable across adapter implementations.
+- Send only normalized title and description for videos that are currently published and public.
+  Never send user IDs, video/business IDs, request IDs, behavior data, credentials/tokens, URLs, or
+  private/draft content to the provider.
+- Load provider credentials only from secret/config injection. Credentials, authorization headers,
+  and derived secret values are never stored in PostgreSQL, Redis, Kafka, checkpoints, logs, or
+  metrics.
+- Add text-hash deduplication and cache semantics scoped by the complete contract identity, plus
+  strict response checks for item count/order, exact dimension, finite components, and L2
+  normalization before any vector is accepted.
+- Define bounded timeouts, concurrency, provider rate-limit and `Retry-After` handling, retry
+  classification, a circuit/gate, and bounded cost/quota/latency metrics.
+- Require a new model identity and complete semantic rebuild/backfill before any provider, model,
+  revision, dimension, or canonicalizer change can become active.
+- Keep `hash-ngram-v1` as the permanent fallback. This change adds no online inference, durable
+  live-video job execution, historical backfill, vector retrieval, ranking, profile, or training
+  behavior; those remain owned by later changes.
+- Remove all requirements for a local model process, Python/PyTorch/Sentence Transformers,
+  downloaded model artifacts, inference child processes, CPU worker pools, or a model container.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `semantic-embedding-service`: Defines the fixed multilingual text-embedding contract, bounded authenticated API, deterministic inference behavior, operational lifecycle, deployment, and verification requirements.
+- `semantic-embedding-service`: Defines the provider-neutral managed Embedding API adapter,
+  canonical text/privacy boundary, pinned contract identity, validation, caching, resilience,
+  cost/quota observability, and model-change/rebuild rules.
 
 ### Modified Capabilities
 
@@ -29,9 +47,11 @@ None.
 
 ## Impact
 
-- Adds a new standalone app directory, Python lock/environment files, tests, and container build context.
-- Extends local Compose and environment documentation with one internal-only service and healthcheck.
-- Introduces a fixed initial model contract: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` at revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`, producing 384-dimensional vectors.
-- Depends on the completed recommendation measurement/learning chain through
-  `learn-recommendation-policy-weights`; it is not part of the Kafka message migration.
-- Does not change existing Go APIs, workers, databases, queues, Web behavior, main OpenSpec specifications, or current recommendation requirements.
+- Affects Go application ports, provider adapter/configuration, secret wiring, bounded metrics,
+  tests, and semantic embedding documentation.
+- Depends on the completed recommendation measurement/learning prerequisites documented by the
+  roadmap; it is not part of the Kafka migration.
+- Establishes reusable contracts for `integrate-semantic-video-embeddings` and
+  `backfill-semantic-video-embeddings`.
+- Adds no Python service, model artifact, model training, public endpoint, database job, Kafka
+  consumer, Feed request-path call, Web behavior, or recommendation-policy change.

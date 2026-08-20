@@ -1,308 +1,209 @@
 ## Context
 
-Frux currently has only in-process fallback content vectors in the recommendation area. A later change, `integrate-semantic-video-embeddings`, needs a stable semantic text contract, but adding Python model dependencies to either Go binary would couple release cadence, memory, and failure behavior to the Feed/worker processes. This change therefore establishes an isolated internal inference service and deliberately leaves all callers, persistence, queues, backfills, and ranking behavior untouched.
+Frux currently has `hash-ngram-v1` as a cheap, deterministic content-vector fallback. The original
+semantic plan added a locally hosted Python/MiniLM runtime. The confirmed direction is to use a
+managed external Embedding API instead, so Frux must own the data boundary, adapter contract,
+validation, resilience, and model identity without owning model artifacts or inference processes.
 
-The service is optimized for Chinese title/description text, predictable CPU operation, and local/Compose deployment. It is not a general model-serving platform. Its contract must be reproducible enough that later persisted vectors can be keyed by exact model identity and dimension.
-
-This is recommendation-roadmap step 5. Implementation is gated on completed and archived
-`persist-recommendation-training-impressions`, `export-recommendation-training-dataset`,
-`evaluate-recommendation-policies-offline`, and `learn-recommendation-policy-weights` changes and
-their acceptance criteria. It is not part of the Kafka message migration.
+This is recommendation-roadmap step 5. It establishes reusable primitives only. Actual provider
+calls occur later from durable live semantic jobs and the operator backfill; synchronous publish,
+API, Feed, profile, and ranking paths must never call the provider.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Add a separately deployable internal Python app with a reproducible locked runtime and immutable model artifact.
-- Fix one multilingual model, revision, dimension, normalization mode, and text-composition rule.
-- Expose only health, readiness, metadata, and bounded batch embedding endpoints.
-- Match Frux internal-token strength and constant-time authentication practices.
-- Bound body size, text size, batch size, CPU threads, process count, concurrency, queueing, memory, and time.
-- Make startup readiness, overload, errors, logging, container operation, and tests implementation-ready.
-- Preserve the recommendation-roadmap gate and keep API/Worker startup independent from the service.
+- Define a narrow Go interface independent of any provider SDK or wire format.
+- Pin one provider/model/revision/dimension/canonicalizer tuple per deployment.
+- Define `semantic-text-v1` and stable text hashing independently from provider tokenization.
+- Minimize outbound data to normalized public title/description text only.
+- Validate every returned vector before it can enter a cache or repository.
+- Bound timeout, concurrency, rate-limit handling, circuit behavior, quota, and cost.
+- Make duplicate canonical text reusable through contract-scoped hash caching.
+- Make any contract change require a separately identified rebuild.
 
 **Non-Goals:**
 
-- Calling the service from Go or changing any Go API, worker, feed, or recommendation policy.
-- Kafka producers/consumers, PostgreSQL/Redis access, video embedding storage, backfill, pgvector/ANN, or similarity retrieval.
-- Dynamic model selection, model administration, GPU support, online downloads, fine-tuning, or recommendation-model training.
-- Public/browser endpoints, Web integration, user authentication, or storage of request content.
+- Hosting, downloading, converting, training, or fine-tuning a model.
+- Python, PyTorch, Sentence Transformers, model containers, CPU inference workers, or GPUs.
+- Performing inference in an HTTP handler, Feed request, publication transaction, or Kafka handler.
+- Owning durable live jobs or historical backfill orchestration.
+- Adding vector search, semantic profiles, retrieval, ranking, or policy changes.
+- Replacing or deprecating `hash-ngram-v1`.
 
 ## Decisions
 
-### 1. Create `apps/semantic-embedding` as an independent Python service
+### 1. Use a narrow Go port with provider adapters
 
-The app will contain `pyproject.toml`, `uv.lock`, source under `src/frux_embedding`, tests, a model-fixture directory, and its own `Dockerfile`. It will use Python `3.12.*`, FastAPI/Pydantic for strict HTTP contracts, one Uvicorn coordinator, a fixed pool of at most two killable inference child processes, Sentence Transformers/PyTorch CPU inference, and `uv` for hash-locked installation. Direct and transitive package versions are committed in `uv.lock`; the final Python base image and `uv` bootstrap image are referenced by digest.
+The application-facing port accepts only a batch of already canonicalized public texts and returns
+vectors in the same positional order:
 
-The coordinator owns authentication, validation, admission, deadlines, and response assembly. Native
-model execution occurs only in isolated child processes so a hung PyTorch/native kernel can be
-terminated without wedging the HTTP process. The service is separate from Frux's Go four-layer
-module convention because it owns no Frux domain facts or persistence.
-
-All preload, initial-pool, and replacement children use the `spawn` start method. The coordinator
-passes only an immutable importable runtime specification containing the fixed model path, fixture
-path, and bounded configuration. Each child constructs and loads its own offline `ModelRuntime`;
-the coordinator never loads Torch/model state and never pickles a loaded runtime. This remains safe
-when replacement starts from an asyncio coordinator thread or `to_thread` helper.
-
-Alternative considered: embed Python or ONNX inference in the Go worker. Rejected because this proposal must not integrate with the worker, and it would mix model/runtime lifecycle with queue processing.
-
-Alternative considered: a general-purpose model server. Rejected because model selection and broad serving features create unnecessary attack surface and an unstable downstream contract.
-
-### 1a. Enforce the roadmap and composition boundary
-
-Before implementation, the four preceding recommendation changes must be archived and their
-measurement/learning acceptance gates satisfied. When this change is eventually applied, Compose may
-build and run the standalone service, but API and Worker do not depend on, wait for, or call it.
-This change adds no Kafka topic or consumer group, PostgreSQL table, Redis key, Go client, or
-recommendation behavior.
-
-### 2. Pin one multilingual MiniLM contract
-
-The initial model is:
-
-- model: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
-- Hugging Face revision: `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`
-- license: Apache-2.0
-- output dimension: 384
-- maximum sequence length: 128 tokens
-- output dtype: `float32`
-- pooling: model-packaged mean pooling
-- post-processing: L2 normalization
-- device: CPU
-
-This model is small enough for bounded CPU deployment, supports Chinese and other Frux-relevant languages, and has a widely used Sentence Transformers contract. The immutable revision is downloaded during image build into `/opt/frux/models/paraphrase-multilingual-MiniLM-L12-v2`, owned by root and read-only at runtime. `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and local-files-only loading prevent runtime downloads. Constants in the app, not environment or request fields, define model identity and behavior.
-
-At startup, the loader verifies the expected model/revision metadata and a committed Chinese fixture vector before readiness. This catches accidental artifact, dependency, pooling, or normalization drift even when filenames still exist.
-
-Alternative considered: `multilingual-e5-small`. Rejected for the initial contract because it requires query/document prefix semantics that are unnecessary for one title/description document encoder and easier for later callers to misuse.
-
-Alternative considered: an ONNX quantized artifact. Rejected initially because lower memory would come with a second conversion/quantization contract. The first version prioritizes a direct pinned upstream Sentence Transformers artifact and deterministic fixtures; ONNX can be a separately versioned future model.
-
-### 3. Use a minimal versioned HTTP contract
-
-Endpoints:
-
-| Method | Path | Authentication | Response |
-| --- | --- | --- | --- |
-| `GET` | `/health/live` | none | process-only `{"status":"live"}` |
-| `GET` | `/health/ready` | none | `200 ready` only after preload/self-check, otherwise `503 not_ready` |
-| `GET` | `/internal/v1/model` | `X-Internal-Token` | exact model metadata and fixed limits |
-| `POST` | `/internal/v1/embeddings` | `X-Internal-Token` | exact model metadata plus ordered item vectors |
-
-The app registers no documentation UI, CORS middleware, cookies, static files, metrics endpoint, or administrative/model-loading route. Default Compose uses `expose: 8081` without `ports`, so only the Compose network can reach it. Health endpoints reveal only process state and are unauthenticated so orchestration can probe without placing the shared token in command arguments. Metadata and inference always require the internal token.
-
-Embedding request:
-
-```json
-{
-  "items": [
-    {
-      "id": "video:1001",
-      "title": "城市夜景",
-      "description": "雨后的街道与霓虹灯"
-    }
-  ]
+```go
+type SemanticEmbedder interface {
+    Embed(ctx context.Context, inputs []CanonicalText) (EmbeddingBatch, error)
 }
 ```
 
-Successful response:
+`CanonicalText` contains canonical text and its `semantic-text-v1` hash. It contains no user ID,
+video ID, request ID, URL, token, behavior field, lifecycle field, or provider option. The adapter
+maps this neutral shape to one configured provider API. Provider SDK types remain in
+infrastructure; application and domain packages depend only on the narrow port and bounded error
+classes.
 
-```json
-{
-  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-  "revision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
-  "dimension": 384,
-  "items": [
-    {
-      "id": "video:1001",
-      "index": 0,
-      "embedding": [0.0123]
-    }
-  ]
-}
-```
+The adapter performs one network attempt. It never hides retries. Durable live jobs and backfills
+own retry count, delay, lease/checkpoint safety, and terminal classification.
 
-The example vector is abbreviated only in documentation; runtime responses require exactly 384 components. Metadata additionally returns `max_sequence_tokens`, `dtype`, `normalized`, `device`, and request limits.
+### 2. Pin one immutable deployment contract
 
-Alternative considered: return embeddings as base64 or a binary tensor format. Rejected because small bounded JSON batches simplify the first internal contract and tests; the maximum response remains bounded by 32 × 384 floats.
+Startup requires bounded configuration for:
 
-### 4. Normalize and bound text before tokenization
+- provider identifier;
+- API base endpoint selected by the adapter;
+- model identifier;
+- immutable model revision or provider snapshot identifier;
+- exact output dimension;
+- canonicalizer `semantic-text-v1`;
+- request timeout, maximum batch, maximum in-flight requests, and rate limit;
+- provider pricing revision and bounded budget/quota settings.
 
-The JSON decoder rejects malformed JSON, trailing content, unknown fields, missing fields, and duplicate IDs. The ASGI receive path counts bytes and stops at 131,072 bytes before normal parsing. A batch contains 1–32 items.
+Requests cannot override any of these fields. The complete tuple
+`(provider, model, revision, dimension, canonicalizer)` is the semantic identity. The full tuple is
+returned with validated results and must be persisted by downstream jobs and vector rows.
+Credentials are injected separately from the secret/config mechanism and are never part of that
+identity.
 
-Each item has:
+A provider, model, revision, dimension, or canonicalizer change creates a new identity. It cannot
+rewrite existing rows in place or silently become compatible. Deployment of the new identity
+requires a planned rebuild/backfill, coverage validation, and explicit consumer cutover while
+`hash-ngram-v1` remains available.
 
-- `id`: 1–128 ASCII characters matching `[A-Za-z0-9][A-Za-z0-9._:-]*`, unique in the batch;
-- `title`: required, 1–200 Unicode code points after normalization;
-- `description`: required but may normalize to empty, 0–2,000 code points;
-- no other fields.
+### 3. Define `semantic-text-v1` independently from providers
 
-Title and description are independently normalized with Unicode NFKC, edge-trimmed, and all Unicode whitespace runs collapsed to one ASCII space. Remaining Unicode control and surrogate categories are rejected. The model input is the title alone when description is empty, otherwise `title + "\n" + description`. Aggregate normalized title-plus-description content is capped at 16,384 code points per request. Limits are evaluated after normalization to prevent compatibility characters or whitespace from bypassing the contract.
+The canonicalizer:
 
-The service does not interpret URLs, tokens, markup, or language; they remain ordinary bounded text and are never logged or persisted. The model's fixed 128-token truncation remains part of metadata, while code-point bounds protect decoding and tokenization work.
+1. accepts title and description only after the caller has established that the video is published
+   and public;
+2. normalizes each field with Unicode NFKC;
+3. trims edges and collapses each Unicode-whitespace run to one ASCII space;
+4. rejects control, surrogate, and invalid Unicode scalar values;
+5. enforces title length 1–200 code points and description length 0–2,000 code points;
+6. composes `title` when description is empty, otherwise `title + "\n" + description`;
+7. computes lowercase SHA-256 over UTF-8 bytes of
+   `"semantic-text-v1\n" + canonical_text`.
 
-Alternative considered: accept one arbitrary `text` field. Rejected because preserving title/description structure now prevents every future caller from inventing an incompatible concatenation rule.
+Provider tokenization, truncation, prefixes, and billing transformations are adapter concerns and
+cannot change the canonical text or hash. If provider-specific prefixes are required, they are a
+fixed part of that adapter/model revision and are covered by contract tests.
 
-### 5. Make inference ordered and deterministic
+### 4. Enforce a minimal outbound privacy boundary
 
-At startup, one 180-second monotonic outer deadline covers the killable preload process, packaged
-model/metadata/fixture validation, and initialization of every configured inference child. Each fixed
-inference child repeats the same immutable preload before accepting work, sets deterministic CPU
-seeds/settings, enables evaluation and no-gradient/inference mode, disables tokenizer parallelism,
-and fixes PyTorch/BLAS/OpenMP threads to two. A request is split into consecutive chunks of 8 and
-encoded sequentially with `normalize_embeddings=True`, without dynamic batching across requests.
-Results are converted to `float32`, checked for shape `(n, 384)`, finiteness, and unit norm, then
-reassembled in original order.
+The provider request contains only canonical text strings in batch order and fixed model selection
+required by the provider. It never contains Frux user IDs, video/business IDs, request or trace IDs,
+interaction/behavior data, access tokens, JWTs, internal tokens, source URLs, object-store URLs,
+private/unpublished drafts, or arbitrary metadata.
 
-Every output includes the caller ID and zero-based request index. Any item failure fails the complete request; partial vectors are never returned. Committed Chinese and mixed-language fixture vectors compare all 384 components at `atol=1e-6`, `rtol=1e-5`. Tests also compare repeated, single-item, multi-item, and chunk-boundary calls.
+The adapter correlates results by local position; it does not send business identifiers as provider
+item IDs. Logs and metrics contain no raw/canonical text or text hash. Request/response capture,
+provider payload logging, and SDK debug logging are disabled. Provider credentials come only from
+secret/config injection and are not stored in PostgreSQL, Redis, Kafka, cache entries,
+checkpoints, logs, traces, or metrics.
 
-Alternative considered: cross-request dynamic batching for throughput. Rejected because it complicates deadlines, fairness, deterministic behavior, and backpressure for a small initial CPU service.
+### 5. Deduplicate and cache by canonical text hash
 
-### 6. Match Frux service authentication and secret handling
+Before an API call, the service deduplicates the batch by
+`(provider, model, revision, dimension, canonicalizer, text_hash)`. A narrow vector-cache port may
+return a previously validated vector for that exact key. Cache entries contain only the complete
+contract identity, text hash, validated vector, and bounded timestamps; they do not contain raw
+text or credentials.
 
-`FRUX_INTERNAL_TOKEN` is the only credential. Startup trims and validates it using the same Frux policy: at least 32 characters, not the known placeholder, and at least three of lowercase, uppercase, digit, and other classes. Protected requests trim `X-Internal-Token` and use `hmac.compare_digest` against the configured value. Missing and mismatched credentials use the existing stable codes `AUTH_INTERNAL_TOKEN_REQUIRED` and `AUTH_INVALID_INTERNAL_TOKEN`.
+Cache hits are validated with the same dimension, finiteness, and norm rules as provider results.
+Corrupt or mismatched entries are ignored and reported with a bounded result. Successful provider
+results are inserted idempotently. Cache failure may reduce reuse but must not weaken vector
+validation or cause an online request-path call.
 
-JWTs, cookies, query parameters, and JSON fields are not credentials. The default Compose service receives the same secret as API/worker but has no browser route or host port. Authentication executes before body parsing or capacity admission so unauthorized requests cannot consume tokenizer/model work.
+### 6. Validate the complete provider response
 
-Both the configured token and supplied header must be printable ASCII. The request boundary rejects
-non-ASCII header bytes with bounded `401 AUTH_INVALID_INTERNAL_TOKEN` before calling
-`hmac.compare_digest`, preventing Python's non-ASCII string comparison from raising `TypeError`.
+The adapter bounds request and response bodies and requires exactly one result for each unique input
+in deterministic order. It rejects partial, missing, duplicated, reordered, or extra items and any
+response that cannot be tied to the configured model contract.
 
-Logs, exceptions, validation details, and test snapshots must never contain either token. Timing tests will not attempt to prove constant-time behavior statistically; unit tests will verify the comparison path uses `hmac.compare_digest`, while HTTP tests cover all auth outcomes.
+Each vector must have the exact configured dimension, contain only finite values, and have a
+positive norm. The service applies deterministic L2 normalization, then verifies unit norm within
+`1e-5`. A batch is atomic: if one vector fails, none from that provider response enters cache or
+persistence. Defensive normalization does not make a wrong dimension, NaN, infinity, zero vector,
+or wrong model acceptable.
 
-Production model and fixture paths are fixed constants and are not supported environment overrides.
-Unknown `FRUX_EMBEDDING_*` variables fail configuration. Tests that need alternate artifacts inject
-`Settings` and factories explicitly. Uvicorn logging is configured so bind/start failures cannot emit
-raw OS detail; a caught `SystemExit` is converted to the same bounded startup category reporting used
-by other controlled startup failures.
+### 7. Bound timeout, rate limits, retry hints, and the circuit gate
 
-Alternative considered: a new embedding-specific token. Rejected for this first internal service because the requirement is consistency with current Frux internal-token practice. Secret separation can be introduced later as a coordinated security change.
+Configuration sets one end-to-end provider timeout, maximum batch size, maximum in-flight requests,
+and local QPS/burst limits within documented safe ranges. Capacity is acquired before a payload is
+built. Cancellation stops the request and releases capacity.
 
-### 7. Apply explicit capacity, timeout, and backpressure limits
+Provider `429`/quota responses preserve only a parsed, bounded `Retry-After` duration; response
+bodies and headers are not exposed. Network failure, timeout, `429`, and bounded `5xx` results are
+retryable by durable callers. Invalid input, authentication/authorization, unknown model/revision,
+dimension/contract mismatch, malformed response, and local configuration are terminal until an
+operator changes configuration or manually requeues work.
 
-The runtime uses one HTTP coordinator, two inference child processes/slots, and a bounded admission
-counter for eight waiting requests. Authentication and input validation occur before queue
-admission. If the admitted waiting capacity is full, the service returns `429 OVER_CAPACITY` and
-`Retry-After: 1`. An admitted request has at most 2 seconds to acquire an inference slot. The
-complete ASGI lifecycle, including body receive/parsing, authentication, validation, queue time,
-inference, vector validation, serialization, and response send, has a 15-second deadline; timeout
-returns no partial result, terminates the executing child, releases admission immediately, cancels a
-stalled send, and asynchronously replaces the slot with a freshly preloaded process.
-Replacement preload failures retry with bounded 100 ms, 500 ms, 1 s, 2 s, then capped 5 s backoff
-until shutdown. The pool reports currently live workers; readiness requires the full configured
-capacity and returns to ready only after all missing replacements have successfully preloaded.
+A replica-local circuit/gate opens after a bounded rolling threshold of retryable failures or
+immediately on authentication, quota exhaustion, or contract mismatch. While open, calls fail fast
+with a bounded class. Half-open probes are rate-limited. The gate never blocks API/Feed startup or
+hash work because only asynchronous workers/backfills invoke it.
 
-Supported configuration:
+### 8. Measure quota, cost, and safety without high-cardinality data
 
-| Variable | Required/default | Validation |
-| --- | --- | --- |
-| `FRUX_INTERNAL_TOKEN` | required | existing strong-token policy |
-| `FRUX_EMBEDDING_BIND_HOST` | `0.0.0.0` | IP literal only |
-| `FRUX_EMBEDDING_PORT` | `8081` | 1–65535 |
-| `FRUX_EMBEDDING_MAX_CONCURRENCY` | `2` | integer 1–2 |
-| `FRUX_EMBEDDING_MAX_QUEUE` | `8` | integer 0–8 |
-| `FRUX_EMBEDDING_QUEUE_TIMEOUT_MS` | `2000` | integer 100–2000 |
-| `FRUX_EMBEDDING_REQUEST_TIMEOUT_MS` | `15000` | integer 1000–15000 and greater than queue timeout |
-| `FRUX_EMBEDDING_LOG_LEVEL` | `INFO` | `WARNING`, `INFO`, or `DEBUG` |
+Metrics cover calls, unique texts, cache hits/misses, duration, result class, throttling,
+`Retry-After`, circuit state, input code points, provider billable units, estimated cost, quota
+remaining, and budget-gate pauses. Labels use closed registries and do not include provider/model
+strings, IDs, text, hashes, URLs, credentials, raw errors, or retry numbers.
 
-Any unknown `FRUX_EMBEDDING_*` variable fails startup so misspellings cannot silently remove bounds. `OMP_NUM_THREADS=2`, `MKL_NUM_THREADS=2`, `OPENBLAS_NUM_THREADS=2`, `NUMEXPR_NUM_THREADS=2`, and `TOKENIZERS_PARALLELISM=false` are fixed by the image/Compose contract and checked on startup. Uvicorn workers are fixed at one rather than configurable.
+Pricing uses an explicitly configured provider pricing revision. A local estimator computes
+billable units/cost before calls for budgeting; actual provider-reported usage, when available, is
+recorded after validation. Missing or stale pricing prevents cost-authorized backfill execution but
+does not affect `hash-ngram-v1`.
 
-Compose applies a 2-CPU/2-GiB limit and documents a 1-CPU/1-GiB minimum reservation. Operators needing more throughput scale replicas horizontally behind an internal load balancer rather than increasing per-process bounds.
+### 9. Keep all invocation asynchronous
 
-The coordinator does not rely on Python thread cancellation for native kernels. Every inference runs
-in a dedicated child process; an end-to-end timeout or request cancellation terminates that child,
-discards all output, and starts a replacement. No timed-out native call retains a slot or survives as
-an untracked background process.
+This change supplies the canonicalizer, identity, port, adapter, validation, cache contract, and
+operational controls. It exposes no public or internal embedding HTTP endpoint. The later live
+integration may invoke the port only after claiming a durable PostgreSQL semantic job. The backfill
+may invoke it only inside a resumable operator run.
 
-While inference is active, the coordinator also reads the ASGI receive channel for
-`http.disconnect`. Disconnect cancellation follows the same kill/recycle path as deadline
-cancellation and releases admission before another request is accepted.
-
-Alternative considered: an unbounded executor queue with only an HTTP timeout. Rejected because timed-out work would continue accumulating and exhaust memory/CPU.
-
-### 8. Fail closed on startup and return safe bounded errors
-
-Startup has one 180-second outer timeout covering settings validation, killable model preload,
-metadata/fixture checks, and complete inference-pool initialization. Workers consume only the
-remaining outer budget; they do not each receive an independent 180-second timeout. Any failure
-terminates startup children, logs a stable startup result class, and exits non-zero; it does not
-start degraded with a substitute model. Inference-process recycling reloads only the same packaged
-immutable model contract.
-
-Errors use the Frux envelope:
-
-```json
-{"code":"INVALID_REQUEST","error":"invalid request"}
-```
-
-Stable categories include authentication errors, `INVALID_JSON`, `INVALID_REQUEST`, `REQUEST_TOO_LARGE`, `OVER_CAPACITY`, `INFERENCE_TIMEOUT`, `NOT_READY`, and `INTERNAL_ERROR`. Messages are generic and do not echo input or infrastructure details. Custom exception handlers replace framework validation/trace output with this envelope and bound all response bodies.
-
-Operational request logs contain only `route`, `status`, `duration_ms`, bounded `result`, and current
-live `capacity`. Route and result values come from closed registries. Logs exclude headers, bodies,
-normalized text, item IDs, vectors, tokens, raw paths, URLs, model filesystem paths, cache URLs, and
-raw exception text. Uvicorn access logging remains disabled. The service has no database, queue,
-cache, request-history file, or analytics sink.
-
-The ASGI boundary reserves the two active plus eight waiting request budget before reading an
-embedding body, and Uvicorn applies a small bounded coordinator connection limit. Production uses
-only importable top-level spawn targets and immutable primitive runtime specifications, so bootstrap
-does not serialize request data or loaded model state. The target redirects stdout/stderr before
-model construction, while bootstrap failures are observed as a closed pipe and reported only
-through the bounded startup or worker-unavailable category.
-
-### 9. Package the model in a hardened Compose service
-
-The multi-stage image resolves locked Python dependencies and downloads the model revision during build. The runtime stage copies only the virtual environment, app, fixtures, and model snapshot. It runs as a numeric non-root user, sets the root filesystem read-only in Compose, sets `TMPDIR=/run/frux-tmp`, mounts only that path as a small `tmpfs` with size/noexec/nosuid/nodev options, drops all Linux capabilities, and uses `no-new-privileges`.
-
-The Compose service is named `semantic-embedding`, has no dependency on PostgreSQL, Redis, Kafka, API, worker, or Web, and publishes no host port. Its readiness healthcheck uses Python's standard library against `127.0.0.1:8081/health/ready`, avoiding an extra curl dependency. Health timing allows up to the 180-second preload window. The model directory remains read-only.
-
-Service documentation will be `docs/modules/semantic-embedding.md`; `docs/modules/README.md`, `docs/engineering.md`, `docs/architecture.md`, `docs/deployment.md`, and the relevant README/configuration examples will be updated during implementation because this adds a new deployable module. Those documentation updates describe the standalone boundary and must not claim Go integration.
-
-### 10. Verify behavior at unit, contract, image, and Compose levels
-
-Pytest coverage will include:
-
-- settings and strong-token validation;
-- NFKC/whitespace/control normalization and all exact/over-limit boundaries;
-- strict schema, malformed/trailing JSON, body cap, duplicate IDs, and unknown fields;
-- auth before body/inference, using the constant-time helper;
-- exact metadata and response schema;
-- real-model deterministic Chinese/mixed fixtures, dimension, dtype, finiteness, norm, repeatability, identity/order, and chunk boundaries;
-- startup fixture failure and readiness behavior;
-- capacity admission, queue timeout, request timeout, release after cancellation/error, and no partial output;
-- safe error envelopes and log redaction.
-
-Container contract tests will start the built image with network disabled after construction, verify non-root/offline behavior, inspect metadata, and run real embeddings. Compose validation will verify no host port, resource/security settings, and a healthy service. The implementation gate is the locked pytest suite, image build and image contract suite, `docker compose config`, and `openspec validate --all --strict`.
+Publication, Feed, hash generation, and API handlers may create or observe durable state but cannot
+wait for the provider. Provider failure therefore changes semantic freshness only; it cannot fail a
+publish request, block Feed, or remove hash fallback.
 
 ## Risks / Trade-offs
 
-- [The model image and Python/PyTorch dependencies are large] → Keep the service isolated, use a multi-stage build, package only the pinned snapshot/runtime, and document the image/resource cost.
-- [CPU floating-point output can vary slightly across supported hosts] → Pin runtime dependencies and thread settings, use full-vector fixtures with tight tolerances rather than byte equality, and version any future runtime/model change.
-- [The 128-token model limit can truncate long descriptions] → Expose the limit in metadata, keep deterministic title-first composition, and treat a different model/sequence length as a new contract.
-- [A native inference call can outlive an HTTP timeout] → Run it only in a killable child process, terminate/recycle that process at the deadline, release admission, and verify no process or input-bearing log leaks.
-- [Two concurrent inferences can approach the 2-GiB limit on some CPUs] → Add an image smoke/load test under the stated limit, permit reducing concurrency to one, and scale horizontally instead of raising limits.
-- [Sharing `FRUX_INTERNAL_TOKEN` broadens the effect of that secret] → Keep the service network-internal, never log it, validate strength, and leave per-service credentials to a coordinated future change.
-- [Unauthenticated health endpoints reveal process state] → Return status only, expose no host port, and keep all metadata/inference protected.
+- [Provider outage or throttling creates backlog] -> Durable callers own retry timing; local gates
+  fail fast and `Retry-After` is bounded.
+- [Provider silently changes a model] -> Pin an immutable revision/snapshot, validate dimension and
+  fixtures, and require a new identity plus rebuild for any change.
+- [Sensitive context leaks externally] -> Send only canonical published/public title/description
+  text and prohibit all identifiers, behavior, URLs, drafts, and credentials.
+- [Duplicate text wastes quota] -> Deduplicate and cache by the full contract plus text hash.
+- [Pricing or quota changes unexpectedly] -> Version pricing configuration, expose cost/quota
+  metrics, and stop cost-authorized work when the budget gate is closed.
+- [Managed API dependence reduces local control] -> Keep the adapter replaceable and
+  `hash-ngram-v1` permanently available.
 
 ## Migration Plan
 
-1. Verify recommendation-roadmap steps 1–4 are completed, archived, and have met their acceptance
-   gates.
-2. Add `apps/semantic-embedding` with locked Python environment, pinned model build, source,
-   fixtures, and tests.
-3. Build and run the image independently with runtime network disabled; verify startup fixture,
-   metadata, deterministic vectors, auth, limits, and non-root filesystem behavior.
-4. Add the internal-only `semantic-embedding` service to Compose with the shared secret,
-   healthcheck, offline/thread settings, and resource/security bounds, without API/Worker
-   dependencies.
-5. Update module, engineering, architecture, deployment, and root documentation to state that no
-   Frux caller consumes the service yet.
-6. Validate the locked test suite, image contract tests, `docker compose config`, and strict
-   OpenSpec validation.
-7. Rollback by removing/stopping only the semantic embedding container. Existing API, worker, Web,
-   PostgreSQL, Redis, Kafka, and recommendation behavior require no data or code rollback.
+1. Verify roadmap prerequisites are complete and archived.
+2. Add the neutral canonicalizer, contract identity, error taxonomy, embedder/cache ports, and unit
+   tests.
+3. Add one configured provider adapter with secret-only credentials, bounded transport, strict
+   validation, cost estimator, and circuit/gate tests.
+4. Add configuration, metrics, redaction, provider sandbox/fixture contract tests, and
+   documentation.
+5. Integrate only through durable live jobs and the resumable backfill changes.
+6. For any future contract change, deploy a new identity, rebuild coverage, validate it, then
+   explicitly cut consumers over; never mutate existing identity rows in place.
+
+Rollback disables provider calls or removes the adapter configuration. Existing semantic facts and
+all `hash-ngram-v1` rows remain intact.
 
 ## Open Questions
 
-None. Model identity, vector dimension, input limits, resource bounds, API shape, authentication, deployment isolation, and deferred integration are fixed by this proposal.
+None. Provider selection is adapter configuration, while identity pinning, privacy, canonicalization,
+validation, resilience, asynchronous-only use, and rebuild requirements are fixed.

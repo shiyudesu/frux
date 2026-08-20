@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Shadow Recall Isolation
-Recommendation MAY execute sampled semantic ANN recall for aggregate shadow evaluation only when the shadow evaluator is explicitly configured. Shadow execution SHALL remain outside production candidate merge and MUST NOT change candidate IDs, recall reasons, source scores, degraded state, ranking, diversity, snapshots, request logs, served-candidate evidence, outcomes, attribution, cursors, response fields, or response latency.
+Recommendation MAY execute sampled semantic ANN recall for aggregate shadow evaluation only when the shadow evaluator is explicitly configured. Shadow execution SHALL remain outside production candidate merge and MUST NOT change candidate IDs, recall reasons, source scores, degraded state, ranking, diversity, snapshots, recommendation request logs, served-candidate evidence, outcomes, attribution, cursors, response fields, or response latency. Any provider-mixing or ranking work SHALL occur only in an isolated copied simulation.
 
 #### Scenario: Sampled shadow recall returns candidates
 - **WHEN** semantic ANN shadow evaluation returns candidate IDs for a recommendation request
@@ -14,6 +14,10 @@ Recommendation MAY execute sampled semantic ANN recall for aggregate shadow eval
 #### Scenario: Active policy omits semantic ANN
 - **WHEN** a sampled request uses a policy without the active `semantic_ann` provider
 - **THEN** shadow evaluation remains observational and does not add, modify, or activate a policy entry
+
+#### Scenario: Shadow simulates future mixing and ranking
+- **WHEN** copied semantic and baseline candidates are evaluated with future reservations, pool limits, and semantic ranking
+- **THEN** only aggregate shadow observations are produced and no simulated candidate enters production response, snapshot, log, evidence, or attribution state
 
 #### Scenario: Shadow evaluation is disabled
 - **WHEN** shadow sampling is zero

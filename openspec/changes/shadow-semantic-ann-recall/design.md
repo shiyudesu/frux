@@ -1,164 +1,124 @@
 ## Context
 
-Frux already has bounded active recall execution with per-provider budgets/deadlines, non-blocking process-local admission, candidate merge, ranking, snapshots, sampled request logs, served-candidate evidence, and attribution. The narrowed `add-pgvector-recommendation-recall` change adds the existing application-level `semantic_ann` provider but deliberately leaves bootstrap policies unchanged and defers shadow evaluation.
+`add-pgvector-recommendation-recall` registers a dormant semantic provider, defines fixed session/recent/long-term fusion, separate semantic capacity, deterministic provider reservations, and an explicit semantic ranking feature, but activates no policy. This shadow change is therefore the mandatory gate before any active gray proposal.
 
-This change depends explicitly on:
-
-- `enable-pgvector-recommendation-index` for the validated, bounded, cancellable ANN query interface and index capacity controls;
-- `project-semantic-user-interest` for compatible recent/long-term semantic profile reads;
-- the narrowed `add-pgvector-recommendation-recall` for one provider invocation contract, profile selection, result classes, budget/deadline bounds, and active-path capacity behavior.
-
-Shadow work is observational only. It must run on production-shaped request context without entering candidate merge or any durable recommendation artifact. Because a provider or database driver may ignore context cancellation, launching one goroutine per sampled request without admission would still be unsafe.
+Shadow execution must use production-shaped context without entering response candidates or any production artifact. It must evaluate operational safety and likely retrieval usefulness at low traffic volume, including cases where large statistical samples are unavailable. Observational shadow data cannot prove causal online lift.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Deterministically sample recommendation requests by user, request, and normalized scene with default-zero PPM configuration.
-- Invoke the existing semantic ANN provider asynchronously without extending response latency or changing any production result or durable record.
-- Preserve active provider capacity while bounding shadow work with a distinct no-queue in-flight limit and the existing provider deadline rules.
-- Compare bounded unique ANN IDs in memory with bounded content-similarity and session-continuation ID sets.
-- Emit fixed-label aggregate metrics for execution, profile availability, latency, candidate counts, and overlap.
-- Provide a repeatable operator report/runbook with explicit data-sufficiency and operational acceptance gates.
-- Prove cancellation, shutdown, capacity, failure isolation, metric bounds, and production-result invariance.
+- Default sampling to zero and deterministically select bounded requests when enabled.
+- Invoke the registered provider asynchronously with separate no-queue shadow capacity.
+- Preserve response latency, production candidates, snapshots, recommendation request logs, evidence, and attribution.
+- Measure latency, errors, capacity, profile/index coverage, staleness, and result fill.
+- Measure unique semantic contribution, pre-rank pool survival, simulated rank survival, author/topic diversity, and Fresh/Hot displacement.
+- Add a small golden semantic-relevance set and human-review procedure that does not require large traffic samples.
+- Produce an operator report with denominators, uncertainty, and explicit no-causal-lift language.
 
 **Non-Goals:**
 
-- pgvector extension, migration, projection, index, reconciliation, query-plan, or embedding/profile projection changes.
-- Semantic provider scoring, profile selection, exclusions, or active policy behavior changes.
-- Candidate merge, ranking features/weights, snapshots, request logs, evidence, attribution, training, policy activation, or online experiments.
-- Persisting per-request shadow facts, candidate IDs, vectors, or overlap rows.
-- A/B assignment, online relevance measurement, public API, or Web changes.
+- Any production policy activation, candidate merge, ranking, snapshot/log/evidence/attribution mutation, or response change.
+- pgvector/profile projection changes, model training, A/B assignment, or causal online experimentation.
+- Persisting per-request shadow candidates, vectors, or identifiers.
+- Treating overlap, diversity, or golden relevance as proof of online lift.
 
 ## Decisions
 
-### 1. Use a versioned deterministic PPM sampler
+### 1. Use a versioned deterministic PPM sampler with default zero
 
-Add shadow configuration under recommendation composition:
+Configuration includes:
 
-- `sample_ppm`: integer `0..1_000_000`, default `0`;
-- `budget`: integer `1..100`, default `20`;
-- `deadline_ms`: integer `25..500`, default `250`;
-- `max_in_flight`: integer `1..16`, default `2`;
-- `comparison_limit`: integer `1..100`, default `100`.
+- `sample_ppm`: `0..1_000_000`, default `0`;
+- `budget`: `1..100`, default `20`;
+- `deadline_ms`: `25..500`, default `250`;
+- `max_in_flight`: `1..16`, default `2`;
+- `comparison_limit`: `1..100`, default `100`;
+- `simulated_pool_limit`: `1..500`, default matching the production pre-rank cap;
+- `simulated_top_k`: `1..100`, default matching response size.
 
-`sample_ppm=0` disables construction/admission of shadow calls. For an eligible recommendation request, the sampler hashes a versioned, length-delimited tuple of positive `user_id`, canonical `request_id`, and normalized scene with SHA-256, maps the first 64 bits to `[0,1_000_000)`, and samples when the bucket is below `sample_ppm`. The same tuple is stable across retries and instances; changing the algorithm requires a new sampler version. The hash and tuple are not logged or persisted.
+The sampler hashes a versioned, length-delimited tuple of positive user ID, canonical request ID, and normalized scene with SHA-256. `sample_ppm=0` performs no admission, goroutine, profile read, or query. The tuple/hash is never logged or persisted.
 
-The evaluator uses its own validated budget/deadline rather than requiring an active policy to contain `semantic_ann`; this is evaluation configuration, not policy activation. It reuses the provider's accepted bounds and does not alter bootstrap or selected policy JSON.
+### 2. Copy bounded provider-local inputs and never attach shadow state
 
-Alternative considered: random sampling per process. Rejected because retries and replicas would produce inconsistent cohorts and make aggregate interpretation harder.
+Before production merge, the service copies bounded provider-local IDs, scores, author IDs, and allowlisted topic/category IDs for Fresh, Hot, content similarity, followed author, and session continuation. Missing/failed/omitted providers receive fixed unavailable states; shadow never reruns them.
 
-### 2. Capture comparison sets before merge, then launch shadow work without awaiting it
+After production recall state is available, sampling and no-queue admission occur. The evaluator receives immutable copied scalars and bounded semantic request context, never mutable candidates, response objects, snapshot builders, request-log builders, evidence writers, attribution inputs, or pooled HTTP objects. It returns only aggregate observations to a shadow metric sink.
 
-Active recall retains bounded unique ID snapshots for only the `content_similarity` and `session_continuation` provider results before merge. Each set is truncated deterministically to `comparison_limit`, copied into a small immutable shadow input, and discarded after evaluation. Failed, absent, or policy-omitted comparators produce an unavailable comparator state rather than triggering extra baseline recall.
+### 3. Preserve active capacity and bound cancellation-resistant work
 
-After active recall has produced the production result needed by the existing path, the service performs sampling and non-blocking admission, then launches shadow evaluation. No caller waits for provider completion, metrics, or report data. The evaluator receives copied scalar context and bounded recent/current video IDs; it never receives mutable candidate objects, snapshot state, request-log builders, evidence writers, or response objects.
+Shadow uses a distinct non-blocking semaphore in addition to the provider's dedicated semantic capacity rules. All permits are acquired before goroutine creation and held until the actual provider call returns. Capacity rejection starts no work. There is no queue or retry.
 
-Shadow output is reduced immediately to bounded unique positive video IDs for in-memory comparison. Candidate scores and vectors are not copied into production candidates, metrics, logs, or persistence.
+The evaluator owns a lifecycle context. Shutdown closes admission, cancels cooperative work, and waits only to the caller's deadline. Context-ignoring work remains bounded by `max_in_flight`; shutdown may report incomplete drain without blocking indefinitely.
 
-Alternative considered: rerun the baseline providers inside shadow evaluation. Rejected because it adds avoidable load and compares different point-in-time results.
+### 4. Observe coverage and staleness explicitly
 
-### 3. Separate active and shadow admission while reusing provider deadline/capacity machinery
+Each selected execution records fixed-state observations for:
 
-Refactor provider execution behind one process-local controller with active and shadow classes:
+- session/recent/long-term component availability and fused-query availability;
+- semantic profile age buckets from `materialized_at`;
+- exact/HNSW query mode and returned-K/budget fill;
+- authoritative projection state `current`, `missing`, or `stale`, where stale means provider/model/revision/text-hash/vector-digest equality failed;
+- provider terminal result, latency, timeout, cancellation, error, and capacity.
 
-- active admission preserves the existing configured active permit count and behavior;
-- shadow admission is a distinct non-blocking semaphore capped by `max_in_flight`;
-- shadow calls use the same deadline validation, timeout wrapper, result classification, and underlying semantic provider;
-- shadow permits cannot consume or reduce active permits.
+No stale projection may enter returned semantic IDs; staleness observations come from bounded diagnostics, not from relaxing the index query's equality/readability filters.
 
-Sampling and both shadow admissions occur before any goroutine is created. Capacity rejection records a fixed `capacity` result and returns immediately. An admitted shadow call holds its shadow permit until the actual provider invocation returns, even if the deadline observer has already emitted `timeout` or `cancelled`; therefore a context-ignoring provider can leave at most `max_in_flight` actual calls/goroutines outstanding. There is no wait queue and no retry.
+### 5. Simulate planned pool mixing and semantic ranking in memory
 
-This preserves the active-path capacity contract while imposing an additional process-wide bound on observational load. The default-zero sampler means no extra query load until operators opt in.
+The evaluator canonicalizes bounded unique semantic and baseline candidates and computes:
 
-Alternative considered: share the active semaphore directly. Rejected because shadow calls could cause production providers to receive capacity degradation, violating isolation.
+- unique contribution: semantic IDs absent from the union of available baseline providers;
+- pool-truncation survival: semantic IDs surviving the planned reservations and deterministic mixing at `simulated_pool_limit`;
+- simulated rank survival: surviving semantic IDs in simulated top-K after applying the planned explicit `semantic_similarity` component to copied bounded features;
+- Fresh and Hot displacement: Fresh/Hot IDs present in the baseline simulated top-K but absent after adding semantic candidates;
+- author/topic diversity: distinct-author/topic counts and bounded concentration/entropy summaries for semantic output and simulated top-K;
+- overlap/intersection/Jaccard with each fixed baseline provider and their union.
 
-### 4. Use a process lifecycle context and bounded shutdown
+Simulation uses pure copied data and versioned rules from `add-pgvector-recommendation-recall`. It cannot write production candidate state. Undefined ratios are omitted; unavailable comparators remain explicit.
 
-The shadow evaluator owns a lifecycle context created during API composition, an admission-closed flag, and a wait group for admitted observers. Request cancellation before admission prevents launch; after launch, work is governed by the earlier of the configured provider deadline and lifecycle cancellation, not by a pooled HTTP request object.
+### 6. Emit only fixed-label aggregate telemetry
 
-Shutdown closes admission first, cancels the lifecycle context, and waits only until the caller's shutdown deadline. Cooperative provider calls exit and release permits. Context-ignoring calls remain bounded by `max_in_flight`; shutdown reports an incomplete drain without starting replacement work or blocking indefinitely. Process exit remains the final cleanup boundary.
+Metrics cover selection, terminal results, latency, capacity, profile/component coverage, profile-age bucket, projection state, query mode, fill ratio, unique contribution, pool survival, simulated rank survival, Fresh/Hot displacement, author/topic diversity, and comparator overlap.
 
-Alternative considered: detach from all cancellation using `context.Background()`. Rejected because deployments could not stop shadow queries promptly.
+Labels use fixed enums only. User/request/session/video/author/topic IDs, vectors, scores, model strings, policy versions, raw scenes, SQL/index details, candidate lists, and raw errors never appear in labels or normal logs. Recommendation request logs receive no shadow fields. Each selected request finalizes at most one terminal observation.
 
-### 5. Define bounded in-memory overlap calculations
+### 7. Add small golden and human semantic relevance evaluation
 
-The evaluator canonicalizes at most `budget` unique ANN IDs and at most `comparison_limit` unique IDs for each captured comparator. It computes for fixed comparator values `content_similarity`, `session_continuation`, and `union`:
+Operators maintain a versioned low-volume golden set of at least 30 representative session/profile contexts with bounded judged candidate labels. It covers cold/absent profile, session-dominant, recent-shift, stable long-term, negative-feedback, sparse-topic, and Fresh/Hot-heavy cases. Labels include relevant, partially relevant, irrelevant, and unsafe/unreadable; unsafe/unreadable must never be retrieved.
 
-- candidate counts;
-- intersection count `|ANN ∩ comparator|`;
-- Jaccard ratio `|intersection| / |ANN ∪ comparator|` when the union is non-empty;
-- comparator coverage ratio `|intersection| / |comparator|` when the comparator is non-empty.
+The report computes precision@K, recall@K where judgments are complete, nDCG@K, unique relevant contribution, and author/topic diversity. At least 20% of contexts receive independent second review, with disagreements and adjudication reported. A bounded manual review may inspect ephemeral candidate text in an authorized operator workflow, but IDs/text are not copied into metrics, request logs, evidence, or long-lived per-request shadow storage.
 
-Unavailable comparators are counted but do not emit ratio observations. Empty available sets emit candidate/intersection counts; undefined ratios are omitted rather than encoded as misleading zeroes. All sets are request-local and become unreachable after metrics are observed.
+The golden set and human review establish semantic plausibility at small scale; they do not prove causal engagement lift.
 
-Alternative considered: persist candidate pairs for later analysis. Rejected because aggregate acceptance does not require identifiers and persistence would expand privacy and retention scope.
+### 8. Make acceptance manual, low-volume-capable, and non-causal
 
-### 6. Emit only fixed-label aggregate metrics
+The operator report records exact denominators and confidence/uncertainty rather than requiring 10,000 requests or another large traffic floor. Production-shaped observations should cover at least one representative peak window when available; deterministic load/cancellation tests and the golden set remain required even when traffic is sparse.
 
-Add metrics such as:
+Operational checks include terminal coverage, latency versus configured deadline, provider/invalid-result errors, timeout, capacity, query fill, current/missing/stale projection coverage, and shutdown behavior. Retrieval checks include unique contribution, pool/rank survival, Fresh/Hot displacement, diversity, overlap, and golden/human relevance.
 
-- `frux_recommendation_semantic_ann_shadow_selected_total`;
-- `frux_recommendation_semantic_ann_shadow_results_total{result,profile}`;
-- `frux_recommendation_semantic_ann_shadow_duration_seconds{result}`;
-- `frux_recommendation_semantic_ann_shadow_candidate_count{source}`;
-- `frux_recommendation_semantic_ann_shadow_intersection_count{comparator}`;
-- `frux_recommendation_semantic_ann_shadow_jaccard_ratio{comparator}`;
-- `frux_recommendation_semantic_ann_shadow_comparator_coverage_ratio{comparator}`;
-- `frux_recommendation_semantic_ann_shadow_comparator_total{comparator,state}`.
-
-Allowed result labels are `success`, `empty`, `no_profile`, `timeout`, `capacity`, `cancelled`, `provider_error`, and `invalid_result`. Profile labels are `available`, `unavailable`, and `unknown`; source labels are `ann`, `content_similarity`, and `session_continuation`; comparator labels are `content_similarity`, `session_continuation`, and `union`; comparator state is `available`, `empty`, or `unavailable`.
-
-User, request, session, video, vector, model, score, policy version, raw scene, SQL/index details, and raw errors never appear in labels or normal logs. Metrics are finalized at most once per selected request.
-
-Alternative considered: label metrics by scene or policy. Rejected because the shadow scope currently has one normalized recommendation scene and those dimensions are unnecessary cardinality.
-
-### 7. Keep every production artifact outside the shadow evaluator
-
-The evaluator returns no candidates or degradation to the recommendation service. Its result type contains only aggregate observation values consumed by the metric sink. It has no interfaces for snapshots, request logs, served evidence, outcomes, attribution, policy selection/mutation, or persistence.
-
-Regression tests compare shadow-disabled and shadow-selected executions for exact production candidate IDs/order, reasons, source scores, rank scores, degraded flags/providers, cursor/snapshot payloads, request-log calls, evidence calls, and response completion ordering. Success, empty profile, provider error, timeout, capacity, cancellation, and context-ignoring cases must all be production-equivalent.
-
-Alternative considered: attach a hidden semantic reason and strip it before HTTP serialization. Rejected because it could still affect merge, ranking, snapshots, logs, or evidence.
-
-### 8. Make the acceptance report operational, not an activation mechanism
-
-Update the recommendation operator documentation with a copyable report template and Prometheus queries. A valid acceptance observation window is at least 24 hours and requires:
-
-- at least 10,000 selected requests;
-- at least 1,000 profile-available provider executions;
-- terminal metric coverage for at least 99% of selected requests;
-- profile availability reported explicitly and at least 10% for the evaluated population;
-- provider p95 latency at or below both 250 milliseconds and the configured shadow deadline;
-- provider-error plus invalid-result rate at or below 1%;
-- timeout rate at or below 1%;
-- capacity rate at or below 5%;
-- candidate, intersection, Jaccard, and comparator-coverage observations for every available comparator, including p50/p95 ratios and empty/unavailable rates.
-
-The report records window, deployment/configuration, dependency revisions, counts, profile availability, latency, result rates, and overlap distributions. Missing sufficiency or a failed operational bound is reported as not accepted. Passing the report only establishes safe operability and observable retrieval behavior; overlap has no relevance threshold, does not prove online lift, and never creates or activates a recommendation policy.
-
-Alternative considered: automatically enable `semantic_ann` when gates pass. Rejected because rollout remains an explicit policy decision under the active-provider change.
+Insufficient observations are reported as `inconclusive`, not passed by assuming zero failures. Passing the report authorizes only a separate rollout proposal; it never creates/selects a policy and explicitly states that shadow/golden evidence does not prove causal online lift.
 
 ## Risks / Trade-offs
 
-- [Shadow queries add database load] → Default sampling to zero, cap PPM/budget/deadline/in-flight work, preserve active permits, and require capacity/latency observation before increasing traffic.
-- [A provider ignores cancellation forever] → Acquire before goroutine creation, retain permits until actual return, bound outstanding calls by `max_in_flight`, and never queue or retry.
-- [Captured comparator sets are unavailable after active failure or policy omission] → Record fixed unavailable state and do not synthesize another baseline.
-- [Overlap distributions may be mistaken for relevance] → Label the report as retrieval-overlap evidence only and require explicit wording that online lift needs a separate accepted experiment.
-- [Asynchronous metrics may be lost during abrupt process death] → Use lifecycle cancellation and bounded shutdown; treat aggregate telemetry as best-effort and require 99% terminal coverage.
-- [Deterministic sampling could change accidentally] → Version and unit-test canonical tuple encoding and golden buckets.
+- [Shadow adds database load] → Default zero, bound PPM/budget/deadline/in-flight work, preserve active permits, and increase sampling only after capacity checks.
+- [Context-ignoring work leaks goroutines] → Acquire before launch, retain permits until actual return, never queue/retry, and bound shutdown.
+- [Simulation drifts from future activation] → Version and share pure reservation/ranking rules with the dormant provider change.
+- [Topic metadata is sparse] → Report unknown coverage explicitly and never invent semantic topics.
+- [Low sample sizes overstate certainty] → Report denominators/uncertainty, require deterministic tests plus golden/human review, and allow `inconclusive`.
+- [Observational relevance is mistaken for lift] → State repeatedly that causal lift requires a separate accepted online experiment.
 
 ## Migration Plan
 
-1. Complete and strictly validate the three prerequisite changes in dependency order.
-2. Add sampler, configuration validation, lifecycle evaluator, classed admission, metric sink, and tests with `sample_ppm=0`.
-3. Wire copied comparator sets and asynchronous launch without adding persistence or policy fields.
-4. Deploy disabled and prove existing recommendation outputs and bootstrap policies are unchanged.
-5. Enable a small PPM in a prepared environment, observe capacity/error/latency, and raise only within documented bounds.
-6. Run the acceptance report for a qualifying window. Treat insufficient or failed observations as no-go information only.
+1. Complete and validate the index, profile, and dormant provider-registration changes.
+2. Add sampler, configuration, lifecycle, no-queue admission, diagnostics, simulation, metrics, and tests with `sample_ppm=0`.
+3. Wire bounded copied baseline inputs without any production artifact interface.
+4. Add the versioned golden set workflow, human-review guidance, and report template.
+5. Deploy disabled and prove production outputs/artifacts are invariant.
+6. Enable a small bounded PPM when capacity allows; produce operational, simulation, diversity, and golden/human evidence.
+7. Keep every production policy unchanged. Any active gray requires a separate accepted proposal.
 
-Rollback sets `sample_ppm=0`, which stops new admissions without changing active policies or prerequisite data. Shutdown cancels cooperative work; bounded context-ignoring calls disappear with the process. No schema or data rollback is needed.
+Rollback sets `sample_ppm=0`; no schema, policy, snapshot, log, evidence, or attribution rollback is needed.
 
 ## Open Questions
 
-None. Sampling identity, defaults and bounds, comparator sets, overlap formulas, admission/shutdown behavior, metric labels, acceptance gates, dependencies, and exclusions are fixed by this proposal.
+None. Default-zero sampling, shadow-first ordering, production isolation, capacity, coverage/staleness, simulation metrics, low-volume golden/human relevance, uncertainty reporting, and no-causal-lift scope are fixed.

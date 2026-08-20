@@ -1,33 +1,34 @@
 ## Why
 
-Frux needs a repeatable way to compare existing linear recommendation policies before any learned-weight or online experiment work, using only privacy-bounded exported facts. The planned `persist-recommendation-training-impressions` and `export-recommendation-training-dataset` changes establish the source and file contract; this change turns that contract into deterministic observational evaluation without claiming causal lift.
+Frux needs a trustworthy way to diagnose and compare recommendation policies before enough user data exists for training or causal inference. The current route therefore centers on deterministic production-scorer replay, a small privacy-reviewed human golden set, and optional observational metrics rather than a large training export.
 
 ## What Changes
 
-- Add a Go operator CLI that validates a versioned export manifest and gzip JSONL checksum/schema before reading rows.
-- Load one baseline and one or more candidate `PolicyConfiguration` JSON files through the same production feature-name and bound validation, then recompute linear scores from logged score components.
-- Replay production score ordering and diversity within each request/session over the available exported candidate set, while explicitly classifying served-subset replay as incomplete for full-pool conclusions.
-- Define and version one bounded composite relevance/utility label using watch ratio/effective watch, completion, like, favorite, follow, quick skip, and explicit feedback.
-- Produce deterministic observational NDCG@K, watch/interaction rates, coverage/concentration, recall-source, policy/degraded/schema, position-stratified, and sample/join-quality metrics.
-- Produce canonical JSON and concise Markdown reports with dataset/policy hashes, definitions, counts, exclusions, warnings, replay limitations, and deterministic bootstrap confidence intervals only where valid.
-- Add fixture/golden, corrupted input/config, unsupported-version, repeatability, replay, metric, bootstrap, and documentation coverage.
-- Add the minimum evaluator-facing dataset metadata needed for production-equivalent tie-breaking, author grouping, and degraded slices; keep raw author identity excluded.
+- Add a Go operator CLI that validates small versioned replay bundles and blinded human golden sets; optional observational inputs use the shared diagnostic identity/time contract but do not require `export-recommendation-training-dataset`.
+- Load one baseline and one or more candidate `PolicyConfiguration` files through production validation, then deterministically replay the production scorer, tie-breaking, and diversity logic.
+- Require exact baseline-order parity on canonical replay fixtures and report parity on diagnostic cases before interpreting candidate results.
+- Reject policies with recall, feature-generation, suppression, rollout, or other non-replayable differences by default; an explicit diagnostic-only mode may list those differences but cannot rank or recommend the policy.
+- Make human semantic relevance the primary low-data evidence through a versioned 0-3 rubric, blinded annotations, adjudication, and agreement reporting.
+- Report recall coverage and source contribution plus author and topic diversity over the frozen candidate pools.
+- Report quick-skip and explicit-negative feedback only when an eligible observed sample exists; otherwise emit `unavailable` with zero denominator rather than a zero rate.
+- Produce deterministic JSON and concise Markdown with hashes, counts, exclusions, parity, golden-set metrics, optional observational metrics, and prominent non-causal limitations.
+- Keep uncertainty optional and sample-appropriate; no large user-cluster bootstrap is required to run or accept the evaluator.
 - Explicitly exclude training weights, activating policies, online serving changes, A/B dashboards, propensity-free IPS, causal-lift claims, embeddings, pgvector, and model inference.
-- Establish this evaluator as a later dependency of `learn-recommendation-policy-weights`.
+- Keep this evaluator independent of the deferred `learn-recommendation-policy-weights` change and usable for the semantic roadmap without it.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `recommendation-offline-evaluation`: Deterministic validation, replay, observational metrics, uncertainty reporting, and machine/human-readable reports for existing linear recommendation policies over versioned exports.
+- `recommendation-offline-evaluation`: Low-data deterministic production replay, blinded human golden-set scoring, optional observational diagnostics, and machine/human-readable policy reports.
 
 ### Modified Capabilities
 
-- `recommendation-training-dataset`: Add only the privacy-bounded replay metadata required for exact production tie-breaking and author/degraded slices in supported dataset versions.
+- `recommendation-training-dataset`: Define optional future interoperability with the evaluator's identity/time and replay metadata; the dataset exporter is not an evaluator prerequisite.
 
 ## Impact
 
-- Depends on the planned `persist-recommendation-training-impressions` change and then `export-recommendation-training-dataset`; it never queries production facts directly.
+- May consume small privacy-reviewed diagnostic bundles aligned with `persist-recommendation-training-impressions`, but does not depend on the future-only dataset exporter and never queries production facts directly.
 - Adds a standalone Go command and offline domain/application packages under `apps/api`, plus fixtures, golden reports, and operator documentation.
-- Extends the planned dataset contract with candidate publication time, a domain-separated pseudonymous author grouping key, and bounded degraded/unknown metadata; no raw author ID, public HTTP, frontend, database mutation, or online policy behavior changes.
-- `learn-recommendation-policy-weights` may consume the evaluator's validated metrics and report contract later, but training remains out of scope here.
+- Uses frozen publication time, pseudonymous author grouping, bounded topic/source/degraded metadata, and human annotations; no raw author ID, public HTTP, frontend, database mutation, or online behavior changes.
+- Weight learning is conditionally deferred and is neither required by nor automatically enabled through this evaluator.

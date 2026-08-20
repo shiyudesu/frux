@@ -1,7 +1,22 @@
 ## ADDED Requirements
 
+### Requirement: Indefinite Conditional Deferral
+Recommendation policy weight learning SHALL remain outside the active roadmap until a reviewed preregistered activation record satisfies every evidence, power, stability, privacy, and resource gate.
+
+#### Scenario: Activation is proposed
+- **WHEN** an owner proposes implementing the learner
+- **THEN** the record defines the learning hypothesis, primary metric and minimum practical effect, prospective sample-size calculation with significance at most 0.05 and power at least 0.80, independent-unit and multiplicity rules, numeric split/label/exposure/feature thresholds, stability checks, privacy/security approval, and resource budgets
+
+#### Scenario: Any activation gate is missing
+- **WHEN** sample size, label coverage, power, stability, privacy approval, or resource budget is missing, retrospective, or unresolved
+- **THEN** the learner remains indefinitely deferred and no command, optimizer, training artifact, or implementation dependency is introduced
+
+#### Scenario: Semantic roadmap proceeds
+- **WHEN** Frux performs deterministic scorer replay, human semantic evaluation, recall coverage, or author/topic diversity work
+- **THEN** that work proceeds without a learner, training export, learned candidate, or activation decision
+
 ### Requirement: Offline-Only Learned-Weight Boundary
-Frux SHALL provide a standalone offline operator tool that learns only the existing production linear feature weights and SHALL NOT introduce a new online inference model or mutate production state.
+After activation, Frux SHALL provide a standalone offline operator tool that learns only the existing production linear feature weights and SHALL NOT introduce a new online inference model or mutate production state.
 
 #### Scenario: Operator runs weight learning
 - **WHEN** valid local dataset, manifest, and baseline policy files are supplied
@@ -16,7 +31,7 @@ Frux SHALL provide a standalone offline operator tool that learns only the exist
 - **THEN** the tool rejects the request rather than optimizing or modifying those settings
 
 ### Requirement: Explicit Prerequisite and Version Compatibility
-The learner SHALL depend on the artifacts and contracts planned by `persist-recommendation-training-impressions`, `export-recommendation-training-dataset`, and `evaluate-recommendation-policies-offline` and SHALL accept only explicitly supported versions.
+After activation, the learner SHALL depend on separately approved compatible artifacts and contracts from `persist-recommendation-training-impressions`, `export-recommendation-training-dataset`, and `evaluate-recommendation-policies-offline` and SHALL accept only explicitly supported versions.
 
 #### Scenario: Compatible inputs are supplied
 - **WHEN** the manifest, compressed dataset, impression record schema, feature schema, dataset schema, label schema, source-model schema, pseudonymization schema, and evaluator label version are all registered as compatible
@@ -132,6 +147,10 @@ The learner SHALL measure feature coverage on training data and SHALL handle spa
 - **WHEN** configured minimum exposed rows, users, requests, pairs, split populations, or trainable-feature counts are not met
 - **THEN** the learner refuses candidate and success-report publication
 
+#### Scenario: Runtime thresholds are weaker than activation thresholds
+- **WHEN** command options or defaults would reduce preregistered sample, label, feature, power, or stability requirements
+- **THEN** the learner rejects the run; production candidate publication cannot lower activation thresholds
+
 ### Requirement: Convergence and Held-Out Selection
 The learner SHALL select weights using only training and validation data and SHALL reserve the test split for one final offline evaluator comparison.
 
@@ -166,31 +185,35 @@ The learner SHALL start from a strictly decoded production-valid baseline `Polic
 - **WHEN** learning succeeds
 - **THEN** the JSON is only an inactive `PolicyConfiguration` artifact with no policy ID, version, enabled state, activation request, database write, or rollout action
 
-### Requirement: Offline Evaluator Regression Gates
-The learner SHALL compare the selected candidate with the baseline on the untouched test split using the versioned replay, label, metric, and report semantics from `evaluate-recommendation-policies-offline`.
+### Requirement: Strict Held-Out Baseline Improvement Gates
+The learner SHALL compare the selected candidate with the baseline on untouched preregistered test data and SHALL publish only when it demonstrates genuine improvement rather than tolerated degradation.
 
 #### Scenario: Candidate is evaluated
 - **WHEN** optimization and candidate validation succeed
 - **THEN** the learner replays baseline and candidate over identical held-out request groups and records the evaluator version, replay scope, label version, metric definitions, sample counts, exclusions, warnings, estimates, and paired deltas
 
-#### Scenario: Evaluator gate passes
-- **WHEN** configured primary NDCG, composite utility, quick-skip, explicit-negative, and required sample/confidence gates all meet their non-regression thresholds
-- **THEN** the candidate is eligible for atomic local publication
+#### Scenario: Primary improvement gate passes
+- **WHEN** the preregistered primary metric improves by at least the minimum practically meaningful effect and its multiplicity-adjusted 95% confidence lower bound is strictly greater than zero
+- **THEN** the primary improvement condition is satisfied
+
+#### Scenario: Guardrail gates pass
+- **WHEN** every preregistered guardrail confidence bound is on the non-degrading side of zero, required non-overlapping time windows and slices agree, and candidate direction is stable across preregistered seeds or resamples
+- **THEN** the candidate may proceed to the remaining publication gates
 
 #### Scenario: Evaluator input or metric is unavailable
-- **WHEN** replay integrity fails, required held-out coverage is insufficient, a required metric or interval is unavailable, or the evaluator reports an unsupported limitation
+- **WHEN** replay integrity or baseline parity fails, required power/coverage is insufficient, a required metric/interval is unavailable, stability fails, or the evaluator reports an unsupported limitation
 - **THEN** the learner refuses candidate and success-report publication
 
-#### Scenario: Evaluator regression is detected
-- **WHEN** any required candidate-minus-baseline delta crosses its configured regression threshold
-- **THEN** the learner refuses output even if training and validation losses improved
+#### Scenario: Improvement is absent or degradation is tolerated
+- **WHEN** the primary lower bound is at or below zero, practical improvement is too small, or any guardrail permits a positive degradation margin
+- **THEN** the learner refuses output even if training/validation loss improved or a point estimate looks favorable
 
 ### Requirement: Complete Deterministic Training Report
 Successful learning SHALL emit a canonical machine-readable report containing enough metadata to reproduce, audit, and interpret the run.
 
 #### Scenario: Success report is rendered
 - **WHEN** every gate passes
-- **THEN** the report contains compressed dataset and manifest hashes, baseline input and normalized hashes, dataset/record/feature/source-model/label/evaluator/tool versions, split policy, seed, all hyperparameters, pair-sampling rules, convergence trace summary, feature coverage and frozen reasons, learned and baseline weights, constraint checks, candidate hash, exclusions, and the held-out evaluator comparison
+- **THEN** the report contains the activation-record identifier and preregistered thresholds, compressed dataset and manifest hashes, baseline input and normalized hashes, versions, split policy, seed, hyperparameters, sampling rules, convergence, feature coverage/freezes, learned and baseline weights, constraints, candidate hash, strict-improvement/stability results, exclusions, and held-out evaluator comparison
 
 #### Scenario: Run is repeated
 - **WHEN** input bytes, tool version, supported registries, hyperparameters, and output options are identical
@@ -239,11 +262,11 @@ Frux SHALL document the learner's prerequisite sequence, supported inputs, optim
 
 #### Scenario: Operator prepares a run
 - **WHEN** consulting the documentation
-- **THEN** the operator can identify required prerequisite artifacts, compatible versions, split and exposure rules, defaults and bounds, deterministic seed behavior, resource limits, output permissions, evaluator gates, and failure recovery
+- **THEN** the operator can identify the indefinite deferral, activation record, sample-size/power/label/stability/privacy/resource gates, prerequisite artifacts, split/exposure rules, deterministic seed behavior, output permissions, strict baseline-improvement gates, and failure recovery
 
 #### Scenario: Candidate is reviewed
 - **WHEN** an operator inspects successful artifacts
-- **THEN** documentation states that the candidate changes only existing linear weights, is observational rather than causal, remains inactive, and requires a separate future reviewed activation workflow
+- **THEN** documentation states that the candidate changes only existing linear weights, has only observational offline support, remains inactive, cannot auto-activate, and requires a separate future reviewed online validation and activation workflow
 
 #### Scenario: Out-of-scope systems are considered
 - **WHEN** implementation scope is reviewed
