@@ -109,14 +109,14 @@
 
 ## 8. Similar-Video Discovery
 
-- [ ] 8.1 Add a typed bounded similar-video application service using the readable source video's
+- [x] 8.1 Add a typed bounded similar-video application service using the readable source video's
   active-contract vector, source exclusion, exact retrieval, final readability checks, and stable
   source/model-bound cursor semantics.
-- [ ] 8.2 Add the public similar-video HTTP route, DTOs, validation, typed semantic-unavailable/empty
+- [x] 8.2 Add the public similar-video HTTP route, DTOs, validation, typed semantic-unavailable/empty
   behavior, error mapping, and router composition without exposing raw model or vector data.
-- [ ] 8.3 Add the minimal Web integration at an existing video destination or development surface,
+- [x] 8.3 Add the minimal Web integration at an existing video destination or development surface,
   preserving current playback/navigation state and truthful unavailable/empty/loading/error states.
-- [ ] 8.4 Add domain, repository, API-flow, and Web tests for readable/unreadable sources, missing
+- [x] 8.4 Add domain, repository, API-flow, and Web tests for readable/unreadable sources, missing
   vectors, exact order, self exclusion, stale neighbors, cursor rebinding, pagination, and identity
   changes during pending requests.
 

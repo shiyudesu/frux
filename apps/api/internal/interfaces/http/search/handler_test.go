@@ -50,6 +50,28 @@ func (handlerVideoLoaderStub) BatchGetReadable(context.Context, int64, []int64, 
 	return map[int64]*domainvideo.Video{}, nil
 }
 
+type handlerSimilarRepositoryStub struct{}
+
+func (handlerSimilarRepositoryStub) FindMultimodalVectorFact(context.Context, int64, domainembedding.MultimodalContractIdentity) (*domainembedding.MultimodalVectorFact, error) {
+	return nil, domainembedding.ErrMultimodalVectorFactNotFound
+}
+
+func (handlerSimilarRepositoryStub) ExactMultimodalSearch(context.Context, domainembedding.MultimodalContractIdentity, []float64, []int64, int) ([]domainembedding.MultimodalExactCandidate, error) {
+	return nil, nil
+}
+
+type handlerReadableVideoLoaderStub struct{ video *domainvideo.Video }
+
+func (s handlerReadableVideoLoaderStub) BatchGetReadable(_ context.Context, _ int64, ids []int64, _ bool) (map[int64]*domainvideo.Video, error) {
+	result := map[int64]*domainvideo.Video{}
+	for _, id := range ids {
+		if s.video != nil && s.video.ID == id {
+			result[id] = s.video
+		}
+	}
+	return result, nil
+}
+
 func (s handlerUserIndexStub) SearchUsers(context.Context, string, *domainsearch.UserCursor, int) ([]*domainsearch.UserIndexItem, error) {
 	return s.items, s.err
 }
@@ -191,5 +213,49 @@ func TestHandlerMapsUnavailableHybridContinuationToRetryableResponse(t *testing.
 	if !strings.Contains(response.Body.String(), interfaceshttpapierror.CodeSearchServiceUnavailable) ||
 		strings.Contains(response.Body.String(), "provider unavailable") {
 		t.Fatalf("unexpected retryable response: %s", response.Body.String())
+	}
+}
+
+func TestSimilarVideoHandlerReportsDisabledAndUncoveredStates(t *testing.T) {
+	disabled := New(applicationsearch.New(handlerVideoIndexStub{}, handlerUserIndexStub{}))
+	disabledRouter := server.New()
+	disabledRouter.GET("/api/videos/:videoId/similar", disabled.SimilarVideos)
+	disabledResponse := ut.PerformRequest(disabledRouter.Engine, http.MethodGet, "/api/videos/1/similar", nil)
+	if disabledResponse.Code != http.StatusOK || !strings.Contains(disabledResponse.Body.String(), `"semantic_available":false`) {
+		t.Fatalf("disabled response status=%d body=%s", disabledResponse.Code, disabledResponse.Body.String())
+	}
+
+	now := time.Now().UTC()
+	contract, err := domainembedding.NewMultimodalContractIdentity(
+		"provider", "model", "revision", domainembedding.MinMultimodalDimension,
+		domainembedding.MultimodalTextCanonicalizerV1,
+		domainembedding.MultimodalFrameSamplingPolicyV1,
+		domainembedding.MultimodalImagePreprocessingV1,
+		domainembedding.MultimodalFusionPolicyV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	video := domainvideo.RestoreVideo(1, 2, "video", "", "/video.mp4", "/cover.jpg", domainvideo.StatusPublished, 0, 0, 0, &now, now, now, "key")
+	similarService, err := applicationsearch.NewSimilarVideoService(
+		handlerSimilarRepositoryStub{}, handlerReadableVideoLoaderStub{video: video},
+		contract, domainsearch.MaxLimit+1, time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := New(
+		applicationsearch.New(handlerVideoIndexStub{}, handlerUserIndexStub{}),
+		WithSimilarVideoService(similarService),
+	)
+	activeRouter := server.New()
+	activeRouter.GET("/api/videos/:videoId/similar", active.SimilarVideos)
+	activeResponse := ut.PerformRequest(activeRouter.Engine, http.MethodGet, "/api/videos/1/similar", nil)
+	if activeResponse.Code != http.StatusOK || !strings.Contains(activeResponse.Body.String(), `"semantic_available":false`) {
+		t.Fatalf("uncovered response status=%d body=%s", activeResponse.Code, activeResponse.Body.String())
+	}
+	invalidResponse := ut.PerformRequest(activeRouter.Engine, http.MethodGet, "/api/videos/nope/similar", nil)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid source status=%d body=%s", invalidResponse.Code, invalidResponse.Body.String())
 	}
 }

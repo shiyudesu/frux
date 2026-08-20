@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiErrorMessage } from "../api/client";
 import { fetchPublicProfile, fetchVideo } from "../api/account";
+import { fetchSimilarVideos } from "../api/search";
 import { ThreadedComments } from "../components/ThreadedComments";
 import { VideoDetails } from "../components/VideoDetails";
 import { PrivateShareDialog } from "../components/PrivateShareDialog";
@@ -36,6 +37,8 @@ export function VideoDetailPage({
   const [state, setState] = useState<DetailState>("loading");
   const [error, setError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
+  const [similar, setSimilar] = useState<Video[]>([]);
+  const [similarState, setSimilarState] = useState<"loading" | "ready" | "unavailable" | "error">("loading");
   const { preferences, updatePreferences } = usePlayerPreferences();
 
   const loadVideo = useCallback(() => {
@@ -70,6 +73,26 @@ export function VideoDetailPage({
   }, [videoID]);
 
   useEffect(() => loadVideo(), [loadVideo]);
+
+  useEffect(() => {
+    if (videoID <= 0) return;
+    let live = true;
+    setSimilarState("loading");
+    fetchSimilarVideos(videoID)
+      .then((page) => {
+        if (!live) return;
+        setSimilar(page.items || []);
+        setSimilarState(page.semantic_available ? "ready" : "unavailable");
+      })
+      .catch(() => {
+        if (!live) return;
+        setSimilar([]);
+        setSimilarState("error");
+      });
+    return () => {
+      live = false;
+    };
+  }, [videoID]);
 
   const handleCommentCountChange = useCallback((count: number) => {
     setItem((current) => current ? { ...current, comment_count: count } : current);
@@ -142,6 +165,23 @@ export function VideoDetailPage({
             setShareOpen(true);
           }}
         />
+        <section className="video-detail-similar" aria-label="相似视频">
+          <h2>相似视频</h2>
+          {similarState === "loading" && <p>正在查找相似视频…</p>}
+          {similarState === "unavailable" && <p>该视频暂时没有多模态向量。</p>}
+          {similarState === "error" && <p>相似视频暂时不可用。</p>}
+          {similarState === "ready" && similar.length === 0 && <p>暂未找到相似视频。</p>}
+          {similarState === "ready" && similar.length > 0 && (
+            <div className="video-detail-similar-list">
+              {similar.map((video) => (
+                <button key={video.id} type="button" onClick={() => navigate(`/videos/${video.id}`)}>
+                  <img src={video.cover_url || image.stage} alt="" />
+                  <span>{video.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
         {invalidFocus && (
           <p className="video-detail-unavailable" role="status">评论链接参数无效，已显示可用讨论。</p>
         )}

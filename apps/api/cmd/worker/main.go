@@ -72,9 +72,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if err := infraconfig.ValidateMultimodalRuntime(
-		cfg.Multimodal,
-		infraconfig.MultimodalRuntimeDependencies{},
+	if err := infraconfig.ValidateMultimodalWorkerRuntime(
+		cfg.Multimodal, nil,
 	); err != nil {
 		return fmt.Errorf("init multimodal runtime: %w", err)
 	}

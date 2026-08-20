@@ -20,6 +20,7 @@ const (
 	MultimodalImagePreprocessingV1  = "rgb-fit-v1"
 	MultimodalFusionPolicyV1        = "provider-fusion-v1"
 	MultimodalHybridMergeVersionV1  = "hybrid-rank-v1"
+	MultimodalExactRankingVersionV1 = "exact-cosine-v1"
 	MultimodalLexicalFallback       = "lexical"
 	MinMultimodalDimension          = 32
 	MaxMultimodalDimension          = 8192

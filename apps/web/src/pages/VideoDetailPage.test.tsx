@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchPublicProfile, fetchVideo } from "../api/account";
 import { fetchUnreadStat } from "../api/messages";
+import { fetchSimilarVideos } from "../api/search";
 import {
   fetchCommentReplies,
   fetchComments,
@@ -23,6 +24,11 @@ vi.mock("../api/account", async (importOriginal) => ({
 vi.mock("../api/messages", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/messages")>()),
   fetchUnreadStat: vi.fn()
+}));
+
+vi.mock("../api/search", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/search")>()),
+  fetchSimilarVideos: vi.fn()
 }));
 
 vi.mock("../api/social", async (importOriginal) => ({
@@ -68,6 +74,9 @@ describe("video discussion deep links", () => {
       value: scrollIntoView
     });
     vi.mocked(fetchUnreadStat).mockResolvedValue({ unread_count: 0 });
+    vi.mocked(fetchSimilarVideos).mockResolvedValue({
+      items: [], next_cursor: "", has_more: false, semantic_available: false
+    });
     vi.mocked(fetchVideo).mockResolvedValue({
       id: 3,
       author_id: 2,
@@ -180,6 +189,37 @@ describe("video discussion deep links", () => {
     await renderDetail(7, 9, true);
     expect(container.textContent).toContain("评论链接参数无效，已显示可用讨论。");
     expect(fetchCommentThread).not.toHaveBeenCalled();
+  });
+
+  it("renders truthful similar-video availability and results", async () => {
+    vi.mocked(fetchComments).mockResolvedValue({
+      items: [], next_cursor: "", has_more: false, comment_count: 0, sort: "hot"
+    });
+    vi.mocked(fetchSimilarVideos).mockResolvedValue({
+      items: [{
+        id: 8,
+        author_id: 4,
+        title: "相似内容",
+        description: "",
+        media_url: "/similar.mp4",
+        cover_url: "/similar.jpg",
+        status: 2,
+        visibility: "public",
+        like_count: 0,
+        comment_count: 0,
+        favorite_count: 0,
+        created_at: "2026-08-03T00:00:00Z",
+        updated_at: "2026-08-03T00:00:00Z"
+      }],
+      next_cursor: "",
+      has_more: false,
+      semantic_available: true
+    });
+
+    await renderDetail(0, 0, false);
+    expect(container.textContent).toContain("相似视频");
+    expect(container.textContent).toContain("相似内容");
+    expect(fetchSimilarVideos).toHaveBeenCalledWith(3);
   });
 
   async function renderDetail(commentID: number, highlightID: number, invalidFocus: boolean) {

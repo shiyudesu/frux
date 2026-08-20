@@ -126,3 +126,30 @@ func TestValidateMultimodalRuntimeRequiresEnabledDependencies(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateMultimodalRuntimeScopesDependenciesByProcess(t *testing.T) {
+	cfg := validMultimodalConfig()
+	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	contract, err := cfg.Contract.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateMultimodalWorkerRuntime(cfg, nil); !errors.Is(err, ErrMissingMultimodalDependency) {
+		t.Fatalf("worker missing provider error=%v", err)
+	}
+	if err := ValidateMultimodalWorkerRuntime(cfg, &contract); err != nil {
+		t.Fatalf("worker rejected matching provider: %v", err)
+	}
+	if err := ValidateMultimodalAPIRuntime(cfg, MultimodalRuntimeDependencies{ExactRetrieval: true}); !errors.Is(err, ErrMissingMultimodalDependency) {
+		t.Fatalf("API missing query dependencies error=%v", err)
+	}
+	similarOnly := cfg
+	similarOnly.VideoJobsEnabled = false
+	similarOnly.QueryEmbeddingEnabled = false
+	similarOnly.HybridSearchEnabled = false
+	if err := ValidateMultimodalAPIRuntime(similarOnly, MultimodalRuntimeDependencies{ExactRetrieval: true}); err != nil {
+		t.Fatalf("similar-only API required a provider: %v", err)
+	}
+}

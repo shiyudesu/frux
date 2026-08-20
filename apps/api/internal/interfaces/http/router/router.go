@@ -39,6 +39,7 @@ import (
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
 	infrachat "github.com/shiyudesu/frux/internal/infra/persistence/chat"
+	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
 	infragovernance "github.com/shiyudesu/frux/internal/infra/persistence/governance"
@@ -429,8 +430,36 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		cfg.Security.HMACSecret,
 	)
 	mediaAdminHandler := interfaceshttpmedia.NewAdmin(mediaAdminService)
+	if err := infraconfig.ValidateMultimodalAPIRuntime(
+		cfg.Multimodal,
+		infraconfig.MultimodalRuntimeDependencies{ExactRetrieval: true},
+	); err != nil {
+		return err
+	}
 	searchService := applicationsearch.New(videoRepo, accountRepo)
-	searchHandler := interfaceshttpsearch.New(searchService)
+	searchHandlerOptions := []interfaceshttpsearch.Option{}
+	if cfg.Multimodal.SimilarVideosEnabled {
+		contract, err := cfg.Multimodal.Contract.Identity()
+		if err != nil {
+			return err
+		}
+		cursorTTL, err := time.ParseDuration(cfg.Multimodal.Hybrid.CursorTTL)
+		if err != nil {
+			return err
+		}
+		similarService, err := applicationsearch.NewSimilarVideoService(
+			infraembedding.New(gormDB), videoRepo, contract,
+			cfg.Multimodal.Exact.MaxLimit, cursorTTL,
+		)
+		if err != nil {
+			return err
+		}
+		searchHandlerOptions = append(
+			searchHandlerOptions,
+			interfaceshttpsearch.WithSimilarVideoService(similarService),
+		)
+	}
+	searchHandler := interfaceshttpsearch.New(searchService, searchHandlerOptions...)
 	interactionOptions = append(
 		interactionOptions,
 		applicationinteraction.WithCommentModeratorReader(
@@ -888,6 +917,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	videos := api.Group("/videos")
 	videos.POST("", authMiddleware, videoHandler.Create)
 	videos.GET("/:videoId", videoHandler.Get)
+	videos.GET("/:videoId/similar", publicSearchRateLimit, searchHandler.SimilarVideos)
 	videos.DELETE("/:videoId", authMiddleware, videoHandler.Delete)
 	videos.PUT("/:videoId/like", authMiddleware, interactionHandler.Like)
 	videos.DELETE("/:videoId/like", authMiddleware, interactionHandler.Unlike)

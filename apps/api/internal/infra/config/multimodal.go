@@ -236,6 +236,37 @@ func ValidateMultimodalRuntime(cfg MultimodalConfig, dependencies MultimodalRunt
 	return nil
 }
 
+func ValidateMultimodalWorkerRuntime(
+	cfg MultimodalConfig,
+	providerContract *domainembedding.MultimodalContractIdentity,
+) error {
+	if !cfg.Enabled || !cfg.VideoJobsEnabled {
+		return nil
+	}
+	expected, err := cfg.Contract.Identity()
+	if err != nil || providerContract == nil || !expected.Equal(*providerContract) {
+		return ErrMissingMultimodalDependency
+	}
+	return nil
+}
+
+func ValidateMultimodalAPIRuntime(cfg MultimodalConfig, dependencies MultimodalRuntimeDependencies) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.QueryEmbeddingEnabled || cfg.HybridSearchEnabled {
+		expected, err := cfg.Contract.Identity()
+		if err != nil || dependencies.ProviderContract == nil ||
+			!expected.Equal(*dependencies.ProviderContract) || !dependencies.QueryCache {
+			return ErrMissingMultimodalDependency
+		}
+	}
+	if (cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled) && !dependencies.ExactRetrieval {
+		return ErrMissingMultimodalDependency
+	}
+	return nil
+}
+
 func (cfg MultimodalContractConfig) Identity() (domainembedding.MultimodalContractIdentity, error) {
 	return domainembedding.NewMultimodalContractIdentity(
 		cfg.ProviderAlias,

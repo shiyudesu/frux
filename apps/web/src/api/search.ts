@@ -1,4 +1,4 @@
-import type { SearchUserPage, SearchVideoPage } from "../types";
+import type { SearchUserPage, SearchVideoPage, SimilarVideoPage } from "../types";
 import { apiRequest } from "./client";
 
 function searchPath(path: string, query: string, cursor: string, limit: number): string {
@@ -21,4 +21,14 @@ export function searchUsers(
   limit = 20
 ): Promise<SearchUserPage> {
   return apiRequest<SearchUserPage>(searchPath("/api/search/users", query, cursor, limit));
+}
+
+export function fetchSimilarVideos(
+  videoID: number,
+  cursor = "",
+  limit = 6
+): Promise<SimilarVideoPage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return apiRequest<SimilarVideoPage>(`/api/videos/${videoID}/similar?${params.toString()}`);
 }

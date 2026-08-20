@@ -217,6 +217,10 @@ export type LibraryVideoPage = CursorPage<LibraryVideoItem>;
 
 export type SearchVideoPage = CursorPage<Video>;
 
+export interface SimilarVideoPage extends CursorPage<Video> {
+  semantic_available: boolean;
+}
+
 export interface SearchUser {
   id: number;
   nickname: string;

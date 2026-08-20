@@ -3,18 +3,23 @@ package applicationsearch
 import (
 	"encoding/base64"
 	"encoding/json"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	videoCursorVersion       = 1
-	hybridVideoCursorVersion = 2
-	userCursorVersion        = 2
-	maxSearchCursorLength    = 2048
+	videoCursorVersion        = 1
+	hybridVideoCursorVersion  = 2
+	similarVideoCursorVersion = 1
+	userCursorVersion         = 2
+	maxSearchCursorLength     = 2048
 )
+
+const similarVideoCursorCategory = "similar_videos"
 
 type cursorPayload struct {
 	Version        int     `json:"v"`
@@ -143,6 +148,51 @@ func DecodeHybridVideoCursor(value, query, rankingVersion, contractKey string, n
 		return nil, domainsearch.ErrInvalidCursor
 	}
 	return cursor, nil
+}
+
+type SimilarVideoCursor struct {
+	ContractKey string
+	Similarity  float64
+	PublishedAt time.Time
+	VideoID     int64
+	ExpiresAt   time.Time
+}
+
+func EncodeSimilarVideoCursor(sourceVideoID int64, cursor *SimilarVideoCursor) string {
+	if sourceVideoID <= 0 || cursor == nil || strings.TrimSpace(cursor.ContractKey) == "" ||
+		math.IsNaN(cursor.Similarity) || math.IsInf(cursor.Similarity, 0) || cursor.Similarity <= 0 ||
+		cursor.PublishedAt.IsZero() || cursor.VideoID <= 0 || cursor.ExpiresAt.IsZero() {
+		return ""
+	}
+	return encodeCursor(cursorPayload{
+		Version: similarVideoCursorVersion, Category: similarVideoCursorCategory,
+		Query: strconv.FormatInt(sourceVideoID, 10), Time: cursor.PublishedAt.UTC().Format(time.RFC3339Nano),
+		ID: cursor.VideoID, Mode: "similar", RankingVersion: domainembedding.MultimodalExactRankingVersionV1,
+		ContractKey: strings.TrimSpace(cursor.ContractKey), Score: cursor.Similarity,
+		ExpiresAt: cursor.ExpiresAt.UTC().UnixNano(),
+	})
+}
+
+func DecodeSimilarVideoCursor(value string, sourceVideoID int64, contractKey string, now time.Time) (*SimilarVideoCursor, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	payload, parsedTime, err := decodeCursor(
+		value, similarVideoCursorVersion, similarVideoCursorCategory,
+		strconv.FormatInt(sourceVideoID, 10),
+	)
+	if err != nil || payload.Mode != "similar" ||
+		payload.RankingVersion != domainembedding.MultimodalExactRankingVersionV1 ||
+		payload.ContractKey != strings.TrimSpace(contractKey) || payload.Score <= 0 ||
+		math.IsNaN(payload.Score) || math.IsInf(payload.Score, 0) || payload.ExpiresAt <= 0 ||
+		!now.UTC().Before(time.Unix(0, payload.ExpiresAt).UTC()) {
+		return nil, domainsearch.ErrInvalidCursor
+	}
+	return &SimilarVideoCursor{
+		ContractKey: payload.ContractKey, Similarity: payload.Score,
+		PublishedAt: parsedTime, VideoID: payload.ID,
+		ExpiresAt: time.Unix(0, payload.ExpiresAt).UTC(),
+	}, nil
 }
 
 func EncodeUserCursor(query string, cursor *domainsearch.UserCursor) string {

@@ -37,6 +37,13 @@ type videoPageResponse struct {
 	HasMore    bool                  `json:"has_more"`
 }
 
+type similarVideoPageResponse struct {
+	Items             []videoResultResponse `json:"items"`
+	NextCursor        string                `json:"next_cursor"`
+	HasMore           bool                  `json:"has_more"`
+	SemanticAvailable bool                  `json:"semantic_available"`
+}
+
 type userPageResponse struct {
 	Items      []userResultResponse `json:"items"`
 	NextCursor string               `json:"next_cursor"`
