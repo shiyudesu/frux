@@ -10,6 +10,7 @@ import (
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 type MultimodalWorkerRepository interface {
@@ -228,9 +229,11 @@ func (w *MultimodalJobWorker) processClaimedJob(ctx context.Context, job *domain
 	}
 	select {
 	case w.slots <- struct{}{}:
+		inframetrics.ObserveMultimodalAdmission("video", "accepted")
 	case <-attemptCtx.Done():
 		return nil
 	default:
+		inframetrics.ObserveMultimodalAdmission("video", "saturated")
 		return w.retry(attemptCtx, job, domainembedding.MultimodalFailureAdmission, 0)
 	}
 	type providerResult struct {
@@ -240,6 +243,7 @@ func (w *MultimodalJobWorker) processClaimedJob(ctx context.Context, job *domain
 	providerDone := make(chan providerResult, 1)
 	providerCtx, cancelProvider := context.WithTimeout(attemptCtx, w.config.ProviderDeadline)
 	defer cancelProvider()
+	providerStarted := time.Now()
 	go func() {
 		defer func() { <-w.slots }()
 		result, err := w.provider.EmbedVideoContent(providerCtx, request)
@@ -249,25 +253,37 @@ func (w *MultimodalJobWorker) processClaimedJob(ctx context.Context, job *domain
 	select {
 	case lost := <-heartbeatLost:
 		_ = lost
+		inframetrics.ObserveMultimodalProvider("video", "cancelled", time.Since(providerStarted))
 		return nil
 	case completed := <-providerDone:
 		if completed.err != nil {
 			if attemptCtx.Err() != nil || receiveHeartbeatLoss(heartbeatLost) != nil {
+				inframetrics.ObserveMultimodalProvider("video", "cancelled", time.Since(providerStarted))
 				return nil
 			}
+			var providerError *MultimodalProviderError
+			result := "retryable"
+			if errors.As(completed.err, &providerError) && !providerError.Retryable {
+				result = "terminal"
+			}
+			inframetrics.ObserveMultimodalProvider("video", result, time.Since(providerStarted))
 			return w.finishProviderFailure(attemptCtx, job, completed.err)
 		}
 		result = completed.result
 	case <-providerCtx.Done():
 		if attemptCtx.Err() != nil {
+			inframetrics.ObserveMultimodalProvider("video", "cancelled", time.Since(providerStarted))
 			return nil
 		}
+		inframetrics.ObserveMultimodalProvider("video", "timeout", time.Since(providerStarted))
 		return w.retry(attemptCtx, job, domainembedding.MultimodalFailureTimeout, 0)
 	}
 	validated, err := ValidateMultimodalEmbeddingResult(job.Contract, job.SourceHash, result)
 	if err != nil {
+		inframetrics.ObserveMultimodalProvider("video", "invalid", time.Since(providerStarted))
 		return w.terminal(attemptCtx, job, domainembedding.MultimodalFailureInvalidVector)
 	}
+	inframetrics.ObserveMultimodalProvider("video", "success", time.Since(providerStarted))
 	current, err = w.loadCurrentSource(attemptCtx, job)
 	if err != nil {
 		if attemptCtx.Err() != nil || receiveHeartbeatLoss(heartbeatLost) != nil {

@@ -9,6 +9,7 @@ import (
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 type SimilarVideoRepository interface {
@@ -77,29 +78,36 @@ func (s *SimilarVideoService) Search(ctx context.Context, request SimilarVideoRe
 		request.Cursor, request.SourceVideoID, s.contract.Key(), s.now(),
 	)
 	if err != nil {
+		inframetrics.ObserveMultimodalSimilar("error")
 		return nil, err
 	}
 	source, err := s.loader.BatchGetReadable(ctx, 0, []int64{request.SourceVideoID}, true)
 	if err != nil {
+		inframetrics.ObserveMultimodalSimilar("error")
 		return nil, ErrSearchFailed
 	}
 	if source[request.SourceVideoID] == nil {
+		inframetrics.ObserveMultimodalSimilar("source_unreadable")
 		return nil, domainvideo.ErrVideoNotFound
 	}
 	fact, err := s.repository.FindMultimodalVectorFact(ctx, request.SourceVideoID, s.contract)
 	if errors.Is(err, domainembedding.ErrMultimodalVectorFactNotFound) {
 		if cursor != nil {
+			inframetrics.ObserveMultimodalSimilar("unavailable")
 			return nil, ErrSemanticContinuationUnavailable
 		}
+		inframetrics.ObserveMultimodalSimilar("unavailable")
 		return &SimilarVideoPage{Items: []VideoResult{}, SemanticAvailable: false}, nil
 	}
 	if err != nil {
+		inframetrics.ObserveMultimodalSimilar("error")
 		return nil, ErrSemanticVideoUnavailable
 	}
 	candidates, err := s.repository.ExactMultimodalSearch(
 		ctx, s.contract, fact.Values, []int64{request.SourceVideoID}, s.poolLimit,
 	)
 	if err != nil {
+		inframetrics.ObserveMultimodalSimilar("error")
 		return nil, ErrSemanticVideoUnavailable
 	}
 	if cursor != nil {
@@ -117,17 +125,25 @@ func (s *SimilarVideoService) Search(ctx context.Context, request SimilarVideoRe
 	}
 	visible, err := s.loader.BatchGetReadable(ctx, 0, videoIDs, true)
 	if err != nil {
+		inframetrics.ObserveMultimodalSimilar("error")
 		return nil, ErrSearchFailed
 	}
 	filtered := candidates[:0]
+	filteredCount := 0
 	for _, candidate := range candidates {
 		video := visible[candidate.VideoID]
 		if video == nil || video.PublishedAt == nil || !video.PublishedAt.Equal(candidate.PublishedAt) {
+			filteredCount++
 			continue
 		}
 		filtered = append(filtered, candidate)
 	}
 	candidates = filtered
+	if filteredCount > 0 {
+		for range filteredCount {
+			inframetrics.ObserveMultimodalSimilar("filtered")
+		}
+	}
 	if len(candidates) > limit+1 {
 		candidates = candidates[:limit+1]
 	}
@@ -156,6 +172,11 @@ func (s *SimilarVideoService) Search(ctx context.Context, request SimilarVideoRe
 			ExpiresAt: s.now().Add(s.cursorTTL),
 		})
 	}
+	result := "success"
+	if len(page.Items) == 0 {
+		result = "empty"
+	}
+	inframetrics.ObserveMultimodalSimilar(result)
 	return page, nil
 }
 

@@ -10,6 +10,7 @@ import (
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 const (
@@ -104,6 +105,7 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 		cursorValue, query, h.config.Version, h.config.Contract.Key(), h.now(),
 	)
 	if err != nil {
+		inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, "error")
 		return nil, err
 	}
 	if cursor != nil && cursor.Mode == VideoRetrievalModeLexical {
@@ -111,17 +113,20 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 	}
 	lexical, err := s.videos.SearchVideos(ctx, query, nil, h.config.PoolLimit)
 	if err != nil {
+		inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, "error")
 		return nil, ErrSearchFailed
 	}
 	queryVector, embedErr := h.embedder.EmbedPublicQuery(ctx, query)
 	if embedErr != nil {
 		if cursor != nil && cursor.Mode == VideoRetrievalModeHybrid {
+			inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, "retryable")
 			return nil, ErrSemanticContinuationUnavailable
 		}
 		return s.searchLexicalFallback(ctx, query, nil, limit, lexical)
 	}
 	if queryVector == nil || !queryVector.Contract.Equal(h.config.Contract) {
 		if cursor != nil {
+			inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, "retryable")
 			return nil, ErrSemanticContinuationUnavailable
 		}
 		return s.searchLexicalFallback(ctx, query, nil, limit, lexical)
@@ -131,6 +136,7 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 	)
 	if err != nil {
 		if cursor != nil {
+			inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, "retryable")
 			return nil, ErrSemanticContinuationUnavailable
 		}
 		return s.searchLexicalFallback(ctx, query, nil, limit, lexical)
@@ -141,6 +147,7 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 	}
 	semanticVideos, err := h.loader.BatchGetReadable(ctx, 0, semanticIDs, true)
 	if err != nil {
+		inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, "error")
 		return nil, ErrSearchFailed
 	}
 	mixed := mixHybridVideoCandidates(lexical, semantic, semanticVideos, h.config)
@@ -159,6 +166,7 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 	}
 	current, err := h.loader.BatchGetReadable(ctx, 0, selectedIDs, true)
 	if err != nil {
+		inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, "error")
 		return nil, ErrSearchFailed
 	}
 	visible := mixed[:0]
@@ -172,6 +180,15 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 		visible = append(visible, candidate)
 	}
 	mixed = visible
+	for _, candidate := range mixed {
+		contribution := "semantic_only"
+		if candidate.lexicalRank >= 0 && candidate.semanticRank >= 0 {
+			contribution = "overlap"
+		} else if candidate.lexicalRank >= 0 {
+			contribution = "lexical_only"
+		}
+		inframetrics.ObserveMultimodalHybridCandidates(contribution, 1)
+	}
 	if len(mixed) > limit+1 {
 		mixed = mixed[:limit+1]
 	}
@@ -195,6 +212,11 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 			ExpiresAt: h.now().Add(h.config.CursorTTL),
 		})
 	}
+	result := "success"
+	if len(page.Items) == 0 {
+		result = "empty"
+	}
+	inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeHybrid, result)
 	return page, nil
 }
 
@@ -216,6 +238,7 @@ func (s *Service) searchLexicalFallback(
 	if items == nil {
 		items, err = s.videos.SearchVideos(ctx, query, lexicalCursor, limit+1)
 		if err != nil {
+			inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeLexical, "error")
 			return nil, ErrSearchFailed
 		}
 	}
@@ -241,6 +264,14 @@ func (s *Service) searchLexicalFallback(
 			ExpiresAt: s.hybrid.now().Add(s.hybrid.config.CursorTTL),
 		})
 	}
+	result := "success"
+	if cursor == nil {
+		result = "fallback"
+	}
+	if len(page.Items) == 0 {
+		result = "empty"
+	}
+	inframetrics.ObserveMultimodalHybrid(VideoRetrievalModeLexical, result)
 	return page, nil
 }
 

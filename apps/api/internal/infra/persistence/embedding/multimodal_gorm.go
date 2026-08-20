@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -471,12 +472,15 @@ func (r *Repository) ExactMultimodalSearch(
 	excludedVideoIDs []int64,
 	limit int,
 ) ([]domainembedding.MultimodalExactCandidate, error) {
+	started := time.Now()
 	query, err := domainembedding.ValidateMultimodalQueryVector(contract, query)
 	if err != nil || limit < 1 || limit > 500 || len(excludedVideoIDs) > 1000 {
+		inframetrics.ObserveMultimodalExactQuery("error", time.Since(started), 0)
 		return nil, domainembedding.ErrInvalidMultimodalProjection
 	}
 	queryJSON, err := json.Marshal(query)
 	if err != nil {
+		inframetrics.ObserveMultimodalExactQuery("error", time.Since(started), 0)
 		return nil, domainembedding.ErrInvalidMultimodalProjection
 	}
 	statement := `
@@ -508,8 +512,18 @@ func (r *Repository) ExactMultimodalSearch(
 	arguments = append(arguments, contract.Dimension, limit)
 	var candidates []domainembedding.MultimodalExactCandidate
 	if err := r.db.WithContext(ctx).Raw(statement, arguments...).Scan(&candidates).Error; err != nil {
+		result := "error"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			result = "cancelled"
+		}
+		inframetrics.ObserveMultimodalExactQuery(result, time.Since(started), 0)
 		return nil, err
 	}
+	result := "success"
+	if len(candidates) == 0 {
+		result = "empty"
+	}
+	inframetrics.ObserveMultimodalExactQuery(result, time.Since(started), len(candidates))
 	return candidates, nil
 }
 

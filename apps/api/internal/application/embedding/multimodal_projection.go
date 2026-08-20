@@ -6,6 +6,7 @@ import (
 	"time"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 type MultimodalProjectionRepository interface {
@@ -80,6 +81,7 @@ func (r *MultimodalProjectionReconciler) ReconcileBatch(
 			}
 			if deleted {
 				result.Deleted++
+				inframetrics.ObserveMultimodalProjection("missing_fact", 1)
 			} else {
 				result.Unchanged++
 			}
@@ -102,6 +104,11 @@ func (r *MultimodalProjectionReconciler) ReconcileBatch(
 			}
 			if deleted {
 				result.Deleted++
+				metricResult := "source_stale"
+				if sourceErr != nil {
+					metricResult = "unreadable"
+				}
+				inframetrics.ObserveMultimodalProjection(metricResult, 1)
 			} else {
 				result.Unchanged++
 			}
@@ -117,8 +124,10 @@ func (r *MultimodalProjectionReconciler) ReconcileBatch(
 		}
 		if changed {
 			result.Upserted++
+			inframetrics.ObserveMultimodalProjection("upserted", 1)
 		} else {
 			result.Unchanged++
+			inframetrics.ObserveMultimodalProjection("unchanged", 1)
 		}
 	}
 	return result, nil

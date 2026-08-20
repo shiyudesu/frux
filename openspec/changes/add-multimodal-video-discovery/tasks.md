@@ -122,7 +122,7 @@
 
 ## 9. Observability, Operations, and Evaluation Evidence
 
-- [ ] 9.1 Add fixed-label metrics for job state/backlog/oldest age, provider result/duration/admission,
+- [x] 9.1 Add fixed-label metrics for job state/backlog/oldest age, provider result/duration/admission,
   active-contract coverage, projection drift, exact-query latency/result count, query-cache outcome,
   hybrid mode/degradation/overlap/contribution, and similar-video empty/filter outcomes.
 - [ ] 9.2 Add bounded operator inspection and manual requeue for multimodal jobs with permission,
@@ -131,7 +131,7 @@
 - [ ] 9.3 Create a small versioned human golden set and deterministic evaluation command comparing
   lexical-only, available component baselines, and multimodal hybrid relevance with denominators,
   model/merge versions, Recall/NDCG-style metrics, overlap, and latency.
-- [ ] 9.4 Add privacy/logging tests proving raw images, vectors, query text, credentials, user/video/
+- [x] 9.4 Add privacy/logging tests proving raw images, vectors, query text, credentials, user/video/
   request IDs, model strings, and raw errors never become metric labels or normal log payloads.
 - [ ] 9.5 Document enablement, contract changes, development fixture generation, disabled behavior,
   query fallback, exact-capacity evidence, operator inspection, rollback, and the explicit absence of

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 var ErrMultimodalQueryUnavailable = errors.New("multimodal query embedding unavailable")
@@ -161,13 +162,17 @@ func (e *MultimodalQueryEmbedder) EmbedPublicQuery(
 		return nil, ErrInvalidMultimodalQueryVector
 	}
 	if cached, ok := e.cache.Get(canonicalQuery, e.config.Contract); ok {
+		inframetrics.ObserveMultimodalQueryCache("hit")
 		return cached, nil
 	}
+	inframetrics.ObserveMultimodalQueryCache("miss")
 	select {
 	case e.slots <- struct{}{}:
+		inframetrics.ObserveMultimodalAdmission("query", "accepted")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+		inframetrics.ObserveMultimodalAdmission("query", "saturated")
 		return nil, ErrMultimodalQuerySaturated
 	}
 	request, err := NewMultimodalQueryEmbeddingRequest(e.config.Contract, canonicalQuery, e.config.MaxQueryRunes)
@@ -180,6 +185,7 @@ func (e *MultimodalQueryEmbedder) EmbedPublicQuery(
 		err    error
 	}
 	completed := make(chan queryResult, 1)
+	started := time.Now()
 	providerCtx, cancel := context.WithTimeout(ctx, e.config.Deadline)
 	defer cancel()
 	go func() {
@@ -190,19 +196,25 @@ func (e *MultimodalQueryEmbedder) EmbedPublicQuery(
 	select {
 	case output := <-completed:
 		if output.err != nil {
+			inframetrics.ObserveMultimodalProvider("query", "retryable", time.Since(started))
 			return nil, ErrMultimodalQueryUnavailable
 		}
 		validated, err := ValidateMultimodalEmbeddingResult(e.config.Contract, request.SourceHash, output.result)
 		if err != nil {
+			inframetrics.ObserveMultimodalProvider("query", "invalid", time.Since(started))
 			return nil, ErrInvalidMultimodalQueryVector
 		}
 		vector := &domainembedding.MultimodalQueryVector{Contract: validated.Identity.Contract, Values: validated.Values}
 		e.cache.Put(canonicalQuery, vector)
+		inframetrics.ObserveMultimodalQueryCache("write")
+		inframetrics.ObserveMultimodalProvider("query", "success", time.Since(started))
 		return vector.Clone(), nil
 	case <-providerCtx.Done():
 		if ctx.Err() != nil {
+			inframetrics.ObserveMultimodalProvider("query", "cancelled", time.Since(started))
 			return nil, ctx.Err()
 		}
+		inframetrics.ObserveMultimodalProvider("query", "timeout", time.Since(started))
 		return nil, ErrMultimodalQueryTimeout
 	}
 }
