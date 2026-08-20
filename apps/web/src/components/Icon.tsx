@@ -4,6 +4,7 @@ export type IconName =
   | "alert"
   | "bell"
   | "bookmark"
+  | "calendar"
   | "camera"
   | "check"
   | "check-all"
@@ -87,6 +88,14 @@ function renderIcon(name: IconName, filled: boolean) {
       );
     case "bookmark":
       return <path d="M6.5 4.5h11v15l-5.5-3.4-5.5 3.4v-15Z" fill={fill} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />;
+    case "calendar":
+      return (
+        <>
+          <rect x="4" y="5.5" width="16" height="14" rx="2.3" fill={fill} stroke="currentColor" strokeWidth="1.7" />
+          <path d="M8 3.5v4M16 3.5v4M4 9.5h16" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
+          <path d="M8 13h2M14 13h2M8 16.5h2M14 16.5h2" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+        </>
+      );
     case "camera":
       return (
         <>

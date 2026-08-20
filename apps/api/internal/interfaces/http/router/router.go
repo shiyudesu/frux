@@ -576,6 +576,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	users.PATCH("/me/profile-settings", authMiddleware, accountHandler.UpdateProfileSettings)
 	users.GET("/me/videos", authMiddleware, videoHandler.ListMine)
 	users.POST("/me/video-queries", authMiddleware, videoHandler.QueryMine)
+	users.GET("/me/video-archive-months", authMiddleware, videoHandler.ListArchiveMonths)
 	users.POST("/me/video-batch-actions", authMiddleware, videoHandler.BatchAction)
 	users.GET("/me/liked-videos", authMiddleware, libraryHandler.ListLiked)
 	users.GET("/me/favorite-videos", authMiddleware, libraryHandler.ListFavorites)

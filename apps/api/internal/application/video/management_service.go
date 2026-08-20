@@ -18,6 +18,8 @@ import (
 
 const defaultManagementLimit = 20
 
+var ErrLoadCreatorArchiveMonthsFailed = errors.New("failed to load creator archive months")
+
 type ManagementService struct {
 	repo             domainvideo.ManagementRepository
 	cacheInvalidator VideoCacheInvalidator
@@ -44,6 +46,10 @@ type CreatorQueryResult struct {
 	Items      []*domainvideo.Video
 	NextCursor string
 	HasMore    bool
+}
+
+type CreatorArchiveMonthResult struct {
+	Months []string
 }
 
 type BatchResult struct {
@@ -160,6 +166,36 @@ func (s *ManagementService) QueryCreatorVideos(ctx context.Context, userID int64
 		next = encodeCreatorCursor(items[len(items)-1].CreatedAt, items[len(items)-1].ID)
 	}
 	return &CreatorQueryResult{Items: items, NextCursor: next, HasMore: hasMore}, nil
+}
+
+func (s *ManagementService) ListCreatorArchiveMonths(
+	ctx context.Context,
+	userID int64,
+	visibility string,
+) (*CreatorArchiveMonthResult, error) {
+	if userID <= 0 {
+		return nil, domainvideo.ErrInvalidAuthorID
+	}
+	visibility = strings.ToLower(strings.TrimSpace(visibility))
+	if !domainvideo.ValidVisibility(visibility) {
+		return nil, domainvideo.ErrInvalidVisibility
+	}
+	values, err := s.repo.ListCreatorArchiveMonths(ctx, userID, visibility)
+	if err != nil {
+		return nil, ErrLoadCreatorArchiveMonthsFailed
+	}
+	seen := make(map[string]struct{}, len(values))
+	months := make([]string, 0, len(values))
+	for _, value := range values {
+		month := value.UTC().Format("2006-01")
+		if _, exists := seen[month]; exists {
+			continue
+		}
+		seen[month] = struct{}{}
+		months = append(months, month)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(months)))
+	return &CreatorArchiveMonthResult{Months: months}, nil
 }
 
 func (s *ManagementService) ApplyBatch(ctx context.Context, userID int64, action string, videoIDs []int64, idempotencyKey string) (*BatchResult, error) {

@@ -1,9 +1,11 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   applyVideoBatchAction,
+  fetchCreatorArchiveMonths,
   queryCreatorVideos
 } from "../api/creator";
 import { apiErrorMessage } from "../api/client";
+import { creatorArchiveMonthRange } from "../creatorArchive";
 import type {
   AsyncState,
   BatchVideoAction,
@@ -16,8 +18,7 @@ const PAGE_LIMIT = 24;
 
 export interface CreatorFilters {
   query: string;
-  createdFrom: string;
-  createdTo: string;
+  createdMonth: string;
 }
 
 export interface CreatorVideoState {
@@ -29,7 +30,15 @@ export interface CreatorVideoState {
   filters: CreatorFilters;
 }
 
-const emptyFilters: CreatorFilters = { query: "", createdFrom: "", createdTo: "" };
+export interface CreatorArchiveState {
+  months: string[];
+  state: "idle" | "loading" | "ready" | "error";
+  error: string;
+}
+
+export type CreatorArchiveRefreshResult = Record<CreatorWorkTab, string[]>;
+
+const emptyFilters: CreatorFilters = { query: "", createdMonth: "" };
 
 function createVideoState(): CreatorVideoState {
   return {
@@ -39,6 +48,14 @@ function createVideoState(): CreatorVideoState {
     state: "idle",
     error: "",
     filters: { ...emptyFilters }
+  };
+}
+
+function createArchiveState(): CreatorArchiveState {
+  return {
+    months: [],
+    state: "idle",
+    error: ""
   };
 }
 
@@ -55,7 +72,29 @@ export function useCreatorContent(token: string, onContentStatsChanged?: () => P
     published: createVideoState(),
     private: createVideoState()
   });
+  const [archives, setArchives] = useState<Record<CreatorWorkTab, CreatorArchiveState>>({
+    published: createArchiveState(),
+    private: createArchiveState()
+  });
   const videoRequests = useRef({ published: 0, private: 0 });
+  const archiveRequests = useRef({ published: 0, private: 0 });
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+
+  useEffect(() => {
+    videoRequests.current.published += 1;
+    videoRequests.current.private += 1;
+    archiveRequests.current.published += 1;
+    archiveRequests.current.private += 1;
+    setVideos({
+      published: createVideoState(),
+      private: createVideoState()
+    });
+    setArchives({
+      published: createArchiveState(),
+      private: createArchiveState()
+    });
+  }, [token]);
 
   const loadVideos = useCallback(
     async (
@@ -67,8 +106,10 @@ export function useCreatorContent(token: string, onContentStatsChanged?: () => P
       const reset = options.reset ?? current.state === "idle";
       const filters = options.filters || current.filters;
       const cursor = reset ? "" : current.nextCursor;
+      const range = creatorArchiveMonthRange(filters.createdMonth);
       const requestID = videoRequests.current[tab] + 1;
       videoRequests.current[tab] = requestID;
+      const requestToken = token;
       setVideos((state) => ({
         ...state,
         [tab]: {
@@ -82,12 +123,12 @@ export function useCreatorContent(token: string, onContentStatsChanged?: () => P
         const data = await queryCreatorVideos(token, {
           visibility: visibilityForTab(tab),
           query: filters.query.trim(),
-          created_from: filters.createdFrom,
-          created_to: filters.createdTo,
+          created_from: range.createdFrom,
+          created_to: range.createdTo,
           cursor,
           limit: PAGE_LIMIT
         });
-        if (videoRequests.current[tab] !== requestID) return;
+        if (videoRequests.current[tab] !== requestID || tokenRef.current !== requestToken) return;
         setVideos((state) => ({
           ...state,
           [tab]: {
@@ -100,7 +141,7 @@ export function useCreatorContent(token: string, onContentStatsChanged?: () => P
           }
         }));
       } catch (error) {
-        if (videoRequests.current[tab] !== requestID) return;
+        if (videoRequests.current[tab] !== requestID || tokenRef.current !== requestToken) return;
         setVideos((state) => ({
           ...state,
           [tab]: {
@@ -114,24 +155,88 @@ export function useCreatorContent(token: string, onContentStatsChanged?: () => P
     [token, videos]
   );
 
+  const loadArchiveMonths = useCallback(
+    async (tab: CreatorWorkTab): Promise<string[] | null> => {
+      if (!token) return null;
+      const requestID = archiveRequests.current[tab] + 1;
+      archiveRequests.current[tab] = requestID;
+      const requestToken = token;
+      setArchives((state) => ({
+        ...state,
+        [tab]: {
+          ...state[tab],
+          state: "loading",
+          error: ""
+        }
+      }));
+      try {
+        const data = await fetchCreatorArchiveMonths(token, visibilityForTab(tab));
+        if (archiveRequests.current[tab] !== requestID || tokenRef.current !== requestToken) {
+          return null;
+        }
+        setArchives((state) => ({
+          ...state,
+          [tab]: {
+            months: data.months,
+            state: "ready",
+            error: ""
+          }
+        }));
+        return data.months;
+      } catch (error) {
+        if (archiveRequests.current[tab] !== requestID || tokenRef.current !== requestToken) {
+          return null;
+        }
+        setArchives((state) => ({
+          ...state,
+          [tab]: {
+            ...state[tab],
+            state: "error",
+            error: apiErrorMessage(error, "作品日期加载失败")
+          }
+        }));
+        return null;
+      }
+    },
+    [token]
+  );
+
   const ensureTab = useCallback(
     (tab: CreatorWorkTab) => {
       if (videos[tab].state === "idle") void loadVideos(tab, { reset: true });
+      if (archives[tab].state === "idle") void loadArchiveMonths(tab);
     },
-    [loadVideos, videos]
+    [archives, loadArchiveMonths, loadVideos, videos]
   );
 
   const runBatchAction = useCallback(
-    async (tab: CreatorWorkTab, videoIDs: number[], action: BatchVideoAction) => {
-      if (!token || videoIDs.length === 0) return;
+    async (
+      tab: CreatorWorkTab,
+      videoIDs: number[],
+      action: BatchVideoAction
+    ): Promise<CreatorArchiveRefreshResult | null> => {
+      if (!token || videoIDs.length === 0) return null;
       setVideos((state) => ({ ...state, [tab]: { ...state[tab], state: "mutating", error: "" } }));
       try {
         await applyVideoBatchAction(token, videoIDs, action, mutationKey(action));
+        const [publishedMonths, privateMonths] = await Promise.all([
+          loadArchiveMonths("published"),
+          loadArchiveMonths("private")
+        ]);
+        const refreshedArchives: CreatorArchiveRefreshResult = {
+          published: publishedMonths ?? archives.published.months,
+          private: privateMonths ?? archives.private.months
+        };
+        const refreshedFilters = {
+          published: reconcileArchiveFilter(videos.published.filters, refreshedArchives.published),
+          private: reconcileArchiveFilter(videos.private.filters, refreshedArchives.private)
+        };
         await Promise.all([
-          loadVideos("published", { reset: true }),
-          loadVideos("private", { reset: true }),
+          loadVideos("published", { reset: true, filters: refreshedFilters.published }),
+          loadVideos("private", { reset: true, filters: refreshedFilters.private }),
           onContentStatsChanged?.()
         ]);
+        return refreshedArchives;
       } catch (error) {
         setVideos((state) => ({
           ...state,
@@ -144,13 +249,23 @@ export function useCreatorContent(token: string, onContentStatsChanged?: () => P
         throw error;
       }
     },
-    [loadVideos, onContentStatsChanged, token]
+    [archives, loadArchiveMonths, loadVideos, onContentStatsChanged, token, videos]
   );
 
   return {
     videos,
+    archives,
     ensureTab,
     loadVideos,
+    loadArchiveMonths,
     runBatchAction
   };
+}
+
+export function reconcileArchiveFilter(
+  filters: CreatorFilters,
+  months: readonly string[]
+): CreatorFilters {
+  if (!filters.createdMonth || months.includes(filters.createdMonth)) return filters;
+  return { ...filters, createdMonth: "" };
 }

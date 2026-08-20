@@ -301,13 +301,14 @@
     min-height: 44px;
   }
 
-  .profile-date-field {
+  .profile-month-archive {
     min-height: 44px;
-    flex: 1 1 180px;
+    flex: 0 0 auto;
   }
 
-  .profile-date-field input {
-    width: 100%;
+  .profile-month-panel {
+    right: auto;
+    left: 0;
   }
 
   .profile-filter-button,
@@ -1011,13 +1012,9 @@
     min-height: 44px;
   }
 
-  .profile-date-field {
+  .profile-month-archive {
     min-height: 44px;
-    flex: 1;
-  }
-
-  .profile-date-field input {
-    width: 100%;
+    flex: 0 0 auto;
   }
 
   .profile-filter-button,

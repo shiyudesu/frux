@@ -2,6 +2,7 @@ package applicationvideo
 
 import (
 	"context"
+	"errors"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"reflect"
@@ -19,6 +20,8 @@ type managementRepoStub struct {
 	videos           map[int64]*domainvideo.Video
 	publicationReady bool
 	publicationMarks int
+	archiveMonths    []time.Time
+	archiveErr       error
 }
 
 type managementMediaPublisherStub struct {
@@ -47,6 +50,9 @@ func (p *managementMediaPublisherStub) ProtectVideo(context.Context, int64, int6
 
 func (r *managementRepoStub) QueryCreatorVideos(context.Context, domainvideo.CreatorVideoFilter) ([]*domainvideo.Video, error) {
 	return nil, nil
+}
+func (r *managementRepoStub) ListCreatorArchiveMonths(context.Context, int64, string) ([]time.Time, error) {
+	return append([]time.Time(nil), r.archiveMonths...), r.archiveErr
 }
 func (r *managementRepoStub) ApplyBatch(_ context.Context, userID int64, action string, videoIDs []int64, key, fingerprint string) (*domainvideo.BatchOperation, bool, error) {
 	r.lastIDs = append([]int64(nil), videoIDs...)
@@ -248,6 +254,34 @@ func TestManagementCursorRoundTrip(t *testing.T) {
 	}
 	if _, err := decodeCreatorCursor("bad"); err != domainvideo.ErrInvalidCursor {
 		t.Fatalf("expected invalid cursor, got %v", err)
+	}
+}
+
+func TestListCreatorArchiveMonthsNormalizesValidatesAndSurfacesFailure(t *testing.T) {
+	repo := &managementRepoStub{
+		archiveMonths: []time.Time{
+			time.Date(2025, 12, 20, 13, 0, 0, 0, time.FixedZone("local", 8*60*60)),
+			time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+	service := NewManagement(repo, nil)
+	result, err := service.ListCreatorArchiveMonths(context.Background(), 7, " PUBLIC ")
+	if err != nil {
+		t.Fatalf("list archive months: %v", err)
+	}
+	if !reflect.DeepEqual(result.Months, []string{"2026-08", "2025-12"}) {
+		t.Fatalf("archive months = %v", result.Months)
+	}
+	if _, err := service.ListCreatorArchiveMonths(context.Background(), 0, "public"); !errors.Is(err, domainvideo.ErrInvalidAuthorID) {
+		t.Fatalf("invalid author error = %v", err)
+	}
+	if _, err := service.ListCreatorArchiveMonths(context.Background(), 7, ""); !errors.Is(err, domainvideo.ErrInvalidVisibility) {
+		t.Fatalf("invalid visibility error = %v", err)
+	}
+	repo.archiveErr = errors.New("database unavailable")
+	if _, err := service.ListCreatorArchiveMonths(context.Background(), 7, "private"); !errors.Is(err, ErrLoadCreatorArchiveMonthsFailed) {
+		t.Fatalf("archive persistence error = %v", err)
 	}
 }
 

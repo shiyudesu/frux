@@ -187,6 +187,54 @@ func TestPostgresAdminVideoSearchFiltersAndStableOrder(t *testing.T) {
 	}
 }
 
+func TestPostgresCreatorArchiveMonthsAreVisibilityScopedUniqueAndOrdered(t *testing.T) {
+	db := openSearchPostgres(t)
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	if err := db.Create(&[]infraaccount.UserModel{
+		{ID: 31, Account: "archive-owner", Password: "hash", Nickname: "Archive Owner", Status: 1, Role: "user", UpdatedAt: now},
+		{ID: 32, Account: "archive-other", Password: "hash", Nickname: "Archive Other", Status: 1, Role: "user", UpdatedAt: now},
+	}).Error; err != nil {
+		t.Fatalf("seed archive accounts: %v", err)
+	}
+	videos := []infravideo.VideoModel{
+		searchVideoModel(211, "August public", "", domainvideo.StatusPublished, domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, now),
+		searchVideoModel(212, "August duplicate", "", domainvideo.StatusPendingReview, domainvideo.VisibilityPublic, domainmedia.MediaStatusProcessing, now.Add(-24*time.Hour)),
+		searchVideoModel(213, "June public", "", domainvideo.StatusRejected, domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, time.Date(2026, 6, 2, 1, 0, 0, 0, time.UTC)),
+		searchVideoModel(214, "Private prior year", "", domainvideo.StatusPublished, domainvideo.VisibilityPrivate, domainmedia.MediaStatusReady, time.Date(2025, 12, 31, 23, 0, 0, 0, time.UTC)),
+		searchVideoModel(215, "Deleted newest", "", domainvideo.StatusDeleted, domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		searchVideoModel(216, "Other owner", "", domainvideo.StatusPublished, domainvideo.VisibilityPublic, domainmedia.MediaStatusReady, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+	}
+	for index := range videos {
+		videos[index].AuthorID = 31
+	}
+	videos[len(videos)-1].AuthorID = 32
+	if err := db.Create(&videos).Error; err != nil {
+		t.Fatalf("seed archive videos: %v", err)
+	}
+	repository := infravideo.New(db)
+	publicMonths, err := repository.ListCreatorArchiveMonths(context.Background(), 31, domainvideo.VisibilityPublic)
+	if err != nil {
+		t.Fatalf("list public archive months: %v", err)
+	}
+	if got := archiveMonthStrings(publicMonths); fmt.Sprint(got) != "[2026-08 2026-06]" {
+		t.Fatalf("public archive months = %v", got)
+	}
+	privateMonths, err := repository.ListCreatorArchiveMonths(context.Background(), 31, domainvideo.VisibilityPrivate)
+	if err != nil {
+		t.Fatalf("list private archive months: %v", err)
+	}
+	if got := archiveMonthStrings(privateMonths); fmt.Sprint(got) != "[2025-12]" {
+		t.Fatalf("private archive months = %v", got)
+	}
+	emptyMonths, err := repository.ListCreatorArchiveMonths(context.Background(), 32, domainvideo.VisibilityPrivate)
+	if err != nil {
+		t.Fatalf("list empty archive months: %v", err)
+	}
+	if len(emptyMonths) != 0 {
+		t.Fatalf("empty archive months = %v", emptyMonths)
+	}
+}
+
 func TestPostgresAdminTransitionRollsBackWhenAuditFails(t *testing.T) {
 	db := openSearchPostgres(t)
 	if err := db.AutoMigrate(
@@ -1042,6 +1090,14 @@ func userSearchIDs(items []*domainsearch.UserIndexItem) []int64 {
 		ids = append(ids, item.ID)
 	}
 	return ids
+}
+
+func archiveMonthStrings(items []time.Time) []string {
+	months := make([]string, 0, len(items))
+	for _, item := range items {
+		months = append(months, item.UTC().Format("2006-01"))
+	}
+	return months
 }
 
 func searchPostgresDSNWithSchema(dsn, schema string) string {

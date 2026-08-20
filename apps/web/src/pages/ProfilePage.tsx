@@ -25,7 +25,10 @@ import { RelationModal } from "../components/RelationModal";
 import { WorkViewer } from "../components/WorkViewer";
 import { CollectionQueueViewer } from "../components/CollectionQueueViewer";
 import { emptyProfile } from "../constants";
-import { useCreatorContent } from "../hooks/useCreatorContent";
+import {
+  reconcileArchiveFilter,
+  useCreatorContent
+} from "../hooks/useCreatorContent";
 import type { CreatorFilters } from "../hooks/useCreatorContent";
 import { useProfileLibrary } from "../hooks/useProfileLibrary";
 import type { ProfileLibraryTab } from "../hooks/useProfileLibrary";
@@ -50,8 +53,8 @@ export const PROFILE_PRIMARY_TABS = [
 ] satisfies Array<{ id: ProfilePrimaryTab; label: string }>;
 
 const defaultFilters: Record<"published" | "private", CreatorFilters> = {
-  published: { query: "", createdFrom: "", createdTo: "" },
-  private: { query: "", createdFrom: "", createdTo: "" }
+  published: { query: "", createdMonth: "" },
+  private: { query: "", createdMonth: "" }
 };
 
 export function ProfilePage() {
@@ -347,6 +350,12 @@ export function ProfilePage() {
     void creator.loadVideos(workTab, { reset: true, filters: filters[workTab] });
   }
 
+  function applyCreatedMonth(createdMonth: string) {
+    const next = { ...filters[workTab], createdMonth };
+    setFilters((state) => ({ ...state, [workTab]: next }));
+    void creator.loadVideos(workTab, { reset: true, filters: next });
+  }
+
   function toggleSelected(videoID: number) {
     setSelectedIDs((current) => {
       const next = new Set(current);
@@ -360,7 +369,13 @@ export function ProfilePage() {
     if (selectedIDs.size === 0) return;
     if (action === "delete" && !window.confirm("确定删除所选作品吗？")) return;
     const affectedTarget = targetVideoID > 0 && selectedIDs.has(targetVideoID);
-    await creator.runBatchAction(workTab, [...selectedIDs], action);
+    const refreshedArchives = await creator.runBatchAction(workTab, [...selectedIDs], action);
+    if (refreshedArchives) {
+      setFilters((state) => ({
+        published: reconcileArchiveFilter(state.published, refreshedArchives.published),
+        private: reconcileArchiveFilter(state.private, refreshedArchives.private)
+      }));
+    }
     if (affectedTarget) {
       setTargetWork(null);
       setTargetRevision((current) => current + 1);
@@ -371,6 +386,7 @@ export function ProfilePage() {
 
   function renderWorks() {
     const current = creator.videos[workTab];
+    const archive = creator.archives[workTab];
     const currentItems = current.items.some((video) => video.id === targetWork?.video.id)
       ? current.items
       : targetWork?.tab === workTab
@@ -380,17 +396,19 @@ export function ProfilePage() {
     return (
       <>
         <CreatorWorkToolbar
+          archiveError={archive.error}
+          archiveMonths={archive.months}
+          archiveState={archive.state}
           busy={current.state === "mutating"}
-          createdFrom={draft.createdFrom}
-          createdTo={draft.createdTo}
+          createdMonth={draft.createdMonth}
           query={draft.query}
           selectedCount={selectedIDs.size}
           selectionMode={selectionMode}
           onBatchDelete={() => void runBatch("delete")}
           onBatchPrivate={() => void runBatch("make_private")}
           onBatchPublic={() => void runBatch("make_public")}
-          onCreatedFromChange={(value) => updateFilter("createdFrom", value)}
-          onCreatedToChange={(value) => updateFilter("createdTo", value)}
+          onArchiveRetry={() => void creator.loadArchiveMonths(workTab)}
+          onCreatedMonthChange={applyCreatedMonth}
           onQueryChange={(value) => updateFilter("query", value)}
           onSubmit={applyFilters}
           onToggleSelection={() => {

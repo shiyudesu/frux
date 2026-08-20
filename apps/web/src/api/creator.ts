@@ -1,11 +1,14 @@
 import type {
   BatchVideoAction,
   BatchVideoActionResponse,
+  CreatorArchiveMonthResponse,
   CreatorVideoPage,
   CreatorVideoQueryRequest,
+  VideoVisibility,
   Video
 } from "../types";
-import { apiRequest } from "./client";
+import { isCreatorArchiveMonth } from "../creatorArchive";
+import { apiRequest, UserFacingError } from "./client";
 
 export function queryCreatorVideos(
   token: string,
@@ -17,6 +20,29 @@ export function queryCreatorVideos(
     auth: "consumer",
     body
   });
+}
+
+export async function fetchCreatorArchiveMonths(
+  token: string,
+  visibility: VideoVisibility
+): Promise<CreatorArchiveMonthResponse> {
+  const params = new URLSearchParams({ visibility });
+  const data = await apiRequest<unknown>(`/api/users/me/video-archive-months?${params.toString()}`, {
+    token,
+    auth: "consumer"
+  });
+  if (!isCreatorArchiveMonthResponse(data)) {
+    throw new UserFacingError("作品日期归档数据格式异常，请刷新后重试");
+  }
+  return data;
+}
+
+export function isCreatorArchiveMonthResponse(value: unknown): value is CreatorArchiveMonthResponse {
+  if (!value || typeof value !== "object") return false;
+  const months = (value as { months?: unknown }).months;
+  return Array.isArray(months) &&
+    months.every(isCreatorArchiveMonth) &&
+    new Set(months).size === months.length;
 }
 
 export async function resolveCreatorVideoTarget(
