@@ -1,6 +1,7 @@
 package infrarecommendation
 
 import (
+	"encoding/json"
 	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	"reflect"
@@ -59,6 +60,38 @@ func TestRequestLogModelRoundTripsQuotaDiagnostics(t *testing.T) {
 	}
 	if !reflect.DeepEqual(restored.RecallDiagnostics, log.RecallDiagnostics) {
 		t.Fatalf("quota diagnostics changed across JSON persistence: got=%#v want=%#v", restored.RecallDiagnostics, log.RecallDiagnostics)
+	}
+}
+
+func TestPolicyModelRestoresDisabledQuotaDevelopmentFixture(t *testing.T) {
+	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	fresh := domainrecommendation.RecallProviderFresh
+	hot := domainrecommendation.RecallProviderHot
+	config := domainrecommendation.InitialRecommendationPolicyConfiguration()
+	config.RecallBudgets = map[string]int{fresh: 400, hot: 400}
+	config.ProviderDeadlinesMS = map[string]int{fresh: 100, hot: 100}
+	config.PreRankPoolLimit = 500
+	config.RecallProviderOrder = []string{fresh, hot}
+	config.RecallProviderReservations = map[string]int{fresh: 100, hot: 100}
+	policy, err := domainrecommendation.NewPolicy("recommend", 7, false, config, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(policy.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := policyFromModel(PolicyModel{
+		ID: 7, Scene: policy.Scene, Version: policy.Version, Enabled: policy.Enabled,
+		ConfigJSON: string(encoded), CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Enabled || restored.Config.PreRankPoolLimit != 500 ||
+		!reflect.DeepEqual(restored.Config.RecallProviderOrder, []string{fresh, hot}) ||
+		restored.Config.RecallProviderReservations[fresh] != 100 {
+		t.Fatalf("disabled quota fixture changed across persistence: %#v", restored)
 	}
 }
 

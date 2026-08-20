@@ -271,3 +271,41 @@ func TestQuotaRecallVisibilityFailureUsesSafeLoadError(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, ErrLoadRecommendationFailed)
 	}
 }
+
+func TestDisabledQuotaDevelopmentPolicyExercisesMixerWithoutRollout(t *testing.T) {
+	now := time.Date(2026, 8, 20, 6, 0, 0, 0, time.UTC)
+	fresh := domainrecommendation.RecallProviderFresh
+	hot := domainrecommendation.RecallProviderHot
+	policy := quotaRecallPolicy(t, 7, false,
+		map[string]int{fresh: 400, hot: 400}, 500, []string{fresh, hot}, map[string]int{fresh: 100, hot: 100},
+	)
+	visibility := &quotaVisibilityCatalog{visible: map[int64]*domainrecommendation.Candidate{
+		1: recallCandidate(1, 1, 1, now),
+		2: recallCandidate(2, 2, 2, now),
+	}}
+	service := New(
+		&rankerTestRepo{},
+		WithCandidateVisibilityFilter(visibility),
+		WithRecallProviders(
+			providerFunc{name: fresh, run: func(_ context.Context, request RecallRequest) ([]*domainrecommendation.Candidate, error) {
+				if request.Budget != 400 {
+					return nil, errors.New("unexpected fresh budget")
+				}
+				return []*domainrecommendation.Candidate{quotaCandidate(1, fresh, 1, now)}, nil
+			}},
+			providerFunc{name: hot, run: func(_ context.Context, request RecallRequest) ([]*domainrecommendation.Candidate, error) {
+				if request.Budget != 400 {
+					return nil, errors.New("unexpected hot budget")
+				}
+				return []*domainrecommendation.Candidate{quotaCandidate(2, hot, 1, now)}, nil
+			}},
+		),
+	)
+	execution, err := service.recallCandidates(context.Background(), &domainrecommendation.CandidateRequest{UserID: 9, Scene: "recommend"}, 500, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Enabled || !reflect.DeepEqual(candidateIDs(execution.candidates), []int64{1, 2}) {
+		t.Fatalf("disabled fixture changed rollout or failed mixing: enabled=%v candidates=%v", policy.Enabled, candidateIDs(execution.candidates))
+	}
+}

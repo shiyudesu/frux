@@ -136,7 +136,8 @@ Worker 按每个已持久化 `recommend` policy（包括禁用和回滚版本）
 清理请求日志，并在全局批额中轮转 policy 起点，避免最新积压版本耗尽批额、较短 policy 提前删除其他版本的
 评估记录，或让退役版本的日志永久滞留。
 请求日志最大保存 500 个候选、每候选最多 8 个 reasons 和 8 个 score components；完整有效池的紧凑 JSON 负载上限为 1 MiB，
-因此不会在正常最大池上静默截断排序前缀或解释。
+因此不会在正常最大池上静默截断排序前缀或解释。启用 Provider Quota Merge 的采样请求还保存最多
+64 条封闭 `phase/provider/result/reason/count` 摘要；摘要不包含原始候选池、source score 或 Provider 错误正文。
 
 ## 8. Recall、排序与 Snapshot
 
@@ -146,11 +147,22 @@ deadline 约束。服务实例还以 16 个全局 provider slots 限制忽略取
 标记 degraded，返回前重新验证 `published + public + media ready`。本地 hash n-gram embedding
 是可替换模型接口的保底实现。
 
-Policy 驱动的正常召回以所选 Provider budget 总和作为统一评分前的候选上限，当前绝对上限为500；
-`recommend/v1` 和 `recommend/v2` 的五个 Provider 各100条，因此全部可读唯一候选都会进入统一特征加载和
-Ranker。候选不会再按响应页 `limit × 8` 派生上限，也不会在评分前按 `published_at` 全局排序截断。
-Provider-local budget/order、重复 reason 合并和可见性复检仍然有效。未带 Policy 的兼容调用和 Repository
-Fallback 继续使用响应页派生的有界池。预算总和超过500的策略在 Quota Merge 实施前会被拒绝。
+Policy 驱动的正常召回有两种兼容模式。未配置 Quota Merge 的策略以所选 Provider budget 总和作为统一
+评分前的候选上限，预算总和必须不超过500；`recommend/v1` 和 `recommend/v2` 仍是五个 Provider 各100条，
+JSON 中不出现新的配额字段，因此全部可读唯一候选都会按原路径进入统一特征加载和 Ranker。
+
+可选 Quota Merge 策略必须同时提供 `pre_rank_pool_limit`、`recall_provider_order` 和
+`recall_provider_reservations`。pool limit 为50–500，顺序必须精确覆盖所选 Provider，reservation 不得超过
+各自 budget 且总和不得超过 pool；满足这些约束后 Provider budget 总和可以高于500。每个健康 Provider
+先按自己的有限 source score、发布时间和 video ID 做稳定去重与 budget 截断；随后对完整有界唯一并集只做
+一次可见性复检，再按显式 Provider 顺序完成 reservation rounds 和 deterministic round-robin fill。
+同一视频始终只占一个全局槽位，但保留全部 reasons，并可同时满足多个 Provider 的 representation；可读候选
+不足时记录 underfill，空出的容量回到公共 fill。最终至多500个唯一候选全部进入既有 Ranker，Provider 的
+source score 不跨 Provider 比较，goroutine 完成顺序和 Go map 迭代不会改变候选池。
+
+候选不会按响应页 `limit × 8` 派生上限，也不会在评分前按 `published_at` 全局排序截断。未带 Policy 的兼容
+调用和 Repository Fallback 继续使用响应页派生的有界池。回滚只需停止选择带配额字段的策略，不需要数据库
+Schema 或数据回滚。
 
 视频发布 intake 当前只条件写入 `hash-ngram-v1`，成功后提交独立 embedding Kafka Group 的 Offset。
 多模态向量、Hybrid Search、Similar Videos、Session Semantic Recall 和 ANN 均尚未实施。当前规划以

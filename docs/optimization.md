@@ -33,6 +33,13 @@ PostgreSQL 保存最终事实、Outbox 和长耗时 durable jobs。
 
 推荐召回还使用每服务 16 个有限 provider slots：不响应取消的下游调用保持占位，后续请求降级而非继续创建 goroutine。
 
+推荐候选池不再按响应页大小提前截断。普通 Policy 要求所选 Provider budget 总和不超过500，并让完整可读
+唯一池进入统一评分；需要扩大召回宽度时，Policy 显式配置50–500的 pre-rank pool、Provider 顺序和 reservation。
+运行时先在 Provider 内稳定去重和截断，再对完整有界并集做一次可见性查询，最后执行 reservation-first 与
+固定顺序 round-robin fill。这样可把400+400等宽召回压缩为确定的500条 Ranker 输入，又不比较不同 Provider
+的 score 标尺，也不让并发完成速度决定优先级。重点容量指标是 visibility superset、selected pool、merge
+duration、Provider underfill/exhausted 和 overlap；预算扩张必须同时验证数据库批量可见性查询与 Ranker P95。
+
 ## 3. P0 优化清单
 
 | 编号 | 问题 | 策略 | 验收指标 |

@@ -144,13 +144,27 @@ inframetrics.PlaybackMetrics.ObserveTelemetryCleanup(inframetrics.TelemetryClean
 ## 9. Recommendation observability and rollout gates
 
 推荐指标为 `frux_recommendation_recall_candidates_total{provider}`、
+`frux_recommendation_candidate_pool_candidates_total{stage,provider}`、
+`frux_recommendation_quota_merge_candidates_total{phase,provider,result,reason}`、
+`frux_recommendation_quota_merge_duration_seconds{result}`、
+`frux_recommendation_quota_merge_selected_pool_size`、
 `frux_recommendation_degraded_requests_total{provider,reason}`、
 `frux_recommendation_snapshot_operations_total{result}`、
 `frux_recommendation_request_log_failures_total{stage}`、
 `frux_recommendation_active_policy_version{scene}`、
 `frux_recommendation_outcomes_total{outcome}`，以及 profile Worker lag/events。标签只允许
 固定 provider、reason、scene、result 和 outcome；不得使用 user、video、request、session 或
-policy cohort 标识。snapshot `result=maintenance_failure` 表示 Lua 已提交权威 snapshot 后的
+policy cohort 标识。Quota Merge 的 phase 只允许 provider/normalization/visibility/reservation/fill/final，
+result 只允许 returned/local_unique/readable/reserved/fill_selected/selected/represented/overlap/exhausted/underfill，
+underfill reason 只允许 `insufficient_readable`。采样请求日志可保存同一封闭枚举的有界计数摘要，但不得把
+候选列表、source score、map payload 或 Provider 原始错误写入普通日志或指标标签。
+
+Quota Merge 排障先比较 `returned → local_unique → readable`，再看 reservation/fill/final represented；
+`exhausted=1` 且 `underfill>0` 表示健康 Provider 的可读唯一输出不足，容量应由公共 fill 回收。overlap 高表示
+一个全局视频同时代表多个 Provider，不等同于内容多样性。selected pool 长期低于 policy limit 时，结合
+Provider degraded/capacity 和 visibility batch 检查，不应通过提高全局上限掩盖数据不足。
+
+snapshot `result=maintenance_failure` 表示 Lua 已提交权威 snapshot 后的
 请求索引 TTL 或用户索引维护失败；该错误不应把本次 Feed 响应降级为本地重排。
 
 v2 扩量前比较同一 24h 窗口的 API error、degraded/timeout、snapshot hit、profile lag、曝光到

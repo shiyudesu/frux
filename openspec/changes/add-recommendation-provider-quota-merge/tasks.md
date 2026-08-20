@@ -58,12 +58,12 @@
   or logs only where current schemas allow, without creating a raw candidate-pool persistence table.
 - [x] 5.3 Add tests proving video/user/request/session IDs, candidate lists, raw source scores, map
   payloads, and Provider raw errors never become labels or normal log payloads.
-- [ ] 5.4 Update recommendation module, optimization, monitoring, and roadmap documentation with
+- [x] 5.4 Update recommendation module, optimization, monitoring, and roadmap documentation with
   policy fields, deterministic algorithm, compatibility behavior, underfill, and rollback.
 
 ## 6. Verification
 
-- [ ] 6.1 Add a disabled development policy fixture with selected budgets above its pool limit and
+- [x] 6.1 Add a disabled development policy fixture with selected budgets above its pool limit and
   verify normalization/persistence/mixing without selecting it for production requests.
 - [ ] 6.2 Run targeted policy domain/persistence, recall, ranker, snapshot, request-log, evidence,
   metrics, composition, and concurrency tests.
