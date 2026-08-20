@@ -3,10 +3,13 @@ package infraembedding_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -342,6 +345,152 @@ func TestPostgresMultimodalMigrationCreatesNoJobsOrANNIndexes(t *testing.T) {
 	}
 }
 
+func TestPostgresExactMultimodalSearchFiltersContractsExclusionsAndTies(t *testing.T) {
+	db := openEmbeddingPostgres(t)
+	migrateMultimodalEmbeddingTables(t, db)
+	repository := infraembedding.New(db)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	contractV1 := multimodalTestContract(t, "revision-1")
+	contractV2 := multimodalTestContract(t, "revision-2")
+	unit := func(first, second float64) []float64 {
+		values := make([]float64, contractV1.Dimension)
+		values[0], values[1] = first, second
+		return values
+	}
+	insertProjection := func(videoID int64, contract domainembedding.MultimodalContractIdentity, values []float64, publishedAt time.Time) {
+		sourceHash := domainembedding.MultimodalSourceHash([]byte(fmt.Sprintf("source-%d-%s", videoID, contract.RevisionAlias)))
+		fact, err := domainembedding.NewMultimodalVectorFact(videoID, &domainembedding.MultimodalVector{
+			Identity: domainembedding.MultimodalVectorIdentity{
+				Contract: contract, SourceHash: sourceHash,
+				VectorDigest: domainembedding.MultimodalVectorDigest(values),
+			}, Values: values,
+		}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projection, err := domainembedding.NewMultimodalProjection(fact, publishedAt, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := repository.UpsertMultimodalProjection(ctx, projection); err != nil || !changed {
+			t.Fatalf("insert projection changed=%v err=%v", changed, err)
+		}
+	}
+	insertProjection(1, contractV1, unit(1, 0), now.Add(-time.Hour))
+	insertProjection(2, contractV1, unit(math.Sqrt(0.5), math.Sqrt(0.5)), now)
+	insertProjection(3, contractV1, unit(1, 0), now)
+	insertProjection(4, contractV1, unit(-1, 0), now)
+	insertProjection(5, contractV2, unit(1, 0), now.Add(time.Hour))
+
+	query := unit(1, 0)
+	candidates, err := repository.ExactMultimodalSearch(ctx, contractV1, query, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 3 || candidates[0].VideoID != 3 || candidates[1].VideoID != 1 || candidates[2].VideoID != 2 ||
+		math.Abs(candidates[2].Similarity-math.Sqrt(0.5)) > 1e-9 {
+		t.Fatalf("exact candidates=%#v", candidates)
+	}
+	excluded, err := repository.ExactMultimodalSearch(ctx, contractV1, query, []int64{3}, 2)
+	if err != nil || len(excluded) != 2 || excluded[0].VideoID != 1 || excluded[1].VideoID != 2 {
+		t.Fatalf("excluded candidates=%#v err=%v", excluded, err)
+	}
+	empty, err := repository.ExactMultimodalSearch(ctx, multimodalTestContract(t, "revision-3"), query, nil, 10)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty contract candidates=%#v err=%v", empty, err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repository.ExactMultimodalSearch(cancelled, contractV1, query, nil, 10); err == nil {
+		t.Fatal("cancelled exact query succeeded")
+	}
+	if _, err := repository.ExactMultimodalSearch(ctx, contractV1, make([]float64, contractV1.Dimension), nil, 10); !errors.Is(err, domainembedding.ErrInvalidMultimodalProjection) {
+		t.Fatalf("invalid query error=%v", err)
+	}
+	if _, err := repository.ExactMultimodalSearch(ctx, contractV1, query, nil, 0); !errors.Is(err, domainembedding.ErrInvalidMultimodalProjection) {
+		t.Fatalf("invalid limit error=%v", err)
+	}
+}
+
+func BenchmarkPostgresExactMultimodalSearch(b *testing.B) {
+	db := openEmbeddingPostgres(b)
+	migrateMultimodalEmbeddingTables(b, db)
+	repository := infraembedding.New(db)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	contract := multimodalTestContract(b, "benchmark-v1")
+	for videoID := int64(1); videoID <= 500; videoID++ {
+		values := make([]float64, contract.Dimension)
+		angle := float64(videoID%100) / 100
+		values[0], values[1] = math.Cos(angle), math.Sin(angle)
+		fact := multimodalTestFact(b, videoID, contract, domainembedding.MultimodalSourceHash([]byte(fmt.Sprintf("source-%d", videoID))), now)
+		fact.Values = values
+		fact.Identity.VectorDigest = domainembedding.MultimodalVectorDigest(values)
+		projection, err := domainembedding.NewMultimodalProjection(fact, now.Add(-time.Duration(videoID)*time.Second), now)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, err := repository.UpsertMultimodalProjection(ctx, projection); err != nil {
+			b.Fatal(err)
+		}
+	}
+	query := make([]float64, contract.Dimension)
+	query[0] = 1
+	queryJSON, err := json.Marshal(query)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rows, err := db.Raw(`
+		EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+		WITH query_vector AS (
+			SELECT value::double precision AS component, ordinality
+			FROM jsonb_array_elements_text(?::jsonb) WITH ORDINALITY
+		)
+		SELECT p.video_id, SUM(value::double precision * query_vector.component) AS similarity
+		FROM multimodal_projection AS p
+		CROSS JOIN LATERAL jsonb_array_elements_text(p.embedding_json) WITH ORDINALITY AS vector(value, ordinality)
+		JOIN query_vector USING (ordinality)
+		WHERE p.contract_key = ?
+		GROUP BY p.video_id, p.published_at
+		ORDER BY similarity DESC, p.published_at DESC, p.video_id DESC
+		LIMIT 50
+	`, string(queryJSON), contract.Key()).Rows()
+	if err != nil {
+		b.Fatal(err)
+	}
+	var plan []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			_ = rows.Close()
+			b.Fatal(err)
+		}
+		plan = append(plan, line)
+	}
+	if err := rows.Close(); err != nil {
+		b.Fatal(err)
+	}
+	b.Logf("eligible_rows=500 exact_query_plan:\n%s", strings.Join(plan, "\n"))
+	durations := make([]time.Duration, 0, b.N)
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		started := time.Now()
+		if _, err := repository.ExactMultimodalSearch(ctx, contract, query, nil, 50); err != nil {
+			b.Fatal(err)
+		}
+		durations = append(durations, time.Since(started))
+	}
+	b.StopTimer()
+	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+	if len(durations) > 0 {
+		b.ReportMetric(float64(durations[len(durations)*50/100].Nanoseconds()), "p50_ns")
+		b.ReportMetric(float64(durations[min(len(durations)-1, len(durations)*95/100)].Nanoseconds()), "p95_ns")
+		b.ReportMetric(float64(durations[min(len(durations)-1, len(durations)*99/100)].Nanoseconds()), "p99_ns")
+	}
+	b.ReportMetric(500, "eligible_rows")
+}
+
 func migrateMultimodalEmbeddingTables(t testing.TB, db *gorm.DB) {
 	t.Helper()
 	if err := db.AutoMigrate(
@@ -392,7 +541,7 @@ func multimodalTestFact(
 	return fact
 }
 
-func openEmbeddingPostgres(t *testing.T) *gorm.DB {
+func openEmbeddingPostgres(t testing.TB) *gorm.DB {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {

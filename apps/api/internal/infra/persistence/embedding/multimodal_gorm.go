@@ -376,6 +376,36 @@ func (r *Repository) FindMultimodalVectorFact(
 	return multimodalFactFromModel(model)
 }
 
+func (r *Repository) ListMultimodalReconciliationVideoIDs(
+	ctx context.Context,
+	contract domainembedding.MultimodalContractIdentity,
+	afterVideoID int64,
+	limit int,
+) ([]int64, error) {
+	validated, err := domainembedding.NewMultimodalContractIdentity(
+		contract.ProviderAlias, contract.ModelAlias, contract.RevisionAlias, contract.Dimension,
+		contract.TextCanonicalizer, contract.FrameSamplingPolicy,
+		contract.ImagePreprocessingPolicy, contract.FusionPolicy,
+	)
+	if err != nil || !validated.Equal(contract) || afterVideoID < 0 || limit < 1 || limit > 1000 {
+		return nil, domainembedding.ErrInvalidMultimodalProjection
+	}
+	var videoIDs []int64
+	err = r.db.WithContext(ctx).Raw(`
+		SELECT video_id
+		FROM (
+			SELECT video_id FROM multimodal_vector_fact
+			WHERE contract_key = ? AND video_id > ?
+			UNION
+			SELECT video_id FROM multimodal_projection
+			WHERE contract_key = ? AND video_id > ?
+		) AS candidates
+		ORDER BY video_id ASC
+		LIMIT ?
+	`, contract.Key(), afterVideoID, contract.Key(), afterVideoID, limit).Scan(&videoIDs).Error
+	return videoIDs, err
+}
+
 func (r *Repository) UpsertMultimodalProjection(
 	ctx context.Context,
 	projection *domainembedding.MultimodalProjection,
@@ -401,6 +431,21 @@ func (r *Repository) UpsertMultimodalProjection(
 	return result.RowsAffected == 1, result.Error
 }
 
+func (r *Repository) DeleteMultimodalProjection(
+	ctx context.Context,
+	videoID int64,
+	contractKey string,
+) (bool, error) {
+	contractKey = strings.ToLower(strings.TrimSpace(contractKey))
+	if videoID <= 0 || len(contractKey) != domainembedding.MultimodalDigestHexLength {
+		return false, domainembedding.ErrInvalidMultimodalProjection
+	}
+	result := r.db.WithContext(ctx).
+		Where("video_id = ? AND contract_key = ?", videoID, contractKey).
+		Delete(&MultimodalProjectionModel{})
+	return result.RowsAffected == 1, result.Error
+}
+
 func (r *Repository) DeleteMultimodalProjectionIfStale(
 	ctx context.Context,
 	videoID int64,
@@ -417,6 +462,55 @@ func (r *Repository) DeleteMultimodalProjectionIfStale(
 		strings.ToLower(strings.TrimSpace(expectedSourceHash)), strings.ToLower(strings.TrimSpace(expectedVectorDigest)),
 	).Delete(&MultimodalProjectionModel{})
 	return result.RowsAffected == 1, result.Error
+}
+
+func (r *Repository) ExactMultimodalSearch(
+	ctx context.Context,
+	contract domainembedding.MultimodalContractIdentity,
+	query []float64,
+	excludedVideoIDs []int64,
+	limit int,
+) ([]domainembedding.MultimodalExactCandidate, error) {
+	query, err := domainembedding.ValidateMultimodalQueryVector(contract, query)
+	if err != nil || limit < 1 || limit > 500 || len(excludedVideoIDs) > 1000 {
+		return nil, domainembedding.ErrInvalidMultimodalProjection
+	}
+	queryJSON, err := json.Marshal(query)
+	if err != nil {
+		return nil, domainembedding.ErrInvalidMultimodalProjection
+	}
+	statement := `
+		WITH query_vector AS (
+			SELECT value::double precision AS component, ordinality
+			FROM jsonb_array_elements_text(?::jsonb) WITH ORDINALITY
+		), scored AS (
+			SELECT p.video_id, p.published_at,
+			       SUM(value::double precision * query_vector.component) AS similarity,
+			       COUNT(*) AS dimensions
+			FROM multimodal_projection AS p
+			CROSS JOIN LATERAL jsonb_array_elements_text(p.embedding_json) WITH ORDINALITY AS vector(value, ordinality)
+			JOIN query_vector USING (ordinality)
+			WHERE p.contract_key = ?`
+	arguments := []any{string(queryJSON), contract.Key()}
+	if len(excludedVideoIDs) > 0 {
+		statement += " AND p.video_id NOT IN ?"
+		arguments = append(arguments, excludedVideoIDs)
+	}
+	statement += `
+			GROUP BY p.video_id, p.published_at
+			HAVING COUNT(*) = ?
+		)
+		SELECT video_id, similarity, published_at
+		FROM scored
+		WHERE similarity > 0
+		ORDER BY similarity DESC, published_at DESC, video_id DESC
+		LIMIT ?`
+	arguments = append(arguments, contract.Dimension, limit)
+	var candidates []domainembedding.MultimodalExactCandidate
+	if err := r.db.WithContext(ctx).Raw(statement, arguments...).Scan(&candidates).Error; err != nil {
+		return nil, err
+	}
+	return candidates, nil
 }
 
 func multimodalJobModel(job *domainembedding.MultimodalEmbeddingJob) MultimodalEmbeddingJobModel {

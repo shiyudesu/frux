@@ -193,13 +193,25 @@ type MultimodalProjection struct {
 	UpdatedAt   time.Time
 }
 
+type MultimodalExactCandidate struct {
+	VideoID     int64
+	Similarity  float64
+	PublishedAt time.Time
+}
+
 func NewMultimodalProjection(fact *MultimodalVectorFact, publishedAt, now time.Time) (*MultimodalProjection, error) {
 	if fact == nil || fact.VideoID <= 0 || publishedAt.IsZero() || now.IsZero() {
 		return nil, ErrInvalidMultimodalProjection
 	}
+	validated, err := ValidateMultimodalVector(
+		fact.Identity.Contract, fact.Identity.SourceHash, fact.Identity, fact.Values,
+	)
+	if err != nil {
+		return nil, ErrInvalidMultimodalProjection
+	}
 	return &MultimodalProjection{
-		VideoID: fact.VideoID, Identity: fact.Identity,
-		Values:      append([]float64(nil), fact.Values...),
+		VideoID: fact.VideoID, Identity: validated.Identity,
+		Values:      append([]float64(nil), validated.Values...),
 		PublishedAt: publishedAt.UTC(), UpdatedAt: now.UTC(),
 	}, nil
 }

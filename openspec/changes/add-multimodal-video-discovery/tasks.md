@@ -77,14 +77,14 @@
 
 ## 6. Projection and Exact Retrieval
 
-- [ ] 6.1 Implement bounded projection reconciliation from authoritative active-contract facts with
+- [x] 6.1 Implement bounded projection reconciliation from authoritative active-contract facts with
   published/public/media-ready/source-equality checks and deterministic stale deletion.
-- [ ] 6.2 Implement database-side exact cosine query with active-contract filtering, bounded top-K,
+- [x] 6.2 Implement database-side exact cosine query with active-contract filtering, bounded top-K,
   exclusions, context cancellation/deadline, positive finite similarity, and deterministic
   similarity/`published_at`/video-ID ordering.
-- [ ] 6.3 Add exact-query repository tests for empty coverage, ties, exclusions, mixed contracts,
+- [x] 6.3 Add exact-query repository tests for empty coverage, ties, exclusions, mixed contracts,
   unreadable videos, stale projections, source mismatch, limit bounds, and cancellation.
-- [ ] 6.4 Add a modest reproducible benchmark recording eligible rows, Exact P50/P95/P99, database
+- [x] 6.4 Add a modest reproducible benchmark recording eligible rows, Exact P50/P95/P99, database
   CPU/query plan, and result quality without defining or creating an ANN index.
 
 ## 7. Hybrid Public Video Search

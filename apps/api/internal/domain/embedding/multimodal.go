@@ -173,7 +173,36 @@ func ValidateMultimodalVector(
 		strings.ToLower(strings.TrimSpace(actualIdentity.SourceHash)) != expectedSourceHash {
 		return nil, validationError(MultimodalValidationInputHash)
 	}
-	if len(values) != expectedContract.Dimension {
+	validatedValues, err := ValidateMultimodalQueryVector(expectedContract, values)
+	if err != nil {
+		return nil, err
+	}
+	digest := MultimodalVectorDigest(validatedValues)
+	if !validSHA256Hex(actualIdentity.VectorDigest) ||
+		strings.ToLower(strings.TrimSpace(actualIdentity.VectorDigest)) != digest {
+		return nil, validationError(MultimodalValidationDigest)
+	}
+	return &MultimodalVector{
+		Identity: MultimodalVectorIdentity{
+			Contract: expectedContract, SourceHash: expectedSourceHash, VectorDigest: digest,
+		},
+		Values: validatedValues,
+	}, nil
+}
+
+func ValidateMultimodalQueryVector(
+	contract MultimodalContractIdentity,
+	values []float64,
+) ([]float64, error) {
+	validatedContract, err := NewMultimodalContractIdentity(
+		contract.ProviderAlias, contract.ModelAlias, contract.RevisionAlias, contract.Dimension,
+		contract.TextCanonicalizer, contract.FrameSamplingPolicy,
+		contract.ImagePreprocessingPolicy, contract.FusionPolicy,
+	)
+	if err != nil || !validatedContract.Equal(contract) {
+		return nil, validationError(MultimodalValidationInvalidContract)
+	}
+	if len(values) != contract.Dimension {
 		return nil, validationError(MultimodalValidationDimension)
 	}
 	var normSquared float64
@@ -186,17 +215,7 @@ func ValidateMultimodalVector(
 	if math.Abs(math.Sqrt(normSquared)-1) > MultimodalVectorNormTolerance {
 		return nil, validationError(MultimodalValidationNorm)
 	}
-	digest := MultimodalVectorDigest(values)
-	if !validSHA256Hex(actualIdentity.VectorDigest) ||
-		strings.ToLower(strings.TrimSpace(actualIdentity.VectorDigest)) != digest {
-		return nil, validationError(MultimodalValidationDigest)
-	}
-	return &MultimodalVector{
-		Identity: MultimodalVectorIdentity{
-			Contract: expectedContract, SourceHash: expectedSourceHash, VectorDigest: digest,
-		},
-		Values: append([]float64(nil), values...),
-	}, nil
+	return append([]float64(nil), values...), nil
 }
 
 func MultimodalSourceHash(parts ...[]byte) string {

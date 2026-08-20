@@ -291,13 +291,27 @@ type multimodalCurrentSource struct {
 	videoObjectKey string
 	coverObjectKey string
 	sourceHash     string
+	publishedAt    time.Time
 }
 
 func (w *MultimodalJobWorker) loadCurrentSource(
 	ctx context.Context,
 	job *domainembedding.MultimodalEmbeddingJob,
 ) (*multimodalCurrentSource, error) {
-	video, err := w.videos.FindByIDAnyStatus(ctx, job.VideoID)
+	return loadCurrentMultimodalSource(
+		ctx, w.videos, w.assets, job.VideoID, job.Contract, w.config.MaxVideoTextRunes,
+	)
+}
+
+func loadCurrentMultimodalSource(
+	ctx context.Context,
+	videos MultimodalVideoReader,
+	assets MultimodalMediaAssetReader,
+	videoID int64,
+	contract domainembedding.MultimodalContractIdentity,
+	maxVideoTextRunes int,
+) (*multimodalCurrentSource, error) {
+	video, err := videos.FindByIDAnyStatus(ctx, videoID)
 	if err != nil {
 		if errors.Is(err, domainvideo.ErrVideoNotFound) {
 			return nil, ErrIneligibleMultimodalContent
@@ -308,7 +322,7 @@ func (w *MultimodalJobWorker) loadCurrentSource(
 		video.MediaAssetID <= 0 || strings.TrimSpace(video.MediaURL) == "" {
 		return nil, ErrIneligibleMultimodalContent
 	}
-	mediaAsset, err := w.assets.FindAssetByID(ctx, video.MediaAssetID)
+	mediaAsset, err := assets.FindAssetByID(ctx, video.MediaAssetID)
 	if err != nil {
 		if errors.Is(err, domainmedia.ErrMediaAssetNotFound) {
 			return nil, ErrIneligibleMultimodalContent
@@ -320,7 +334,7 @@ func (w *MultimodalJobWorker) loadCurrentSource(
 	}
 	coverObjectKey := ""
 	if video.CoverAssetID > 0 {
-		coverAsset, err := w.assets.FindAssetByID(ctx, video.CoverAssetID)
+		coverAsset, err := assets.FindAssetByID(ctx, video.CoverAssetID)
 		if err != nil {
 			if errors.Is(err, domainmedia.ErrMediaAssetNotFound) {
 				return nil, ErrIneligibleMultimodalContent
@@ -332,7 +346,7 @@ func (w *MultimodalJobWorker) loadCurrentSource(
 		}
 		coverObjectKey = coverAsset.ObjectKey
 	}
-	text, err := domainembedding.CanonicalizePublicVideoText(video.Title, video.Description, w.config.MaxVideoTextRunes)
+	text, err := domainembedding.CanonicalizePublicVideoText(video.Title, video.Description, maxVideoTextRunes)
 	if err != nil {
 		return nil, ErrInvalidMultimodalHandoff
 	}
@@ -342,8 +356,9 @@ func (w *MultimodalJobWorker) loadCurrentSource(
 	}
 	return &multimodalCurrentSource{
 		content: content, videoObjectKey: mediaAsset.ObjectKey, coverObjectKey: coverObjectKey,
+		publishedAt: video.PublishedAt.UTC(),
 		sourceHash: MultimodalVideoSourceHash(
-			job.Contract, text, video.MediaURL, video.CoverURL,
+			contract, text, video.MediaURL, video.CoverURL,
 			video.MediaAssetID, video.CoverAssetID, video.MediaProfileVersion, video.Version,
 		),
 	}, nil

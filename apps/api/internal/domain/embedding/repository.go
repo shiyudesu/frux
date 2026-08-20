@@ -21,6 +21,9 @@ type MultimodalRepository interface {
 	RequeueMultimodalJob(context.Context, int64, string) (bool, error)
 	DeleteCompletedMultimodalJobsBefore(context.Context, time.Time, int) (int64, error)
 	FindMultimodalVectorFact(context.Context, int64, MultimodalContractIdentity) (*MultimodalVectorFact, error)
+	ListMultimodalReconciliationVideoIDs(context.Context, MultimodalContractIdentity, int64, int) ([]int64, error)
 	UpsertMultimodalProjection(context.Context, *MultimodalProjection) (bool, error)
+	DeleteMultimodalProjection(context.Context, int64, string) (bool, error)
 	DeleteMultimodalProjectionIfStale(context.Context, int64, string, string, string) (bool, error)
+	ExactMultimodalSearch(context.Context, MultimodalContractIdentity, []float64, []int64, int) ([]MultimodalExactCandidate, error)
 }
