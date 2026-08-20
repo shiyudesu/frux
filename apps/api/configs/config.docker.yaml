@@ -122,6 +122,16 @@ multimodal:
   query_embedding_enabled: false
   hybrid_search_enabled: false
   similar_videos_enabled: false
+  max_video_text_runes: 2048
+  contract:
+    provider_alias: "alibaba-bailian"
+    model_alias: "tongyi-embedding-vision-flash"
+    revision_alias: "2026-03-06-res1"
+    dimension: 768
+    text_canonicalizer: "public-content-v1"
+    frame_sampling_policy: "representative-frames-v1"
+    image_preprocessing_policy: "rgb-fit-v1"
+    fusion_policy: "provider-fusion-v1"
   provider:
     endpoint: "${FRUX_MULTIMODAL_ENDPOINT}"
     hmac_secret: "${FRUX_MULTIMODAL_HMAC_SECRET}"

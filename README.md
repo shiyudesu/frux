@@ -138,6 +138,21 @@ docker exec frux-postgres \
 两个 Go 进程使用相对路径读取 `apps/api/configs/config.yaml`；直接运行 Go 命令时应进入
 `apps/api` 目录。脚本不会自动创建 PostgreSQL、Redis、Kafka 或 MinIO。
 
+### 可选：启动通义多模态向量适配服务
+
+仓库内置 `tongyi-embedding-vision-flash-2026-03-06` 的模型适配器，但默认不开启，也不会自动调用
+外部 API。复制 [环境变量示例](apps/.env.multimodal.example)，填入当前百炼地域/工作空间对应的原生
+Multimodal-Embedding Endpoint、API Key 和一段至少32字符的共享 HMAC Secret，然后运行：
+
+```bash
+cd apps/api
+go run ./cmd/multimodal-provider
+```
+
+适配器启动时会先执行一次真实的文本向量探测；凭证、Endpoint、模型或返回维度不正确时不会开始监听。
+通过探测后，Frux API/Worker 可连接 `http://127.0.0.1:8099`。具体开关顺序和固定合同见
+[视频向量模块](docs/modules/embedding.md)。
+
 ## 开发与验证
 
 Pull Request、`main` 分支 Push 和手动触发会运行 GitHub Actions CI，分别检查后端、Web 和仓库配置。
@@ -148,7 +163,7 @@ cd apps/api
 test -z "$(gofmt -l .)"
 go vet ./...
 go test ./...
-go build ./cmd/feed ./cmd/worker
+go build ./cmd/feed ./cmd/worker ./cmd/multimodal-provider
 
 # 前端
 pnpm -C apps/web install --frozen-lockfile
@@ -170,6 +185,7 @@ openspec validate --all --strict
 
 - `cmd/feed` 提供 HTTP API，组合仓储、应用服务、Handler、中间件和监控。
 - `cmd/worker` 消费 Kafka 事件并执行媒体、审核、Feed、嵌入和恢复任务。
+- `cmd/multimodal-provider` 是可选的百炼 Tongyi 多模态向量适配服务；默认不启动，也不会产生模型调用费用。
 - PostgreSQL 是业务事实和长任务状态的最终来源。
 - Redis 保存 Feed 页、热榜、互动状态和短期索引。
 - Kafka 负责可回放事件与短时唤醒，不承担长期租约和延迟重试。

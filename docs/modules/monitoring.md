@@ -180,6 +180,9 @@ play/complete 和反馈率；任何错误或降级恶化、snapshot hit 明显�
 projection reconciliation、Exact latency/result、query cache、Hybrid mode/contribution 和 Similar outcome。
 HTTP Adapter 另暴露 `frux_multimodal_provider_transport_total{operation,result}` 与 transport duration；
 operation 仅为 readiness/video/query，result 复用 success/retryable/terminal/invalid/cancelled 封闭集合。
+Tongyi 上游适配器暴露 `frux_tongyi_provider_operations_total{operation,result}`、duration 和
+`frux_tongyi_provider_tokens_total{operation,token_type}`；operation 仅为 startup/video/query，
+token_type 仅为 input/image/text/output。Token 计数用于成本估算，不携带文本、图片或请求标识。
 标签只允许封闭 state/operation/result/mode/contribution；provider/model/revision 使用配置 alias 进入
 受限管理响应，不作为这些指标标签。禁止 user/video/request/session ID、query、图片、向量、URL、
 credential、claim token、source hash、map payload 或 raw error。

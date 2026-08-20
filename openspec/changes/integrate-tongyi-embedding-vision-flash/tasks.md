@@ -43,11 +43,11 @@
 
 ## 5. Packaging and Documentation
 
-- [ ] 5.1 Build the adapter binary in the existing API image and add inactive environment examples
+- [x] 5.1 Build the adapter binary in the existing API image and add inactive environment examples
   without committing a real API key or enabling Frux multimodal flags.
-- [ ] 5.2 Document the selected contract, DashScope payload mapping, launch/configuration sequence,
+- [x] 5.2 Document the selected contract, DashScope payload mapping, launch/configuration sequence,
   cost/usage observation, feature activation order, and rollback.
-- [ ] 5.3 Update the recommendation roadmap and model-evaluation instructions without claiming Golden
+- [x] 5.3 Update the recommendation roadmap and model-evaluation instructions without claiming Golden
   Set quality before a real credential-backed run.
 
 ## 6. Verification

@@ -33,6 +33,7 @@ dist/
 apps/api/uploads/
 apps/api/feed
 apps/api/worker
+apps/api/multimodal-provider
 .clone-ui/
 docs/interview-questions.md
 docs/resume-highlights.md

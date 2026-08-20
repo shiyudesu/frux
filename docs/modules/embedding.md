@@ -129,5 +129,51 @@ cd apps/api
 go test ./internal/infra/persistence/embedding -run '^TestHTTPMultimodalProvider'
 ```
 
-该测试服务只存在于 `_test.go`，其单位向量只验证协议，不能作为运行时 Provider 或相关性证据。下一阶段
-选择具体预训练模型后，模型服务必须先通过同一协议与 Golden Set，再考虑打开开发环境 feature flags。
+该测试服务只存在于 `_test.go`，其单位向量只验证协议，不能作为运行时 Provider 或相关性证据。
+
+## 10. Tongyi Embedding Vision Flash adapter
+
+首个具体开发合同固定为：
+
+| 字段 | 值 |
+| --- | --- |
+| Provider | `alibaba-bailian` |
+| Model | `tongyi-embedding-vision-flash` |
+| Revision | `2026-03-06-res1` |
+| Dimension | `768` |
+| Resolution | `res_level=1`，单图402 Token |
+| Fusion | `provider-fusion-v1` |
+
+Adapter 使用百炼原生 Multimodal-Embedding HTTP API，不依赖 DashScope SDK。Query 被转换为一个
+`{"text": ...}` content；视频被转换为一个同时包含 `text` 和 `multi_images` 的 content，因此返回
+一个 `type=fused` 的融合向量。图片使用 Base64 Data URI，原视频、对象存储地址和签名 URL 不离开
+Frux 边界。
+
+启动所需变量：
+
+```bash
+export FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR='127.0.0.1:8099'
+export FRUX_MULTIMODAL_HMAC_SECRET='<至少32字符，API/Worker与Adapter共享>'
+export DASHSCOPE_MULTIMODAL_ENDPOINT='https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding'
+export DASHSCOPE_API_KEY='<仅Adapter持有>'
+
+cd apps/api
+go run ./cmd/multimodal-provider
+```
+
+可选边界变量见 `apps/.env.multimodal.example`。`/health` 只表示进程存活；Adapter 必须先用固定模型完成
+一次真实 text embedding probe，之后才会在签名 `/v1/ready` 中报告 ready。API Key、上游 Endpoint、
+请求内容、向量、source hash 和上游 request ID 不进入正常日志或 Prometheus label。
+
+启用顺序：
+
+1. 启动 Adapter，确认 startup probe 成功；
+2. 为 API/Worker 设置相同 `FRUX_MULTIMODAL_ENDPOINT` 和 `FRUX_MULTIMODAL_HMAC_SECRET`；
+3. 先只打开 `multimodal.enabled` 与 `video_jobs_enabled`，发布少量开发视频生成向量；
+4. 确认 Job、Fact、Projection 和成本指标正常，再打开 `similar_videos_enabled`；
+5. 使用真实 Golden Set 验收后，最后打开 `query_embedding_enabled` 与 `hybrid_search_enabled`。
+
+北京地域公开原价为每千输入 Token 0.00015 元。Adapter 按 operation 累加 input/image/text/output Token，
+便于用实际调用校准费用；该计数不包含请求内容。官方接口与模型限制以
+[阿里云 Multimodal-Embedding 文档](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)
+为准。
