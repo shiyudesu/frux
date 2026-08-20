@@ -17,6 +17,7 @@ import (
 	"time"
 
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
+	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 )
 
 type tongyiEmbeddingClientStub struct {
@@ -136,6 +137,32 @@ func TestTongyiAdapterProbeFailureNeverBecomesReady(t *testing.T) {
 	provider := newMultimodalHTTPTestProvider(t, server.URL, TongyiMultimodalContract(), nil)
 	if err := provider.CheckReady(context.Background(), MultimodalProviderCapabilityQuery); err == nil {
 		t.Fatal("adapter reported ready after failed probe")
+	}
+}
+
+func TestTongyiAdapterIsolatesSelectedProfileContract(t *testing.T) {
+	profile, err := multimodalprofile.Resolve(multimodalprofile.TongyiFlashStableProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := tongyiTestConfig("https://workspace.example.com/multimodal", nil)
+	config.Profile = profile
+	adapter, err := NewTongyiAdapter(config, &tongyiEmbeddingClientStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(adapter.Handler())
+	defer server.Close()
+	selected := newMultimodalHTTPTestProvider(t, server.URL, profile.Contract, nil)
+	if err := selected.CheckReady(context.Background(), MultimodalProviderCapabilityVideo); err != nil {
+		t.Fatalf("selected profile was not ready: %v", err)
+	}
+	defaultProvider := newMultimodalHTTPTestProvider(t, server.URL, TongyiMultimodalContract(), nil)
+	if err := defaultProvider.CheckReady(context.Background(), MultimodalProviderCapabilityVideo); err == nil {
+		t.Fatal("adapter accepted another profile contract")
 	}
 }
 

@@ -64,7 +64,7 @@ func NewTongyiAdapter(config TongyiAdapterConfig, client tongyiEmbeddingClient) 
 	}
 	return &TongyiAdapter{
 		secret: []byte(strings.TrimSpace(config.FruxHMACSecret)),
-		client: client, contract: TongyiMultimodalContract(),
+		client: client, contract: config.Profile.Contract,
 		maxRequestBytes: config.MaxInboundRequestBytes,
 		now:             func() time.Time { return time.Now().UTC() },
 		replay: &tongyiReplayGuard{

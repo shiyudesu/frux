@@ -18,6 +18,7 @@ type Config struct {
 }
 
 type MultimodalConfig struct {
+	Profile               string                   `yaml:"profile"`
 	Enabled               bool                     `yaml:"enabled"`
 	VideoJobsEnabled      bool                     `yaml:"video_jobs_enabled"`
 	QueryEmbeddingEnabled bool                     `yaml:"query_embedding_enabled"`

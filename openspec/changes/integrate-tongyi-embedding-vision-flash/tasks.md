@@ -60,9 +60,9 @@
 
 ## 7. Configurable Tongyi Model Profiles
 
-- [ ] 7.1 Replace the hard-coded model contract with one shared allowlisted profile resolver for the
+- [x] 7.1 Replace the hard-coded model contract with one shared allowlisted profile resolver for the
   dated and undated Tongyi Flash model IDs, including a distinct local-fusion policy identity.
-- [ ] 7.2 Keep native fusion for the dated snapshot and implement strict independent-result validation
+- [x] 7.2 Keep native fusion for the dated snapshot and implement strict independent-result validation
   plus deterministic normalized-mean fusion for the undated model.
 - [ ] 7.3 Make the profile selectable through configuration, update inactive environment examples and
   operator documentation, and keep all multimodal feature flags disabled by default.

@@ -15,17 +15,18 @@ import (
 )
 
 const (
-	MultimodalTextCanonicalizerV1   = "public-content-v1"
-	MultimodalFrameSamplingPolicyV1 = "representative-frames-v1"
-	MultimodalImagePreprocessingV1  = "rgb-fit-v1"
-	MultimodalFusionPolicyV1        = "provider-fusion-v1"
-	MultimodalHybridMergeVersionV1  = "hybrid-rank-v1"
-	MultimodalExactRankingVersionV1 = "exact-cosine-v1"
-	MultimodalLexicalFallback       = "lexical"
-	MinMultimodalDimension          = 32
-	MaxMultimodalDimension          = 8192
-	MultimodalVectorNormTolerance   = 0.001
-	MultimodalDigestHexLength       = sha256.Size * 2
+	MultimodalTextCanonicalizerV1    = "public-content-v1"
+	MultimodalFrameSamplingPolicyV1  = "representative-frames-v1"
+	MultimodalImagePreprocessingV1   = "rgb-fit-v1"
+	MultimodalFusionPolicyV1         = "provider-fusion-v1"
+	MultimodalNormalizedMeanFusionV1 = "normalized-mean-fusion-v1"
+	MultimodalHybridMergeVersionV1   = "hybrid-rank-v1"
+	MultimodalExactRankingVersionV1  = "exact-cosine-v1"
+	MultimodalLexicalFallback        = "lexical"
+	MinMultimodalDimension           = 32
+	MaxMultimodalDimension           = 8192
+	MultimodalVectorNormTolerance    = 0.001
+	MultimodalDigestHexLength        = sha256.Size * 2
 )
 
 type MultimodalValidationCode string

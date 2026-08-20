@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 )
 
 var ErrInvalidMultimodalConfig = errors.New("invalid multimodal config")
@@ -37,6 +38,15 @@ type MultimodalRuntimeDependencies struct {
 func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 	if cfg == nil {
 		return ErrInvalidMultimodalConfig
+	}
+	cfg.Profile = strings.ToLower(strings.TrimSpace(cfg.Profile))
+	if cfg.Profile != "" {
+		profile, err := multimodalprofile.Resolve(cfg.Profile)
+		if err != nil {
+			return ErrInvalidMultimodalConfig
+		}
+		cfg.Profile = profile.ID
+		cfg.Contract = multimodalContractConfig(profile.Contract)
 	}
 	contractFields := multimodalContractFieldCount(cfg.Contract)
 	contractConfigured := contractFields == 8
@@ -84,7 +94,10 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 			identity.TextCanonicalizer != domainembedding.MultimodalTextCanonicalizerV1 ||
 			identity.FrameSamplingPolicy != domainembedding.MultimodalFrameSamplingPolicyV1 ||
 			identity.ImagePreprocessingPolicy != domainembedding.MultimodalImagePreprocessingV1 ||
-			identity.FusionPolicy != domainembedding.MultimodalFusionPolicyV1 {
+			!slices.Contains([]string{
+				domainembedding.MultimodalFusionPolicyV1,
+				domainembedding.MultimodalNormalizedMeanFusionV1,
+			}, identity.FusionPolicy) {
 			return ErrInvalidMultimodalConfig
 		}
 		cfg.Contract = MultimodalContractConfig{
@@ -265,6 +278,17 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		return ErrInvalidMultimodalConfig
 	}
 	return nil
+}
+
+func multimodalContractConfig(identity domainembedding.MultimodalContractIdentity) MultimodalContractConfig {
+	return MultimodalContractConfig{
+		ProviderAlias: identity.ProviderAlias, ModelAlias: identity.ModelAlias,
+		RevisionAlias: identity.RevisionAlias, Dimension: identity.Dimension,
+		TextCanonicalizer:        identity.TextCanonicalizer,
+		FrameSamplingPolicy:      identity.FrameSamplingPolicy,
+		ImagePreprocessingPolicy: identity.ImagePreprocessingPolicy,
+		FusionPolicy:             identity.FusionPolicy,
+	}
 }
 
 func ValidateMultimodalRuntime(cfg MultimodalConfig, dependencies MultimodalRuntimeDependencies) error {

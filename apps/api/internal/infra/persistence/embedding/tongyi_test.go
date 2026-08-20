@@ -17,10 +17,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 )
 
 func TestTongyiAdapterConfigFromEnvironment(t *testing.T) {
 	t.Setenv("FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR", "127.0.0.1:18099")
+	t.Setenv("FRUX_MULTIMODAL_PROFILE", TongyiStableUpstreamModel)
 	t.Setenv("FRUX_MULTIMODAL_HMAC_SECRET", multimodalTestSecret)
 	t.Setenv("DASHSCOPE_MULTIMODAL_ENDPOINT", "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding")
 	t.Setenv("DASHSCOPE_API_KEY", "sk-test-value")
@@ -34,7 +36,7 @@ func TestTongyiAdapterConfigFromEnvironment(t *testing.T) {
 	}
 	if config.ListenAddress != "127.0.0.1:18099" || config.UpstreamTimeout != 5*time.Second ||
 		config.MaxInboundRequestBytes != 4<<20 || config.MaxUpstreamResponseBytes != 1<<20 ||
-		config.ShutdownTimeout != 7*time.Second {
+		config.ShutdownTimeout != 7*time.Second || config.Profile.ID != TongyiStableUpstreamModel {
 		t.Fatalf("config=%#v", config)
 	}
 }
@@ -54,6 +56,7 @@ func TestTongyiAdapterConfigRejectsSecretsEndpointsAndBounds(t *testing.T) {
 		{name: "request limit", mutate: func(c *TongyiAdapterConfig) { c.MaxInboundRequestBytes = 1024 }},
 		{name: "response limit", mutate: func(c *TongyiAdapterConfig) { c.MaxUpstreamResponseBytes = 1024 }},
 		{name: "shutdown", mutate: func(c *TongyiAdapterConfig) { c.ShutdownTimeout = 100 * time.Millisecond }},
+		{name: "unknown profile", mutate: func(c *TongyiAdapterConfig) { c.Profile.ID = "unknown" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config := base
@@ -130,6 +133,69 @@ func TestTongyiClientTranslatesQueryAndFusedVideo(t *testing.T) {
 		video.Input.Contents[0].MultiImages[0] != "data:image/jpeg;base64,b25l" ||
 		video.Input.Contents[0].MultiImages[1] != "data:image/webp;base64,dHdv" {
 		t.Fatalf("video payload=%#v", video)
+	}
+}
+
+func TestTongyiClientTranslatesAndFusesIndependentVideo(t *testing.T) {
+	var payload tongyiRequest
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		textVector := make([]float64, TongyiDimension)
+		textVector[0], textVector[1] = 3, 4
+		imageVector := make([]float64, TongyiDimension)
+		imageVector[1] = 5
+		writeTongyiIndependentResponse(t, writer, textVector, imageVector, TongyiUsage{
+			InputTokens: 809, ImageTokens: 804, TextTokens: 5, OutputTokens: 6, TotalTokens: 815,
+		})
+	}))
+	defer server.Close()
+	client := newTongyiTestClientForProfile(
+		t,
+		server,
+		TongyiStableUpstreamModel,
+		2<<20,
+		1<<20,
+		time.Second,
+	)
+	result, err := client.EmbedVideo(
+		context.Background(),
+		"雨夜街道",
+		[]applicationembedding.PreparedMultimodalImage{{MIMEType: "image/jpeg", Content: []byte("one")}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Values) != TongyiDimension || math.Abs(result.Values[0]-0.31622776601683794) > 1e-12 ||
+		math.Abs(result.Values[1]-0.9486832980505138) > 1e-12 {
+		t.Fatalf("fused vector prefix=%v", result.Values[:2])
+	}
+	if payload.Model != TongyiStableUpstreamModel || payload.Parameters.Dimension != 0 ||
+		payload.Parameters.ResLevel != 0 || len(payload.Input.Contents) != 2 ||
+		payload.Input.Contents[0].Text != "雨夜街道" ||
+		len(payload.Input.Contents[0].MultiImages) != 0 || payload.Input.Contents[1].Text != "" ||
+		len(payload.Input.Contents[1].MultiImages) != 1 {
+		t.Fatalf("independent payload=%#v", payload)
+	}
+}
+
+func TestTongyiStableProfileRejectsMoreThanEightImages(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("invalid image count reached upstream")
+	}))
+	defer server.Close()
+	client := newTongyiTestClientForProfile(
+		t, server, TongyiStableUpstreamModel, 2<<20, 1<<20, time.Second,
+	)
+	images := make([]applicationembedding.PreparedMultimodalImage, 9)
+	for index := range images {
+		images[index] = applicationembedding.PreparedMultimodalImage{
+			MIMEType: "image/jpeg", Content: []byte{byte(index + 1)},
+		}
+	}
+	if _, err := client.EmbedVideo(context.Background(), "video", images); err == nil {
+		t.Fatal("expected stable-profile image limit error")
 	}
 }
 
@@ -278,7 +344,11 @@ func TestValidateTongyiResponseRejectsNonFiniteVector(t *testing.T) {
 	response.Output.Embeddings[0].Embedding[0] = math.NaN()
 	response.Usage.InputTokens = 1
 	response.Usage.TotalTokens = 1
-	if _, err := validateTongyiResponse(response, "text"); err == nil {
+	if _, err := validateTongyiResponse(
+		response,
+		[]tongyiExpectedEmbedding{{Index: 0, Type: "text"}},
+		TongyiDimension,
+	); err == nil {
 		t.Fatal("expected non-finite vector error")
 	}
 }
@@ -300,7 +370,12 @@ func TestTongyiUsageMetricsUseClosedLabels(t *testing.T) {
 }
 
 func tongyiTestConfig(endpoint string, httpClient *http.Client) TongyiAdapterConfig {
+	profile, err := multimodalprofile.Resolve(multimodalprofile.DefaultProfile)
+	if err != nil {
+		panic(err)
+	}
 	return TongyiAdapterConfig{
+		Profile:       profile,
 		ListenAddress: "127.0.0.1:8099", FruxHMACSecret: multimodalTestSecret,
 		DashScopeEndpoint: endpoint, DashScopeAPIKey: "sk-test-value",
 		UpstreamTimeout: time.Second, MaxInboundRequestBytes: 2 << 20,
@@ -310,8 +385,26 @@ func tongyiTestConfig(endpoint string, httpClient *http.Client) TongyiAdapterCon
 }
 
 func newTongyiTestClient(t testing.TB, server *httptest.Server, maxRequest, maxResponse int64, timeout time.Duration) *TongyiClient {
+	return newTongyiTestClientForProfile(
+		t, server, multimodalprofile.DefaultProfile, maxRequest, maxResponse, timeout,
+	)
+}
+
+func newTongyiTestClientForProfile(
+	t testing.TB,
+	server *httptest.Server,
+	profileID string,
+	maxRequest int64,
+	maxResponse int64,
+	timeout time.Duration,
+) *TongyiClient {
 	t.Helper()
 	config := tongyiTestConfig(server.URL, server.Client())
+	profile, err := multimodalprofile.Resolve(profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Profile = profile
 	config.UpstreamTimeout = timeout
 	config.MaxInboundRequestBytes = maxRequest
 	config.MaxUpstreamResponseBytes = maxResponse
@@ -320,6 +413,29 @@ func newTongyiTestClient(t testing.TB, server *httptest.Server, maxRequest, maxR
 		t.Fatal(err)
 	}
 	return client
+}
+
+func writeTongyiIndependentResponse(
+	t testing.TB,
+	writer http.ResponseWriter,
+	textVector []float64,
+	imageVector []float64,
+	usage TongyiUsage,
+) {
+	t.Helper()
+	response := map[string]any{
+		"output": map[string]any{"embeddings": []any{
+			map[string]any{"index": 0, "embedding": textVector, "type": "text"},
+			map[string]any{"index": 1, "embedding": imageVector, "type": "multi_images"},
+		}},
+		"usage": tongyiUsageResponse(usage),
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	_, _ = writer.Write(body)
 }
 
 func writeTongyiUpstreamResponse(t testing.TB, writer http.ResponseWriter, responseType string, vector []float64, usage TongyiUsage) {
@@ -337,13 +453,7 @@ func tongyiResponseBody(responseType string, vector []float64, usage TongyiUsage
 		"output": map[string]any{"embeddings": []any{map[string]any{
 			"index": 0, "embedding": vector, "type": responseType,
 		}}},
-		"usage": map[string]any{
-			"input_tokens": usage.InputTokens,
-			"input_tokens_details": map[string]any{
-				"image_tokens": usage.ImageTokens, "text_tokens": usage.TextTokens,
-			},
-			"output_tokens": usage.OutputTokens, "total_tokens": usage.TotalTokens,
-		},
+		"usage":      tongyiUsageResponse(usage),
 		"request_id": "upstream-request-id-must-not-leak",
 	}
 	body, err := json.Marshal(response)
@@ -351,6 +461,16 @@ func tongyiResponseBody(responseType string, vector []float64, usage TongyiUsage
 		panic(err)
 	}
 	return body
+}
+
+func tongyiUsageResponse(usage TongyiUsage) map[string]any {
+	return map[string]any{
+		"input_tokens": usage.InputTokens,
+		"input_tokens_details": map[string]any{
+			"image_tokens": usage.ImageTokens, "text_tokens": usage.TextTokens,
+		},
+		"output_tokens": usage.OutputTokens, "total_tokens": usage.TotalTokens,
+	}
 }
 
 func tongyiNonNormalizedVector() []float64 {

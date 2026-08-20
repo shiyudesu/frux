@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 )
 
 func validMultimodalConfig() MultimodalConfig {
@@ -66,6 +67,28 @@ func TestNormalizeAndValidateMultimodalConfigAcceptsCompleteContract(t *testing.
 	dependencies := MultimodalRuntimeDependencies{ProviderContract: &contract, QueryCache: true, ExactRetrieval: true}
 	if err := ValidateMultimodalRuntime(cfg, dependencies); err != nil {
 		t.Fatalf("complete runtime rejected: %v", err)
+	}
+}
+
+func TestNormalizeAndValidateMultimodalConfigResolvesSelectedProfile(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.Profile = multimodalprofile.TongyiFlashStableProfile
+	cfg.Contract = MultimodalContractConfig{}
+	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Contract.ProviderAlias != multimodalprofile.TongyiProviderAlias ||
+		cfg.Contract.RevisionAlias != "stable-independent-mean-v1" ||
+		cfg.Contract.FusionPolicy != domainembedding.MultimodalNormalizedMeanFusionV1 {
+		t.Fatalf("resolved config=%#v", cfg)
+	}
+}
+
+func TestNormalizeAndValidateMultimodalConfigRejectsUnknownProfile(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.Profile = "tongyi-embedding-vision-plus"
+	if err := normalizeAndValidateMultimodalConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("error=%v", err)
 	}
 }
 

@@ -20,14 +20,13 @@ import (
 	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
+	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 )
 
 const (
-	TongyiUpstreamModel        = "tongyi-embedding-vision-flash-2026-03-06"
-	TongyiProviderAlias        = "alibaba-bailian"
-	TongyiModelAlias           = "tongyi-embedding-vision-flash"
-	TongyiRevisionAlias        = "2026-03-06-res1"
-	TongyiDimension            = 768
+	TongyiUpstreamModel        = multimodalprofile.TongyiFlashSnapshotProfile
+	TongyiStableUpstreamModel  = multimodalprofile.TongyiFlashStableProfile
+	TongyiDimension            = multimodalprofile.TongyiDimension
 	TongyiResolutionLevel      = 1
 	TongyiDefaultListenAddr    = "127.0.0.1:8099"
 	TongyiDefaultTimeout       = 20 * time.Second
@@ -39,6 +38,7 @@ const (
 var ErrInvalidTongyiAdapterConfig = errors.New("invalid Tongyi adapter configuration")
 
 type TongyiAdapterConfig struct {
+	Profile                  multimodalprofile.Profile
 	ListenAddress            string
 	FruxHMACSecret           string
 	DashScopeEndpoint        string
@@ -51,7 +51,12 @@ type TongyiAdapterConfig struct {
 }
 
 func LoadTongyiAdapterConfigFromEnv() (TongyiAdapterConfig, error) {
+	profile, profileErr := multimodalprofile.Resolve(os.Getenv("FRUX_MULTIMODAL_PROFILE"))
+	if profileErr != nil {
+		return TongyiAdapterConfig{}, fmt.Errorf("FRUX_MULTIMODAL_PROFILE: %w", ErrInvalidTongyiAdapterConfig)
+	}
 	config := TongyiAdapterConfig{
+		Profile:           profile,
 		ListenAddress:     strings.TrimSpace(os.Getenv("FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR")),
 		FruxHMACSecret:    strings.TrimSpace(os.Getenv("FRUX_MULTIMODAL_HMAC_SECRET")),
 		DashScopeEndpoint: strings.TrimSpace(os.Getenv("DASHSCOPE_MULTIMODAL_ENDPOINT")),
@@ -80,20 +85,19 @@ func LoadTongyiAdapterConfigFromEnv() (TongyiAdapterConfig, error) {
 }
 
 func TongyiMultimodalContract() domainembedding.MultimodalContractIdentity {
-	contract, err := domainembedding.NewMultimodalContractIdentity(
-		TongyiProviderAlias,
-		TongyiModelAlias,
-		TongyiRevisionAlias,
-		TongyiDimension,
-		domainembedding.MultimodalTextCanonicalizerV1,
-		domainembedding.MultimodalFrameSamplingPolicyV1,
-		domainembedding.MultimodalImagePreprocessingV1,
-		domainembedding.MultimodalFusionPolicyV1,
-	)
+	profile, err := multimodalprofile.Resolve(multimodalprofile.DefaultProfile)
 	if err != nil {
 		panic(err)
 	}
-	return contract
+	return profile.Contract
+}
+
+func TongyiMultimodalContractForProfile(profileID string) (domainembedding.MultimodalContractIdentity, error) {
+	profile, err := multimodalprofile.Resolve(profileID)
+	if err != nil {
+		return domainembedding.MultimodalContractIdentity{}, err
+	}
+	return profile.Contract, nil
 }
 
 type TongyiUsage struct {
@@ -123,6 +127,7 @@ func (e *TongyiUpstreamError) Error() string {
 }
 
 type TongyiClient struct {
+	profile          multimodalprofile.Profile
 	endpoint         string
 	apiKey           string
 	client           *http.Client
@@ -148,7 +153,7 @@ type tongyiContent struct {
 
 type tongyiParameters struct {
 	OutputType string `json:"output_type"`
-	Dimension  int    `json:"dimension"`
+	Dimension  int    `json:"dimension,omitempty"`
 	ResLevel   int    `json:"res_level,omitempty"`
 }
 
@@ -171,6 +176,11 @@ type tongyiResponse struct {
 	} `json:"usage"`
 }
 
+type tongyiExpectedEmbedding struct {
+	Index int
+	Type  string
+}
+
 func NewTongyiClient(config TongyiAdapterConfig) (*TongyiClient, error) {
 	if err := validateTongyiAdapterConfig(config); err != nil {
 		return nil, err
@@ -189,6 +199,7 @@ func NewTongyiClient(config TongyiAdapterConfig) (*TongyiClient, error) {
 	transport.MaxConnsPerHost = 8
 	transport.IdleConnTimeout = 30 * time.Second
 	return &TongyiClient{
+		profile:  config.Profile,
 		endpoint: strings.TrimSpace(config.DashScopeEndpoint),
 		apiKey:   strings.TrimSpace(config.DashScopeAPIKey),
 		client: &http.Client{
@@ -206,7 +217,12 @@ func (c *TongyiClient) EmbedQuery(ctx context.Context, query string) (*TongyiEmb
 	if c == nil || query == "" {
 		return nil, tongyiError(false, "invalid_request", 0)
 	}
-	return c.embed(ctx, "query", "text", []tongyiContent{{Text: query}})
+	return c.embed(
+		ctx,
+		"query",
+		[]tongyiContent{{Text: query}},
+		[]tongyiExpectedEmbedding{{Index: 0, Type: "text"}},
+	)
 }
 
 func (c *TongyiClient) Probe(ctx context.Context) error {
@@ -214,8 +230,10 @@ func (c *TongyiClient) Probe(ctx context.Context) error {
 		return ErrInvalidTongyiAdapterConfig
 	}
 	_, err := c.embed(
-		ctx, "startup", "text",
+		ctx,
+		"startup",
 		[]tongyiContent{{Text: "frux multimodal provider readiness"}},
+		[]tongyiExpectedEmbedding{{Index: 0, Type: "text"}},
 	)
 	return err
 }
@@ -226,7 +244,7 @@ func (c *TongyiClient) EmbedVideo(
 	images []applicationembedding.PreparedMultimodalImage,
 ) (*TongyiEmbedding, error) {
 	text = strings.TrimSpace(text)
-	if c == nil || text == "" || len(images) == 0 || len(images) > 16 {
+	if c == nil || text == "" || len(images) == 0 || len(images) > c.profile.MaxImages {
 		return nil, tongyiError(false, "invalid_request", 0)
 	}
 	dataURIs := make([]string, len(images))
@@ -237,25 +255,45 @@ func (c *TongyiClient) EmbedVideo(
 		dataURIs[index] = "data:" + strings.ToLower(strings.TrimSpace(image.MIMEType)) + ";base64," +
 			base64.StdEncoding.EncodeToString(image.Content)
 	}
-	return c.embed(ctx, "video", "fused", []tongyiContent{{Text: text, MultiImages: dataURIs}})
+	switch c.profile.VideoFusion {
+	case multimodalprofile.VideoFusionNative:
+		return c.embed(
+			ctx,
+			"video",
+			[]tongyiContent{{Text: text, MultiImages: dataURIs}},
+			[]tongyiExpectedEmbedding{{Index: 0, Type: "fused"}},
+		)
+	case multimodalprofile.VideoFusionIndependentMean:
+		return c.embed(
+			ctx,
+			"video",
+			[]tongyiContent{{Text: text}, {MultiImages: dataURIs}},
+			[]tongyiExpectedEmbedding{{Index: 0, Type: "text"}, {Index: 1, Type: "multi_images"}},
+		)
+	default:
+		return nil, tongyiError(false, "invalid_profile", 0)
+	}
 }
 
 func (c *TongyiClient) embed(
 	ctx context.Context,
 	operation string,
-	expectedType string,
 	contents []tongyiContent,
+	expected []tongyiExpectedEmbedding,
 ) (*TongyiEmbedding, error) {
 	started := time.Now()
 	resultLabel := "success"
 	defer func() { inframetrics.ObserveTongyiProvider(operation, resultLabel, time.Since(started)) }()
 	payload := tongyiRequest{
-		Model:      TongyiUpstreamModel,
+		Model:      c.profile.UpstreamModel,
 		Input:      tongyiInput{Contents: contents},
-		Parameters: tongyiParameters{OutputType: "dense", Dimension: TongyiDimension},
+		Parameters: tongyiParameters{OutputType: "dense"},
 	}
-	if operation == "video" {
-		payload.Parameters.ResLevel = TongyiResolutionLevel
+	if c.profile.IncludeDimension {
+		payload.Parameters.Dimension = c.profile.Dimension
+	}
+	if operation == "video" && c.profile.ResolutionLevel > 0 {
+		payload.Parameters.ResLevel = c.profile.ResolutionLevel
 	}
 	body, err := json.Marshal(payload)
 	if err != nil || int64(len(body)) > c.maxRequestBytes {
@@ -307,7 +345,7 @@ func (c *TongyiClient) embed(
 		resultLabel = "terminal"
 		return nil, tongyiError(false, "response_invalid", 0)
 	}
-	embedding, err := validateTongyiResponse(decoded, expectedType)
+	embedding, err := validateTongyiResponse(decoded, expected, c.profile.Dimension)
 	if err != nil {
 		resultLabel = "terminal"
 		return nil, err
@@ -316,28 +354,38 @@ func (c *TongyiClient) embed(
 	return embedding, nil
 }
 
-func validateTongyiResponse(response tongyiResponse, expectedType string) (*TongyiEmbedding, error) {
-	if len(response.Output.Embeddings) != 1 {
+func validateTongyiResponse(
+	response tongyiResponse,
+	expected []tongyiExpectedEmbedding,
+	dimension int,
+) (*TongyiEmbedding, error) {
+	if len(expected) == 0 || len(expected) > 2 || len(response.Output.Embeddings) != len(expected) {
 		return nil, tongyiError(false, "response_count", 0)
 	}
-	item := response.Output.Embeddings[0]
-	if item.Index != 0 || strings.ToLower(strings.TrimSpace(item.Type)) != expectedType ||
-		len(item.Embedding) != TongyiDimension {
-		return nil, tongyiError(false, "response_shape", 0)
-	}
-	var norm float64
-	for _, value := range item.Embedding {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return nil, tongyiError(false, "response_vector", 0)
+	vectors := make([][]float64, len(expected))
+	for index, item := range response.Output.Embeddings {
+		if item.Index != expected[index].Index ||
+			strings.ToLower(strings.TrimSpace(item.Type)) != expected[index].Type ||
+			len(item.Embedding) != dimension {
+			return nil, tongyiError(false, "response_shape", 0)
 		}
-		norm = math.Hypot(norm, value)
+		values, err := normalizeTongyiVector(item.Embedding)
+		if err != nil {
+			return nil, err
+		}
+		vectors[index] = values
 	}
-	if norm == 0 {
-		return nil, tongyiError(false, "response_vector", 0)
-	}
-	values := make([]float64, len(item.Embedding))
-	for index, value := range item.Embedding {
-		values[index] = value / norm
+	values := vectors[0]
+	if len(vectors) == 2 {
+		mean := make([]float64, dimension)
+		for index := range mean {
+			mean[index] = (vectors[0][index] + vectors[1][index]) / 2
+		}
+		var err error
+		values, err = normalizeTongyiVector(mean)
+		if err != nil {
+			return nil, err
+		}
 	}
 	usage := TongyiUsage{
 		InputTokens:  response.Usage.InputTokens,
@@ -354,8 +402,28 @@ func validateTongyiResponse(response tongyiResponse, expectedType string) (*Tong
 	return &TongyiEmbedding{Values: values, Usage: usage}, nil
 }
 
+func normalizeTongyiVector(input []float64) ([]float64, error) {
+	var norm float64
+	for _, value := range input {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, tongyiError(false, "response_vector", 0)
+		}
+		norm = math.Hypot(norm, value)
+	}
+	if norm == 0 {
+		return nil, tongyiError(false, "response_vector", 0)
+	}
+	values := make([]float64, len(input))
+	for index, value := range input {
+		values[index] = value / norm
+	}
+	return values, nil
+}
+
 func validateTongyiAdapterConfig(config TongyiAdapterConfig) error {
-	if strings.TrimSpace(config.ListenAddress) == "" || len(strings.TrimSpace(config.FruxHMACSecret)) < 32 ||
+	resolvedProfile, profileErr := multimodalprofile.Resolve(config.Profile.ID)
+	if profileErr != nil || resolvedProfile != config.Profile ||
+		strings.TrimSpace(config.ListenAddress) == "" || len(strings.TrimSpace(config.FruxHMACSecret)) < 32 ||
 		len(strings.TrimSpace(config.FruxHMACSecret)) > 512 || strings.TrimSpace(config.DashScopeAPIKey) == "" ||
 		len(strings.TrimSpace(config.DashScopeAPIKey)) > 4096 ||
 		config.UpstreamTimeout < 100*time.Millisecond || config.UpstreamTimeout > 2*time.Minute ||
