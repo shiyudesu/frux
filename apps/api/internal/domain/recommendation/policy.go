@@ -13,6 +13,7 @@ const (
 	MaxFeatureWeight           = 100
 	MaxTotalFeatureWeight      = 1_000
 	MaxRecallBudget            = 500
+	MinPolicyPreRankCandidates = 50
 	MaxPolicyPreRankCandidates = MaxRequestLogCandidates
 	MaxProviderDeadlineMS      = 30_000
 	MaxFreshnessHalfLifeHours  = 8_760
@@ -55,6 +56,9 @@ type PolicyConfiguration struct {
 	FeatureWeights               map[string]float64 `json:"feature_weights"`
 	RecallBudgets                map[string]int     `json:"recall_budgets"`
 	ProviderDeadlinesMS          map[string]int     `json:"provider_deadlines_ms"`
+	PreRankPoolLimit             int                `json:"pre_rank_pool_limit,omitempty"`
+	RecallProviderOrder          []string           `json:"recall_provider_order,omitempty"`
+	RecallProviderReservations   map[string]int     `json:"recall_provider_reservations,omitempty"`
 	FreshnessHalfLifeHours       int                `json:"freshness_half_life_hours"`
 	ProfileLongTermHalfLifeHours int                `json:"profile_long_term_half_life_hours"`
 	ProfileRecentHalfLifeHours   int                `json:"profile_recent_half_life_hours"`
@@ -181,6 +185,7 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 		FeatureWeights:               make(map[string]float64, len(config.FeatureWeights)),
 		RecallBudgets:                make(map[string]int, len(config.RecallBudgets)),
 		ProviderDeadlinesMS:          make(map[string]int, len(config.ProviderDeadlinesMS)),
+		PreRankPoolLimit:             config.PreRankPoolLimit,
 		Diversity:                    config.Diversity,
 		FreshnessHalfLifeHours:       config.FreshnessHalfLifeHours,
 		ProfileLongTermHalfLifeHours: config.ProfileLongTermHalfLifeHours,
@@ -239,13 +244,10 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 		if budget <= 0 || budget > MaxRecallBudget {
 			return PolicyConfiguration{}, ErrInvalidPolicyBound
 		}
-		if totalRecallBudget > MaxPolicyPreRankCandidates-budget {
-			return PolicyConfiguration{}, ErrInvalidPolicyBound
-		}
 		totalRecallBudget += budget
 		normalized.RecallBudgets[provider] = budget
 	}
-	if totalRecallBudget <= 0 || totalRecallBudget > MaxPolicyPreRankCandidates {
+	if totalRecallBudget <= 0 {
 		return PolicyConfiguration{}, ErrInvalidPolicyBound
 	}
 	if len(config.ProviderDeadlinesMS) != len(normalized.RecallBudgets) {
@@ -260,6 +262,13 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 			return PolicyConfiguration{}, ErrInvalidPolicyBound
 		}
 		normalized.ProviderDeadlinesMS[provider] = deadline
+	}
+	if quotaMergeConfigured(config) {
+		if err := normalizeQuotaMergeConfiguration(config, &normalized); err != nil {
+			return PolicyConfiguration{}, err
+		}
+	} else if totalRecallBudget > MaxPolicyPreRankCandidates {
+		return PolicyConfiguration{}, ErrInvalidPolicyBound
 	}
 	if normalized.FreshnessHalfLifeHours <= 0 || normalized.FreshnessHalfLifeHours > MaxFreshnessHalfLifeHours ||
 		normalized.ProfileLongTermHalfLifeHours <= 0 || normalized.ProfileLongTermHalfLifeHours > MaxProfileHalfLifeHours ||
@@ -292,11 +301,77 @@ func clonePolicyConfiguration(config PolicyConfiguration) PolicyConfiguration {
 	for key, value := range config.ProviderDeadlinesMS {
 		cloned.ProviderDeadlinesMS[key] = value
 	}
+	if config.RecallProviderOrder != nil {
+		cloned.RecallProviderOrder = append([]string(nil), config.RecallProviderOrder...)
+	}
+	if config.RecallProviderReservations != nil {
+		cloned.RecallProviderReservations = make(map[string]int, len(config.RecallProviderReservations))
+		for key, value := range config.RecallProviderReservations {
+			cloned.RecallProviderReservations[key] = value
+		}
+	}
 	cloned.SuppressionHours = make(map[string]int, len(config.SuppressionHours))
 	for key, value := range config.SuppressionHours {
 		cloned.SuppressionHours[key] = value
 	}
 	return cloned
+}
+
+func quotaMergeConfigured(config PolicyConfiguration) bool {
+	return config.PreRankPoolLimit != 0 || config.RecallProviderOrder != nil || config.RecallProviderReservations != nil
+}
+
+func normalizeQuotaMergeConfiguration(config PolicyConfiguration, normalized *PolicyConfiguration) error {
+	if normalized == nil || config.PreRankPoolLimit < MinPolicyPreRankCandidates ||
+		config.PreRankPoolLimit > MaxPolicyPreRankCandidates ||
+		len(config.RecallProviderOrder) != len(normalized.RecallBudgets) ||
+		len(config.RecallProviderReservations) != len(normalized.RecallBudgets) {
+		return ErrInvalidPolicyConfiguration
+	}
+
+	normalized.RecallProviderOrder = make([]string, 0, len(config.RecallProviderOrder))
+	seenOrder := make(map[string]struct{}, len(config.RecallProviderOrder))
+	for _, rawProvider := range config.RecallProviderOrder {
+		provider := normalizePolicyToken(rawProvider)
+		if !validRecallProvider(provider) {
+			return ErrUnknownRecallProvider
+		}
+		if _, selected := normalized.RecallBudgets[provider]; !selected {
+			return ErrInvalidPolicyConfiguration
+		}
+		if _, duplicate := seenOrder[provider]; duplicate {
+			return ErrInvalidPolicyConfiguration
+		}
+		seenOrder[provider] = struct{}{}
+		normalized.RecallProviderOrder = append(normalized.RecallProviderOrder, provider)
+	}
+
+	normalized.RecallProviderReservations = make(map[string]int, len(config.RecallProviderReservations))
+	totalReservations := 0
+	for rawProvider, reservation := range config.RecallProviderReservations {
+		provider := normalizePolicyToken(rawProvider)
+		if !validRecallProvider(provider) {
+			return ErrUnknownRecallProvider
+		}
+		budget, selected := normalized.RecallBudgets[provider]
+		if !selected {
+			return ErrInvalidPolicyConfiguration
+		}
+		if _, duplicate := normalized.RecallProviderReservations[provider]; duplicate {
+			return ErrInvalidPolicyConfiguration
+		}
+		if reservation < 0 || reservation > budget || totalReservations > config.PreRankPoolLimit-reservation {
+			return ErrInvalidPolicyBound
+		}
+		totalReservations += reservation
+		normalized.RecallProviderReservations[provider] = reservation
+	}
+	if len(seenOrder) != len(normalized.RecallBudgets) ||
+		len(normalized.RecallProviderReservations) != len(normalized.RecallBudgets) ||
+		totalReservations > config.PreRankPoolLimit {
+		return ErrInvalidPolicyConfiguration
+	}
+	return nil
 }
 
 func defaultSuppressionHours() map[string]int {

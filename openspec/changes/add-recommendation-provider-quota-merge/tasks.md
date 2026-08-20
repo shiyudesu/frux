@@ -1,15 +1,15 @@
 ## 1. Policy Contract
 
-- [ ] 1.1 Add omission-compatible `pre_rank_pool_limit`, ordered Provider list, and Provider
+- [x] 1.1 Add omission-compatible `pre_rank_pool_limit`, ordered Provider list, and Provider
   reservation fields plus defensive clone/JSON persistence support to recommendation policy types.
-- [ ] 1.2 Normalize Provider tokens and validate complete-field presence, exact selected-Provider
+- [x] 1.2 Normalize Provider tokens and validate complete-field presence, exact selected-Provider
   coverage, no duplicates, pool limit 50–500, reservation 0..budget, and reservation sum within the
   pool.
-- [ ] 1.3 Preserve prerequisite complete-pool validation when every quota field is omitted and allow
+- [x] 1.3 Preserve prerequisite complete-pool validation when every quota field is omitted and allow
   selected budget sum above 500 only for a complete valid quota configuration.
-- [ ] 1.4 Add domain table tests for valid/invalid orders, partial fields, unknown/missing/duplicate
+- [x] 1.4 Add domain table tests for valid/invalid orders, partial fields, unknown/missing/duplicate
   Providers, negative/over-budget reservations, over-sum reservations, bounds, and defensive copies.
-- [ ] 1.5 Add exact seed/serialization/persistence regressions proving `recommend/v1` and
+- [x] 1.5 Add exact seed/serialization/persistence regressions proving `recommend/v1` and
   `recommend/v2` remain byte-for-byte free of quota fields and continue using complete-pool mode.
 
 ## 2. Provider-local Normalization

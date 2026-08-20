@@ -2,6 +2,7 @@ package domainrecommendation
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,6 +36,11 @@ func TestInitialRecommendationPoliciesAreValidatedAndStaged(t *testing.T) {
 		}
 		if string(encoded) != expectedJSON[index] {
 			t.Fatalf("policy v%d serialization changed:\n got: %s\nwant: %s", policy.Version, encoded, expectedJSON[index])
+		}
+		for _, forbidden := range []string{"pre_rank_pool_limit", "recall_provider_order", "recall_provider_reservations"} {
+			if strings.Contains(string(encoded), forbidden) {
+				t.Fatalf("policy v%d unexpectedly serialized quota field %q: %s", policy.Version, forbidden, encoded)
+			}
 		}
 	}
 }
