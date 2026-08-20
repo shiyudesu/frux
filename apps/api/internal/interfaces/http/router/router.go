@@ -8,6 +8,7 @@ import (
 	applicationadminaudit "github.com/shiyudesu/frux/internal/application/adminaudit"
 	applicationadminauth "github.com/shiyudesu/frux/internal/application/adminauth"
 	applicationchat "github.com/shiyudesu/frux/internal/application/chat"
+	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
 	applicationfeed "github.com/shiyudesu/frux/internal/application/feed"
 	applicationgovernance "github.com/shiyudesu/frux/internal/application/governance"
@@ -59,6 +60,7 @@ import (
 	interfaceshttpadmin "github.com/shiyudesu/frux/internal/interfaces/http/admin"
 	interfaceshttpadminauth "github.com/shiyudesu/frux/internal/interfaces/http/adminauth"
 	interfaceshttpchat "github.com/shiyudesu/frux/internal/interfaces/http/chat"
+	interfaceshttpembedding "github.com/shiyudesu/frux/internal/interfaces/http/embedding"
 	interfaceshttpexposure "github.com/shiyudesu/frux/internal/interfaces/http/exposure"
 	interfaceshttpfeed "github.com/shiyudesu/frux/internal/interfaces/http/feed"
 	interfaceshttpgovernance "github.com/shiyudesu/frux/internal/interfaces/http/governance"
@@ -460,6 +462,12 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		)
 	}
 	searchHandler := interfaceshttpsearch.New(searchService, searchHandlerOptions...)
+	adminMultimodalRepo := infraembedding.New(
+		gormDB, infraembedding.WithAdminAuditWriter(adminAuditRepo),
+	)
+	adminMultimodalHandler := interfaceshttpembedding.NewAdmin(
+		applicationembedding.NewAdminMultimodalService(adminMultimodalRepo),
+	)
 	interactionOptions = append(
 		interactionOptions,
 		applicationinteraction.WithCommentModeratorReader(
@@ -748,6 +756,27 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 			),
 		),
 		videoAdminHandler.Restore,
+	)
+	admin.GET(
+		"/multimodal-jobs",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo, domainaccount.PermissionGovernanceExecute,
+		),
+		adminMultimodalHandler.List,
+	)
+	admin.POST(
+		"/multimodal-jobs/:jobId/requeue",
+		interfaceshttpmiddleware.NewRequireAdminPermission(
+			accountRepo,
+			domainaccount.PermissionGovernanceExecute,
+			interfaceshttpmiddleware.WithDeniedAttemptAudit(
+				adminAuditService,
+				domainadminaudit.ActionMultimodalJobRequeue,
+				domainadminaudit.TargetMultimodalJob,
+				"job",
+			),
+		),
+		adminMultimodalHandler.Requeue,
 	)
 	admin.GET(
 		"/media-processing/overview",

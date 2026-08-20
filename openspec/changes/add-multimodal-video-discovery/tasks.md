@@ -125,7 +125,7 @@
 - [x] 9.1 Add fixed-label metrics for job state/backlog/oldest age, provider result/duration/admission,
   active-contract coverage, projection drift, exact-query latency/result count, query-cache outcome,
   hybrid mode/degradation/overlap/contribution, and similar-video empty/filter outcomes.
-- [ ] 9.2 Add bounded operator inspection and manual requeue for multimodal jobs with permission,
+- [x] 9.2 Add bounded operator inspection and manual requeue for multimodal jobs with permission,
   audit, cursor, and closed-detail contracts that expose no images, vectors, raw queries, credentials,
   signed URLs, or arbitrary provider errors.
 - [ ] 9.3 Create a small versioned human golden set and deterministic evaluation command comparing

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 
@@ -321,6 +322,115 @@ func (r *Repository) RequeueMultimodalJob(
 		}).Error
 	})
 	return replayed, err
+}
+
+func (r *Repository) ListAdminMultimodalJobs(
+	ctx context.Context,
+	state string,
+	afterID int64,
+	limit int,
+) ([]*domainembedding.MultimodalEmbeddingJob, error) {
+	state = strings.ToLower(strings.TrimSpace(state))
+	if (state != "" && !domainembedding.ValidMultimodalJobState(state)) || afterID < 0 || limit < 1 || limit > 101 {
+		return nil, domainembedding.ErrInvalidMultimodalJob
+	}
+	query := r.db.WithContext(ctx).Model(&MultimodalEmbeddingJobModel{}).Where("id > ?", afterID)
+	if state != "" {
+		query = query.Where("state = ?", state)
+	}
+	var models []MultimodalEmbeddingJobModel
+	if err := query.Order("id ASC").Limit(limit).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	jobs := make([]*domainembedding.MultimodalEmbeddingJob, 0, len(models))
+	for _, model := range models {
+		job, err := multimodalJobFromModel(model)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
+func (r *Repository) CommitAdminMultimodalRequeue(
+	ctx context.Context,
+	jobID int64,
+	operationKey string,
+	buildAudit func(*domainembedding.MultimodalEmbeddingJob, *domainembedding.MultimodalEmbeddingJob) (*domainadminaudit.Fact, error),
+) (*domainembedding.MultimodalEmbeddingJob, bool, error) {
+	operationKey = strings.TrimSpace(operationKey)
+	if r == nil || r.db == nil || r.auditWriter == nil || jobID <= 0 ||
+		operationKey == "" || len(operationKey) > 128 || buildAudit == nil {
+		return nil, false, domainembedding.ErrInvalidMultimodalJob
+	}
+	var stored MultimodalEmbeddingJobModel
+	var auditFact *domainadminaudit.Fact
+	replayed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now, err := multimodalDatabaseTime(tx)
+		if err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", jobID).Take(&stored).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domainembedding.ErrMultimodalJobNotFound
+			}
+			return err
+		}
+		previous, err := multimodalJobFromModel(stored)
+		if err != nil {
+			return err
+		}
+		var receipt MultimodalJobOperationModel
+		findReceipt := tx.Where("job_id = ? AND operation_key = ?", jobID, operationKey).Take(&receipt)
+		if findReceipt.Error == nil {
+			replayed = true
+			return nil
+		}
+		if !errors.Is(findReceipt.Error, gorm.ErrRecordNotFound) {
+			return findReceipt.Error
+		}
+		if stored.State != domainembedding.MultimodalJobStateTerminal {
+			return domainembedding.ErrMultimodalOperationConflict
+		}
+		if err := tx.Create(&MultimodalJobOperationModel{
+			JobID: jobID, OperationKey: operationKey,
+			Operation: "manual_requeue", CreatedAt: now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&MultimodalEmbeddingJobModel{}).Where("id = ?", jobID).Updates(map[string]any{
+			"state": domainembedding.MultimodalJobStatePending, "attempts": 0,
+			"claim_token": "", "lease_until": nil, "next_attempt_at": now,
+			"failure_code": "", "completed_at": nil, "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", jobID).Take(&stored).Error; err != nil {
+			return err
+		}
+		next, err := multimodalJobFromModel(stored)
+		if err != nil {
+			return err
+		}
+		auditFact, err = buildAudit(previous, next)
+		if err != nil {
+			return err
+		}
+		return r.auditWriter.AppendInTransaction(ctx, tx, auditFact)
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	job, err := multimodalJobFromModel(stored)
+	if err != nil {
+		return nil, false, err
+	}
+	if auditFact != nil {
+		r.auditWriter.RecordCommittedWrite(auditFact)
+	}
+	return job, replayed, nil
 }
 
 func (r *Repository) DeleteCompletedMultimodalJobsBefore(

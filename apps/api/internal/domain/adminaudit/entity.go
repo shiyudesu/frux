@@ -43,6 +43,7 @@ const (
 	ActionAccountUnfreeze       Action = "account.unfreeze"
 	ActionAccountSessionsRevoke Action = "account.sessions_revoke"
 	ActionMediaProcessingRetry  Action = "media_processing.retry"
+	ActionMultimodalJobRequeue  Action = "multimodal_job.requeue"
 )
 
 type TargetType string
@@ -57,6 +58,7 @@ const (
 	TargetKafkaDeadLetterRecord TargetType = "kafka_dead_letter_record"
 	TargetUserAccount           TargetType = "user_account"
 	TargetMediaProcessingJob    TargetType = "media_processing_job"
+	TargetMultimodalJob         TargetType = "multimodal_embedding_job"
 )
 
 type Outcome string
@@ -108,6 +110,10 @@ var allowedDetailsByAction = map[Action]map[string]struct{}{
 	ActionMediaProcessingRetry: detailKeys(
 		"http_method", "new_state", "previous_attempts", "previous_state",
 		"reason_code", "route", "video_id",
+	),
+	ActionMultimodalJobRequeue: detailKeys(
+		"http_method", "new_state", "previous_attempts", "previous_state",
+		"reason_code", "route",
 	),
 }
 
@@ -245,6 +251,17 @@ var schemasByAction = map[Action]actionSchema{
 			"configuration_changed", "temporary_failure", "operator_retry",
 		),
 	},
+	ActionMultimodalJobRequeue: {
+		permission: domainaccount.PermissionGovernanceExecute,
+		targetType: TargetMultimodalJob,
+		route:      "/api/admin/multimodal-jobs/:jobId/requeue",
+		method:     "POST",
+		successKeys: detailKeys(
+			"http_method", "new_state", "previous_attempts", "previous_state",
+			"reason_code", "route",
+		),
+		successReasons: detailKeys("configuration_changed", "operator_retry"),
+	},
 }
 
 var validTargetTypes = map[TargetType]struct{}{
@@ -257,6 +274,7 @@ var validTargetTypes = map[TargetType]struct{}{
 	TargetKafkaDeadLetterRecord: {},
 	TargetUserAccount:           {},
 	TargetMediaProcessingJob:    {},
+	TargetMultimodalJob:         {},
 }
 
 var detailNumberPattern = regexp.MustCompile(`^[0-9]+$`)
@@ -518,8 +536,11 @@ func validDetailValue(action Action, key, value string) bool {
 		_, ok := validStatuses[value]
 		return ok
 	case "new_state", "previous_state":
-		return action == ActionMediaProcessingRetry &&
-			(value == "failed" || value == "retryable")
+		if action == ActionMediaProcessingRetry {
+			return value == "failed" || value == "retryable"
+		}
+		return action == ActionMultimodalJobRequeue &&
+			(value == "terminal" || value == "pending")
 	case "reason_code":
 		return len(value) <= 64 && detailCodePattern.MatchString(value)
 	case "failure_code":
@@ -595,6 +616,7 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 		return false
 	}
 	if action != ActionGovernanceExecute && action != ActionMediaProcessingRetry &&
+		action != ActionMultimodalJobRequeue &&
 		(detail["http_method"] != schema.method || detail["route"] != schema.route) {
 		return false
 	}
@@ -664,6 +686,11 @@ func validDetailSchema(action Action, outcome Outcome, detail map[string]string)
 		videoID, videoErr := strconv.ParseInt(detail["video_id"], 10, 64)
 		attempts, attemptsErr := strconv.Atoi(detail["previous_attempts"])
 		return videoErr == nil && videoID > 0 && attemptsErr == nil && attempts >= 0
+	case ActionMultimodalJobRequeue:
+		attempts, attemptsErr := strconv.Atoi(detail["previous_attempts"])
+		return detail["http_method"] == schema.method && detail["route"] == schema.route &&
+			detail["previous_state"] == "terminal" && detail["new_state"] == "pending" &&
+			attemptsErr == nil && attempts >= 0
 	default:
 		return false
 	}

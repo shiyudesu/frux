@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	domainadminaudit "github.com/shiyudesu/frux/internal/domain/adminaudit"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 
 	"gorm.io/gorm"
@@ -11,11 +12,29 @@ import (
 )
 
 type Repository struct {
-	db *gorm.DB
+	db          *gorm.DB
+	auditWriter AuditWriter
 }
 
-func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+type Option func(*Repository)
+
+type AuditWriter interface {
+	AppendInTransaction(context.Context, *gorm.DB, *domainadminaudit.Fact) error
+	RecordCommittedWrite(*domainadminaudit.Fact)
+}
+
+func WithAdminAuditWriter(writer AuditWriter) Option {
+	return func(repository *Repository) { repository.auditWriter = writer }
+}
+
+func New(db *gorm.DB, options ...Option) *Repository {
+	repository := &Repository{db: db}
+	for _, option := range options {
+		if option != nil {
+			option(repository)
+		}
+	}
+	return repository
 }
 
 // SaveVideoEmbedding conditionally upserts one model fact for a video.

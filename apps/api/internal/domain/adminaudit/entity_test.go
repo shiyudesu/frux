@@ -165,6 +165,31 @@ func TestMediaProcessingRetryAuditIsPrivacyBounded(t *testing.T) {
 	}
 }
 
+func TestMultimodalJobRequeueAuditIsPrivacyBounded(t *testing.T) {
+	digest, err := DigestIdempotencyKey("multimodal-requeue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := FactInput{
+		ActorID: 7, Permission: domainaccount.PermissionGovernanceExecute,
+		Action: ActionMultimodalJobRequeue, TargetType: TargetMultimodalJob, TargetID: "42",
+		Outcome: OutcomeSuccess, RequestID: NewRequestID(),
+		IdempotencyKeyHash: digest, CreatedAt: time.Now().UTC(),
+		Detail: map[string]string{
+			"http_method": "POST", "route": "/api/admin/multimodal-jobs/:jobId/requeue",
+			"reason_code": "operator_retry", "previous_state": "terminal",
+			"new_state": "pending", "previous_attempts": "5",
+		},
+	}
+	if _, err := NewFact(input); err != nil {
+		t.Fatalf("valid multimodal requeue fact rejected: %v", err)
+	}
+	input.Detail["source_hash"] = strings.Repeat("a", 64)
+	if _, err := NewFact(input); !errors.Is(err, ErrInvalidDetail) {
+		t.Fatalf("sensitive multimodal detail error=%v", err)
+	}
+}
+
 func TestGovernanceAuditSupportsUpdateRollbackAndProtectedReads(t *testing.T) {
 	now := time.Date(2026, 8, 6, 14, 0, 0, 0, time.UTC)
 	for _, input := range []FactInput{
