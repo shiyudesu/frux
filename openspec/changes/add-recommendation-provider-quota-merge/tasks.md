@@ -65,9 +65,9 @@
 
 - [x] 6.1 Add a disabled development policy fixture with selected budgets above its pool limit and
   verify normalization/persistence/mixing without selecting it for production requests.
-- [ ] 6.2 Run targeted policy domain/persistence, recall, ranker, snapshot, request-log, evidence,
+- [x] 6.2 Run targeted policy domain/persistence, recall, ranker, snapshot, request-log, evidence,
   metrics, composition, and concurrency tests.
-- [ ] 6.3 Run `cd apps/api && go test ./...` and compile `./cmd/feed` and `./cmd/worker`.
-- [ ] 6.4 Run `openspec validate --all --strict` and confirm the change adds no Provider, semantic/
+- [x] 6.3 Run `cd apps/api && go test ./...` and compile `./cmd/feed` and `./cmd/worker`.
+- [x] 6.4 Run `openspec validate --all --strict` and confirm the change adds no Provider, semantic/
   multimodal feature, public API, persistence table, learned quota, bootstrap policy edit, or active
   rollout.
