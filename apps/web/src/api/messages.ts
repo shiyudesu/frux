@@ -1,5 +1,10 @@
 // 消息域 API：消息列表、已读、未读数。
-import type { MarkReadResponse, MessageListResponse, UnreadStatResponse } from "../types";
+import type {
+  InboxUnreadSummary,
+  MarkReadResponse,
+  MessageListResponse,
+  UnreadStatResponse
+} from "../types";
 import { apiRequest } from "./client";
 
 export function fetchMessages(token: string, cursor = ""): Promise<MessageListResponse> {
@@ -24,4 +29,8 @@ export function markMessagesRead(token: string, messageIDs: number[] = []): Prom
 
 export function fetchUnreadStat(token: string): Promise<UnreadStatResponse> {
   return apiRequest<UnreadStatResponse>("/api/message-stats/unread", { token, auth: "consumer" });
+}
+
+export function fetchInboxUnreadSummary(token: string): Promise<InboxUnreadSummary> {
+  return apiRequest<InboxUnreadSummary>("/api/inbox-stats/unread", { token, auth: "consumer" });
 }

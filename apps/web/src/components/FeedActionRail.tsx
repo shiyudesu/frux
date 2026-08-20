@@ -20,6 +20,7 @@ interface FeedActionRailProps {
   onLike: () => void;
   onComment: () => void;
   onFavorite: () => void;
+  onShare?: () => void;
   onFollow: () => void;
   onOpenAuthor: (profile: PublicProfileInput) => void;
   onRecommendationFeedback?: (type: RecommendationFeedbackType) => Promise<void>;
@@ -43,6 +44,7 @@ export function FeedActionRail({
   onLike,
   onComment,
   onFavorite,
+  onShare,
   onFollow,
   onOpenAuthor,
   onRecommendationFeedback,
@@ -168,7 +170,7 @@ export function FeedActionRail({
             active={favorited}
             onClick={onFavorite}
           />
-          <ActionButton icon="share" label="分享" ariaLabel="分享视频" compact />
+          <ActionButton icon="share" label="分享" ariaLabel="分享视频" compact onClick={onShare} />
           {(showRecommendationFeedback || showWatchLater) && <div className="rail-more" ref={moreRootRef}>
             <ActionButton
               icon="more"

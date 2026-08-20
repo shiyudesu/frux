@@ -2,7 +2,9 @@
 
 ## 1. 模块职责和边界
 
-消息模块负责站内消息持久化、列表、未读数和已读状态。它识别 `LIKE`、`COMMENT`、`COMMENT_REPLY`、`COMMENT_LIKE`、`FOLLOW`、`SYSTEM` 和 `VIDEO_LIFECYCLE`，并保存 actor 展示信息、结构化讨论目标与视频生命周期目标。
+消息模块只负责事件驱动的站内通知持久化、列表、未读数和已读状态。它识别 `LIKE`、`COMMENT`、`COMMENT_REPLY`、`COMMENT_LIKE`、`FOLLOW`、`SYSTEM` 和 `VIDEO_LIFECYCLE`，并保存 actor 展示信息、结构化讨论目标与视频生命周期目标。用户主动发送的文本和视频卡片由独立的 `chat` 模块负责，不能写入 `user_message`。
+
+`chat` 与本模块共享 `/messages` Web 工作区但不共享事实表：无 conversation/member/message 语义的通知继续走本模块，私信历史、互关授权、私信已读边界和 chat unread 走 [chat.md](chat.md)。通知 API、分页、深链和已有读取语义保持兼容。
 
 评论事实和通知可靠性仍归 interaction：根评论、回复和首次评论点赞在同一事务写入 `interaction_comment_notification_outbox`；Worker 通过窄 `CommentNotificationMessageWriter` 调用 message Application Service。message 不读取互动表，也不拥有互动 Outbox。
 
@@ -21,6 +23,7 @@
 | GET | `/api/message-stats/unread` | 当前用户未读数 | 登录 |
 | PATCH | `/api/messages` | 指定 ID 或空数组全部已读 | 登录，状态幂等 |
 | POST | `/internal/messages` | 内部事件创建消息 | 服务入口；event/key 去重 |
+| GET | `/api/inbox-stats/unread` | additive 返回通知、私信和总未读数 | 登录；只读聚合，不改变通知事实 |
 
 内部创建 DTO 和公开消息 DTO 均可携带：
 
@@ -95,6 +98,7 @@ actor 与 recipient 相同时 interaction 不创建 Outbox，避免自己评论�
 
 ## 6. Web 行为和兼容性
 
+- `/messages` 无会话 ID 时默认通知视图；私信视图由独立 chat 工作区提供，`/messages/{conversationId}` 只由 typed route 打开私信，不改变通知 deep link。
 - 消息中心分别渲染“新评论”“新回复”“评论获赞”，使用 comment/reply/heart 图标，并保留未知类型的安全 fallback。
 - 激活消息先调用已读接口；成功后，仅当三个结构化 ID 都是安全正整数时导航。
 - 导航目标为 typed `/videos/{videoId}?comment={rootCommentId}&highlight={commentId}`。
@@ -105,7 +109,10 @@ actor 与 recipient 相同时 interaction 不创建 Outbox，避免自己评论�
 - 生命周期消息严格校验 stage/result/reason、正 `video_id`、正 `review_version` 和发生时间；未知组合使用安全 fallback，不解析标题或正文推断状态。
 - 激活生命周期消息时先标已读。已发布/已恢复目标若当前仍公开可读则进入视频详情；待审、审核通过但未公开、拒绝、处理失败或下架目标进入创作者作品页。
 - 作品页使用认证查询跨公开/私密作品定位 `video_id`；目标已删除或不可解析时只显示安全不可用状态，不泄露保护媒体。
+- 导航总徽标消费 `/api/inbox-stats/unread` 的 total；通知 Tab 仍消费 notification unread，chat Tab 消费 chat unread。批量已读通知不会修改 chat unread。
+- `/api/inbox-stats/unread` 只做 additive 聚合，响应固定包含
+  `notification_unread_count`、`chat_unread_count` 和 `total_unread_count`；它不会改变任一域的已读事实。
 
 ## 7. 测试覆盖
 
-已覆盖根评论、回复、评论点赞事件，自通知抑制，租约/瞬时重试/terminal 错误，稳定 event 去重，结构化目标，旧消息补齐与 legacy 读取；并覆盖视频与账号生命周期载荷校验、事务回滚、发布竞态、重启恢复、冻结/解冻原因文案、残留 Access 读取、解冻后读取、消息渲染、先已读后导航、保护/删除目标和旧 `SYSTEM` 兼容。
+已覆盖根评论、回复、评论点赞事件，自通知抑制，租约/瞬时重试/terminal 错误，稳定 event 去重，结构化目标，旧消息补齐与 legacy 读取；并覆盖视频与账号生命周期载荷校验、事务回滚、发布竞态、重启恢复、冻结/解冻原因文案、残留 Access 读取、解冻后读取、消息渲染、先已读后导航、保护/删除目标和旧 `SYSTEM` 兼容。chat 的授权、私信/通知未读分离、inbox summary、空会话历史元数据和 committed-message-first 幂等重放由 chat 模块及其 API-flow、Web 工作区/历史/分享/profile/dialog 测试覆盖。

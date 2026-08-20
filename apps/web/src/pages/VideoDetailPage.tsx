@@ -3,6 +3,7 @@ import { apiErrorMessage } from "../api/client";
 import { fetchPublicProfile, fetchVideo } from "../api/account";
 import { ThreadedComments } from "../components/ThreadedComments";
 import { VideoDetails } from "../components/VideoDetails";
+import { PrivateShareDialog } from "../components/PrivateShareDialog";
 import { VideoStage } from "../components/VideoStage";
 import { PageMessage } from "../components/StatusMessages";
 import { emptyProfile, image } from "../constants";
@@ -34,6 +35,7 @@ export function VideoDetailPage({
   const [item, setItem] = useState<FeedVideo | null>(null);
   const [state, setState] = useState<DetailState>("loading");
   const [error, setError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
   const { preferences, updatePreferences } = usePlayerPreferences();
 
   const loadVideo = useCallback(() => {
@@ -129,7 +131,17 @@ export function VideoDetailPage({
     <main className="video-detail-page" data-ui="video-detail-page">
       <section className="video-detail-stage">{stage}</section>
       <section ref={discussionRef} className="video-detail-discussion" aria-label="视频讨论">
-        <VideoDetails item={item} onOpenUser={(profile) => openPublicProfile(profile, navigate)} />
+        <VideoDetails
+          item={item}
+          onOpenUser={(profile) => openPublicProfile(profile, navigate)}
+          onShare={() => {
+            if (!session.token) {
+              navigate("/auth");
+              return;
+            }
+            setShareOpen(true);
+          }}
+        />
         {invalidFocus && (
           <p className="video-detail-unavailable" role="status">评论链接参数无效，已显示可用讨论。</p>
         )}
@@ -144,6 +156,7 @@ export function VideoDetailPage({
           onOpenUser={(profile) => openPublicProfile(profile, navigate)}
         />
       </section>
+      {shareOpen && <PrivateShareDialog video={item} onClose={() => setShareOpen(false)} />}
     </main>
   );
 }

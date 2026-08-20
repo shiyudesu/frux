@@ -1,13 +1,15 @@
 import type { FeedVideo } from "../types";
 import type { PublicProfileInput } from "../utils";
 import { formatMetric, profileFromFeedItem, publicUserAvatar } from "../utils";
+import { Icon } from "./Icon";
 
 interface VideoDetailsProps {
   item: FeedVideo | null;
   onOpenUser: (profile: PublicProfileInput) => void;
+  onShare?: () => void;
 }
 
-export function VideoDetails({ item, onOpenUser }: VideoDetailsProps) {
+export function VideoDetails({ item, onOpenUser, onShare }: VideoDetailsProps) {
   if (!item) return null;
   return (
     <div className="details-content">
@@ -25,6 +27,12 @@ export function VideoDetails({ item, onOpenUser }: VideoDetailsProps) {
         <span><strong>{formatMetric(item.comment_count)}</strong>评论</span>
         <span><strong>{formatMetric(item.favorite_count)}</strong>收藏</span>
       </div>
+      {onShare && (
+        <button className="video-detail-share-button ghost-button compact" type="button" onClick={onShare}>
+          <Icon name="share" size={16} />
+          分享给私信联系人
+        </button>
+      )}
     </div>
   );
 }

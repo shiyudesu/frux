@@ -12,6 +12,7 @@ import {
 import { favoriteVideo, followUser, likeVideo, loadFollowingMap } from "../api/social";
 import { setWatchLater } from "../api/library";
 import { FeedDetailsPanel } from "../components/FeedDetailsPanel";
+import { PrivateShareDialog } from "../components/PrivateShareDialog";
 import { FollowingFeedDirectory } from "../components/FollowingFeedDirectory";
 import { FeedMessage } from "../components/StatusMessages";
 import { Icon } from "../components/Icon";
@@ -93,6 +94,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     : undefined;
 
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [shareVideoID, setShareVideoID] = useState(0);
   const handleCommentCountChange = useCallback((count: number) => {
     if (current && count >= 0) updateCurrentItem(current.video_id, { comment_count: count });
   }, [current, updateCurrentItem]);
@@ -345,6 +347,11 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
     }
   }, [current, navigate, requireLogin, session, swipe]);
 
+  const openShare = useCallback((videoID: number) => {
+    if (!requireLogin()) return;
+    setShareVideoID(videoID);
+  }, [requireLogin]);
+
   const openComments = useCallback(() => {
     setCommentsOpen(true);
   }, [setCommentsOpen]);
@@ -470,6 +477,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onLike={setLike}
                     onComment={openComments}
                     onFavorite={setFavorite}
+                    onShare={() => openShare(visibleNext.video_id)}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
                     telemetryEnabled={Boolean(session.token)}
@@ -504,6 +512,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                   commentButtonRef={commentButtonRef}
                   onComment={openComments}
                   onFavorite={setFavorite}
+                  onShare={() => openShare(visibleCurrent.video_id)}
                   onFollow={setFollow}
                   onPlaybackQoS={reportPlaybackQoS}
                   telemetryEnabled={Boolean(session.token)}
@@ -536,6 +545,7 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
                     onLike={setLike}
                     onComment={openComments}
                     onFavorite={setFavorite}
+                    onShare={() => openShare(visibleNext.video_id)}
                     onFollow={setFollow}
                     onPlaybackQoS={reportPlaybackQoS}
                     telemetryEnabled={Boolean(session.token)}
@@ -574,6 +584,12 @@ export function FeedPage({ feedScene }: { feedScene: string }) {
         authenticated={Boolean(session.token && session.user)}
         onOpenUser={(profile) => openPublicProfile(profile, navigate)}
       />
+      {shareVideoID > 0 && (() => {
+        const shareVideo = items.find((item) => item.video_id === shareVideoID);
+        return shareVideo
+          ? <PrivateShareDialog video={shareVideo} onClose={() => setShareVideoID(0)} />
+          : null;
+      })()}
     </main>
   );
 }

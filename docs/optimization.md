@@ -252,3 +252,16 @@ feed:hot:window:v1:{windowEndUnix}
   `cd apps/api && go test ./internal/application/recommendation -run '^$' -bench '^BenchmarkRecommendBoundedPool$' -benchtime=5s`。
   该基准以 100 候选有界池运行并发 `RunParallel`，用于比较提交前的 allocation 与 ns/op，不能替代
   含 PostgreSQL/Redis 的容量压测。
+
+## 17. 私信性能与容量边界
+
+私信首版优先保证事实一致性而不是最低延迟：
+
+- PostgreSQL 是会话、成员、消息、最后消息摘要和 unread 的权威存储；发送事务不等待 Kafka、Redis 或 WebSocket。
+- 会话列表使用 `(last_message_id DESC, id DESC)`，历史使用 `(conversation_id, id DESC)`，幂等使用 `(sender_id, idempotency_key)` 唯一索引；空会话不进入普通列表。
+- Application 按页批量 hydration 对方资料和公开视频卡片，历史中的重复 video ID 只读取一次。不可用视频返回无 URL 的 tombstone，不能用缓存旧卡片绕过当前可见性。
+- Web 只在可见消息工作区轮询：启用或恢复可见时立即刷新，成功后间隔 5 秒，瞬时失败退避到 10/20/30 秒；页面隐藏、路由离开或账号变化会清理 timer。活动会话只用 `after_message_id` 拉增量，避免重复下载完整历史；初始和增量响应都携带会话/资格元数据。
+- 发送成功和已读成功立即更新本地会话/徽标，轮询只负责收敛其他端的提交。失败保留已加载内容并显示 degraded 状态，不用刷新清空工作区。
+- 收件人查询使用互关关系表的一次 SQL 和昵称过滤，不让客户端加载两套关系列表再求交集；cursor 绑定过滤 query，防止分页重复和无界扫描。
+- `chat_send` 按用户限流，正常为本地 30、分布式 60，紧急为本地 10、分布式 20；分布式协调不可用时 fail-closed。指标只保留低基数 operation/kind/outcome/error-class。
+- 当前不新增 chat Redis cache、Kafka topic 或 WebSocket runtime。若未来轮询成本证明需要唤醒，只能将 Redis/Kafka 作为 committed row 的 hint，客户端仍通过 HTTP 读取 PostgreSQL 权威数据。

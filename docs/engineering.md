@@ -56,6 +56,8 @@ apps/api/
 
 评论通知同样遵守所有权：`interaction` 拥有根/回复/评论点赞事实、计数和 `interaction_comment_notification_outbox`；Worker 通过 Application 层的窄 `CommentNotificationMessageWriter` 调用 `message.Service`。message 只持久化消息和结构化目标，不反查互动表；interaction Domain/Application 不导入 message Infrastructure。
 
+私信同样保持独立所有权：`chat` 拥有会话、成员、用户消息、私信已读和 chat unread；`message` 只拥有事件通知。`application/chat.Service` 只依赖账号展示、互关关系、公开视频 hydration、通知 unread 和可选 observer 等窄接口，Router 通过 `chat_adapters.go` 组合跨模块能力。私信发送不依赖 Kafka 或 Redis，必须在 PostgreSQL 事务内完成事实、摘要和接收方 unread；精确幂等重试先解析已提交消息，再执行可变授权检查。
+
 ## 3. 新增后端模块文件组
 
 ```text
@@ -65,6 +67,7 @@ apps/api/internal/domain/{module}/repository.go
 apps/api/internal/application/{module}/service.go
 apps/api/internal/infra/persistence/{module}/model.go
 apps/api/internal/infra/persistence/{module}/gorm.go
+apps/api/internal/infra/persistence/{module}/indexes.go # 需要显式 PostgreSQL 索引时
 apps/api/internal/interfaces/http/{module}/dto.go
 apps/api/internal/interfaces/http/{module}/handler.go
 apps/api/test/{module}_api_test.go
@@ -403,6 +406,9 @@ DELETE /api/videos/{videoId}/like
 | 创作者作品查询 | `created_at DESC, id DESC` |
 | 喜欢、收藏、稍后再看 | `updated_at DESC, video_id DESC` |
 | 观看历史 | `last_watched_at DESC, video_id DESC` |
+| 私信会话 | `last_message_id DESC, conversation_id DESC` |
+| 私信历史 | `message_id DESC`，cursor 绑定 conversation |
+| 互关收件人 | `followed_at DESC, user_id DESC`，cursor 绑定 normalized query |
 
 返回结构：
 
@@ -492,12 +498,16 @@ apps/web/src/feedPreload.ts  # Feed 预加载契约、网络策略、候选顺�
 apps/web/src/feedPreloadController.ts # 有界原生媒体资源、代际取消、复用与调试状态
 apps/web/src/player/          # 播放状态机、能力选源、MP4/DASH adapters、fallback 与三槽池
 apps/web/src/api/            # apiRequest<T> 客户端与按域 fetch（feed/messages/social/account/creator/library）
+apps/web/src/api/chat.ts     # 私信资格、收件人、会话、历史、发送、已读
 apps/web/src/session.tsx     # SessionContext + useSession/useUnreadCount
 apps/web/src/consumerSessionCoordinator.ts # 内存 Access、Refresh single-flight、跨标签页退出
 apps/web/src/router.tsx      # Route union + normalizeRoute + useRoute/useNavigate
 apps/web/src/pages/          # Login/Feed/Messages/Profile/PublicProfile/Upload
 apps/web/src/components/     # AppShell/导航/Icon/VideoStage/FeedDetailsPanel 等共享组件
 apps/web/src/hooks/          # useFeed/useFeedPreloading/useComments/useSwipe/useCreatorContent/useProfileLibrary
+apps/web/src/hooks/useChatConversations.ts
+apps/web/src/hooks/useChatHistory.ts
+apps/web/src/hooks/useChatPolling.ts
 apps/web/src/styles/         # tokens/base/shell/feed/pages/responsive 模块化样式
 apps/web/src/App.tsx         # Provider 组装 + 路由分发
 apps/web/src/main.tsx
@@ -518,6 +528,9 @@ apps/web/src/styles.css      # 按固定顺序聚合 styles/ 下的样式
 - 页面状态保持清楚：loading、error、empty、success。
 - 多 Tab 页面为每个 Tab 独立保存 items、cursor、hasMore、loading 和 error；切换 Tab 不得用另一列表覆盖已加载页。
 - 多排序/嵌套列表按资源和排序分区保存状态。评论 controller 按 video+sort 保存根页、按 root 保存回复页，并对 preview/context/page 实体按 ID 去重；草稿、展开、focused target 和各操作 busy/error 不能互相覆盖。
+- 私信状态按认证用户和 conversation 隔离；会话列表按 ID 去重，历史按 message ID 去重并保持服务端顺序。旧请求通过 generation/request guard 丢弃，账号替换、路由切换和会话切换必须清理旧数据。
+- 私信首版使用 HTTP polling 而不是 WebSocket：工作区可见时立即刷新，随后默认 5 秒刷新，失败按 10/20/30 秒有界退避，页面隐藏或路由离开时清理 timer；`after_message_id` 只用于活动会话增量刷新，初始和增量历史响应都带 conversation/eligibility 元数据。发送和已读成功后直接本地 reconcile。
+- 视频分享只能从后端返回的互关收件人中单选；同一视频/收件人/会话的 uncertain retry 复用操作键，只有成功、输入变化或账号变化才轮换。发送中锁定选择，嵌套 dialog 的 Escape 只处理最上层并在关闭后恢复触发控件焦点。
 - 个人内容正文不写入 localStorage；当前仅公开资料摘要可通过既有 type guard 缓存。
 - 公开主页只渲染后端明确允许的能力。收藏、观看历史、稍后再看和私密作品不出现在公开页面；没有领域模型的“短剧”和“我的预约”不得添加占位 Tab。
 - CSS class 使用语义命名。
@@ -573,9 +586,19 @@ GitHub Actions 在 Pull Request、`main` 分支 Push 和手动触发时运行三
 - Repository：校验 Docker Compose 和全部 OpenSpec。
 
 CI 只使用只读仓库权限和非敏感测试值，不依赖仓库 Secret。真实 PostgreSQL 集成测试仍按
-`FRUX_POSTGRES_TEST_DSN` 显式启用，不在基础 PR 门禁中启动状态服务。
+`FRUX_POSTGRES_TEST_DSN` 显式启用，不在基础 PR 门禁中启动状态服务；本次验证未设置该 DSN，
+因此 `chat_postgres_test.go` 明确跳过，未启动 PostgreSQL、Redis 或 Kafka。
 
-## 15. 文档同步
+## 15. 私信工程约束
+
+- Domain 只定义 `TEXT`/`VIDEO`、pair canonicalization、文本/请求边界、cursor identity、成员 read monotonicity 和封闭错误；不得导入 Hertz、GORM、Redis 或 Kafka 类型。
+- Application 每次 create/send 都检查正常消费端账号与当前互关，视频 send-time 只接受公开视频 ID；列表/历史 hydration 必须批量且有界，消失的账号或视频使用 safe fallback。
+- GORM Repository 使用 `chat_conversation`、`chat_conversation_member`、`chat_message` 三表和显式索引；发送锁定会话及成员，按 sender+idempotency key 重放或冲突，事实、摘要和 unread 在同一事务中提交。Application Service 在账号/关系/视频等 mutable authorization 前先按精确 payload 解析 committed retry，返回 `created=false`；同键不同 payload 才返回冲突。
+- Handler 使用有界 `BindStrictJSON`、正数 path ID、limit/cursor 校验和稳定 `CHAT_*` 映射；`Idempotency-Key` 仅是发送接口必填，消息体不得携带媒体 URL、标题或作者快照。
+- Chat metrics 只能使用注册的 operation/kind/outcome/error-class；禁止把正文、昵称、用户/会话/消息/视频 ID 或 URL 放入日志、trace、Prometheus label 或 analytics。
+- 测试边界是 Domain/Application 单测、可选 PostgreSQL 并发/回滚/reconciliation 测试、Hertz API-flow、Web API/router/operation 测试，以及 `ChatWorkspace`、`useChatHistory`、`PrivateShareDialog`、`PublicProfilePage` 和 `useDialogFocus` 专项测试；PostgreSQL 测试由 `FRUX_POSTGRES_TEST_DSN` gate，本次未设置 DSN 且未启动服务。不在单元测试中启动 Kafka、Redis 或 WebSocket。
+
+## 16. 文档同步
 
 改动以下内容时同步文档：
 
@@ -598,7 +621,7 @@ CI 只使用只读仓库权限和非敏感测试值，不依赖仓库 Secret。�
 - API 测试覆盖成功和失败路径。
 - 模块文档和产品状态更新。
 
-## 16. 推荐与自动审核工程约束
+## 17. 推荐与自动审核工程约束
 
 - 推荐 context 只使用 `domain/recommendation.RecommendationContext`；HTTP 必须严格绑定并拒绝
   超限/未知字段，客户端不提供身份、关系、曝光或任意 metadata。

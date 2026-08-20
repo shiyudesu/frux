@@ -114,6 +114,17 @@ const (
 
 	CodeMessageValidationFailed = "MESSAGE_VALIDATION_FAILED"
 
+	CodeChatValidationFailed     = "CHAT_VALIDATION_FAILED"
+	CodeChatSelfConversation     = "CHAT_SELF_CONVERSATION"
+	CodeChatNotEligible          = "CHAT_NOT_ELIGIBLE"
+	CodeChatAccountUnavailable   = "CHAT_ACCOUNT_UNAVAILABLE"
+	CodeChatCursorInvalid        = "CHAT_CURSOR_INVALID"
+	CodeChatConversationNotFound = "CHAT_CONVERSATION_NOT_FOUND"
+	CodeChatMessageNotFound      = "CHAT_MESSAGE_NOT_FOUND"
+	CodeChatVideoUnavailable     = "CHAT_VIDEO_UNAVAILABLE"
+	CodeChatIdempotencyConflict  = "CHAT_IDEMPOTENCY_CONFLICT"
+	CodeChatUnavailable          = "CHAT_UNAVAILABLE"
+
 	CodeReviewValidationFailed            = "REVIEW_VALIDATION_FAILED"
 	CodeReviewCaseNotFound                = "REVIEW_CASE_NOT_FOUND"
 	CodeReviewConflict                    = "REVIEW_CONFLICT"

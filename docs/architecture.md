@@ -1,6 +1,6 @@
 # 视频 Feed 系统架构图（MVP）
 
-本文按 `mermaid-diagrams` skill 重构：每张图只表达一个概念，节点保持克制，连接线带语义标签，图前给出用途说明。当前实现由 Go API 与 Worker 共同承载账户、视频、Feed、互动、曝光、个人内容库和消息能力。
+本文按 `mermaid-diagrams` skill 重构：每张图只表达一个概念，节点保持克制，连接线带语义标签，图前给出用途说明。当前实现由 Go API 与 Worker 共同承载账户、视频、Feed、互动、曝光、个人内容库、事件通知和私信聊天能力。
 
 ## 1. 系统上下文
 
@@ -87,9 +87,9 @@ flowchart LR
   Auth["JWT Middleware<br/>身份上下文"]
   AdminAuth["Admin Permission Middleware<br/>当前账号状态与角色"]
   Audit["Admin Audit<br/>不可变操作事实"]
-  Handlers["HTTP Handlers<br/>account / video / feed / interaction / exposure / library"]
-  Services["Application Services<br/>账户资料 / 创作者管理 / 个人内容库"]
-  Domains["Domain Models<br/>account / video / interaction / exposure / library"]
+  Handlers["HTTP Handlers<br/>account / video / feed / interaction / exposure / library / message / chat"]
+  Services["Application Services<br/>账户资料 / 创作者管理 / 个人内容库 / 通知 / 私信"]
+  Domains["Domain Models<br/>account / video / interaction / exposure / library / message / chat"]
   Config["Config Loader<br/>configs/config.yaml"]
   JWT["JWT Manager<br/>隔离 key ring / 短期访问令牌"]
   Session["Refresh Session<br/>旋转 / 撤销 / auth_version"]
@@ -448,7 +448,17 @@ erDiagram
 
 ```
 
-迁移在 PostgreSQL advisory transaction lock 内执行 `AutoMigrate`，包括异步互动回执 `version` 和行为行 `latest_event_version`/兼容顺序列，随后补齐 `video_stat`、将历史视频可见性置为 `public`、补齐隐私默认行、以版本 `0` 和现有行为 `updated_at` 安全回填旧行为顺序、重建 `user_content_stat`、仅在 `app_migration` 缺少持久标记时从原始观看事件一次性回填 `video_view_history`，最后确保 Feed Timeline 索引。标记与回填处于同一事务，用户之后删除或清空的历史不会被后续 API/Worker 启动恢复。
+迁移在 PostgreSQL advisory transaction lock 内执行 `AutoMigrate`，包括异步互动回执 `version` 和行为行 `latest_event_version`/兼容顺序列，随后补齐 `video_stat`、将历史视频可见性置为 `public`、补齐隐私默认行、以版本 `0` 和现有行为 `updated_at` 安全回填旧行为顺序、重建 `user_content_stat`、仅在 `app_migration` 缺少持久标记时从原始观看事件一次性回填 `video_view_history`，最后确保 Feed Timeline 索引。`chat_conversation`、`chat_conversation_member` 和 `chat_message` 也在同一个 advisory-lock migration 中注册，并显式创建 pair、成员、幂等、历史和 unread 索引；不修改或回填 `user_message`。标记与回填处于同一事务，用户之后删除或清空的历史不会被后续 API/Worker 启动恢复。
+
+### 4.2 私信数据模型与提交边界
+
+私信把用户对会话、成员状态和消息事实拆成三张 PostgreSQL 表。`chat_conversation` 用 `(lower_user_id, higher_user_id)` 唯一约束保证一个用户对只有一个会话；空会话没有 `last_message_id`，不会进入普通列表。`chat_conversation_member` 恰好为每个会话保存两行，维护 `last_read_message_id`、`last_read_at` 和 `unread_count`；`chat_message` 使用全局递增 ID 作为顺序，保存 `TEXT` 或 `VIDEO`、规范化文本或 `video_id`、发送者幂等键，以及未来撤回用的保留字段。
+
+发送事务按确定性的用户 ID 顺序锁定会话成员，比较发送者和幂等键的既有 payload；Application Service 在任何可变账号、互关、成员或视频授权检查前先解析已提交消息，因此不确定响应的精确重试不会因后续取关、冻结或视频下架而被错误拒绝。成功时同时插入消息、更新会话最后消息并只增加接收成员 unread。重复请求返回原消息，不再次增加 unread；任一步骤失败则整体回滚。Kafka、Redis 和消息通知 Outbox 不在私信发送提交路径中。
+
+私信 Application Service 通过 Router composition root 的窄 adapter 读取正常账号显示资料、单查询互关关系和当前公开视频卡片。服务每次创建/发送都检查当前互关；取关只阻断后续发送，不删除历史。视频只存 ID，读取时批量 hydration，当前不可读视频返回无保护字段的 unavailable tombstone。
+
+私信列表和历史使用绑定排序元组的版本化 URL-safe cursor：会话按 `(last_message_id DESC, id DESC)`，历史按 `message_id DESC`，互关收件人按 `(followed_at DESC, user_id DESC)`；历史响应除消息页外始终带当前 conversation 快照和 eligibility（包括空会话），活动会话使用 `after_message_id` 增量读取。通知 `user_message` 的事实、API 和深链保持独立。
 
 ## 5. 演进能力地图
 
@@ -484,10 +494,12 @@ flowchart TB
   Library["个人内容库"]
   Review["审核"]
   Message["消息"]
+  Chat["私信聊天"]
   Admin["后台运营"]
   Governance["系统治理"]
   Observability["监控告警"]
   AsyncStore[("Redis / MQ / 对象存储")]
+  ChatStore[("PostgreSQL<br/>chat tables")]
 
   Account -->|"提供资料隐私"| Library
   Video -->|"进入内容审核"| Review
@@ -503,13 +515,17 @@ flowchart TB
   Exposure -->|"提供观看历史投影"| Library
   Interaction -->|"投递互动事件"| AsyncStore
   AsyncStore -->|"生成站内通知"| Message
+  Account -->|"提供账号和关系资格"| Chat
+  Video -->|"提供当前公开视频卡片"| Chat
+  Chat -->|"保存会话、成员、消息和私信未读"| ChatStore
+  Chat -.->|"初版使用 HTTP 轮询；未来可接唤醒"| AsyncStore
   Admin -->|"处理审核任务"| Review
   Governance -->|"保护核心接口"| Feed
   Observability -->|"采集服务指标"| Governance
 
-  class Account,Video,Feed,Upload,Recommendation,Interaction,Exposure,Library,Message,Review,Admin current;
+  class Account,Video,Feed,Upload,Recommendation,Interaction,Exposure,Library,Message,Chat,Review,Admin current;
   class Governance,Observability platform;
-  class AsyncStore data;
+  class AsyncStore,ChatStore data;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
@@ -629,6 +645,10 @@ max staleness 后使用 failure default。请求和消费热路径不访问控�
 ## 6. 说明
 
 - 当前代码以 Go API 承载同步 HTTP，用 Worker 消费互动、发布、曝光预热、嵌入和媒体处理事件；内部按接口层、应用层、领域层、基础设施层组织。
+- `message` 与 `chat` 是两个不同的体验域：`message` 保留事件通知和 `user_message` 兼容合同，`chat` 以 PostgreSQL 三表承载互关 1:1 用户内容。`/api/inbox-stats/unread` 只做 additive 汇总，导航使用 total，两个视图仍保留独立 unread。
+- 私信首版没有 WebSocket/SSE。Web 在消息工作区可见时立即轮询会话和活动历史，随后每 5 秒刷新，瞬时失败按 10/20/30 秒有界退避，页面隐藏、路由离开或账号变化时暂停；发送和已读成功后立即本地 reconcile。Redis、Kafka 和对象存储不是接受私信的前置依赖。
+- 私信分享和嵌套播放窗口共享焦点栈；Escape 只关闭当前最上层 dialog，关闭后焦点返回触发控件，避免一次按键越级关闭外层播放。
+- 私信发送使用认证用户维度的 `chat_send` 分层限流；正常 profile 本地 30、分布式 60，紧急 profile 本地 10、分布式 20，分布式协调失败时 fail-closed。观测只保留 operation、kind、outcome、error class 和 latency 等低基数维度，不记录正文或身份内容。
 - 对外接口统一挂载在 `/api/*`；`/uploads/*` 中头像/普通文件公开读取，视频/封面按不可变上传所有权、同作者视频引用、数据库状态和可选 Authorization 或“短期 HttpOnly JWT 资产 Cookie + Web 活跃标记”授权后提供 Range/HEAD；资产 Cookie 在登录、刷新和改密时随 Access JWT 轮换，普通响应不刷新，离线退出同步移除活跃标记；健康检查使用 `/health`。
 - 数据持久化使用 PostgreSQL；API 和 Worker 通过 advisory transaction lock 串行执行完整 GORM 自动迁移。内容统计校正采用快照差量叠加，既修复旧偏差也保留其他在线实例已提交的并发增量；观看历史聚合修复只修正仍存在的投影，不会从原始事件恢复用户已删除的历史。
 - Feed 通过 `scene` 分发策略：`timeline` 按 `published_at DESC, id DESC` 排序，`hot` 按最近 60 分钟互动热度排序，并通过 Base64 游标分页。

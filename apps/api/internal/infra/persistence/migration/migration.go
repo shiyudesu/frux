@@ -7,6 +7,7 @@ import (
 	domainaccount "github.com/shiyudesu/frux/internal/domain/account"
 	infraaccount "github.com/shiyudesu/frux/internal/infra/persistence/account"
 	infraadminaudit "github.com/shiyudesu/frux/internal/infra/persistence/adminaudit"
+	infrachat "github.com/shiyudesu/frux/internal/infra/persistence/chat"
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
 	infrafeed "github.com/shiyudesu/frux/internal/infra/persistence/feed"
@@ -121,6 +122,9 @@ func AutoMigrate(db *gorm.DB) error {
 			&infrainteraction.CommentLikeIdempotencyReceiptModel{},
 			&infrainteraction.CommentNotificationOutboxModel{},
 			&inframessage.MessageModel{},
+			&infrachat.ConversationModel{},
+			&infrachat.ConversationMemberModel{},
+			&infrachat.MessageModel{},
 			&infraplayback.ConfigModel{},
 			&infraplayback.QoSLogModel{},
 			&infraplayback.TelemetryBatchModel{},
@@ -131,6 +135,9 @@ func AutoMigrate(db *gorm.DB) error {
 			&infralibrary.WatchLaterModel{},
 			&markerModel{},
 		); err != nil {
+			return err
+		}
+		if err := infrachat.EnsureIndexes(tx); err != nil {
 			return err
 		}
 		if err := infravideo.EnsureStats(tx); err != nil {

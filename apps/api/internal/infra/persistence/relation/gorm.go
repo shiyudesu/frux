@@ -34,6 +34,14 @@ type relationUserProfileModel struct {
 	Bio       string
 }
 
+type mutualRecipientModel struct {
+	UserID     int64
+	Nickname   string
+	AvatarURL  string
+	Bio        string
+	FollowedAt time.Time
+}
+
 type followStateModel struct {
 	TargetExists bool
 	Following    bool
@@ -222,6 +230,33 @@ func (r *Repository) IsFollowing(ctx context.Context, userID int64, targetUserID
 	return state.Following, nil
 }
 
+func (r *Repository) AreMutuallyFollowing(ctx context.Context, firstUserID, secondUserID int64) (bool, error) {
+	var state struct {
+		FirstExists   bool
+		SecondExists  bool
+		FirstFollows  bool
+		SecondFollows bool
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			EXISTS (SELECT 1 FROM account WHERE id = ? AND status = ? AND role = ?) AS first_exists,
+			EXISTS (SELECT 1 FROM account WHERE id = ? AND status = ? AND role = ?) AS second_exists,
+			EXISTS (SELECT 1 FROM user_follow WHERE user_id = ? AND target_user_id = ? AND status = ?) AS first_follows,
+			EXISTS (SELECT 1 FROM user_follow WHERE user_id = ? AND target_user_id = ? AND status = ?) AS second_follows
+	`, firstUserID, domainaccount.StatusNormal, domainaccount.RoleUser,
+		secondUserID, domainaccount.StatusNormal, domainaccount.RoleUser,
+		firstUserID, secondUserID, domainrelation.FollowStatusActive,
+		secondUserID, firstUserID, domainrelation.FollowStatusActive,
+	).Scan(&state).Error
+	if err != nil {
+		return false, err
+	}
+	if !state.FirstExists || !state.SecondExists {
+		return false, domainrelation.ErrTargetUserNotFound
+	}
+	return state.FirstFollows && state.SecondFollows, nil
+}
+
 // ListFollowing 查询当前用户关注的人。
 func (r *Repository) ListFollowing(ctx context.Context, userID int64, listQuery string, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.UserItem, error) {
 	query := r.db.WithContext(ctx).
@@ -264,6 +299,39 @@ func (r *Repository) ListFollowers(ctx context.Context, userID int64, cursor *do
 	}
 
 	return scanUserItems(query.Order("f.updated_at DESC").Order("f.user_id DESC").Limit(limit))
+}
+
+func (r *Repository) ListMutualRecipients(ctx context.Context, userID int64, listQuery string, cursor *domainrelation.ListCursor, limit int) ([]*domainrelation.MutualRecipient, error) {
+	query := r.db.WithContext(ctx).
+		Table("user_follow AS outgoing").
+		Select(`a.id AS user_id, a.nickname, a.avatar_url, a.bio,
+			GREATEST(outgoing.updated_at, incoming.updated_at) AS followed_at`).
+		Joins("JOIN user_follow AS incoming ON incoming.user_id = outgoing.target_user_id AND incoming.target_user_id = outgoing.user_id AND incoming.status = ?", domainrelation.FollowStatusActive).
+		Joins("JOIN account AS a ON a.id = outgoing.target_user_id").
+		Where("outgoing.user_id = ? AND outgoing.status = ? AND a.status = ? AND a.role = ?", userID, domainrelation.FollowStatusActive, domainaccount.StatusNormal, domainaccount.RoleUser)
+	if listQuery != "" {
+		pattern := "%" + domainsearch.EscapeLikeLiteral(listQuery) + "%"
+		query = query.Where("a.nickname ILIKE ? ESCAPE '\\'", pattern)
+	}
+	if cursor != nil {
+		query = query.Where(
+			"(GREATEST(outgoing.updated_at, incoming.updated_at) < ? OR (GREATEST(outgoing.updated_at, incoming.updated_at) = ? AND outgoing.target_user_id < ?))",
+			cursor.FollowedAt, cursor.FollowedAt, cursor.UserID,
+		)
+	}
+	var models []mutualRecipientModel
+	if err := query.Order("followed_at DESC").Order("outgoing.target_user_id DESC").Limit(limit).Scan(&models).Error; err != nil {
+		return nil, err
+	}
+	items := make([]*domainrelation.MutualRecipient, 0, len(models))
+	for _, model := range models {
+		items = append(items, &domainrelation.MutualRecipient{
+			UserID: model.UserID, Nickname: strings.TrimSpace(model.Nickname),
+			AvatarURL: strings.TrimSpace(model.AvatarURL), Bio: strings.TrimSpace(model.Bio),
+			FollowedAt: model.FollowedAt,
+		})
+	}
+	return items, nil
 }
 
 // GetUserProfile 读取用户展示资料，用于关注通知。
@@ -398,3 +466,5 @@ func clampCount(value int) int {
 }
 
 var _ domainrelation.Repository = (*Repository)(nil)
+var _ domainrelation.MutualFollowRepository = (*Repository)(nil)
+var _ domainrelation.MutualRecipientRepository = (*Repository)(nil)

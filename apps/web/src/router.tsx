@@ -16,6 +16,7 @@ export type Route =
   | "/search"
   | "/upload"
   | "/messages"
+  | `/messages/${number}`
   | "/not-found"
   | "/admin/login"
   | "/admin/reviews"
@@ -31,6 +32,19 @@ export interface VideoDiscussionNavigation {
   highlight?: number;
 }
 
+export function messageFromRoute(route: Route): MessageRoute | null {
+  const match = /^\/messages\/(\d+)$/.exec(route);
+  if (!match) return null;
+  const conversationID = positiveInteger(match[1]);
+  return conversationID > 0 ? { conversationID } : null;
+}
+
+export function messagePath(target: MessageNavigation): string {
+  const match = /^\/messages\/(\d+)$/.exec(target.route);
+  if (!match || positiveInteger(match[1]) <= 0) return "/messages";
+  return `/messages/${positiveInteger(match[1])}`;
+}
+
 export type SearchTab = "videos" | "users";
 
 export interface SearchNavigation {
@@ -39,9 +53,17 @@ export interface SearchNavigation {
   tab?: SearchTab;
 }
 
+export function useMessageRoute(): MessageRoute | null {
+  return messageFromRoute(useRouterValue().route);
+}
+
 export interface ProfileNavigation {
   route: "/profile";
   video?: number;
+}
+
+export interface MessageNavigation {
+  route: `/messages/${number}`;
 }
 
 export interface SearchRoute {
@@ -65,6 +87,7 @@ export type NavigationTarget =
   | VideoDiscussionNavigation
   | SearchNavigation
   | ProfileNavigation
+  | MessageNavigation
   | AdminLoginNavigation;
 
 export interface VideoDiscussionRoute {
@@ -82,11 +105,22 @@ export interface AdminLoginRoute {
   returnTo: AdminProtectedRoute;
 }
 
+export interface MessageRoute {
+  conversationID: number;
+}
+
 export function normalizeRoute(pathname: string): Route {
   if (pathname === "/login") return "/auth";
   if (pathname === "/me") return "/profile";
   if (/^\/users\/\d+$/.test(pathname)) return pathname as `/users/${number}`;
   if (/^\/videos\/\d+$/.test(pathname)) return pathname as `/videos/${number}`;
+  const messageMatch = /^\/messages\/(\d+)$/.exec(pathname);
+  if (messageMatch) {
+    return positiveInteger(messageMatch[1]) > 0
+      ? pathname as `/messages/${number}`
+      : "/not-found";
+  }
+  if (pathname.startsWith("/messages/")) return "/not-found";
   const reviewMatch = /^\/admin\/reviews\/(\d+)$/.exec(pathname);
   if (reviewMatch) {
     return positiveInteger(reviewMatch[1]) > 0
@@ -236,7 +270,9 @@ export function RouterProvider({ children }: { children: ReactNode }) {
           ? adminLoginPath(target)
           : target.route === "/profile"
             ? profilePath(target)
-            : videoDiscussionPath(target);
+            : /^\/messages\/\d+$/.test(target.route)
+              ? messagePath(target as MessageNavigation)
+              : videoDiscussionPath(target as VideoDiscussionNavigation);
     const url = new URL(authoredPath, window.location.origin);
     const nextPath = normalizeRoute(url.pathname);
     window.history.pushState({}, "", `${nextPath}${url.search}`);

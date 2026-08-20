@@ -7,6 +7,7 @@ import {
   adminLoginPath,
   profilePath,
   normalizeRoute,
+  messageFromRoute,
   adminReviewFromRoute,
   RouterProvider,
   searchFromLocation,
@@ -131,6 +132,14 @@ describe("typed video discussion routing", () => {
       "?return=https%3A%2F%2Fevil.example"
     )).toEqual({ returnTo: "/admin/reviews" });
     expect(profilePath({ route: "/profile", video: 42 })).toBe("/profile?video=42");
+  });
+
+  it("validates typed message routes and rejects invalid conversation identifiers", () => {
+    expect(normalizeRoute("/messages/42")).toBe("/messages/42");
+    expect(messageFromRoute("/messages/42")).toEqual({ conversationID: 42 });
+    expect(normalizeRoute("/messages/0")).toBe("/not-found");
+    expect(normalizeRoute("/messages/nope")).toBe("/not-found");
+    expect(messageFromRoute("/messages")).toBeNull();
   });
 
   function renderRouter() {

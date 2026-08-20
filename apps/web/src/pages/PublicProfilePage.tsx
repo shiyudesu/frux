@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchPublicProfile, fetchUserVideos } from "../api/account";
-import { apiErrorMessage } from "../api/client";
+import {
+  apiErrorMessage,
+  currentConsumerSessionEpoch,
+  isUnauthorized
+} from "../api/client";
+import { createChatConversation, fetchChatEligibility } from "../api/chat";
+import {
+  createChatOperationKey,
+  rotateChatOperationKey
+} from "../chatOperations";
 import { fetchPublicLikedVideos } from "../api/library";
 import { fetchFollowState, followUser } from "../api/social";
 import {
@@ -18,7 +27,8 @@ import type {
   LibraryVideoItem,
   PublicProfileTab,
   PublicUserProfile,
-  Video
+  Video,
+  ChatEligibilityResponse
 } from "../types";
 import { normalizePublicProfile, readPublicProfile, savePublicProfile } from "../utils";
 
@@ -54,12 +64,18 @@ function PublicProfileContent({ userID }: { userID: number }) {
   } | null>(null);
   const [following, setFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
+  const [chatEligibility, setChatEligibility] = useState<ChatEligibilityResponse | null>(null);
+  const [chatEligibilityState, setChatEligibilityState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [chatEligibilityError, setChatEligibilityError] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
   const profileRequest = useRef(0);
   const videosRequest = useRef(0);
   const videosRef = useRef(videos);
   videosRef.current = videos;
   const followingRequest = useRef(0);
   const likesRequest = useRef(0);
+  const chatRequest = useRef(0);
+  const chatActionRequest = useRef(0);
 
   useEffect(() => {
     const requestID = profileRequest.current + 1;
@@ -152,6 +168,37 @@ function PublicProfileContent({ userID }: { userID: number }) {
     };
   }, [session.token, userID]);
 
+  useEffect(() => {
+    const requestID = chatRequest.current + 1;
+    chatRequest.current = requestID;
+    setChatEligibility(null);
+    setChatEligibilityError("");
+    if (!session.token || session.user?.id === userID) {
+      setChatEligibilityState("idle");
+      return undefined;
+    }
+    setChatEligibilityState("loading");
+    fetchChatEligibility(session.token, userID)
+      .then((data) => {
+        if (chatRequest.current !== requestID) return;
+        setChatEligibility(data);
+        setChatEligibilityState("ready");
+      })
+      .catch((error: unknown) => {
+        if (chatRequest.current !== requestID) return;
+        if (isUnauthorized(error)) {
+          session.clearAuth();
+          navigate("/auth");
+          return;
+        }
+        setChatEligibilityError(apiErrorMessage(error, "私信权限加载失败"));
+        setChatEligibilityState("error");
+      });
+    return () => {
+      if (chatRequest.current === requestID) chatRequest.current += 1;
+    };
+  }, [navigate, session, session.token, session.user?.id, userID]);
+
   const loadLikes = useCallback(
     async (reset = false) => {
       if (!profile?.liked_videos_public) return;
@@ -222,6 +269,58 @@ function PublicProfileContent({ userID }: { userID: number }) {
     }
   }
 
+  async function openPrivateConversation() {
+    if (!session.token || !chatEligibility?.eligible || chatBusy) return;
+    setChatBusy(true);
+    setChatEligibilityError("");
+    const requestID = chatActionRequest.current + 1;
+    chatActionRequest.current = requestID;
+    const requestToken = session.token;
+    const requestUserID = session.user?.id || 0;
+    const requestEpoch = currentConsumerSessionEpoch();
+    const identity = `${requestEpoch}:${requestUserID}:${userID}`;
+    const key = createChatOperationKey("conversation", identity);
+    const isCurrent = () => (
+      chatActionRequest.current === requestID
+      && session.token === requestToken
+      && session.user?.id === requestUserID
+      && currentConsumerSessionEpoch() === requestEpoch
+    );
+    try {
+      const conversation = await createChatConversation(requestToken, userID, key);
+      rotateChatOperationKey("conversation", identity);
+      if (!isCurrent()) return;
+      navigate({ route: `/messages/${conversation.conversation_id}` });
+    } catch (error) {
+      if (!isCurrent()) return;
+      setChatEligibilityError(apiErrorMessage(error, "私信会话创建失败"));
+      if (error instanceof Error && "code" in error && error.code === "CHAT_NOT_ELIGIBLE") {
+        setChatEligibility(null);
+        setChatEligibilityState("loading");
+        const requestID = chatRequest.current + 1;
+        chatRequest.current = requestID;
+        fetchChatEligibility(requestToken, userID)
+          .then((data) => {
+            if (chatRequest.current !== requestID) return;
+            setChatEligibility(data);
+            setChatEligibilityState("ready");
+          })
+          .catch((reloadError: unknown) => {
+            if (chatRequest.current !== requestID) return;
+            if (isUnauthorized(reloadError)) {
+              session.clearAuth();
+              navigate("/auth");
+              return;
+            }
+            setChatEligibilityError(apiErrorMessage(reloadError, "私信权限加载失败"));
+            setChatEligibilityState("error");
+          });
+      }
+    } finally {
+      if (isCurrent()) setChatBusy(false);
+    }
+  }
+
   const display = profile || {
     id: userID,
     nickname: cached?.nickname || `用户_${userID}`,
@@ -261,14 +360,37 @@ function PublicProfileContent({ userID }: { userID: number }) {
               查看我的主页
             </button>
           ) : (
-            <button className={following ? "profile-secondary-action" : "profile-follow-action"} disabled={followBusy} type="button" onClick={() => void toggleFollow()}>
-              {followBusy ? "处理中" : following ? "已关注" : "关注"}
-            </button>
+            <div className="public-profile-actions">
+              <button className={following ? "profile-secondary-action" : "profile-follow-action"} disabled={followBusy} type="button" onClick={() => void toggleFollow()}>
+                {followBusy ? "处理中" : following ? "已关注" : "关注"}
+              </button>
+              {session.token && (
+                <>
+                  {chatEligibilityState === "loading" && (
+                    <button className="profile-secondary-action" disabled type="button">检查私信权限…</button>
+                  )}
+                  {chatEligibilityState === "ready" && chatEligibility?.eligible && (
+                    <button className="profile-message-action" disabled={chatBusy} type="button" onClick={() => void openPrivateConversation()}>
+                      {chatBusy ? "打开中…" : "私信"}
+                    </button>
+                  )}
+                  {chatEligibilityState === "ready" && chatEligibility && !chatEligibility.eligible && (
+                    <span className="profile-message-hint" role="status">需要互相关注后才能私信</span>
+                  )}
+                  {chatEligibilityState === "error" && (
+                    <span className="profile-message-hint" role="status">{chatEligibilityError || "暂时无法确认私信权限"}</span>
+                  )}
+                </>
+              )}
+            </div>
           )
         }
       />
       <section className="profile-content">
         {profileState === "error" && <p className="profile-inline-error">{profileError}</p>}
+        {chatEligibilityError && chatEligibilityState === "ready" && (
+          <p className="profile-inline-error">{chatEligibilityError}</p>
+        )}
         <ProfilePrimaryTabs active={activeTab} tabs={tabs} onChange={setActiveTab} />
         <section
           id={`profile-panel-${activeTab}`}

@@ -26,6 +26,7 @@ const (
 	PolicyConsumerLogin     PolicyName = "consumer_login"
 	PolicySessionRefresh    PolicyName = "session_refresh"
 	PolicyPasswordChange    PolicyName = "password_change"
+	PolicyChatSend          PolicyName = "chat_send"
 
 	IdentityIP   IdentityDimension = "ip"
 	IdentityUser IdentityDimension = "user"
@@ -214,6 +215,19 @@ func DefaultRegistry(playbackBatchesPerMinute int, distributedTimeout time.Durat
 				Distributed: Quota{
 					Capacity: 2, Algorithm: AlgorithmFixedWindow, Window: 15 * time.Minute,
 				},
+			},
+		},
+		{
+			Name: PolicyChatSend, EndpointGroup: string(PolicyChatSend),
+			Identity: IdentityUser, Distributed: DistributedRedis, Fallback: FallbackFailClosed,
+			DistributedTimeout: distributedTimeout, RetryAfterMinimum: time.Second,
+			Normal: Profile{
+				Local:       Quota{Capacity: 30, RefillPerSecond: 0.5},
+				Distributed: Quota{Capacity: 60, RefillPerSecond: 1},
+			},
+			Emergency: Profile{
+				Local:       Quota{Capacity: 10, RefillPerSecond: 1.0 / 12},
+				Distributed: Quota{Capacity: 20, RefillPerSecond: 1.0 / 6},
 			},
 		},
 	})
