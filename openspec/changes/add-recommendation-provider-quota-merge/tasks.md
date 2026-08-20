@@ -24,13 +24,13 @@
 
 ## 3. Readable Superset Preparation
 
-- [ ] 3.1 Build one bounded unique superset from every healthy normalized Provider and perform one
+- [x] 3.1 Build one bounded unique superset from every healthy normalized Provider and perform one
   visibility batch before quota accounting.
-- [ ] 3.2 Filter each Provider-local sequence to readable IDs while updating current author,
+- [x] 3.2 Filter each Provider-local sequence to readable IDs while updating current author,
   publication, and hot facts on the global merged candidate.
-- [ ] 3.3 Preserve existing visibility failure, all-providers-failed, timeout/error/capacity
+- [x] 3.3 Preserve existing visibility failure, all-providers-failed, timeout/error/capacity
   degradation, and no-policy compatibility behavior.
-- [ ] 3.4 Add tests for leading unreadable candidates, mixed lifecycle states, large overlap,
+- [x] 3.4 Add tests for leading unreadable candidates, mixed lifecycle states, large overlap,
   visibility lookup failure, Provider underfill after filtering, and bounded superset size.
 
 ## 4. Reservation and Fill Mixer
@@ -41,12 +41,12 @@
   unused capacity returns to the common fill phase.
 - [x] 4.3 Implement deterministic round-robin fill from retained Provider cursors until pool limit or
   global exhaustion, merging duplicates without consuming another slot.
-- [ ] 4.4 Integrate quota merge only when a policy supplies the complete quota contract; retain the
+- [x] 4.4 Integrate quota merge only when a policy supplies the complete quota contract; retain the
   prerequisite complete-pool path for policies that omit it.
-- [ ] 4.5 Add exhaustive table/property-style tests for completion-order independence, policy-order
+- [x] 4.5 Add exhaustive table/property-style tests for completion-order independence, policy-order
   priority, overlaps representing multiple Providers, duplicate-only turns, underfill, one-provider
   remainder, exact pool fill, empty providers, and pool bounds.
-- [ ] 4.6 Add service regressions proving every mixed unique candidate reaches unified feature
+- [x] 4.6 Add service regressions proving every mixed unique candidate reaches unified feature
   scoring and existing ranking/diversity/Snapshot/cursor/evidence behavior remains unchanged.
 
 ## 5. Observability and Diagnostics

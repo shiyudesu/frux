@@ -200,6 +200,27 @@ func TestQuotaMergeDuplicateTurnsStillFillExactPool(t *testing.T) {
 	}
 }
 
+func TestQuotaMergeEmptyProviderUnderfillsAndSingleRemainderFills(t *testing.T) {
+	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	fresh := domainrecommendation.RecallProviderFresh
+	hot := domainrecommendation.RecallProviderHot
+	hotCandidates := make([]*domainrecommendation.Candidate, 0, 60)
+	for id := int64(1); id <= 60; id++ {
+		hotCandidates = append(hotCandidates, quotaCandidate(id, hot, float64(61-id), now.Add(-time.Duration(id)*time.Second)))
+	}
+	result, err := mixQuotaCandidates(
+		quotaConfig(50, []string{fresh, hot}, map[string]int{fresh: 10, hot: 10}),
+		map[string][]*domainrecommendation.Candidate{fresh: {}, hot: hotCandidates},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Candidates) != 50 || result.Providers[fresh].Underfill != 10 ||
+		!result.Providers[fresh].Exhausted || result.Providers[hot].Represented != 50 {
+		t.Fatalf("single-provider remainder was not reallocated: candidates=%d providers=%#v", len(result.Candidates), result.Providers)
+	}
+}
+
 func TestQuotaMergeRejectsInvalidContract(t *testing.T) {
 	fresh := domainrecommendation.RecallProviderFresh
 	hot := domainrecommendation.RecallProviderHot

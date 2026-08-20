@@ -398,6 +398,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 		return nil, nil
 	}
 	policyDriven := len(policies) > 0 && policies[0] != nil
+	quotaDriven := policyDriven && policies[0].Config.PreRankPoolLimit > 0
 	poolLimit := totalLimit
 	if policyDriven {
 		poolLimit = policyRecallPoolLimit(policies[0])
@@ -451,6 +452,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 
 	execution := &recallExecution{}
 	merged := map[int64]*domainrecommendation.Candidate{}
+	providerResults := map[string][]*domainrecommendation.Candidate{}
 	for result := range results {
 		if result.err != nil {
 			reason := "error"
@@ -464,6 +466,10 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 		}
 		execution.healthy++
 		inframetrics.ObserveRecommendationCandidatePool("provider_returned", result.provider, len(result.candidates))
+		if quotaDriven {
+			providerResults[result.provider] = append(providerResults[result.provider], result.candidates...)
+			continue
+		}
 		for _, candidate := range result.candidates {
 			mergeRecalledCandidate(merged, candidate)
 		}
@@ -476,6 +482,18 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 		}
 		if len(execution.degraded) == 0 {
 			return nil, ErrLoadRecommendationFailed
+		}
+	}
+	var normalizedProviders map[string][]*domainrecommendation.Candidate
+	if quotaDriven {
+		config := policies[0].Config
+		normalizedProviders = make(map[string][]*domainrecommendation.Candidate, len(config.RecallProviderOrder))
+		for _, provider := range config.RecallProviderOrder {
+			normalized := normalizeProviderCandidates(provider, providerResults[provider], config.RecallBudgets[provider])
+			normalizedProviders[provider] = normalized
+			for _, candidate := range normalized {
+				mergeRecalledCandidate(merged, candidate)
+			}
 		}
 	}
 	pool := make([]*domainrecommendation.Candidate, 0, len(merged))
@@ -516,6 +534,32 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 		pool = filtered
 	}
 	inframetrics.ObserveRecommendationCandidatePool("visibility_filtered", "all", len(pool))
+	if quotaDriven {
+		readable := make(map[int64]*domainrecommendation.Candidate, len(pool))
+		for _, candidate := range pool {
+			readable[candidate.VideoID] = candidate
+		}
+		readableProviders := make(map[string][]*domainrecommendation.Candidate, len(normalizedProviders))
+		for provider, candidates := range normalizedProviders {
+			filtered := make([]*domainrecommendation.Candidate, 0, len(candidates))
+			for _, candidate := range candidates {
+				current := readable[candidate.VideoID]
+				if current == nil {
+					continue
+				}
+				candidate.AuthorID = current.AuthorID
+				candidate.PublishedAt = current.PublishedAt
+				candidate.HotScore = current.HotScore
+				filtered = append(filtered, candidate)
+			}
+			readableProviders[provider] = filtered
+		}
+		mixed, err := mixQuotaCandidates(policies[0].Config, readableProviders)
+		if err != nil {
+			return nil, ErrLoadRecommendationFailed
+		}
+		pool = mixed.Candidates
+	}
 	// Keep direct legacy callers safe while normal recommendation requests
 	// defer suppression to the policy-aware ranker.
 	if len(policies) == 0 && len(pool) > 0 {
@@ -550,6 +594,9 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 func policyRecallPoolLimit(policy *domainrecommendation.Policy) int {
 	if policy == nil {
 		return 0
+	}
+	if policy.Config.PreRankPoolLimit > 0 {
+		return policy.Config.PreRankPoolLimit
 	}
 	total := 0
 	for _, budget := range policy.Config.RecallBudgets {
