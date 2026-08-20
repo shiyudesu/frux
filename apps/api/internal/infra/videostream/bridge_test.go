@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
@@ -64,12 +65,14 @@ func TestVideoPublishersRequireKafka(t *testing.T) {
 
 type fanoutStub struct {
 	publishedAt time.Time
+	calls       int
 }
 
 func (s *fanoutStub) HandleVideoPublished(
 	_ context.Context,
 	event *applicationvideo.PublishedEvent,
 ) error {
+	s.calls++
 	s.publishedAt = event.PublishedAt
 	return nil
 }
@@ -146,6 +149,15 @@ func (invalidHashEmbeddingIntakeStub) HandleVideoPublished(
 	return domainembedding.ErrInvalidHashText
 }
 
+type embeddingIntakeErrorStub struct{ err error }
+
+func (s embeddingIntakeErrorStub) HandleVideoPublished(
+	context.Context,
+	*applicationvideo.PublishedEvent,
+) error {
+	return s.err
+}
+
 func TestEmbeddingHandlerTreatsInvalidHashTextAsTerminal(t *testing.T) {
 	outcome, err := NewEmbeddingHandler(invalidHashEmbeddingIntakeStub{}).Handle(
 		context.Background(),
@@ -156,6 +168,35 @@ func TestEmbeddingHandlerTreatsInvalidHashTextAsTerminal(t *testing.T) {
 	if outcome != applicationeventstream.OutcomeTerminal ||
 		!errors.Is(err, domainembedding.ErrInvalidHashText) {
 		t.Fatalf("outcome=%s err=%v", outcome, err)
+	}
+}
+
+func TestEmbeddingHandlerCommitsOnlyAfterDurableMultimodalDecision(t *testing.T) {
+	payload := &infrakafka.VideoPublishedPayload{VideoID: 1, Title: "title"}
+	terminalOutcome, terminalErr := NewEmbeddingHandler(embeddingIntakeErrorStub{
+		err: applicationembedding.ErrInvalidMultimodalHandoff,
+	}).Handle(context.Background(), applicationeventstream.Event{Payload: payload})
+	if terminalOutcome != applicationeventstream.OutcomeTerminal ||
+		!errors.Is(terminalErr, applicationembedding.ErrInvalidMultimodalHandoff) {
+		t.Fatalf("terminal outcome=%s err=%v", terminalOutcome, terminalErr)
+	}
+	retryOutcome, retryErr := NewEmbeddingHandler(embeddingIntakeErrorStub{
+		err: applicationembedding.ErrHandoffMultimodalEmbeddingFailed,
+	}).Handle(context.Background(), applicationeventstream.Event{Payload: payload})
+	if retryOutcome != applicationeventstream.OutcomeRetryable ||
+		!errors.Is(retryErr, applicationembedding.ErrHandoffMultimodalEmbeddingFailed) {
+		t.Fatalf("retry outcome=%s err=%v", retryOutcome, retryErr)
+	}
+	fanout := &fanoutStub{}
+	fanoutOutcome, fanoutErr := NewFanoutHandler(fanout).
+		Handle(context.Background(), applicationeventstream.Event{Payload: payload})
+	if fanoutOutcome != applicationeventstream.OutcomeDurableSuccess || fanoutErr != nil || fanout.calls != 1 {
+		t.Fatalf("independent fanout outcome=%s calls=%d err=%v", fanoutOutcome, fanout.calls, fanoutErr)
+	}
+	successOutcome, successErr := NewEmbeddingHandler(embeddingIntakeErrorStub{}).
+		Handle(context.Background(), applicationeventstream.Event{Payload: payload})
+	if successOutcome != applicationeventstream.OutcomeDurableSuccess || successErr != nil {
+		t.Fatalf("durable outcome=%s err=%v", successOutcome, successErr)
 	}
 }
 

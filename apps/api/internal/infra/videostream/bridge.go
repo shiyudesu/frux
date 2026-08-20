@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	applicationembedding "github.com/shiyudesu/frux/internal/application/embedding"
 	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	applicationmedia "github.com/shiyudesu/frux/internal/application/media"
 	applicationvideo "github.com/shiyudesu/frux/internal/application/video"
@@ -176,7 +177,8 @@ func (h *EmbeddingHandler) Handle(
 		return applicationeventstream.OutcomeTerminal, nil
 	}
 	if err := h.intake.HandleVideoPublished(ctx, publishedEvent(payload)); err != nil {
-		if errors.Is(err, domainembedding.ErrInvalidHashText) {
+		if errors.Is(err, domainembedding.ErrInvalidHashText) ||
+			errors.Is(err, applicationembedding.ErrInvalidMultimodalHandoff) {
 			return applicationeventstream.OutcomeTerminal, err
 		}
 		return applicationeventstream.OutcomeRetryable, err

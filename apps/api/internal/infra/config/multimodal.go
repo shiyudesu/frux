@@ -54,6 +54,12 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 			return ErrInvalidMultimodalConfig
 		}
 	}
+	if cfg.MaxVideoTextRunes == 0 {
+		cfg.MaxVideoTextRunes = 2048
+	}
+	if cfg.MaxVideoTextRunes < 1 || cfg.MaxVideoTextRunes > 8192 {
+		return ErrInvalidMultimodalConfig
+	}
 
 	if contractConfigured {
 		identity, err := domainembedding.NewMultimodalContractIdentity(

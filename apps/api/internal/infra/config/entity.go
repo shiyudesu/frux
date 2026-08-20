@@ -23,6 +23,7 @@ type MultimodalConfig struct {
 	QueryEmbeddingEnabled bool                     `yaml:"query_embedding_enabled"`
 	HybridSearchEnabled   bool                     `yaml:"hybrid_search_enabled"`
 	SimilarVideosEnabled  bool                     `yaml:"similar_videos_enabled"`
+	MaxVideoTextRunes     int                      `yaml:"max_video_text_runes"`
 	Contract              MultimodalContractConfig `yaml:"contract"`
 	Provider              MultimodalProviderConfig `yaml:"provider"`
 	Jobs                  MultimodalJobConfig      `yaml:"jobs"`

@@ -466,7 +466,24 @@ func startWorkers(
 	}
 
 	embeddingRepo := infraembedding.New(gormDB)
-	embeddingService := applicationembedding.New(embeddingRepo, nil)
+	embeddingOptions := []applicationembedding.Option{}
+	if cfg.Multimodal.VideoJobsEnabled {
+		contract, contractErr := cfg.Multimodal.Contract.Identity()
+		if contractErr != nil {
+			return fmt.Errorf("build multimodal contract: %w", contractErr)
+		}
+		handoffConfig, handoffErr := applicationembedding.NewMultimodalHandoffConfig(
+			true, contract, cfg.Multimodal.Jobs.MaxAttempts, cfg.Multimodal.MaxVideoTextRunes,
+		)
+		if handoffErr != nil {
+			return fmt.Errorf("build multimodal handoff: %w", handoffErr)
+		}
+		embeddingOptions = append(
+			embeddingOptions,
+			applicationembedding.WithMultimodalJobHandoff(embeddingRepo, handoffConfig),
+		)
+	}
+	embeddingService := applicationembedding.New(embeddingRepo, nil, embeddingOptions...)
 	embeddingWorker := applicationembedding.NewVideoEmbeddingWorker(
 		embeddingService, nil,
 	)

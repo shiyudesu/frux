@@ -3,6 +3,7 @@ package applicationembedding
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,51 @@ type hashIntakeRepository struct {
 	mutex     sync.Mutex
 	embedding *domainembedding.VideoEmbedding
 	saveErr   error
+}
+
+type multimodalHandoffStub struct {
+	mutex          sync.Mutex
+	jobs           map[string]*domainembedding.MultimodalEmbeddingJob
+	err            error
+	hashRepository *hashIntakeRepository
+}
+
+func (r *multimodalHandoffStub) HandoffMultimodalJob(
+	_ context.Context,
+	job *domainembedding.MultimodalEmbeddingJob,
+) (*domainembedding.MultimodalEmbeddingJob, bool, bool, error) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if r.err != nil {
+		return nil, false, false, r.err
+	}
+	if r.hashRepository == nil {
+		return nil, false, false, errors.New("hash fact was not durable before handoff")
+	}
+	r.hashRepository.mutex.Lock()
+	hashReady := r.hashRepository.embedding != nil
+	r.hashRepository.mutex.Unlock()
+	if !hashReady {
+		return nil, false, false, errors.New("hash fact was not durable before handoff")
+	}
+	if r.jobs == nil {
+		r.jobs = map[string]*domainembedding.MultimodalEmbeddingJob{}
+	}
+	key := fmt.Sprintf("%d:%s", job.VideoID, job.Contract.Key())
+	existing := r.jobs[key]
+	if existing == nil {
+		stored := job.Clone()
+		stored.ID = int64(len(r.jobs) + 1)
+		r.jobs[key] = stored
+		return stored.Clone(), true, false, nil
+	}
+	if existing.SourceHash == job.SourceHash {
+		return existing.Clone(), false, false, nil
+	}
+	stored := job.Clone()
+	stored.ID = existing.ID
+	r.jobs[key] = stored
+	return stored.Clone(), false, true, nil
 }
 
 func (r *hashIntakeRepository) SaveVideoEmbedding(
@@ -121,4 +167,93 @@ func TestPublicationIntakeRejectsInvalidHashText(t *testing.T) {
 	if repository.embedding != nil {
 		t.Fatalf("invalid hash text persisted=%+v", repository.embedding)
 	}
+}
+
+func TestPublicationIntakeHandsOffMultimodalOnlyAfterHashPersistence(t *testing.T) {
+	now := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	repository := &hashIntakeRepository{}
+	handoff := &multimodalHandoffStub{hashRepository: repository}
+	config := testMultimodalHandoffConfig(t)
+	service := New(
+		repository,
+		nil,
+		WithMultimodalJobHandoff(handoff, config),
+		WithEmbeddingNow(func() time.Time { return now }),
+	)
+	event := &applicationvideo.PublishedEvent{
+		VideoID: 12, Title: " title ", Description: " description ",
+		MediaURL: "https://media.example/video.mp4", CoverURL: "https://media.example/cover.jpg",
+		PublishedAt: now, OccurredAt: now,
+	}
+	first, err := service.GenerateForPublishedVideo(context.Background(), event)
+	if err != nil || first.MultimodalHandoff != MultimodalHandoffCreated || len(handoff.jobs) != 1 {
+		t.Fatalf("first handoff=%#v jobs=%d err=%v", first, len(handoff.jobs), err)
+	}
+	second, err := service.GenerateForPublishedVideo(context.Background(), event)
+	if err != nil || second.MultimodalHandoff != MultimodalHandoffExisting || len(handoff.jobs) != 1 {
+		t.Fatalf("duplicate handoff=%#v jobs=%d err=%v", second, len(handoff.jobs), err)
+	}
+	event.Title = "changed"
+	third, err := service.GenerateForPublishedVideo(context.Background(), event)
+	if err != nil || third.MultimodalHandoff != MultimodalHandoffRefreshed || len(handoff.jobs) != 1 {
+		t.Fatalf("changed handoff=%#v jobs=%d err=%v", third, len(handoff.jobs), err)
+	}
+}
+
+func TestPublicationIntakeMultimodalNoopAndRetryBoundaries(t *testing.T) {
+	now := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	config := testMultimodalHandoffConfig(t)
+	repository := &hashIntakeRepository{}
+	handoff := &multimodalHandoffStub{hashRepository: repository}
+	service := New(repository, nil, WithMultimodalJobHandoff(handoff, config), WithEmbeddingNow(func() time.Time { return now }))
+	result, err := service.GenerateForPublishedVideo(context.Background(), &applicationvideo.PublishedEvent{
+		VideoID: 13, Title: "title", PublishedAt: now,
+	})
+	if err != nil || result.MultimodalHandoff != MultimodalHandoffNoop || len(handoff.jobs) != 0 || repository.embedding == nil {
+		t.Fatalf("ineligible no-op=%#v jobs=%d hash=%#v err=%v", result, len(handoff.jobs), repository.embedding, err)
+	}
+
+	repository = &hashIntakeRepository{}
+	handoff = &multimodalHandoffStub{hashRepository: repository, err: errors.New("database unavailable")}
+	service = New(repository, nil, WithMultimodalJobHandoff(handoff, config), WithEmbeddingNow(func() time.Time { return now }))
+	_, err = service.GenerateForPublishedVideo(context.Background(), &applicationvideo.PublishedEvent{
+		VideoID: 14, Title: "title", MediaURL: "https://media.example/video.mp4", PublishedAt: now,
+	})
+	if !errors.Is(err, ErrHandoffMultimodalEmbeddingFailed) || repository.embedding == nil {
+		t.Fatalf("handoff failure=%v hash=%#v", err, repository.embedding)
+	}
+}
+
+func TestPublicationIntakeRejectsOversizedMultimodalTextAfterHashSafety(t *testing.T) {
+	now := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	repository := &hashIntakeRepository{}
+	handoff := &multimodalHandoffStub{hashRepository: repository}
+	config := testMultimodalHandoffConfig(t)
+	config.MaxVideoTextRunes = 4
+	service := New(repository, nil, WithMultimodalJobHandoff(handoff, config), WithEmbeddingNow(func() time.Time { return now }))
+	_, err := service.GenerateForPublishedVideo(context.Background(), &applicationvideo.PublishedEvent{
+		VideoID: 15, Title: "too long", MediaURL: "https://media.example/video.mp4", PublishedAt: now,
+	})
+	if !errors.Is(err, ErrInvalidMultimodalHandoff) || repository.embedding == nil || len(handoff.jobs) != 0 {
+		t.Fatalf("oversized handoff=%v hash=%#v jobs=%d", err, repository.embedding, len(handoff.jobs))
+	}
+}
+
+func testMultimodalHandoffConfig(t testing.TB) MultimodalHandoffConfig {
+	t.Helper()
+	contract, err := domainembedding.NewMultimodalContractIdentity(
+		"provider", "model", "revision", domainembedding.MinMultimodalDimension,
+		domainembedding.MultimodalTextCanonicalizerV1,
+		domainembedding.MultimodalFrameSamplingPolicyV1,
+		domainembedding.MultimodalImagePreprocessingV1,
+		domainembedding.MultimodalFusionPolicyV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := NewMultimodalHandoffConfig(true, contract, 5, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return config
 }

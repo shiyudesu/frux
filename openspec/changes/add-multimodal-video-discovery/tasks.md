@@ -50,14 +50,14 @@
 
 ## 4. Newly Published Video Job Handoff
 
-- [ ] 4.1 Extend the existing video-publication embedding consumer to create/reuse an exact-contract
+- [x] 4.1 Extend the existing video-publication embedding consumer to create/reuse an exact-contract
   multimodal job only after `hash-ngram-v1` is durably safe and the video is published, public, and
   media-ready.
-- [ ] 4.2 Keep provider execution outside the Kafka handler and allow source offset commit only after
+- [x] 4.2 Keep provider execution outside the Kafka handler and allow source offset commit only after
   durable multimodal handoff or a registered terminal/no-op decision.
-- [ ] 4.3 Define source/retry/DLQ commit boundaries and idempotency tests for duplicate publication,
+- [x] 4.3 Define source/retry/DLQ commit boundaries and idempotency tests for duplicate publication,
   transient PostgreSQL failure, poison input, and replay without coupling provider retries to Kafka.
-- [ ] 4.4 Add integration tests proving publication, Feed fanout, hash embedding, and Kafka source
+- [x] 4.4 Add integration tests proving publication, Feed fanout, hash embedding, and Kafka source
   progress remain available when multimodal handoff is a no-op, delayed, retried, or terminal.
 
 ## 5. Multimodal Job Execution
