@@ -1473,8 +1473,7 @@
   pointer-events: auto;
 }
 
-.profile-search-field,
-.profile-date-field {
+.profile-search-field {
   display: inline-flex;
   min-height: 34px;
   align-items: center;
@@ -1501,30 +1500,118 @@
   font-size: 13px;
 }
 
-.profile-date-field {
-  padding: 0 8px;
-  font-size: 11px;
-}
-
-.profile-date-field input {
-  width: 112px;
-  min-height: 28px;
-  padding: 0;
-  color: rgba(255, 255, 255, 0.76);
-  border: 0;
-  outline: 0;
-  background: transparent;
-  font-size: 11px;
-}
-
-.profile-date-field input::-webkit-calendar-picker-indicator {
-  filter: invert(1);
-  opacity: 0.6;
-}
-
-.profile-search-field:focus-within,
-.profile-date-field:focus-within {
+.profile-search-field:focus-within {
   border-color: var(--frux-cyan);
+}
+
+.profile-month-archive {
+  position: relative;
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+}
+
+.profile-month-trigger {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  color: var(--frux-muted);
+  border-radius: 7px;
+  background: transparent;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.profile-month-trigger:hover,
+.profile-month-archive.open .profile-month-trigger {
+  color: #fff;
+}
+
+.profile-month-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.profile-month-panel {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 25;
+  display: grid;
+  width: min(225px, calc(100vw - 24px));
+  height: 292px;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: #1f1f1f;
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.4);
+}
+
+.profile-month-column {
+  min-width: 0;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.profile-month-column > button {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  color: var(--frux-muted);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 14px;
+}
+
+.profile-month-column > button:hover,
+.profile-month-column > button:focus-visible,
+.profile-month-column > button.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.profile-month-column > button.selected {
+  color: var(--frux-rose);
+}
+
+.profile-month-divider {
+  width: 1px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.profile-month-status {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 4px;
+  color: var(--frux-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.profile-month-status.error {
+  color: var(--frux-danger);
+}
+
+.profile-month-status button {
+  min-height: 32px;
+  padding: 0 12px;
+  color: #fff;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .profile-filter-button,

@@ -11,6 +11,21 @@ import { SessionProvider, useSession } from "../session";
 import { PasswordChangeDialog } from "../components/PasswordChangeDialog";
 import { ProfilePage } from "./ProfilePage";
 
+const creatorContent = vi.hoisted(() => ({
+  archives: {
+    published: { months: [] as string[], state: "ready" as const, error: "" },
+    private: { months: [] as string[], state: "ready" as const, error: "" }
+  },
+  videos: {
+    published: { items: [], state: "ready" as const, error: "", hasMore: false },
+    private: { items: [], state: "ready" as const, error: "", hasMore: false }
+  },
+  ensureTab: vi.fn(),
+  loadArchiveMonths: vi.fn(),
+  loadVideos: vi.fn(),
+  runBatchAction: vi.fn()
+}));
+
 vi.mock("../api/account", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/account")>()),
   changeMyPassword: vi.fn(),
@@ -40,15 +55,7 @@ vi.mock("../api/social", () => ({
 }));
 
 vi.mock("../hooks/useCreatorContent", () => ({
-  useCreatorContent: () => ({
-    videos: {
-      published: { items: [], state: "ready", error: "", hasMore: false },
-      private: { items: [], state: "ready", error: "", hasMore: false }
-    },
-    ensureTab: () => {},
-    loadVideos: async () => {},
-    runBatchAction: async () => {}
-  })
+  useCreatorContent: () => creatorContent
 }));
 
 vi.mock("../hooks/useProfileLibrary", () => ({
@@ -90,6 +97,12 @@ describe("profile account security", () => {
     root = createRoot(container);
     vi.mocked(changeMyPassword).mockReset();
     vi.mocked(loadFollowingMap).mockResolvedValue({});
+    creatorContent.ensureTab.mockReset();
+    creatorContent.loadArchiveMonths.mockReset().mockResolvedValue([]);
+    creatorContent.loadVideos.mockReset().mockResolvedValue(undefined);
+    creatorContent.runBatchAction.mockReset().mockResolvedValue(null);
+    creatorContent.archives.published.months = [];
+    creatorContent.archives.private.months = [];
   });
 
   afterEach(async () => {
@@ -143,6 +156,23 @@ describe("profile account security", () => {
     window.history.replaceState({}, "", "/uploads");
     expect(document.cookie).toContain("frux_asset_active=1");
     expect(container.textContent).toContain("密码已更新，当前设备将继续保持登录");
+  });
+
+  it("applies an archive month with the current keyword draft", async () => {
+    creatorContent.archives.published.months = ["2026-08"];
+    await renderProfile();
+    setInputValue(required<HTMLInputElement>('input[placeholder="搜索发布的作品"]'), " sunset ");
+
+    await clickAsync(required(".profile-month-trigger"));
+    await clickAsync(buttonByText("8月"));
+
+    expect(creatorContent.loadVideos).toHaveBeenLastCalledWith("published", {
+      reset: true,
+      filters: {
+        query: " sunset ",
+        createdMonth: "2026-08"
+      }
+    });
   });
 
   async function renderProfile() {

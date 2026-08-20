@@ -56,6 +56,7 @@ type LocalAsset struct {
 
 type ManagementRepository interface {
 	QueryCreatorVideos(ctx context.Context, filter CreatorVideoFilter) ([]*Video, error)
+	ListCreatorArchiveMonths(ctx context.Context, authorID int64, visibility string) ([]time.Time, error)
 	ApplyBatch(ctx context.Context, userID int64, action string, videoIDs []int64, idempotencyKey, fingerprint string) (*BatchOperation, bool, error)
 	BatchGetReadable(ctx context.Context, viewerID int64, videoIDs []int64, publicOnly bool) (map[int64]*Video, error)
 	ListAssetReferences(ctx context.Context, assetURL string) ([]AssetReference, error)

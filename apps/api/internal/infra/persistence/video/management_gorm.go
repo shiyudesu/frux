@@ -56,6 +56,37 @@ func (r *Repository) QueryCreatorVideos(ctx context.Context, filter domainvideo.
 	return videos, nil
 }
 
+func (r *Repository) ListCreatorArchiveMonths(
+	ctx context.Context,
+	authorID int64,
+	visibility string,
+) ([]time.Time, error) {
+	const monthExpression = "date_trunc('month', created_at AT TIME ZONE 'UTC')"
+	var rows []struct {
+		MonthStart time.Time `gorm:"column:month_start"`
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&VideoModel{}).
+		Select(monthExpression+" AS month_start").
+		Where(
+			"author_id = ? AND visibility = ? AND status <> ?",
+			authorID,
+			visibility,
+			domainvideo.StatusDeleted,
+		).
+		Group(monthExpression).
+		Order(monthExpression + " DESC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	months := make([]time.Time, 0, len(rows))
+	for _, row := range rows {
+		value := row.MonthStart.UTC()
+		months = append(months, time.Date(value.Year(), value.Month(), 1, 0, 0, 0, 0, time.UTC))
+	}
+	return months, nil
+}
+
 func (r *Repository) ListMediaAssetRefs(ctx context.Context, videoIDs []int64) ([]applicationvideo.MediaAssetRef, error) {
 	if len(videoIDs) == 0 {
 		return []applicationvideo.MediaAssetRef{}, nil

@@ -61,6 +61,10 @@ type cursorVideoListResponse struct {
 	HasMore    bool            `json:"has_more"`
 }
 
+type creatorArchiveMonthResponse struct {
+	Months []string `json:"months"`
+}
+
 type batchVideoActionResponse struct {
 	Action   string  `json:"action"`
 	VideoIDs []int64 `json:"video_ids"`

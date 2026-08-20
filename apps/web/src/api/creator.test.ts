@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveCreatorVideoTarget } from "./creator";
+import { UserFacingError } from "./client";
+import {
+  fetchCreatorArchiveMonths,
+  isCreatorArchiveMonthResponse,
+  resolveCreatorVideoTarget
+} from "./creator";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -47,5 +52,39 @@ describe("creator lifecycle message target resolution", () => {
       headers: { "Content-Type": "application/json" }
     })));
     await expect(resolveCreatorVideoTarget("token", 99)).resolves.toBeNull();
+  });
+});
+
+describe("creator archive months", () => {
+  it("requests visibility-scoped canonical months", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      months: ["2026-08", "2025-12"]
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchCreatorArchiveMonths("token", "private")).resolves.toEqual({
+      months: ["2026-08", "2025-12"]
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/users/me/video-archive-months?visibility=private",
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
+  it("rejects malformed or duplicate archive payloads", async () => {
+    expect(isCreatorArchiveMonthResponse({ months: ["2026-08"] })).toBe(true);
+    expect(isCreatorArchiveMonthResponse({ months: ["2026-8"] })).toBe(false);
+    expect(isCreatorArchiveMonthResponse({ months: ["2026-08", "2026-08"] })).toBe(false);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      months: ["2026-8"]
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })));
+    await expect(fetchCreatorArchiveMonths("token", "public")).rejects.toBeInstanceOf(UserFacingError);
   });
 });

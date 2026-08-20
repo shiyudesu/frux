@@ -1,5 +1,10 @@
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { image } from "../constants";
+import {
+  formatCreatorArchiveMonth,
+  groupCreatorArchiveMonths
+} from "../creatorArchive";
 import type {
   AsyncState,
   CreatorWorkTab,
@@ -222,14 +227,16 @@ export function CreatorWorkTabs({ active, onChange }: CreatorWorkTabsProps) {
 
 interface CreatorWorkToolbarProps {
   query: string;
-  createdFrom: string;
-  createdTo: string;
+  createdMonth: string;
+  archiveMonths: string[];
+  archiveState: "idle" | "loading" | "ready" | "error";
+  archiveError: string;
   selectionMode: boolean;
   selectedCount: number;
   busy?: boolean;
   onQueryChange: (value: string) => void;
-  onCreatedFromChange: (value: string) => void;
-  onCreatedToChange: (value: string) => void;
+  onCreatedMonthChange: (value: string) => void;
+  onArchiveRetry: () => void;
   onSubmit: () => void;
   onToggleSelection: () => void;
   onBatchPublic: () => void;
@@ -256,24 +263,15 @@ export function CreatorWorkToolbar(props: CreatorWorkToolbarProps) {
           onChange={(event) => props.onQueryChange(event.target.value)}
         />
       </label>
-      <label className="profile-date-field">
-        <span>从</span>
-        <input
-          aria-label="开始日期"
-          type="date"
-          value={props.createdFrom}
-          onChange={(event) => props.onCreatedFromChange(event.target.value)}
-        />
-      </label>
-      <label className="profile-date-field">
-        <span>至</span>
-        <input
-          aria-label="结束日期"
-          type="date"
-          value={props.createdTo}
-          onChange={(event) => props.onCreatedToChange(event.target.value)}
-        />
-      </label>
+      <ProfileMonthArchiveFilter
+        disabled={props.busy}
+        error={props.archiveError}
+        months={props.archiveMonths}
+        state={props.archiveState}
+        value={props.createdMonth}
+        onChange={props.onCreatedMonthChange}
+        onRetry={props.onArchiveRetry}
+      />
       <button className="profile-filter-button" type="submit">
         筛选
       </button>
@@ -299,6 +297,266 @@ export function CreatorWorkToolbar(props: CreatorWorkToolbarProps) {
         </button>
       )}
     </form>
+  );
+}
+
+interface ProfileMonthArchiveFilterProps {
+  value: string;
+  months: string[];
+  state: "idle" | "loading" | "ready" | "error";
+  error: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  onRetry: () => void;
+}
+
+const archiveLeaveDelay = 500;
+
+export function ProfileMonthArchiveFilter({
+  value,
+  months,
+  state,
+  error,
+  disabled = false,
+  onChange,
+  onRetry
+}: ProfileMonthArchiveFilterProps) {
+  const groups = useMemo(() => groupCreatorArchiveMonths(months), [months]);
+  const selectedYear = value.split("-")[0] || "";
+  const [open, setOpen] = useState(false);
+  const [activeYear, setActiveYear] = useState(selectedYear || groups[0]?.year || "");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const yearRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const monthRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const leaveTimer = useRef(0);
+  const focusOnOpen = useRef(false);
+
+  const activeGroup = groups.find((group) => group.year === activeYear) || groups[0];
+
+  useEffect(() => {
+    setActiveYear((current) => {
+      if (selectedYear && groups.some((group) => group.year === selectedYear)) {
+        return selectedYear;
+      }
+      if (groups.some((group) => group.year === current)) return current;
+      return groups[0]?.year || "";
+    });
+  }, [groups, selectedYear]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !focusOnOpen.current) return;
+    focusOnOpen.current = false;
+    const selectedIndex = selectedYear
+      ? Math.max(1, groups.findIndex((group) => group.year === selectedYear) + 1)
+      : 0;
+    yearRefs.current[selectedIndex]?.focus();
+  }, [groups, open, selectedYear]);
+
+  useEffect(() => () => window.clearTimeout(leaveTimer.current), []);
+
+  function clearLeaveTimer() {
+    window.clearTimeout(leaveTimer.current);
+  }
+
+  function show(focusYear: boolean) {
+    if (disabled) return;
+    clearLeaveTimer();
+    focusOnOpen.current = focusYear;
+    setOpen(true);
+  }
+
+  function scheduleClose() {
+    clearLeaveTimer();
+    leaveTimer.current = window.setTimeout(() => setOpen(false), archiveLeaveDelay);
+  }
+
+  function selectMonth(month: string) {
+    onChange(month);
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function focusYear(index: number) {
+    yearRefs.current[index]?.focus();
+  }
+
+  function focusMonth(index: number) {
+    monthRefs.current[index]?.focus();
+  }
+
+  function handleYearKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const count = groups.length + 1;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      focusYear((index + direction + count) % count);
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      focusYear(event.key === "Home" ? 0 : count - 1);
+      return;
+    }
+    if (event.key === "ArrowRight" && index > 0 && activeGroup?.months.length) {
+      event.preventDefault();
+      const selectedMonthIndex = activeGroup.months.indexOf(value);
+      focusMonth(selectedMonthIndex >= 0 ? selectedMonthIndex : 0);
+    }
+  }
+
+  function handleMonthKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const count = activeGroup?.months.length || 0;
+    if (count === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      focusMonth((index + direction + count) % count);
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      focusMonth(event.key === "Home" ? 0 : count - 1);
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      const yearIndex = groups.findIndex((group) => group.year === activeGroup?.year);
+      focusYear(Math.max(1, yearIndex + 1));
+    }
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      className={`profile-month-archive ${open ? "open" : ""}`}
+      onMouseEnter={() => show(false)}
+      onMouseLeave={scheduleClose}
+      onFocus={clearLeaveTimer}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        ref={triggerRef}
+        className="profile-month-trigger"
+        type="button"
+        aria-label={value ? `创建月份，当前 ${formatCreatorArchiveMonth(value)}` : "按创建月份筛选作品"}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        disabled={disabled}
+        onClick={() => {
+          clearLeaveTimer();
+          setOpen((current) => !current);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          show(true);
+        }}
+      >
+        <Icon name="calendar" size={16} />
+        <span>{formatCreatorArchiveMonth(value)}</span>
+        <Icon name="chevron-down" size={14} />
+      </button>
+      {open && (
+        <div
+          className="profile-month-panel"
+          role="dialog"
+          aria-label="按创建月份筛选作品"
+          aria-busy={state === "loading"}
+          onMouseEnter={clearLeaveTimer}
+          onMouseLeave={scheduleClose}
+        >
+          <div className="profile-month-column" role="listbox" aria-label="年份">
+            <button
+              ref={(element) => {
+                yearRefs.current[0] = element;
+              }}
+              className={!value ? "selected" : ""}
+              type="button"
+              role="option"
+              aria-selected={!value}
+              onClick={() => selectMonth("")}
+              onKeyDown={(event) => handleYearKey(event, 0)}
+            >
+              全部
+            </button>
+            {groups.map((group, index) => (
+              <button
+                ref={(element) => {
+                  yearRefs.current[index + 1] = element;
+                }}
+                className={[
+                  activeGroup?.year === group.year ? "active" : "",
+                  selectedYear === group.year ? "selected" : ""
+                ].filter(Boolean).join(" ")}
+                key={group.year}
+                type="button"
+                role="option"
+                aria-selected={selectedYear === group.year}
+                onFocus={() => setActiveYear(group.year)}
+                onMouseEnter={() => setActiveYear(group.year)}
+                onClick={() => selectMonth(group.months[0] || "")}
+                onKeyDown={(event) => handleYearKey(event, index + 1)}
+              >
+                {group.year}年
+              </button>
+            ))}
+          </div>
+          <span className="profile-month-divider" aria-hidden="true" />
+          <div className="profile-month-column profile-month-values" role="listbox" aria-label="月份">
+            {state === "error" && (
+              <div className="profile-month-status error" role="alert">
+                <span>{error || "日期加载失败"}</span>
+                <button type="button" onClick={onRetry}>重试</button>
+              </div>
+            )}
+            {state === "loading" && groups.length === 0 && (
+              <p className="profile-month-status" role="status">正在加载日期…</p>
+            )}
+            {state !== "error" && state !== "loading" && groups.length === 0 && (
+              <p className="profile-month-status">暂无可筛选月份</p>
+            )}
+            {activeGroup?.months.map((month, index) => (
+              <button
+                ref={(element) => {
+                  monthRefs.current[index] = element;
+                }}
+                className={value === month ? "selected" : ""}
+                key={month}
+                type="button"
+                role="option"
+                aria-selected={value === month}
+                onClick={() => selectMonth(month)}
+                onKeyDown={(event) => handleMonthKey(event, index)}
+              >
+                {Number(month.slice(5))}月
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
