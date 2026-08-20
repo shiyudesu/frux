@@ -64,7 +64,7 @@
   dated and undated Tongyi Flash model IDs, including a distinct local-fusion policy identity.
 - [x] 7.2 Keep native fusion for the dated snapshot and implement strict independent-result validation
   plus deterministic normalized-mean fusion for the undated model.
-- [ ] 7.3 Make the profile selectable through configuration, update inactive environment examples and
+- [x] 7.3 Make the profile selectable through configuration, update inactive environment examples and
   operator documentation, and keep all multimodal feature flags disabled by default.
 - [ ] 7.4 Add profile, payload, response, fusion, contract-isolation, configuration, and regression tests;
   then rerun targeted and complete Go validation before marking the change complete again.

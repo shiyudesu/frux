@@ -68,6 +68,20 @@ func TestTongyiAdapterConfigRejectsSecretsEndpointsAndBounds(t *testing.T) {
 	}
 }
 
+func TestTongyiAdapterConfigRejectsMissingOrUnknownProfileEnvironment(t *testing.T) {
+	t.Setenv("FRUX_MULTIMODAL_HMAC_SECRET", multimodalTestSecret)
+	t.Setenv("DASHSCOPE_MULTIMODAL_ENDPOINT", "https://workspace.example.com/multimodal")
+	t.Setenv("DASHSCOPE_API_KEY", "sk-test-value")
+	for _, profile := range []string{"", "tongyi-embedding-vision-plus"} {
+		t.Run(profile, func(t *testing.T) {
+			t.Setenv("FRUX_MULTIMODAL_PROFILE", profile)
+			if _, err := LoadTongyiAdapterConfigFromEnv(); !errors.Is(err, ErrInvalidTongyiAdapterConfig) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
 func TestTongyiClientTranslatesQueryAndFusedVideo(t *testing.T) {
 	var mutex sync.Mutex
 	requests := make([]tongyiRequest, 0, 2)

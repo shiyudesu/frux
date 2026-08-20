@@ -51,7 +51,11 @@ type TongyiAdapterConfig struct {
 }
 
 func LoadTongyiAdapterConfigFromEnv() (TongyiAdapterConfig, error) {
-	profile, profileErr := multimodalprofile.Resolve(os.Getenv("FRUX_MULTIMODAL_PROFILE"))
+	profileValue := strings.TrimSpace(os.Getenv("FRUX_MULTIMODAL_PROFILE"))
+	if profileValue == "" {
+		return TongyiAdapterConfig{}, fmt.Errorf("FRUX_MULTIMODAL_PROFILE: %w", ErrInvalidTongyiAdapterConfig)
+	}
+	profile, profileErr := multimodalprofile.Resolve(profileValue)
 	if profileErr != nil {
 		return TongyiAdapterConfig{}, fmt.Errorf("FRUX_MULTIMODAL_PROFILE: %w", ErrInvalidTongyiAdapterConfig)
 	}

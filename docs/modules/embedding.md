@@ -133,26 +133,27 @@ go test ./internal/infra/persistence/embedding -run '^TestHTTPMultimodalProvider
 
 ## 10. Tongyi Embedding Vision Flash adapter
 
-首个具体开发合同固定为：
+Adapter 支持两个显式档位：
 
-| 字段 | 值 |
-| --- | --- |
-| Provider | `alibaba-bailian` |
-| Model | `tongyi-embedding-vision-flash` |
-| Revision | `2026-03-06-res1` |
-| Dimension | `768` |
-| Resolution | `res_level=1`，单图402 Token |
-| Fusion | `provider-fusion-v1` |
+| `FRUX_MULTIMODAL_PROFILE` | Revision | 请求方式 | Fusion |
+| --- | --- | --- | --- |
+| `tongyi-embedding-vision-flash-2026-03-06` | `2026-03-06-res1` | 同一 content 内的 `text + multi_images`，要求一个 `type=fused` 结果 | `provider-fusion-v1` |
+| `tongyi-embedding-vision-flash` | `stable-independent-mean-v1` | 独立 `text` 与 `multi_images` content，要求两个独立结果 | `normalized-mean-fusion-v1` |
 
-Adapter 使用百炼原生 Multimodal-Embedding HTTP API，不依赖 DashScope SDK。Query 被转换为一个
-`{"text": ...}` content；视频被转换为一个同时包含 `text` 和 `multi_images` 的 content，因此返回
-一个 `type=fused` 的融合向量。图片使用 Base64 Data URI，原视频、对象存储地址和签名 URL 不离开
-Frux 边界。
+两个档位都使用 provider `alibaba-bailian`、model alias `tongyi-embedding-vision-flash` 和 768 维输出，
+但合同不同，数据库和检索层不会把两者的向量混在一起。日期版支持原生融合，并固定 `res_level=1`；
+无日期版不支持融合、`dimension` 或 `res_level` 参数，因此 Adapter 会分别归一化文本与多图序列向量，
+取等权均值后再次归一化。更改融合算法或权重必须使用新的合同标识。
+
+Adapter 使用百炼原生 Multimodal-Embedding HTTP API，不依赖 DashScope SDK。图片使用 Base64 Data URI，
+原视频、对象存储地址和签名 URL 不离开 Frux 边界。无日期模型名称可能被服务商调整实现；如实际模型
+行为发生变化，应升级 revision 并重新生成向量。需要可重复性时优先使用带日期的档位。
 
 启动所需变量：
 
 ```bash
 export FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR='127.0.0.1:8099'
+export FRUX_MULTIMODAL_PROFILE='tongyi-embedding-vision-flash-2026-03-06'
 export FRUX_MULTIMODAL_HMAC_SECRET='<至少32字符，API/Worker与Adapter共享>'
 export DASHSCOPE_MULTIMODAL_ENDPOINT='https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding'
 export DASHSCOPE_API_KEY='<仅Adapter持有>'
@@ -161,14 +162,16 @@ cd apps/api
 go run ./cmd/multimodal-provider
 ```
 
-可选边界变量见 `apps/.env.multimodal.example`。`/health` 只表示进程存活；Adapter 必须先用固定模型完成
-一次真实 text embedding probe，之后才会在签名 `/v1/ready` 中报告 ready。API Key、上游 Endpoint、
+API、Worker 和 Adapter 必须设置相同的 `FRUX_MULTIMODAL_PROFILE`。可选边界变量见
+`apps/.env.multimodal.example`。`/health` 只表示进程存活；Adapter 必须先用所选模型完成一次真实 text
+embedding probe，之后才会在签名 `/v1/ready` 中报告所选合同 ready。API Key、上游 Endpoint、
 请求内容、向量、source hash 和上游 request ID 不进入正常日志或 Prometheus label。
 
 启用顺序：
 
 1. 启动 Adapter，确认 startup probe 成功；
-2. 为 API/Worker 设置相同 `FRUX_MULTIMODAL_ENDPOINT` 和 `FRUX_MULTIMODAL_HMAC_SECRET`；
+2. 为 API/Worker 设置相同的 `FRUX_MULTIMODAL_PROFILE`、`FRUX_MULTIMODAL_ENDPOINT` 和
+   `FRUX_MULTIMODAL_HMAC_SECRET`；
 3. 先只打开 `multimodal.enabled` 与 `video_jobs_enabled`，发布少量开发视频生成向量；
 4. 确认 Job、Fact、Projection 和成本指标正常，再打开 `similar_videos_enabled`；
 5. 使用真实 Golden Set 验收后，最后打开 `query_embedding_enabled` 与 `hybrid_search_enabled`。

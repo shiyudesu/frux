@@ -203,7 +203,8 @@ API 镜像同时包含 `frux-multimodal-provider`，但 Compose 和 Kubernetes �
 同机开发可以让 Adapter 监听 `127.0.0.1:8099`，API/Worker 使用
 `FRUX_MULTIMODAL_ENDPOINT=http://127.0.0.1:8099` 并设置 `allow_insecure_local=true`。跨主机或容器网络
 部署必须在 Adapter 前终止 TLS，并让 Frux 使用 HTTPS Endpoint；不要为了容器互联放宽非 loopback HTTP
-限制。百炼 API Key 只注入 Adapter，不能注入 API/Worker。
+限制。百炼 API Key 只注入 Adapter，不能注入 API/Worker。`FRUX_MULTIMODAL_PROFILE` 则必须在 API、
+Worker 和 Adapter 中保持一致；当前允许选择带日期的原生融合档位或无日期的本地均值融合档位。
 
 部署和回滚步骤见 [视频向量模块](modules/embedding.md)。没有完成真实 startup probe 与 Golden Set 前，
 保持全部 multimodal feature flags 为 false。
