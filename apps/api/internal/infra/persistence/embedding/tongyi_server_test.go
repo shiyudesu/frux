@@ -125,6 +125,20 @@ func TestTongyiAdapterEndToEndWithFruxProviderClient(t *testing.T) {
 	}
 }
 
+func TestTongyiAdapterProbeFailureNeverBecomesReady(t *testing.T) {
+	upstream := &tongyiEmbeddingClientStub{probeErr: errors.New("invalid API key")}
+	adapter := newTongyiTestAdapter(t, upstream)
+	if err := adapter.Probe(context.Background()); err == nil {
+		t.Fatal("expected probe failure")
+	}
+	server := httptest.NewServer(adapter.Handler())
+	defer server.Close()
+	provider := newMultimodalHTTPTestProvider(t, server.URL, TongyiMultimodalContract(), nil)
+	if err := provider.CheckReady(context.Background(), MultimodalProviderCapabilityQuery); err == nil {
+		t.Fatal("adapter reported ready after failed probe")
+	}
+}
+
 func TestTongyiAdapterAuthenticatesTimestampAndReplay(t *testing.T) {
 	upstream := &tongyiEmbeddingClientStub{}
 	adapter := newTongyiTestAdapter(t, upstream)

@@ -25,6 +25,6 @@ COPY configs ./configs
 
 RUN mkdir -p uploads
 
-EXPOSE 8080
+EXPOSE 8080 8099
 
 CMD ["./frux-api"]

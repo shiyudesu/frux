@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -71,8 +72,15 @@ func TestTongyiClientTranslatesQueryAndFusedVideo(t *testing.T) {
 		if request.Header.Get("Authorization") != "Bearer sk-test-value" || request.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("headers=%v", request.Header)
 		}
+		rawBody, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+		}
+		if bytes.Contains(rawBody, []byte("sk-test-value")) {
+			t.Error("API key leaked into request body")
+		}
 		var payload tongyiRequest
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		if err := json.Unmarshal(rawBody, &payload); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
 		mutex.Lock()
@@ -139,6 +147,26 @@ func TestTongyiClientValidatesResponsesAndMapsFailures(t *testing.T) {
 		{name: "malformed", status: http.StatusOK, retryable: false, body: func() []byte { return []byte(`{"output":`) }},
 		{name: "zero vector", status: http.StatusOK, retryable: false, body: func() []byte {
 			return tongyiResponseBody("text", make([]float64, TongyiDimension), TongyiUsage{InputTokens: 1, TotalTokens: 1})
+		}},
+		{name: "wrong index", status: http.StatusOK, retryable: false, body: func() []byte {
+			return bytes.Replace(
+				tongyiResponseBody("text", tongyiNonNormalizedVector(), TongyiUsage{InputTokens: 1, TotalTokens: 1}),
+				[]byte(`"index":0`), []byte(`"index":1`), 1,
+			)
+		}},
+		{name: "multiple embeddings", status: http.StatusOK, retryable: false, body: func() []byte {
+			var response map[string]any
+			if err := json.Unmarshal(
+				tongyiResponseBody("text", tongyiNonNormalizedVector(), TongyiUsage{InputTokens: 1, TotalTokens: 1}),
+				&response,
+			); err != nil {
+				panic(err)
+			}
+			output := response["output"].(map[string]any)
+			items := output["embeddings"].([]any)
+			output["embeddings"] = append(items, items[0])
+			body, _ := json.Marshal(response)
+			return body
 		}},
 		{name: "wrong dimension", status: http.StatusOK, retryable: false, body: func() []byte {
 			return tongyiResponseBody("text", []float64{1}, TongyiUsage{InputTokens: 1, TotalTokens: 1})
@@ -219,6 +247,20 @@ func TestTongyiClientBoundsRedirectTimeoutCancellationAndResponse(t *testing.T) 
 		defer server.Close()
 		client := newTongyiTestClient(t, server, 2<<20, 64<<10, time.Second)
 		_, err := client.EmbedQuery(context.Background(), "query")
+		var upstreamError *TongyiUpstreamError
+		if !errors.As(err, &upstreamError) || upstreamError.Retryable {
+			t.Fatalf("error=%v", err)
+		}
+	})
+	t.Run("oversized request", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("oversized request reached upstream")
+		}))
+		defer server.Close()
+		client := newTongyiTestClient(t, server, 1<<20, 1<<20, time.Second)
+		_, err := client.EmbedVideo(context.Background(), "video", []applicationembedding.PreparedMultimodalImage{{
+			MIMEType: "image/jpeg", Content: bytes.Repeat([]byte{1}, 800<<10),
+		}})
 		var upstreamError *TongyiUpstreamError
 		if !errors.As(err, &upstreamError) || upstreamError.Retryable {
 			t.Fatalf("error=%v", err)
