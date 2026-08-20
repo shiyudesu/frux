@@ -27,6 +27,14 @@ var (
 		prometheus.CounterOpts{Namespace: "frux", Name: "multimodal_provider_admission_total", Help: "Multimodal provider admission outcomes by bounded operation."},
 		[]string{"operation", "result"},
 	)
+	MultimodalProviderTransportTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "multimodal_provider_transport_total", Help: "Multimodal provider HTTP transport calls by bounded operation and result."},
+		[]string{"operation", "result"},
+	)
+	MultimodalProviderTransportDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Namespace: "frux", Name: "multimodal_provider_transport_duration_seconds", Help: "Multimodal provider HTTP transport duration by bounded operation and result."},
+		[]string{"operation", "result"},
+	)
 	MultimodalCoverageVideos = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Namespace: "frux", Name: "multimodal_coverage_videos", Help: "Readable videos by bounded multimodal coverage result."},
 		[]string{"result"},
@@ -68,6 +76,8 @@ func init() {
 		MultimodalProviderCallsTotal,
 		MultimodalProviderDuration,
 		MultimodalProviderAdmissionTotal,
+		MultimodalProviderTransportTotal,
+		MultimodalProviderTransportDuration,
 		MultimodalCoverageVideos,
 		MultimodalProjectionTotal,
 		MultimodalExactQueryDuration,
@@ -99,6 +109,13 @@ func ObserveMultimodalProvider(operation, result string, duration time.Duration)
 
 func ObserveMultimodalAdmission(operation, result string) {
 	MultimodalProviderAdmissionTotal.WithLabelValues(multimodalOperation(operation), multimodalAdmissionResult(result)).Inc()
+}
+
+func ObserveMultimodalProviderTransport(operation, result string, duration time.Duration) {
+	operation = multimodalTransportOperation(operation)
+	result = multimodalProviderResult(result)
+	MultimodalProviderTransportTotal.WithLabelValues(operation, result).Inc()
+	MultimodalProviderTransportDuration.WithLabelValues(operation, result).Observe(max(duration.Seconds(), 0))
 }
 
 func ObserveMultimodalProjection(result string, count int) {
@@ -145,6 +162,15 @@ func multimodalJobState(value string) string {
 func multimodalOperation(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "video", "query":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "unknown"
+	}
+}
+
+func multimodalTransportOperation(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "readiness", "video", "query":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "unknown"

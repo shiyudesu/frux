@@ -3,33 +3,33 @@
 - [x] 1.1 Extend multimodal provider configuration with endpoint, HMAC secret, protocol version,
   loopback HTTP opt-in, startup timeout, and encoded request/response byte limits while preserving
   disabled defaults and environment interpolation.
-- [ ] 1.2 Define infrastructure-owned readiness, video, query, contract, image, result, and closed
+- [x] 1.2 Define infrastructure-owned readiness, video, query, contract, image, result, and closed
   error envelopes without changing domain/application provider interfaces.
 - [x] 1.3 Add configuration tests for disabled mode, HTTPS/loopback rules, secret and size bounds,
   partial configuration, and process-scoped provider requirements.
 
 ## 2. Authenticated HTTP Provider Adapter
 
-- [ ] 2.1 Implement one reusable HTTP client with redirect rejection, bounded connection settings,
+- [x] 2.1 Implement one reusable HTTP client with redirect rejection, bounded connection settings,
   context propagation, canonical request HMAC, response HMAC verification, and bounded body reads.
-- [ ] 2.2 Implement signed readiness inspection with protocol, capability, and complete immutable
+- [x] 2.2 Implement signed readiness inspection with protocol, capability, and complete immutable
   contract validation.
-- [ ] 2.3 Implement video-content request serialization after image count/size/pixel/MIME/digest
+- [x] 2.3 Implement video-content request serialization after image count/size/pixel/MIME/digest
   validation, with no URLs, credentials, user IDs, or behavior metadata.
-- [ ] 2.4 Implement query-text request serialization and shared strict response decoding, source/
+- [x] 2.4 Implement query-text request serialization and shared strict response decoding, source/
   contract/vector validation, and one-attempt retryable versus terminal failure mapping.
-- [ ] 2.5 Add fixed-cardinality adapter observations for operation/result without raw bodies, query
+- [x] 2.5 Add fixed-cardinality adapter observations for operation/result without raw bodies, query
   text, image bytes, vectors, identifiers, endpoints, secrets, or arbitrary errors as labels.
 
 ## 3. Conformance and Security Tests
 
-- [ ] 3.1 Add an `httptest` conformance server that independently verifies request signatures and
+- [x] 3.1 Add an `httptest` conformance server that independently verifies request signatures and
   payload shape and returns deterministic normalized vectors only for tests.
-- [ ] 3.2 Test readiness, video, and query success plus exact source, contract, digest, dimension,
+- [x] 3.2 Test readiness, video, and query success plus exact source, contract, digest, dimension,
   norm, operation-ID, and response-signature validation.
-- [ ] 3.3 Test timeout, cancellation, redirect, oversized request/response, malformed JSON, unknown
+- [x] 3.3 Test timeout, cancellation, redirect, oversized request/response, malformed JSON, unknown
   fields, rate limit, retryable server status, terminal rejection, and unreachable endpoint mapping.
-- [ ] 3.4 Add privacy assertions proving payload and observability boundaries and proving the
+- [x] 3.4 Add privacy assertions proving payload and observability boundaries and proving the
   conformance server is unavailable as a runtime model implementation.
 
 ## 4. Worker Runtime Wiring
