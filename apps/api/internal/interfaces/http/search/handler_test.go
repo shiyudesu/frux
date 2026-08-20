@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	applicationsearch "github.com/shiyudesu/frux/internal/application/search"
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	interfaceshttpapierror "github.com/shiyudesu/frux/internal/interfaces/http/apierror"
 	"net/http"
 	"strings"
@@ -28,6 +30,24 @@ func (s handlerVideoIndexStub) SearchVideos(context.Context, string, *domainsear
 type handlerUserIndexStub struct {
 	items []*domainsearch.UserIndexItem
 	err   error
+}
+
+type unavailableSemanticQueryStub struct{}
+
+func (unavailableSemanticQueryStub) EmbedPublicQuery(context.Context, string) (*domainembedding.MultimodalQueryVector, error) {
+	return nil, errors.New("provider unavailable")
+}
+
+type handlerSemanticIndexStub struct{}
+
+func (handlerSemanticIndexStub) ExactMultimodalSearch(context.Context, domainembedding.MultimodalContractIdentity, []float64, []int64, int) ([]domainembedding.MultimodalExactCandidate, error) {
+	return nil, nil
+}
+
+type handlerVideoLoaderStub struct{}
+
+func (handlerVideoLoaderStub) BatchGetReadable(context.Context, int64, []int64, bool) (map[int64]*domainvideo.Video, error) {
+	return map[int64]*domainvideo.Video{}, nil
 }
 
 func (s handlerUserIndexStub) SearchUsers(context.Context, string, *domainsearch.UserCursor, int) ([]*domainsearch.UserIndexItem, error) {
@@ -124,5 +144,52 @@ func TestHandlerHidesInfrastructureErrors(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "database details") {
 		t.Fatalf("response leaked infrastructure detail: %s", response.Body.String())
+	}
+}
+
+func TestHandlerMapsUnavailableHybridContinuationToRetryableResponse(t *testing.T) {
+	now := time.Now().UTC()
+	contract, err := domainembedding.NewMultimodalContractIdentity(
+		"provider", "model", "revision", domainembedding.MinMultimodalDimension,
+		domainembedding.MultimodalTextCanonicalizerV1,
+		domainembedding.MultimodalFrameSamplingPolicyV1,
+		domainembedding.MultimodalImagePreprocessingV1,
+		domainembedding.MultimodalFusionPolicyV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := applicationsearch.NewHybridVideoSearchConfig(
+		contract, domainembedding.MultimodalHybridMergeVersionV1,
+		domainsearch.MaxLimit+1, 10, 10, time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := applicationsearch.New(
+		handlerVideoIndexStub{}, handlerUserIndexStub{},
+		applicationsearch.WithHybridVideoSearch(
+			unavailableSemanticQueryStub{}, handlerSemanticIndexStub{}, handlerVideoLoaderStub{}, config,
+		),
+	)
+	cursor := applicationsearch.EncodeHybridVideoCursor("cat", &applicationsearch.HybridVideoCursor{
+		Mode:           applicationsearch.VideoRetrievalModeHybrid,
+		RankingVersion: domainembedding.MultimodalHybridMergeVersionV1,
+		ContractKey:    contract.Key(), HybridScore: 1, PublishedAt: now,
+		VideoID: 1, ExpiresAt: now.Add(time.Minute),
+	})
+	handler := New(service)
+	router := server.New()
+	router.GET("/api/search/videos", handler.Videos)
+	response := ut.PerformRequest(
+		router.Engine, http.MethodGet,
+		"/api/search/videos?q=cat&cursor="+cursor, nil,
+	)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), interfaceshttpapierror.CodeSearchServiceUnavailable) ||
+		strings.Contains(response.Body.String(), "provider unavailable") {
+		t.Fatalf("unexpected retryable response: %s", response.Body.String())
 	}
 }

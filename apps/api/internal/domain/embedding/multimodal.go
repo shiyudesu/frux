@@ -147,6 +147,20 @@ type MultimodalVector struct {
 	Values   []float64
 }
 
+type MultimodalQueryVector struct {
+	Contract MultimodalContractIdentity
+	Values   []float64
+}
+
+func (v *MultimodalQueryVector) Clone() *MultimodalQueryVector {
+	if v == nil {
+		return nil
+	}
+	cloned := *v
+	cloned.Values = append([]float64(nil), v.Values...)
+	return &cloned
+}
+
 func ValidateMultimodalVector(
 	expectedContract MultimodalContractIdentity,
 	expectedSourceHash string,

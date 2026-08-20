@@ -195,8 +195,24 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 	if cfg.Hybrid.FallbackMode == "" {
 		cfg.Hybrid.FallbackMode = domainembedding.MultimodalLexicalFallback
 	}
+	if cfg.Hybrid.PoolLimit == 0 {
+		cfg.Hybrid.PoolLimit = 100
+	}
+	if cfg.Hybrid.LexicalReservation == 0 {
+		cfg.Hybrid.LexicalReservation = 20
+	}
+	if cfg.Hybrid.SemanticReservation == 0 {
+		cfg.Hybrid.SemanticReservation = 20
+	}
+	cfg.Hybrid.CursorTTL = defaultDuration(cfg.Hybrid.CursorTTL, "15m")
+	cursorTTL, cursorErr := time.ParseDuration(cfg.Hybrid.CursorTTL)
 	if cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV1 ||
-		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback {
+		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback ||
+		cfg.Hybrid.PoolLimit < 51 || cfg.Hybrid.PoolLimit > 500 ||
+		cfg.Hybrid.PoolLimit > cfg.Exact.MaxLimit ||
+		cfg.Hybrid.LexicalReservation < 0 || cfg.Hybrid.SemanticReservation < 0 ||
+		cfg.Hybrid.LexicalReservation+cfg.Hybrid.SemanticReservation > cfg.Hybrid.PoolLimit ||
+		cursorErr != nil || cursorTTL < time.Minute || cursorTTL > 24*time.Hour {
 		return ErrInvalidMultimodalConfig
 	}
 	return nil

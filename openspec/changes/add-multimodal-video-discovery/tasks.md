@@ -95,15 +95,15 @@
 - [x] 7.2 Implement one no-retry synchronous query embedding attempt behind deadline and
   non-blocking admission, with lexical-only first-page fallback for disabled, saturated, failed,
   timed-out, or invalid semantic results.
-- [ ] 7.3 Implement a versioned deterministic lexical/semantic candidate merge with explicit
+- [x] 7.3 Implement a versioned deterministic lexical/semantic candidate merge with explicit
   reservations, video-ID deduplication, retained internal reasons, stable hybrid scoring, bounded
   pool size, and final readability revalidation.
-- [ ] 7.4 Version video-search cursors with normalized query, result category, lexical/hybrid mode,
+- [x] 7.4 Version video-search cursors with normalized query, result category, lexical/hybrid mode,
   merge version, model contract where applicable, complete ordering tuple, and expiry; reject legacy
   or rebound cursors.
-- [ ] 7.5 Preserve hybrid mode across continuation pages and return a typed retryable error when a
+- [x] 7.5 Preserve hybrid mode across continuation pages and return a typed retryable error when a
   compatible query vector cannot be reproduced instead of silently switching to lexical ordering.
-- [ ] 7.6 Add API-flow and Web regressions for lexical-only fallback, hybrid exact/title matches,
+- [x] 7.6 Add API-flow and Web regressions for lexical-only fallback, hybrid exact/title matches,
   semantic-only matches, duplicates, stale results, independent user search, cursor pagination,
   stale requests, empty/error/loading states, and encoded query navigation.
 

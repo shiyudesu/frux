@@ -17,28 +17,14 @@ var ErrMultimodalQuerySaturated = errors.New("multimodal query embedding saturat
 var ErrMultimodalQueryTimeout = errors.New("multimodal query embedding timed out")
 var ErrInvalidMultimodalQueryVector = errors.New("invalid multimodal query vector")
 
-type MultimodalQueryVector struct {
-	Contract domainembedding.MultimodalContractIdentity
-	Values   []float64
-}
-
-func (v *MultimodalQueryVector) Clone() *MultimodalQueryVector {
-	if v == nil {
-		return nil
-	}
-	cloned := *v
-	cloned.Values = append([]float64(nil), v.Values...)
-	return &cloned
-}
-
 type MultimodalQueryCache interface {
-	Get(string, domainembedding.MultimodalContractIdentity) (*MultimodalQueryVector, bool)
-	Put(string, *MultimodalQueryVector)
+	Get(string, domainembedding.MultimodalContractIdentity) (*domainembedding.MultimodalQueryVector, bool)
+	Put(string, *domainembedding.MultimodalQueryVector)
 }
 
 type multimodalQueryCacheEntry struct {
 	key       string
-	vector    *MultimodalQueryVector
+	vector    *domainembedding.MultimodalQueryVector
 	expiresAt time.Time
 }
 
@@ -64,7 +50,7 @@ func NewBoundedMultimodalQueryCache(maxEntries int, ttl time.Duration) (*Bounded
 func (c *BoundedMultimodalQueryCache) Get(
 	query string,
 	contract domainembedding.MultimodalContractIdentity,
-) (*MultimodalQueryVector, bool) {
+) (*domainembedding.MultimodalQueryVector, bool) {
 	if c == nil {
 		return nil, false
 	}
@@ -88,10 +74,10 @@ func (c *BoundedMultimodalQueryCache) Get(
 		return nil, false
 	}
 	c.order.MoveToFront(element)
-	return &MultimodalQueryVector{Contract: contract, Values: values}, true
+	return &domainembedding.MultimodalQueryVector{Contract: contract, Values: values}, true
 }
 
-func (c *BoundedMultimodalQueryCache) Put(query string, vector *MultimodalQueryVector) {
+func (c *BoundedMultimodalQueryCache) Put(query string, vector *domainembedding.MultimodalQueryVector) {
 	if c == nil || vector == nil {
 		return
 	}
@@ -104,13 +90,13 @@ func (c *BoundedMultimodalQueryCache) Put(query string, vector *MultimodalQueryV
 	defer c.mutex.Unlock()
 	if element := c.items[key]; element != nil {
 		entry := element.Value.(*multimodalQueryCacheEntry)
-		entry.vector = &MultimodalQueryVector{Contract: vector.Contract, Values: values}
+		entry.vector = &domainembedding.MultimodalQueryVector{Contract: vector.Contract, Values: values}
 		entry.expiresAt = c.now().Add(c.ttl)
 		c.order.MoveToFront(element)
 		return
 	}
 	entry := &multimodalQueryCacheEntry{
-		key: key, vector: &MultimodalQueryVector{Contract: vector.Contract, Values: values},
+		key: key, vector: &domainembedding.MultimodalQueryVector{Contract: vector.Contract, Values: values},
 		expiresAt: c.now().Add(c.ttl),
 	}
 	c.items[key] = c.order.PushFront(entry)
@@ -166,7 +152,7 @@ func NewMultimodalQueryEmbedder(
 func (e *MultimodalQueryEmbedder) EmbedPublicQuery(
 	ctx context.Context,
 	query string,
-) (*MultimodalQueryVector, error) {
+) (*domainembedding.MultimodalQueryVector, error) {
 	if e == nil {
 		return nil, ErrMultimodalQueryUnavailable
 	}
@@ -210,7 +196,7 @@ func (e *MultimodalQueryEmbedder) EmbedPublicQuery(
 		if err != nil {
 			return nil, ErrInvalidMultimodalQueryVector
 		}
-		vector := &MultimodalQueryVector{Contract: validated.Identity.Contract, Values: validated.Values}
+		vector := &domainembedding.MultimodalQueryVector{Contract: validated.Identity.Contract, Values: validated.Values}
 		e.cache.Put(canonicalQuery, vector)
 		return vector.Clone(), nil
 	case <-providerCtx.Done():

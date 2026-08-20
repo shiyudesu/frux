@@ -154,6 +154,8 @@ describe("global search state", () => {
       .toBe("搜索服务暂时不可用，请稍后重试");
     expect(searchErrorMessage(new NetworkError()))
       .toBe("网络连接失败，请检查网络后重试");
+    expect(searchErrorMessage(new ApiError("semantic retry", 503, "SEARCH_SERVICE_UNAVAILABLE")))
+      .toBe("搜索服务暂时不可用，请稍后重试");
     expect(searchErrorMessage(new ApiError("search query is required", 400, "SEARCH_QUERY_REQUIRED")))
       .toBe("请输入搜索关键词");
   });

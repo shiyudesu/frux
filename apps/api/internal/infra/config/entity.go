@@ -80,8 +80,12 @@ type MultimodalExactConfig struct {
 }
 
 type MultimodalHybridConfig struct {
-	Version      string `yaml:"version"`
-	FallbackMode string `yaml:"fallback_mode"`
+	Version             string `yaml:"version"`
+	FallbackMode        string `yaml:"fallback_mode"`
+	PoolLimit           int    `yaml:"pool_limit"`
+	LexicalReservation  int    `yaml:"lexical_reservation"`
+	SemanticReservation int    `yaml:"semantic_reservation"`
+	CursorTTL           string `yaml:"cursor_ttl"`
 }
 
 type SecurityConfig struct {

@@ -46,7 +46,7 @@ func TestBoundedMultimodalQueryCacheUsesHashedContractScopedKeysAndLRU(t *testin
 	}
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	cache.now = func() time.Time { return now }
-	vector := &MultimodalQueryVector{Contract: contract, Values: unitMultimodalVector(contract.Dimension)}
+	vector := &domainembedding.MultimodalQueryVector{Contract: contract, Values: unitMultimodalVector(contract.Dimension)}
 	cache.Put("private-looking query", vector)
 	for key := range cache.items {
 		if strings.Contains(key, "private-looking") || len(key) != domainembedding.MultimodalDigestHexLength {

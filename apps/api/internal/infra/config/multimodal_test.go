@@ -33,7 +33,9 @@ func TestNormalizeAndValidateMultimodalConfigDisabledDefaults(t *testing.T) {
 		cfg.MaxVideoTextRunes != 2048 || cfg.Images.MaxCount != 4 ||
 		cfg.Query.MaxRunes != 128 || cfg.Query.CacheEntries != 1000 ||
 		cfg.Exact.MaxLimit != 100 || cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV1 ||
-		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback {
+		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback ||
+		cfg.Hybrid.PoolLimit != 100 || cfg.Hybrid.LexicalReservation != 20 ||
+		cfg.Hybrid.SemanticReservation != 20 || cfg.Hybrid.CursorTTL != "15m" {
 		t.Fatalf("unexpected disabled defaults: %#v", cfg)
 	}
 	if err := ValidateMultimodalRuntime(cfg, MultimodalRuntimeDependencies{}); err != nil {
@@ -84,6 +86,9 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 		{name: "unbounded exact limit", mutate: func(c *MultimodalConfig) { c.Exact.MaxLimit = 501 }},
 		{name: "unknown hybrid version", mutate: func(c *MultimodalConfig) { c.Hybrid.Version = "unknown" }},
 		{name: "fallback disabled", mutate: func(c *MultimodalConfig) { c.Hybrid.FallbackMode = "none" }},
+		{name: "hybrid pool below page bound", mutate: func(c *MultimodalConfig) { c.Hybrid.PoolLimit = 50 }},
+		{name: "hybrid pool exceeds exact", mutate: func(c *MultimodalConfig) { c.Hybrid.PoolLimit = 101 }},
+		{name: "hybrid reservations exceed pool", mutate: func(c *MultimodalConfig) { c.Hybrid.LexicalReservation = 81 }},
 		{name: "hybrid without query", mutate: func(c *MultimodalConfig) { c.QueryEmbeddingEnabled = false }},
 		{name: "disabled with active feature", mutate: func(c *MultimodalConfig) { c.Enabled = false }},
 	}

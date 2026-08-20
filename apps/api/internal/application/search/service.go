@@ -5,6 +5,7 @@ import (
 	"fmt"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainsearch "github.com/shiyudesu/frux/internal/domain/search"
+	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
 	"time"
 )
 
@@ -13,7 +14,10 @@ const DefaultLimit = 20
 type Service struct {
 	videos domainsearch.VideoSearchIndex
 	users  domainsearch.UserSearchIndex
+	hybrid *hybridVideoSearch
 }
+
+type Option func(*Service)
 
 type Request struct {
 	Query  string
@@ -22,22 +26,24 @@ type Request struct {
 }
 
 type VideoResult struct {
-	ID              int64
-	AuthorID        int64
-	Title           string
-	Description     string
-	MediaURL        string
-	CoverURL        string
-	Status          int
-	Visibility      string
-	LikeCount       int
-	CommentCount    int
-	FavoriteCount   int
-	PublishedAt     time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	MediaStatus     string
-	PlaybackSources []domainmedia.PlaybackSource
+	ID               int64
+	AuthorID         int64
+	Title            string
+	Description      string
+	MediaURL         string
+	CoverURL         string
+	Status           int
+	Visibility       string
+	LikeCount        int
+	CommentCount     int
+	FavoriteCount    int
+	PublishedAt      time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	MediaStatus      string
+	PlaybackSources  []domainmedia.PlaybackSource
+	HybridScore      float64
+	RetrievalReasons []string
 }
 
 type UserResult struct {
@@ -59,14 +65,23 @@ type UserPage struct {
 	HasMore    bool
 }
 
-func New(videos domainsearch.VideoSearchIndex, users domainsearch.UserSearchIndex) *Service {
-	return &Service{videos: videos, users: users}
+func New(videos domainsearch.VideoSearchIndex, users domainsearch.UserSearchIndex, options ...Option) *Service {
+	service := &Service{videos: videos, users: users}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 func (s *Service) SearchVideos(ctx context.Context, request Request) (*VideoPage, error) {
 	query, limit, err := normalizeRequest(request)
 	if err != nil {
 		return nil, err
+	}
+	if s.hybrid != nil {
+		return s.searchHybridVideos(ctx, query, request.Cursor, limit)
 	}
 	cursor, err := DecodeVideoCursor(request.Cursor, query)
 	if err != nil {
@@ -102,6 +117,31 @@ func (s *Service) SearchVideos(ctx context.Context, request Request) (*VideoPage
 		})
 	}
 	return &VideoPage{Items: results, NextCursor: nextCursor, HasMore: hasMore}, nil
+}
+
+func videoResultFromIndexItem(item *domainsearch.VideoIndexItem) VideoResult {
+	return VideoResult{
+		ID: item.ID, AuthorID: item.AuthorID, Title: item.Title, Description: item.Description,
+		MediaURL: item.MediaURL, CoverURL: item.CoverURL, Status: item.Status,
+		Visibility: item.Visibility, LikeCount: item.LikeCount, CommentCount: item.CommentCount,
+		FavoriteCount: item.FavoriteCount, PublishedAt: item.PublishedAt,
+		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, MediaStatus: item.MediaStatus,
+		PlaybackSources: item.PlaybackSources,
+	}
+}
+
+func videoIndexItemFromDomain(video *domainvideo.Video) *domainsearch.VideoIndexItem {
+	if video == nil || video.PublishedAt == nil {
+		return nil
+	}
+	return &domainsearch.VideoIndexItem{
+		ID: video.ID, AuthorID: video.AuthorID, Title: video.Title, Description: video.Description,
+		MediaURL: video.MediaURL, CoverURL: video.CoverURL, Status: video.Status,
+		Visibility: video.Visibility, LikeCount: video.LikeCount, CommentCount: video.CommentCount,
+		FavoriteCount: video.FavoriteCount, PublishedAt: video.PublishedAt.UTC(),
+		CreatedAt: video.CreatedAt, UpdatedAt: video.UpdatedAt, MediaStatus: video.MediaStatus,
+		PlaybackSources: video.PlaybackSources,
+	}
 }
 
 func (s *Service) SearchUsers(ctx context.Context, request Request) (*UserPage, error) {

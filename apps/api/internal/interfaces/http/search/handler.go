@@ -88,6 +88,8 @@ func writeSearchError(c *app.RequestContext, err error) {
 	case errors.Is(err, domainsearch.ErrInvalidLimit),
 		errors.Is(err, domainsearch.ErrInvalidCursor):
 		interfaceshttpapierror.Write(c, http.StatusBadRequest, interfaceshttpapierror.CodeSearchParametersInvalid, "搜索参数已失效，请重新搜索")
+	case errors.Is(err, applicationsearch.ErrSemanticContinuationUnavailable):
+		interfaceshttpapierror.Write(c, http.StatusServiceUnavailable, interfaceshttpapierror.CodeSearchServiceUnavailable, "语义搜索暂时不可用，请稍后重试")
 	default:
 		interfaceshttpapierror.Write(c, http.StatusInternalServerError, interfaceshttpapierror.CodeSearchServiceUnavailable, "搜索服务暂时不可用，请稍后重试")
 	}
