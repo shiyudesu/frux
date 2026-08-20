@@ -66,6 +66,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := normalizeAndValidateModerationConfig(&cfg.Moderation); err != nil {
 		return nil, err
 	}
+	if err := normalizeAndValidateMultimodalConfig(&cfg.Multimodal); err != nil {
+		return nil, err
+	}
 	if err := validateModerationMediaConfig(&cfg.Moderation, &cfg.Media); err != nil {
 		return nil, err
 	}

@@ -11,9 +11,64 @@ type Config struct {
 	Kafka      KafkaConfig      `yaml:"kafka"`
 	Media      MediaConfig      `yaml:"media"`
 	Moderation ModerationConfig `yaml:"moderation"`
+	Multimodal MultimodalConfig `yaml:"multimodal"`
 	Playback   PlaybackConfig   `yaml:"playback"`
 	Governance GovernanceConfig `yaml:"governance"`
 	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
+}
+
+type MultimodalConfig struct {
+	Enabled               bool                     `yaml:"enabled"`
+	VideoJobsEnabled      bool                     `yaml:"video_jobs_enabled"`
+	QueryEmbeddingEnabled bool                     `yaml:"query_embedding_enabled"`
+	HybridSearchEnabled   bool                     `yaml:"hybrid_search_enabled"`
+	SimilarVideosEnabled  bool                     `yaml:"similar_videos_enabled"`
+	Contract              MultimodalContractConfig `yaml:"contract"`
+	Provider              MultimodalProviderConfig `yaml:"provider"`
+	Images                MultimodalImageConfig    `yaml:"images"`
+	Query                 MultimodalQueryConfig    `yaml:"query"`
+	Exact                 MultimodalExactConfig    `yaml:"exact"`
+	Hybrid                MultimodalHybridConfig   `yaml:"hybrid"`
+}
+
+type MultimodalContractConfig struct {
+	ProviderAlias            string `yaml:"provider_alias"`
+	ModelAlias               string `yaml:"model_alias"`
+	RevisionAlias            string `yaml:"revision_alias"`
+	Dimension                int    `yaml:"dimension"`
+	TextCanonicalizer        string `yaml:"text_canonicalizer"`
+	FrameSamplingPolicy      string `yaml:"frame_sampling_policy"`
+	ImagePreprocessingPolicy string `yaml:"image_preprocessing_policy"`
+	FusionPolicy             string `yaml:"fusion_policy"`
+}
+
+type MultimodalProviderConfig struct {
+	Deadline       string `yaml:"deadline"`
+	AdmissionLimit int    `yaml:"admission_limit"`
+}
+
+type MultimodalImageConfig struct {
+	MaxCount         int      `yaml:"max_count"`
+	MaxBytesEach     int      `yaml:"max_bytes_each"`
+	MaxTotalBytes    int      `yaml:"max_total_bytes"`
+	MaxPixelsEach    int64    `yaml:"max_pixels_each"`
+	AllowedMIMETypes []string `yaml:"allowed_mime_types"`
+}
+
+type MultimodalQueryConfig struct {
+	MaxRunes     int    `yaml:"max_runes"`
+	CacheTTL     string `yaml:"cache_ttl"`
+	CacheEntries int    `yaml:"cache_entries"`
+}
+
+type MultimodalExactConfig struct {
+	MaxLimit int    `yaml:"max_limit"`
+	Deadline string `yaml:"deadline"`
+}
+
+type MultimodalHybridConfig struct {
+	Version      string `yaml:"version"`
+	FallbackMode string `yaml:"fallback_mode"`
 }
 
 type SecurityConfig struct {

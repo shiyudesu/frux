@@ -72,6 +72,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if err := infraconfig.ValidateMultimodalRuntime(
+		cfg.Multimodal,
+		infraconfig.MultimodalRuntimeDependencies{},
+	); err != nil {
+		return fmt.Errorf("init multimodal runtime: %w", err)
+	}
 	if !cfg.Kafka.Enabled || len(cfg.Kafka.Brokers) == 0 {
 		return errors.New("Kafka brokers are required for worker")
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 )
 
@@ -414,6 +415,10 @@ func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	}
 	if cfg.Internal.Token != token || !cfg.Internal.Enabled {
 		t.Fatalf("internal config = %+v, want enabled environment token", cfg.Internal)
+	}
+	if cfg.Multimodal.Enabled || cfg.Multimodal.Provider.Deadline != defaultMultimodalProviderDeadline ||
+		cfg.Multimodal.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback {
+		t.Fatalf("multimodal config = %+v, want disabled-safe defaults", cfg.Multimodal)
 	}
 }
 

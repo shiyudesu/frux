@@ -17,6 +17,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config failed: %v", err)
 	}
+	if err := infraconfig.ValidateMultimodalRuntime(
+		cfg.Multimodal,
+		infraconfig.MultimodalRuntimeDependencies{},
+	); err != nil {
+		log.Fatalf("init multimodal runtime failed: %v", err)
+	}
 	log.Printf(
 		"config loaded: port=%d database=%s:%d/%s jwt_access_ttl=%s",
 		cfg.Port,

@@ -107,6 +107,9 @@ media:
 moderation:
   mode: "disabled"
 
+multimodal:
+  enabled: false
+
 playback:
   telemetry:
     retention: "168h"

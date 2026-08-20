@@ -116,6 +116,9 @@ moderation:
   sample_retention: "1h"
   sample_presign_endpoint: "${FRUX_MODERATION_SAMPLE_PRESIGN_ENDPOINT}"
 
+multimodal:
+  enabled: false
+
 playback:
   telemetry:
     retention: "168h"

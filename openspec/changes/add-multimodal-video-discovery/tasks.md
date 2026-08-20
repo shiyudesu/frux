@@ -6,23 +6,23 @@
 - [x] 1.2 Update `docs/recommendation-roadmap.md` to place multimodal discovery before Session
   recommendation, remove development-history backfill from the first implementation path, and keep
   HNSW behind measured Exact capacity gates.
-- [ ] 1.3 Define typed configuration for enablement, active contract aliases, dimension, text/frame/
+- [x] 1.3 Define typed configuration for enablement, active contract aliases, dimension, text/frame/
   preprocessing/fusion policy IDs, provider deadlines/admission, image limits, query cache, exact
   limits, hybrid version, and lexical fallback with disabled-safe defaults.
-- [ ] 1.4 Add configuration validation proving partial contracts, unknown policies, weak bounds,
+- [x] 1.4 Add configuration validation proving partial contracts, unknown policies, weak bounds,
   incompatible dimensions, and semantic enablement without required dependencies fail startup while
   disabled mode requires no provider.
 
 ## 2. Multimodal Provider and Input Contracts
 
-- [ ] 2.1 Add application-owned video-content and query-text embedding interfaces and typed
+- [x] 2.1 Add application-owned video-content and query-text embedding interfaces and typed
   request/result contracts without provider SDK, hardware, process, language, URL, or storage types.
-- [ ] 2.2 Implement canonical contract identity and equality helpers covering provider/model/
+- [x] 2.2 Implement canonical contract identity and equality helpers covering provider/model/
   revision/dimension/canonicalizer/frame/preprocessing/fusion policies, source input hash, and vector
   digest.
-- [ ] 2.3 Implement strict vector validation for exact identity, dimension, finite components,
+- [x] 2.3 Implement strict vector validation for exact identity, dimension, finite components,
   normalization tolerance, input hash, and digest with bounded closed failure codes.
-- [ ] 2.4 Implement bounded normalized public-video text and public-query canonicalization without
+- [x] 2.4 Implement bounded normalized public-video text and public-query canonicalization without
   persisting raw canonical text or attaching identity/session/request metadata.
 - [ ] 2.5 Add a media preparation port and Infrastructure adapter that selects and prepares bounded
   cover/keyframe inputs under the configured frame/preprocessing policy with deterministic hashes
