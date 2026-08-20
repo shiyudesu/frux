@@ -147,9 +147,15 @@ docker exec frux-postgres \
 然后运行：
 
 ```bash
+cp apps/.env.multimodal.example apps/.env.multimodal
+# 编辑 apps/.env.multimodal
+
 cd apps/api
 go run ./cmd/multimodal-provider
 ```
+
+原生 API、Worker 和 Adapter 命令会在仓库内自动发现 `.env.multimodal`，不需要先执行 `source`。
+已存在的系统环境变量优先；API/Worker 只加载 Frux 侧配置，DashScope API Key 只会加载到 Adapter。
 
 适配器启动时会先执行一次真实的文本向量探测；凭证、Endpoint、模型或返回维度不正确时不会开始监听。
 通过探测后，Frux API/Worker 可连接 `http://127.0.0.1:8099`。具体开关顺序和固定合同见

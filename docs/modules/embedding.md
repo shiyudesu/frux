@@ -149,22 +149,25 @@ Adapter 使用百炼原生 Multimodal-Embedding HTTP API，不依赖 DashScope S
 原视频、对象存储地址和签名 URL 不离开 Frux 边界。无日期模型名称可能被服务商调整实现；如实际模型
 行为发生变化，应升级 revision 并重新生成向量。需要可重复性时优先使用带日期的档位。
 
-启动所需变量：
+原生开发时，先创建仓库本地配置文件：
 
 ```bash
-export FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR='127.0.0.1:8099'
-export FRUX_MULTIMODAL_PROFILE='tongyi-embedding-vision-flash-2026-03-06'
-export FRUX_MULTIMODAL_HMAC_SECRET='<至少32字符，API/Worker与Adapter共享>'
-export DASHSCOPE_MULTIMODAL_ENDPOINT='https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding'
-export DASHSCOPE_API_KEY='<仅Adapter持有>'
+cp apps/.env.multimodal.example apps/.env.multimodal
+# 编辑 apps/.env.multimodal，填写 Profile、共享 HMAC、百炼 Endpoint 和 API Key
 
 cd apps/api
 go run ./cmd/multimodal-provider
 ```
 
-API、Worker 和 Adapter 必须设置相同的 `FRUX_MULTIMODAL_PROFILE`。可选边界变量见
-`apps/.env.multimodal.example`。`/health` 只表示进程存活；Adapter 必须先用所选模型完成一次真实 text
-embedding probe，之后才会在签名 `/v1/ready` 中报告所选合同 ready。API Key、上游 Endpoint、
+从仓库内启动时，API、Worker 和 Adapter 会自动向上查找 `.env.multimodal`，也会识别推荐位置
+`apps/.env.multimodal`，不需要执行 `source`。进程中已存在的环境变量优先于文件。API/Worker 只从文件加载
+`FRUX_MULTIMODAL_PROFILE`、`FRUX_MULTIMODAL_ENDPOINT` 和 `FRUX_MULTIMODAL_HMAC_SECRET`；只有 Adapter
+会加载 `DASHSCOPE_API_KEY`、百炼 Endpoint 与 Tongyi 边界参数。文件缺失时继续使用普通系统环境变量，
+文件存在但格式错误时启动失败。
+
+`.env.multimodal` 已被 Git 忽略。Docker Compose 不会把宿主机文件挂进容器，使用 Compose 时仍应通过
+`--env-file .env.multimodal` 注入所需变量。`/health` 只表示进程存活；Adapter 必须先用所选模型完成一次
+真实 text embedding probe，之后才会在签名 `/v1/ready` 中报告所选合同 ready。API Key、上游 Endpoint、
 请求内容、向量、source hash 和上游 request ID 不进入正常日志或 Prometheus label。
 
 启用顺序：

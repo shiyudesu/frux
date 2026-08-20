@@ -206,5 +206,9 @@ API 镜像同时包含 `frux-multimodal-provider`，但 Compose 和 Kubernetes �
 限制。百炼 API Key 只注入 Adapter，不能注入 API/Worker。`FRUX_MULTIMODAL_PROFILE` 则必须在 API、
 Worker 和 Adapter 中保持一致；当前允许选择带日期的原生融合档位或无日期的本地均值融合档位。
 
+原生仓库开发可把配置保存为 `apps/.env.multimodal`，三个 Go 命令会自动发现它，且只有 Adapter 会加载
+其中的 DashScope 凭证。容器部署不会自动读取宿主机上的该文件，仍需使用 Compose/Kubernetes 的环境变量
+注入机制；不要把 `.env.multimodal` 复制进镜像。
+
 部署和回滚步骤见 [视频向量模块](modules/embedding.md)。没有完成真实 startup probe 与 Golden Set 前，
 保持全部 multimodal feature flags 为 false。

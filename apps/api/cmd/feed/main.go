@@ -5,6 +5,7 @@ import (
 
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
+	infraenvfile "github.com/shiyudesu/frux/internal/infra/envfile"
 	infrahttphertz "github.com/shiyudesu/frux/internal/infra/httphertz"
 	interfaceshttprouter "github.com/shiyudesu/frux/internal/interfaces/http/router"
 )
@@ -12,6 +13,9 @@ import (
 const configPath = "./configs/config.yaml"
 
 func main() {
+	if err := infraenvfile.LoadMultimodal(infraenvfile.MultimodalFruxRuntime); err != nil {
+		log.Fatalf("load multimodal environment failed: %v", err)
+	}
 	// 启动顺序保持简单：配置 -> 数据库 -> Hertz -> 路由 -> 启动服务。
 	cfg, err := infraconfig.LoadConfig(configPath)
 	if err != nil {

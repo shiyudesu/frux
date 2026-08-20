@@ -35,6 +35,7 @@ import (
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
 	infraconfig "github.com/shiyudesu/frux/internal/infra/config"
 	infradatabase "github.com/shiyudesu/frux/internal/infra/database"
+	infraenvfile "github.com/shiyudesu/frux/internal/infra/envfile"
 	infrakafka "github.com/shiyudesu/frux/internal/infra/kafka"
 	inframedia "github.com/shiyudesu/frux/internal/infra/media"
 	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
@@ -72,6 +73,9 @@ func main() {
 }
 
 func run() error {
+	if err := infraenvfile.LoadMultimodal(infraenvfile.MultimodalFruxRuntime); err != nil {
+		return fmt.Errorf("load multimodal environment: %w", err)
+	}
 	cfg, err := infraconfig.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	infraenvfile "github.com/shiyudesu/frux/internal/infra/envfile"
 	infraembedding "github.com/shiyudesu/frux/internal/infra/persistence/embedding"
 )
 
@@ -22,6 +23,9 @@ func main() {
 }
 
 func run() error {
+	if err := infraenvfile.LoadMultimodal(infraenvfile.MultimodalTongyiAdapter); err != nil {
+		return fmt.Errorf("load multimodal environment: %w", err)
+	}
 	config, err := infraembedding.LoadTongyiAdapterConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("load adapter config: %w", err)
