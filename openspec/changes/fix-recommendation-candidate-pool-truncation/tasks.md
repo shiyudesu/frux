@@ -49,9 +49,9 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run targeted recommendation domain, recall, ranker, snapshot, request-log, evidence,
+- [x] 5.1 Run targeted recommendation domain, recall, ranker, snapshot, request-log, evidence,
   policy-persistence, metrics, and router tests.
-- [ ] 5.2 Run `cd apps/api && go test ./...` and compile `./cmd/feed` and `./cmd/worker`.
-- [ ] 5.3 Run `openspec validate --all --strict` and confirm the change adds no Provider Reservation,
+- [x] 5.2 Run `cd apps/api && go test ./...` and compile `./cmd/feed` and `./cmd/worker`.
+- [x] 5.3 Run `openspec validate --all --strict` and confirm the change adds no Provider Reservation,
   semantic/multimodal dependency, new feature weight, persistence migration, policy rollout, or
   public API change.
