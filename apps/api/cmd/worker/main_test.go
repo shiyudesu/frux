@@ -307,6 +307,22 @@ func (*workerMultimodalRepositoryStub) TerminalMultimodalJob(context.Context, in
 	return false, nil
 }
 
+func (*workerMultimodalRepositoryStub) ListMultimodalReconciliationVideoIDs(context.Context, domainembedding.MultimodalContractIdentity, int64, int) ([]int64, error) {
+	return nil, nil
+}
+
+func (*workerMultimodalRepositoryStub) FindMultimodalVectorFact(context.Context, int64, domainembedding.MultimodalContractIdentity) (*domainembedding.MultimodalVectorFact, error) {
+	return nil, domainembedding.ErrMultimodalVectorFactNotFound
+}
+
+func (*workerMultimodalRepositoryStub) UpsertMultimodalProjection(context.Context, *domainembedding.MultimodalProjection) (bool, error) {
+	return false, nil
+}
+
+func (*workerMultimodalRepositoryStub) DeleteMultimodalProjection(context.Context, int64, string) (bool, error) {
+	return false, nil
+}
+
 type workerMultimodalVideoReaderStub struct{}
 
 func (*workerMultimodalVideoReaderStub) FindByIDAnyStatus(context.Context, int64) (*domainvideo.Video, error) {

@@ -61,6 +61,9 @@ import (
 
 const configPath = "./configs/config.yaml"
 
+const multimodalProjectionInterval = 5 * time.Second
+const multimodalProjectionBatchSize = 200
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("frux worker failed: %v", err)
@@ -531,7 +534,7 @@ func startWorkers(
 func startMultimodalJobRuntime(
 	ctx context.Context,
 	cfg *infraconfig.Config,
-	repository applicationembedding.MultimodalWorkerRepository,
+	repository workerMultimodalRepository,
 	videos applicationembedding.MultimodalVideoReader,
 	assets applicationembedding.MultimodalMediaAssetReader,
 	mediaStore domainmedia.MediaObjectStore,
@@ -556,6 +559,11 @@ type workerReadyMultimodalProvider interface {
 	Contract() domainembedding.MultimodalContractIdentity
 }
 
+type workerMultimodalRepository interface {
+	applicationembedding.MultimodalWorkerRepository
+	applicationembedding.MultimodalProjectionRepository
+}
+
 type workerMultimodalProviderFactory func(
 	context.Context,
 	infraconfig.MultimodalConfig,
@@ -565,7 +573,7 @@ type workerMultimodalProviderFactory func(
 func startMultimodalJobRuntimeWithProvider(
 	ctx context.Context,
 	cfg *infraconfig.Config,
-	repository applicationembedding.MultimodalWorkerRepository,
+	repository workerMultimodalRepository,
 	videos applicationembedding.MultimodalVideoReader,
 	assets applicationembedding.MultimodalMediaAssetReader,
 	mediaStore domainmedia.MediaObjectStore,
@@ -642,6 +650,18 @@ func startMultimodalJobRuntimeWithProvider(
 	if err != nil {
 		return fmt.Errorf("build multimodal job worker: %w", err)
 	}
+	projectionReconciler, err := applicationembedding.NewMultimodalProjectionReconciler(
+		repository, videos, assets, contract, cfg.Multimodal.MaxVideoTextRunes,
+	)
+	if err != nil {
+		return fmt.Errorf("build multimodal projection reconciler: %w", err)
+	}
+	projectionWorker, err := applicationembedding.NewMultimodalProjectionWorker(
+		projectionReconciler, multimodalProjectionInterval, multimodalProjectionBatchSize,
+	)
+	if err != nil {
+		return fmt.Errorf("build multimodal projection worker: %w", err)
+	}
 	owner, err := newWorkerOwner("multimodal")
 	if err != nil {
 		return err
@@ -650,6 +670,14 @@ func startMultimodalJobRuntimeWithProvider(
 		if runErr := worker.Run(ctx, owner); runErr != nil && ctx.Err() == nil && runtimeFailures != nil {
 			select {
 			case runtimeFailures <- fmt.Errorf("multimodal job worker: %w", runErr):
+			default:
+			}
+		}
+	}()
+	go func() {
+		if runErr := projectionWorker.Run(ctx); runErr != nil && ctx.Err() == nil && runtimeFailures != nil {
+			select {
+			case runtimeFailures <- fmt.Errorf("multimodal projection worker: %w", runErr):
 			default:
 			}
 		}

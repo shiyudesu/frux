@@ -38,6 +38,8 @@
   type/count/index/dimension, non-finite/zero vectors, and upstream status mapping.
 - [x] 4.4 Add the standalone command with startup probe, signal-aware server lifecycle, bounded
   shutdown, and no credential/content logging.
+- [x] 4.5 Run the existing multimodal projection reconciler under the Worker lifecycle so newly
+  persisted Tongyi vectors become eligible for Exact, Similar, and Hybrid retrieval automatically.
 
 ## 5. Packaging and Documentation
 
