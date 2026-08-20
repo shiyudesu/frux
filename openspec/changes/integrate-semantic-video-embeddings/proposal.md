@@ -1,3 +1,7 @@
+> **Superseded implementation plan (2026-08-20):** Do not apply this change. Its durable handoff
+> principles are incorporated into `add-multimodal-video-discovery`; the old managed text-only
+> provider prerequisite is no longer part of the active implementation path.
+
 ## Why
 
 Frux needs semantic embeddings for newly published public videos, but a managed Embedding API is a

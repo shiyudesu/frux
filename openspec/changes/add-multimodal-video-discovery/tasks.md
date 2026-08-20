@@ -1,9 +1,9 @@
 ## 1. Planning Reconciliation and Contract Baseline
 
-- [ ] 1.1 Reconcile or retire `add-semantic-embedding-service` and
+- [x] 1.1 Reconcile or retire `add-semantic-embedding-service` and
   `integrate-semantic-video-embeddings` so implementation has one active embedding contract and no
   external-text-only prerequisite.
-- [ ] 1.2 Update `docs/recommendation-roadmap.md` to place multimodal discovery before Session
+- [x] 1.2 Update `docs/recommendation-roadmap.md` to place multimodal discovery before Session
   recommendation, remove development-history backfill from the first implementation path, and keep
   HNSW behind measured Exact capacity gates.
 - [ ] 1.3 Define typed configuration for enablement, active contract aliases, dimension, text/frame/

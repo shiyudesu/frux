@@ -1,3 +1,8 @@
+> **Superseded implementation plan (2026-08-20):** Do not apply this change. The authoritative
+> first implementation is `add-multimodal-video-discovery`, whose environment-neutral provider
+> contract includes public video text, prepared visual inputs, and compatible query text without
+> requiring a managed external API.
+
 ## Why
 
 Frux needs higher-quality semantic text vectors without operating or training a model runtime. The
