@@ -17,6 +17,14 @@ Frux contract assigned to the selected model, dimension, resolution, and fusion 
 - **WHEN** configuration names a model profile outside the verified allowlist
 - **THEN** startup fails before any provider request is accepted
 
+#### Scenario: Repository-local environment file is present
+- **WHEN** a native API, Worker, or Adapter process starts inside the repository and discovers `.env.multimodal`
+- **THEN** it loads only its allowlisted variables, preserves existing process environment values, and keeps DashScope credentials out of API and Worker
+
+#### Scenario: Repository-local environment file is malformed
+- **WHEN** a discovered `.env.multimodal` cannot be parsed
+- **THEN** the process fails startup without logging secret values
+
 #### Scenario: Caller requests another contract
 - **WHEN** a Frux request carries a different provider, model, revision, dimension, or policy identifier
 - **THEN** the adapter returns a signed closed unsupported-contract response without calling DashScope

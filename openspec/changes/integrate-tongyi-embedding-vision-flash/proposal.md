@@ -24,6 +24,8 @@ capability-aware profile instead of hard-coding one upstream model.
   ready, while keeping API keys and upstream response bodies out of Frux-facing payloads and logs.
 - Add deterministic fake-upstream integration tests, configuration examples, container build support,
   usage/cost metrics, and operator documentation. Existing multimodal feature flags remain disabled.
+- Automatically discover a repository-local `.env.multimodal` for native development while loading
+  only process-appropriate variables and preserving already-injected environment values.
 
 ## Capabilities
 

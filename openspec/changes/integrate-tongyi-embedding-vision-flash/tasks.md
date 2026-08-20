@@ -68,3 +68,5 @@
   operator documentation, and keep all multimodal feature flags disabled by default.
 - [x] 7.4 Add profile, payload, response, fusion, contract-isolation, configuration, and regression tests;
   then rerun targeted and complete Go validation before marking the change complete again.
+- [ ] 7.5 Automatically load a repository-local `.env.multimodal` with environment precedence,
+  process-specific secret allowlists, tests, and native-development documentation.

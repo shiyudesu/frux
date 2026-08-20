@@ -109,6 +109,12 @@ timeout have bounded defaults.
 No API key, upstream endpoint, raw provider body, request text, image bytes, vector, source hash,
 operation ID, or Alibaba request ID is emitted as a metric label or normal log field.
 
+For native repository development, API, Worker, and Adapter commands discover the nearest
+`.env.multimodal` within the repository so operators do not need to run `source` for every shell.
+Existing process environment values take precedence. API and Worker load only the Frux profile,
+provider endpoint, and shared HMAC secret; only the Adapter loads DashScope credentials and Tongyi
+upstream settings. Missing files are ignored, but a discovered malformed file fails startup.
+
 ## Risks / Trade-offs
 
 - [External API availability and billing] → Keep all Frux feature flags off by default, preserve
