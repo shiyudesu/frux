@@ -25,17 +25,17 @@
 
 ## 3. Ranking and Resource Regressions
 
-- [ ] 3.1 Add service tests proving a 10-card request with five 100-budget Providers sends all 500
+- [x] 3.1 Add service tests proving a 10-card request with five 100-budget Providers sends all 500
   unique readable candidates to feature loading and ranking before response slicing.
-- [ ] 3.2 Add a regression where an older candidate is outside the former 80-item recency prefix but
+- [x] 3.2 Add a regression where an older candidate is outside the former 80-item recency prefix but
   ranks first after content/session or another existing feature is evaluated.
-- [ ] 3.3 Add shuffled Provider completion and candidate-map insertion tests proving the final ranked
+- [x] 3.3 Add shuffled Provider completion and candidate-map insertion tests proving the final ranked
   output is identical for equivalent candidate facts.
-- [ ] 3.4 Add duplicate-heavy, visibility-filtered, partially failed, capacity-degraded, all-failed,
+- [x] 3.4 Add duplicate-heavy, visibility-filtered, partially failed, capacity-degraded, all-failed,
   and empty-provider regressions proving bounds and existing error semantics.
-- [ ] 3.5 Prove feature batch loading, suppression, diversity, Snapshot creation, full-pool request
+- [x] 3.5 Prove feature batch loading, suppression, diversity, Snapshot creation, full-pool request
   logging, served evidence, cursor fallback, and response assembly remain within 500 candidates.
-- [ ] 3.6 Extend the bounded-pool benchmark to exercise the full 500-candidate policy path and record
+- [x] 3.6 Extend the bounded-pool benchmark to exercise the full 500-candidate policy path and record
   feature/ranking allocations and latency without setting an unsupported production SLO.
 
 ## 4. Metrics and Documentation

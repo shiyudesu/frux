@@ -13,17 +13,20 @@ import (
 )
 
 type rankerTestRepo struct {
-	vectors         map[int64][]float64
-	interest        []float64
-	features        *domainrecommendation.RankingFeatures
-	pool            []*domainrecommendation.Candidate
-	servedEvidence  []*domainrecommendation.ServedCandidateEvidence
-	evidenceByVideo map[string]time.Time
-	feedback        map[string]*domainrecommendation.Feedback
-	outcomes        map[string]*domainrecommendation.Outcome
-	evidenceMu      sync.Mutex
-	captureEvidence bool
-	evidenceErr     error
+	vectors           map[int64][]float64
+	interest          []float64
+	features          *domainrecommendation.RankingFeatures
+	featureMu         sync.Mutex
+	captureFeatureIDs bool
+	featureVideoIDs   []int64
+	pool              []*domainrecommendation.Candidate
+	servedEvidence    []*domainrecommendation.ServedCandidateEvidence
+	evidenceByVideo   map[string]time.Time
+	feedback          map[string]*domainrecommendation.Feedback
+	outcomes          map[string]*domainrecommendation.Outcome
+	evidenceMu        sync.Mutex
+	captureEvidence   bool
+	evidenceErr       error
 }
 
 func (r *rankerTestRepo) ListCandidatePool(context.Context, int64, int) ([]*domainrecommendation.Candidate, error) {
@@ -118,7 +121,12 @@ func (r *rankerTestRepo) HasServedCandidateEvidence(_ context.Context, userID in
 func (*rankerTestRepo) DeleteServedCandidateEvidenceBefore(context.Context, time.Time, int) (domainrecommendation.ServedCandidateEvidenceCleanupResult, error) {
 	return domainrecommendation.ServedCandidateEvidenceCleanupResult{}, nil
 }
-func (r *rankerTestRepo) LoadRankingFeatures(context.Context, int64, []int64, time.Time, time.Time) (*domainrecommendation.RankingFeatures, error) {
+func (r *rankerTestRepo) LoadRankingFeatures(_ context.Context, _ int64, videoIDs []int64, _ time.Time, _ time.Time) (*domainrecommendation.RankingFeatures, error) {
+	if r.captureFeatureIDs {
+		r.featureMu.Lock()
+		r.featureVideoIDs = append([]int64(nil), videoIDs...)
+		r.featureMu.Unlock()
+	}
 	return r.features, nil
 }
 

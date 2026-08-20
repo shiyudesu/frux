@@ -9,12 +9,12 @@ import (
 
 // BenchmarkRecommendBoundedPool is the repeatable pre-release load check. It
 // exercises policy selection, ranking, diversity, and cursor construction on
-// a bounded 100-candidate pool without external services.
+// the maximum bounded 500-candidate policy pool without external services.
 func BenchmarkRecommendBoundedPool(b *testing.B) {
 	now := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
-	pool := make([]*domainrecommendation.Candidate, 0, 100)
-	vectors := make(map[int64][]float64, 100)
-	for id := int64(1); id <= 100; id++ {
+	pool := make([]*domainrecommendation.Candidate, 0, domainrecommendation.MaxPolicyPreRankCandidates)
+	vectors := make(map[int64][]float64, domainrecommendation.MaxPolicyPreRankCandidates)
+	for id := int64(1); id <= domainrecommendation.MaxPolicyPreRankCandidates; id++ {
 		pool = append(pool, rankerCandidate(id, (id%10)+1, int(id), now.Add(-time.Duration(id)*time.Minute), domainrecommendation.RecallProviderHot))
 		vectors[id] = []float64{float64(id % 3), float64((id + 1) % 5)}
 	}
