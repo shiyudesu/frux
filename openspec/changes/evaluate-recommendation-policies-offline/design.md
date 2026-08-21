@@ -124,9 +124,10 @@ exclusion reasons per baseline. No baseline is described as the production polic
 For sorted unique K values from 1 through 100, compute Recall@K, NDCG@K, HitRate@K, and reciprocal
 rank using the single held-out target. Aggregate Catalog Coverage against the eligible item universe,
 distinct category/author coverage when metadata exists, largest category/author share, repeated-item
-and repeated-primary-category runs, and per-case ranking latency (`count`, total, min, max, p50, p95)
-using integer nanoseconds. Optional upstream embedding throughput is copied only from a signed or
-checksum-covered declared measurement file and is never measured through provider calls.
+and repeated-primary-category runs, and deterministic ranking work (cases, candidates, vector
+components, comparisons). Optional Exact latency and upstream embedding throughput are copied only
+from a checksum-covered declared measurement file and are never measured through provider calls or
+mixed into the byte-stable default report.
 
 Dataset reports remain separate. A summary may place them side-by-side but cannot average MicroLens
 and KuaiRec into one score.
@@ -178,8 +179,8 @@ failure preserves existing final outputs.
   Sets rather than manufacturing multiple labels.
 - [Large CSVs exceed local memory] → Stream interactions, enforce manifest bounds, and retain only
   bounded per-user histories, item aggregates, and final cases.
-- [Latency varies by machine] → Record operation/count statistics as engineering evidence, not a
-  cross-machine benchmark.
+- [Latency varies by machine] → Keep deterministic work counts in the canonical report and accept
+  latency only as separately checksum-covered machine-specific evidence.
 
 ## Migration Plan
 

@@ -17,8 +17,8 @@ human Golden Sets, and isolated public short-video datasets before any Shadow pr
 - Compare deterministic Popularity, Recent Interaction, Category, Text-only, Image-only,
   Multimodal, and Multimodal + Session Interest baselines when their required inputs are available.
 - Report Recall@K, NDCG@K, HitRate@K, MRR, Catalog Coverage, category/author diversity,
-  repeated-item/category runs, feature coverage, Exact ranking latency, and optional declared
-  upstream embedding throughput.
+  repeated-item/category runs, feature coverage, deterministic ranking work, and optional
+  checksum-covered Exact latency/upstream embedding throughput evidence.
 - Retain exact production-scorer replay and versioned blinded Golden Sets as separate evidence. A
   public-dataset result cannot substitute for production parity, and replay cannot substitute for
   semantic relevance labels.

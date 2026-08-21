@@ -78,8 +78,8 @@ explicit feature requirements.
 
 ### Requirement: Public-dataset ranking metrics have explicit denominators
 The evaluator SHALL compute Recall@K, NDCG@K, HitRate@K, MRR, Catalog Coverage, available
-category/author diversity and concentration, repetition, feature coverage, and Exact ranking latency
-for sorted unique K values.
+category/author diversity and concentration, repetition, feature coverage, and deterministic ranking
+work for sorted unique K values. Exact latency MAY appear only as checksum-covered optional evidence.
 
 #### Scenario: Baseline cases complete
 - **WHEN** at least one eligible case is ranked
@@ -88,6 +88,10 @@ for sorted unique K values.
 #### Scenario: Metadata metric is unsupported
 - **WHEN** author, category, feature, or throughput metadata is absent
 - **THEN** the metric is `unavailable` with a reason and is not serialized as numeric zero
+
+#### Scenario: Runtime latency is not declared
+- **WHEN** no checksum-covered performance evidence file is present
+- **THEN** the canonical report remains byte-stable, includes deterministic ranking work, and marks Exact latency unavailable
 
 ### Requirement: Production replay requires exact compatible parity
 The replay track SHALL validate production policy configurations and replay frozen score components,
