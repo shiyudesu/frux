@@ -1,0 +1,60 @@
+{
+  "version": "human-golden-v1",
+  "rubric": "semantic-0-3-v1",
+  "provenance": "frux_blinded_human",
+  "cases": [
+    {
+      "name": "query-rain-city",
+      "kind": "query_relevance",
+      "candidates": [
+        {"key":"candidate-a","judgments":[3,3]},
+        {"key":"candidate-b","judgments":[1,1]},
+        {"key":"candidate-c","judgments":[0,0]}
+      ],
+      "rankings": [
+        {"name":"baseline","order":["candidate-b","candidate-a","candidate-c"]},
+        {"name":"semantic","order":["candidate-a","candidate-b","candidate-c"]}
+      ]
+    },
+    {
+      "name": "similar-rain-city",
+      "kind": "similar_video",
+      "candidates": [
+        {"key":"candidate-a","judgments":[3,1],"adjudicated":3},
+        {"key":"candidate-b","judgments":[2,2]},
+        {"key":"candidate-c","judgments":[0,0]}
+      ],
+      "rankings": [
+        {"name":"baseline","order":["candidate-b","candidate-a","candidate-c"]},
+        {"name":"semantic","order":["candidate-a","candidate-b","candidate-c"]}
+      ]
+    },
+    {
+      "name": "session-direction",
+      "kind": "session_direction",
+      "expected_direction": "toward",
+      "candidates": [
+        {"key":"candidate-a","judgments":[3,3]},
+        {"key":"candidate-b","judgments":[1,1]}
+      ],
+      "rankings": [
+        {"name":"baseline","order":["candidate-b","candidate-a"],"direction":"away"},
+        {"name":"semantic","order":["candidate-a","candidate-b"],"direction":"toward"}
+      ]
+    },
+    {
+      "name": "negative-suppression",
+      "kind": "negative_suppression",
+      "suppressed_candidate_key": "candidate-b",
+      "suppression_cutoff": 1,
+      "candidates": [
+        {"key":"candidate-a","judgments":[3,3]},
+        {"key":"candidate-b","judgments":[0,0]}
+      ],
+      "rankings": [
+        {"name":"baseline","order":["candidate-b","candidate-a"]},
+        {"name":"semantic","order":["candidate-a","candidate-b"]}
+      ]
+    }
+  ]
+}
