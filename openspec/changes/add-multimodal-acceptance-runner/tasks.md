@@ -49,7 +49,7 @@
 
 - [x] 6.1 Add fake API, Adapter, metrics, presigned-upload, cancellation, timeout, redirect, malformed
   response, secret-redaction, partial-run, and cleanup tests.
-- [ ] 6.2 Run command dry-run tests, targeted race tests, complete Go tests/vet/build, Compose validation,
+- [x] 6.2 Run command dry-run tests, targeted race tests, complete Go tests/vet/build, Compose validation,
   and strict OpenSpec validation.
-- [ ] 6.3 Confirm repository defaults remain disabled and no credentials, bearer tokens, signed URLs,
+- [x] 6.3 Confirm repository defaults remain disabled and no credentials, bearer tokens, signed URLs,
   fixture media, raw vectors, generated reports, or acceptance database DSNs are committed.
