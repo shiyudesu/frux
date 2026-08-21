@@ -23,10 +23,10 @@
 
 ## 4. Metrics and aggregation
 
-- [ ] 4.1 Implement Recall@K, NDCG@K, HitRate@K, reciprocal rank, and paired baseline result aggregation with explicit numerators/denominators.
-- [ ] 4.2 Implement Catalog Coverage, category/author coverage and concentration, largest-group share, and repeated item/primary-category runs with availability reasons.
-- [ ] 4.3 Implement per-baseline feature/case coverage, exclusion summaries, dataset counts, and separate dataset result boundaries.
-- [ ] 4.4 Implement deterministic ranking work summaries and checksum-covered optional Exact-latency/upstream embedding-throughput evidence.
+- [x] 4.1 Implement Recall@K, NDCG@K, HitRate@K, reciprocal rank, and paired baseline result aggregation with explicit numerators/denominators.
+- [x] 4.2 Implement Catalog Coverage, category/author coverage and concentration, largest-group share, and repeated item/primary-category runs with availability reasons.
+- [x] 4.3 Implement per-baseline feature/case coverage, exclusion summaries, dataset counts, and separate dataset result boundaries.
+- [x] 4.4 Implement deterministic ranking work summaries and checksum-covered optional Exact-latency/upstream embedding-throughput evidence.
 - [ ] 4.5 Add metric edge-case, K-bound, empty/unavailable, repeated-run, and exact expected-report tests.
 
 ## 5. Production replay and Golden Sets

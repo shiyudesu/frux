@@ -16,6 +16,13 @@ type Ranking struct {
 	Available bool
 	Reason    ExclusionCode
 	Items     []RankedItem
+	Work      RankingWork
+}
+
+type RankingWork struct {
+	CandidateScores  int64 `json:"candidate_scores"`
+	VectorComponents int64 `json:"vector_components"`
+	Comparisons      int64 `json:"comparisons"`
 }
 
 func Rank(dataset *Dataset, evaluationCase EvaluationCase, profile CaseProfile, baseline Baseline) Ranking {
@@ -47,17 +54,42 @@ func Rank(dataset *Dataset, evaluationCase EvaluationCase, profile CaseProfile, 
 		return result
 	}
 	result.Available = true
+	result.Work.CandidateScores = int64(len(evaluationCase.CandidateKeys))
+	if baseline == BaselineCategory {
+		for _, interaction := range evaluationCase.History {
+			result.Work.VectorComponents += int64(len(dataset.Items[interaction.ItemKey].Categories))
+		}
+		for _, itemKey := range evaluationCase.CandidateKeys {
+			result.Work.VectorComponents += int64(len(dataset.Items[itemKey].Categories))
+		}
+	}
+	if baseline == BaselineText || baseline == BaselineImage || baseline == BaselineMultimodal || baseline == BaselineMultimodalSession {
+		dimension := int64(dataset.FeatureDimensions[baselineFeatureChannel(baseline)])
+		result.Work.VectorComponents = dimension * int64(len(evaluationCase.Session)+len(evaluationCase.CandidateKeys))
+	}
 	result.Items = make([]RankedItem, 0, len(evaluationCase.CandidateKeys))
 	for _, itemKey := range evaluationCase.CandidateKeys {
 		result.Items = append(result.Items, RankedItem{ItemKey: itemKey, Score: scores[itemKey]})
 	}
 	sort.SliceStable(result.Items, func(i, j int) bool {
+		result.Work.Comparisons++
 		if result.Items[i].Score != result.Items[j].Score {
 			return result.Items[i].Score > result.Items[j].Score
 		}
 		return result.Items[i].ItemKey < result.Items[j].ItemKey
 	})
 	return result
+}
+
+func baselineFeatureChannel(baseline Baseline) FeatureChannel {
+	switch baseline {
+	case BaselineText:
+		return FeatureText
+	case BaselineImage:
+		return FeatureImage
+	default:
+		return FeatureMultimodal
+	}
 }
 
 func popularityScores(dataset *Dataset, evaluationCase EvaluationCase, profile CaseProfile) (map[string]float64, bool) {
