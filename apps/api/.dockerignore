@@ -1,0 +1,24 @@
+.git
+.gitignore
+.offline-data/
+.offline-reports/
+.env
+.env.*
+uploads/
+
+# Locally built binaries and test output are not image inputs.
+feed
+worker
+multimodal-provider
+coverage/
+coverage.out
+*.coverprofile
+*.test
+
+# Editor and temporary files.
+.idea/
+.vscode/
+*.log
+*.tmp
+*.swp
+*~

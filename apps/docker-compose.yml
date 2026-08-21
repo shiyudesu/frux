@@ -99,6 +99,7 @@ services:
         mc anonymous set download local/frux-media/media
 
   api:
+    image: frux-api:local
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -138,11 +139,8 @@ services:
       start_period: 20s
 
   worker:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-      args:
-        GOPROXY: https://goproxy.cn,direct
+    image: frux-api:local
+    pull_policy: never
     container_name: frux-worker
     environment:
       FRUX_INTERNAL_TOKEN: ${FRUX_INTERNAL_TOKEN:?set FRUX_INTERNAL_TOKEN to a strong random value}
