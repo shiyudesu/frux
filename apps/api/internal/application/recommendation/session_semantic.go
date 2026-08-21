@@ -81,18 +81,49 @@ func (i *SessionSemanticInterest) Clone() *SessionSemanticInterest {
 }
 
 type SessionSemanticBuilder struct {
-	facts   SessionSemanticFactSource
-	vectors SessionSemanticVectorSource
+	facts       SessionSemanticFactSource
+	vectors     SessionSemanticVectorSource
+	maxSeeds    int
+	maxLookback time.Duration
+}
+
+type SessionSemanticBuilderOption func(*SessionSemanticBuilder) error
+
+func WithSessionSemanticRuntimeLimits(
+	maxSeeds int,
+	maxLookback time.Duration,
+) SessionSemanticBuilderOption {
+	return func(builder *SessionSemanticBuilder) error {
+		if builder == nil || maxSeeds < 1 || maxSeeds > domainrecommendation.MaxSessionSemanticSeeds ||
+			maxLookback < time.Minute || maxLookback > 24*time.Hour {
+			return ErrSessionSemanticUnavailable
+		}
+		builder.maxSeeds = maxSeeds
+		builder.maxLookback = maxLookback
+		return nil
+	}
 }
 
 func NewSessionSemanticBuilder(
 	facts SessionSemanticFactSource,
 	vectors SessionSemanticVectorSource,
+	options ...SessionSemanticBuilderOption,
 ) (*SessionSemanticBuilder, error) {
 	if facts == nil || vectors == nil {
 		return nil, ErrSessionSemanticUnavailable
 	}
-	return &SessionSemanticBuilder{facts: facts, vectors: vectors}, nil
+	builder := &SessionSemanticBuilder{
+		facts: facts, vectors: vectors,
+		maxSeeds: domainrecommendation.MaxSessionSemanticSeeds, maxLookback: 24 * time.Hour,
+	}
+	for _, option := range options {
+		if option != nil {
+			if err := option(builder); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return builder, nil
 }
 
 func (b *SessionSemanticBuilder) Build(
@@ -102,7 +133,8 @@ func (b *SessionSemanticBuilder) Build(
 	policy, err := domainrecommendation.ValidateSessionSemanticPolicyConfiguration(request.Policy)
 	if b == nil || b.facts == nil || b.vectors == nil || err != nil || request.UserID <= 0 ||
 		request.Context == nil || request.Budget <= 0 || request.Budget > domainrecommendation.MaxRecallBudget ||
-		request.Now.IsZero() || policy.ContractKey != request.Contract.Key() {
+		request.Now.IsZero() || policy.ContractKey != request.Contract.Key() ||
+		policy.MaxSeeds > b.maxSeeds || time.Duration(policy.LookbackSeconds)*time.Second > b.maxLookback {
 		return nil, ErrSessionSemanticUnavailable
 	}
 	seedIDs := boundedSessionSemanticSeedIDs(request.Context, policy.MaxSeeds)

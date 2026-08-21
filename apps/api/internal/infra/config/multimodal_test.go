@@ -43,7 +43,8 @@ func TestNormalizeAndValidateMultimodalConfigDisabledDefaults(t *testing.T) {
 		cfg.Exact.MaxLimit != 100 || cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV1 ||
 		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback ||
 		cfg.Hybrid.PoolLimit != 100 || cfg.Hybrid.LexicalReservation != 20 ||
-		cfg.Hybrid.SemanticReservation != 20 || cfg.Hybrid.CursorTTL != "15m" {
+		cfg.Hybrid.SemanticReservation != 20 || cfg.Hybrid.CursorTTL != "15m" ||
+		cfg.SessionRecommendationEnabled || cfg.Session.MaxSeeds != 21 || cfg.Session.MaxLookback != "24h" {
 		t.Fatalf("unexpected disabled defaults: %#v", cfg)
 	}
 	if err := ValidateMultimodalRuntime(cfg, MultimodalRuntimeDependencies{}); err != nil {
@@ -125,6 +126,8 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 		{name: "invalid image type", mutate: func(c *MultimodalConfig) { c.Images.AllowedMIMETypes = []string{"image/svg+xml"} }},
 		{name: "weak query cache", mutate: func(c *MultimodalConfig) { c.Query.CacheTTL = "100ms" }},
 		{name: "unbounded exact limit", mutate: func(c *MultimodalConfig) { c.Exact.MaxLimit = 501 }},
+		{name: "unbounded session seeds", mutate: func(c *MultimodalConfig) { c.Session.MaxSeeds = 22 }},
+		{name: "unbounded session lookback", mutate: func(c *MultimodalConfig) { c.Session.MaxLookback = "25h" }},
 		{name: "unknown hybrid version", mutate: func(c *MultimodalConfig) { c.Hybrid.Version = "unknown" }},
 		{name: "fallback disabled", mutate: func(c *MultimodalConfig) { c.Hybrid.FallbackMode = "none" }},
 		{name: "hybrid pool below page bound", mutate: func(c *MultimodalConfig) { c.Hybrid.PoolLimit = 50 }},
@@ -141,6 +144,35 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 				t.Fatalf("error = %v, want %v", err, ErrInvalidMultimodalConfig)
 			}
 		})
+	}
+}
+
+func TestSessionSemanticRuntimeRequiresExactButNotProvider(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.VideoJobsEnabled = false
+	cfg.QueryEmbeddingEnabled = false
+	cfg.HybridSearchEnabled = false
+	cfg.SimilarVideosEnabled = false
+	cfg.SessionRecommendationEnabled = true
+	cfg.Provider = MultimodalProviderConfig{}
+	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	ready := MultimodalRuntimeDependencies{ExactRetrieval: true, SessionRecommendation: true}
+	if err := ValidateMultimodalRuntime(cfg, ready); err != nil {
+		t.Fatalf("session-only runtime required provider: %v", err)
+	}
+	if err := ValidateMultimodalAPIRuntime(cfg, ready); err != nil {
+		t.Fatalf("session-only API required provider: %v", err)
+	}
+	for _, dependencies := range []MultimodalRuntimeDependencies{
+		{},
+		{ExactRetrieval: true},
+		{SessionRecommendation: true},
+	} {
+		if err := ValidateMultimodalAPIRuntime(cfg, dependencies); !errors.Is(err, ErrMissingMultimodalDependency) {
+			t.Fatalf("dependencies=%#v error=%v", dependencies, err)
+		}
 	}
 }
 

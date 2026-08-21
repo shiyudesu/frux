@@ -30,10 +30,10 @@
 
 ## 5. Runtime configuration and composition
 
-- [ ] 5.1 Add `multimodal.session_recommendation_enabled` and bounded session-semantic runtime settings to local, Docker, production, and sample configuration with every checked-in default false.
-- [ ] 5.2 Extend multimodal configuration normalization so enabled session recommendation requires a complete active contract and Exact retrieval but does not require query embedding or an upstream provider endpoint.
-- [ ] 5.3 Reorder/reuse multimodal PostgreSQL repository assembly and conditionally register the semantic Provider only after complete dependency validation.
-- [ ] 5.4 Add startup/configuration tests for disabled defaults, complete runtime, partial dependencies, policy/runtime contract mismatch, and enabled runtime with a policy that omits semantic recall.
+- [x] 5.1 Add `multimodal.session_recommendation_enabled` and bounded session-semantic runtime settings to local, Docker, production, and sample configuration with every checked-in default false.
+- [x] 5.2 Extend multimodal configuration normalization so enabled session recommendation requires a complete active contract and Exact retrieval but does not require query embedding or an upstream provider endpoint.
+- [x] 5.3 Reorder/reuse multimodal PostgreSQL repository assembly and conditionally register the semantic Provider only after complete dependency validation.
+- [x] 5.4 Add startup/configuration tests for disabled defaults, complete runtime, partial dependencies, policy/runtime contract mismatch, and enabled runtime with a policy that omits semantic recall.
 
 ## 6. Evidence, metrics, and Snapshot stability
 

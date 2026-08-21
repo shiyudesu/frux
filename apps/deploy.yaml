@@ -104,6 +104,7 @@ stringData:
       query_embedding_enabled: false
       hybrid_search_enabled: false
       similar_videos_enabled: false
+      session_recommendation_enabled: false
       max_video_text_runes: 2048
       contract:
         provider_alias: "alibaba-bailian"
@@ -124,6 +125,9 @@ stringData:
         admission_limit: 2
         max_request_bytes: 25165824
         max_response_bytes: 2097152
+      session:
+        max_seeds: 21
+        max_lookback: "24h"
     playback:
       telemetry:
         retention: "168h"

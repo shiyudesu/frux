@@ -224,19 +224,49 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	)
 	durablePublicationPublisher := applicationvideo.NewDurablePublicationPublisher(videoRepo)
 	feedRepo := infrafeed.New(gormDB, infrafeed.WithMediaCatalog(mediaCatalog))
+	multimodalRepository := infraembedding.New(gormDB)
 	recommendationRepo := infrarecommendation.New(gormDB)
 	relationRepo := infrarelation.New(gormDB)
+	recallProviders := []applicationrecommendation.RecallProvider{
+		applicationrecommendation.NewFreshContentProvider(recommendationRepo),
+		applicationrecommendation.NewHotContentProvider(recommendationRepo),
+		applicationrecommendation.NewContentSimilarityProvider(recommendationRepo, recommendationRepo, recommendationRepo),
+		applicationrecommendation.NewFollowedAuthorProvider(followedAuthorRecallAdapter{source: relationRepo}, recommendationRepo),
+		applicationrecommendation.NewSessionContinuationProvider(recommendationRepo, recommendationRepo),
+	}
+	sessionRecommendationReady := false
+	if cfg.Multimodal.SessionRecommendationEnabled {
+		contract, err := cfg.Multimodal.Contract.Identity()
+		if err != nil {
+			return err
+		}
+		maxLookback, err := time.ParseDuration(cfg.Multimodal.Session.MaxLookback)
+		if err != nil {
+			return err
+		}
+		builder, err := applicationrecommendation.NewSessionSemanticBuilder(
+			recommendationRepo, multimodalRepository,
+			applicationrecommendation.WithSessionSemanticRuntimeLimits(
+				cfg.Multimodal.Session.MaxSeeds, maxLookback,
+			),
+		)
+		if err != nil {
+			return err
+		}
+		provider, err := applicationrecommendation.NewSemanticSessionProvider(
+			builder, multimodalRepository, contract,
+		)
+		if err != nil {
+			return err
+		}
+		recallProviders = append(recallProviders, provider)
+		sessionRecommendationReady = true
+	}
 	recommendationOptions := []applicationrecommendation.Option{
 		applicationrecommendation.WithPolicySelector(applicationrecommendation.NewPolicyService(recommendationRepo, nil)),
 		applicationrecommendation.WithRequestLogRepository(recommendationRepo),
 		applicationrecommendation.WithCandidateVisibilityFilter(recommendationRepo),
-		applicationrecommendation.WithRecallProviders(
-			applicationrecommendation.NewFreshContentProvider(recommendationRepo),
-			applicationrecommendation.NewHotContentProvider(recommendationRepo),
-			applicationrecommendation.NewContentSimilarityProvider(recommendationRepo, recommendationRepo, recommendationRepo),
-			applicationrecommendation.NewFollowedAuthorProvider(followedAuthorRecallAdapter{source: relationRepo}, recommendationRepo),
-			applicationrecommendation.NewSessionContinuationProvider(recommendationRepo, recommendationRepo),
-		),
+		applicationrecommendation.WithRecallProviders(recallProviders...),
 	}
 	feedOptions := []applicationfeed.Option{}
 	videoOptions := []applicationvideo.Option{
@@ -432,10 +462,9 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		cfg.Security.HMACSecret,
 	)
 	mediaAdminHandler := interfaceshttpmedia.NewAdmin(mediaAdminService)
-	multimodalRepository := infraembedding.New(gormDB)
 	searchService, err := newMultimodalSearchService(
 		context.Background(), cfg.Multimodal, videoRepo, accountRepo,
-		multimodalRepository, newReadyMultimodalProvider,
+		multimodalRepository, sessionRecommendationReady, newReadyMultimodalProvider,
 	)
 	if err != nil {
 		return err

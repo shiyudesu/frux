@@ -30,9 +30,10 @@ const (
 )
 
 type MultimodalRuntimeDependencies struct {
-	ProviderContract *domainembedding.MultimodalContractIdentity
-	QueryCache       bool
-	ExactRetrieval   bool
+	ProviderContract      *domainembedding.MultimodalContractIdentity
+	QueryCache            bool
+	ExactRetrieval        bool
+	SessionRecommendation bool
 }
 
 func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
@@ -57,17 +58,17 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		return ErrInvalidMultimodalConfig
 	}
 	if !cfg.Enabled && (cfg.VideoJobsEnabled || cfg.QueryEmbeddingEnabled ||
-		cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled) {
+		cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled || cfg.SessionRecommendationEnabled) {
 		return ErrInvalidMultimodalConfig
 	}
 	if cfg.Enabled && !cfg.VideoJobsEnabled && !cfg.QueryEmbeddingEnabled &&
-		!cfg.HybridSearchEnabled && !cfg.SimilarVideosEnabled {
+		!cfg.HybridSearchEnabled && !cfg.SimilarVideosEnabled && !cfg.SessionRecommendationEnabled {
 		return ErrInvalidMultimodalConfig
 	}
 	if cfg.HybridSearchEnabled && !cfg.QueryEmbeddingEnabled {
 		return ErrInvalidMultimodalConfig
 	}
-	if cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled {
+	if cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled || cfg.SessionRecommendationEnabled {
 		if !cfg.Enabled {
 			return ErrInvalidMultimodalConfig
 		}
@@ -248,6 +249,15 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		exactDeadline < 10*time.Millisecond || exactDeadline > 10*time.Second {
 		return ErrInvalidMultimodalConfig
 	}
+	if cfg.Session.MaxSeeds == 0 {
+		cfg.Session.MaxSeeds = 21
+	}
+	cfg.Session.MaxLookback = defaultDuration(cfg.Session.MaxLookback, "24h")
+	sessionLookback, err := time.ParseDuration(cfg.Session.MaxLookback)
+	if err != nil || cfg.Session.MaxSeeds < 1 || cfg.Session.MaxSeeds > 21 ||
+		sessionLookback < time.Minute || sessionLookback > 24*time.Hour {
+		return ErrInvalidMultimodalConfig
+	}
 
 	cfg.Hybrid.Version = strings.ToLower(strings.TrimSpace(cfg.Hybrid.Version))
 	if cfg.Hybrid.Version == "" {
@@ -295,15 +305,21 @@ func ValidateMultimodalRuntime(cfg MultimodalConfig, dependencies MultimodalRunt
 	if !cfg.Enabled {
 		return nil
 	}
-	expected, err := cfg.Contract.Identity()
-	if err != nil || dependencies.ProviderContract == nil ||
-		!expected.Equal(*dependencies.ProviderContract) {
-		return ErrMissingMultimodalDependency
+	providerRequired := cfg.VideoJobsEnabled || cfg.QueryEmbeddingEnabled || cfg.HybridSearchEnabled
+	if providerRequired {
+		expected, err := cfg.Contract.Identity()
+		if err != nil || dependencies.ProviderContract == nil ||
+			!expected.Equal(*dependencies.ProviderContract) {
+			return ErrMissingMultimodalDependency
+		}
 	}
 	if (cfg.QueryEmbeddingEnabled || cfg.HybridSearchEnabled) && !dependencies.QueryCache {
 		return ErrMissingMultimodalDependency
 	}
-	if (cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled) && !dependencies.ExactRetrieval {
+	if (cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled || cfg.SessionRecommendationEnabled) && !dependencies.ExactRetrieval {
+		return ErrMissingMultimodalDependency
+	}
+	if cfg.SessionRecommendationEnabled && !dependencies.SessionRecommendation {
 		return ErrMissingMultimodalDependency
 	}
 	return nil
@@ -334,7 +350,10 @@ func ValidateMultimodalAPIRuntime(cfg MultimodalConfig, dependencies MultimodalR
 			return ErrMissingMultimodalDependency
 		}
 	}
-	if (cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled) && !dependencies.ExactRetrieval {
+	if (cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled || cfg.SessionRecommendationEnabled) && !dependencies.ExactRetrieval {
+		return ErrMissingMultimodalDependency
+	}
+	if cfg.SessionRecommendationEnabled && !dependencies.SessionRecommendation {
 		return ErrMissingMultimodalDependency
 	}
 	return nil

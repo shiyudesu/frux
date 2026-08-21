@@ -122,6 +122,7 @@ func TestNewMultimodalSearchServiceScopesProviderByFeature(t *testing.T) {
 			calls := 0
 			service, err := newMultimodalSearchService(
 				context.Background(), test.cfg, videoRepository, userRepository, semanticIndex,
+				false,
 				func(context.Context, infraconfig.MultimodalConfig, string) (readyMultimodalProvider, error) {
 					calls++
 					return nil, errors.New("provider must not be constructed")
@@ -131,6 +132,36 @@ func TestNewMultimodalSearchServiceScopesProviderByFeature(t *testing.T) {
 				t.Fatalf("service=%#v calls=%d err=%v", service, calls, err)
 			}
 		})
+	}
+}
+
+func TestNewMultimodalSearchServiceRequiresCompletedSessionRecommendationAssembly(t *testing.T) {
+	contract := routerMultimodalContract(t)
+	cfg := infraconfig.MultimodalConfig{
+		Enabled: true, SessionRecommendationEnabled: true,
+		Contract: routerMultimodalContractConfig(contract),
+	}
+	semantic := &routerMultimodalSemanticIndexStub{}
+	providerCalls := 0
+	factory := func(context.Context, infraconfig.MultimodalConfig, string) (readyMultimodalProvider, error) {
+		providerCalls++
+		return nil, errors.New("query provider must not be constructed")
+	}
+	service, err := newMultimodalSearchService(
+		context.Background(), cfg,
+		&routerMultimodalVideoRepositoryStub{}, &routerMultimodalUserRepositoryStub{}, semantic,
+		false, factory,
+	)
+	if service != nil || !errors.Is(err, infraconfig.ErrMissingMultimodalDependency) || providerCalls != 0 {
+		t.Fatalf("service=%#v calls=%d err=%v", service, providerCalls, err)
+	}
+	service, err = newMultimodalSearchService(
+		context.Background(), cfg,
+		&routerMultimodalVideoRepositoryStub{}, &routerMultimodalUserRepositoryStub{}, semantic,
+		true, factory,
+	)
+	if err != nil || service == nil || providerCalls != 0 {
+		t.Fatalf("service=%#v calls=%d err=%v", service, providerCalls, err)
 	}
 }
 
@@ -154,6 +185,7 @@ func TestNewMultimodalSearchServiceWiresHybridAndDegrades(t *testing.T) {
 	calls := 0
 	service, err := newMultimodalSearchService(
 		context.Background(), cfg, videos, &routerMultimodalUserRepositoryStub{}, semantic,
+		false,
 		func(_ context.Context, _ infraconfig.MultimodalConfig, capability string) (readyMultimodalProvider, error) {
 			calls++
 			if capability != "query" {
@@ -173,6 +205,7 @@ func TestNewMultimodalSearchServiceWiresHybridAndDegrades(t *testing.T) {
 	provider.err = errors.New("provider unavailable")
 	degradedService, err := newMultimodalSearchService(
 		context.Background(), cfg, videos, &routerMultimodalUserRepositoryStub{}, semantic,
+		false,
 		func(context.Context, infraconfig.MultimodalConfig, string) (readyMultimodalProvider, error) {
 			return provider, nil
 		},
@@ -193,6 +226,7 @@ func TestNewMultimodalSearchServiceFailsClosedOnProviderStartup(t *testing.T) {
 		context.Background(), routerMultimodalHybridConfig(contract),
 		&routerMultimodalVideoRepositoryStub{}, &routerMultimodalUserRepositoryStub{},
 		&routerMultimodalSemanticIndexStub{},
+		false,
 		func(context.Context, infraconfig.MultimodalConfig, string) (readyMultimodalProvider, error) {
 			return nil, want
 		},

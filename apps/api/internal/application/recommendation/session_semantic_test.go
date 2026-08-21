@@ -250,6 +250,40 @@ func TestSessionSemanticBuilderPropagatesInfrastructureFailuresAndBoundsSeeds(t 
 	}
 }
 
+func TestSessionSemanticBuilderEnforcesRuntimePolicyCeilings(t *testing.T) {
+	now := time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)
+	contract := sessionSemanticTestContract(t, "revision-1")
+	builder, err := NewSessionSemanticBuilder(
+		&sessionSemanticFactSourceStub{}, &sessionSemanticVectorSourceStub{},
+		WithSessionSemanticRuntimeLimits(2, time.Hour),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := sessionSemanticTestPolicy(contract.Key(), 1)
+	policy.MaxSeeds = 3
+	if _, err := builder.Build(context.Background(), SessionSemanticBuildRequest{
+		UserID: 7, Context: sessionSemanticContext(t, 1, nil), Policy: policy,
+		Contract: contract, Budget: 20, Now: now,
+	}); !errors.Is(err, ErrSessionSemanticUnavailable) {
+		t.Fatalf("max-seed error=%v", err)
+	}
+	policy.MaxSeeds = 2
+	policy.LookbackSeconds = 2 * 60 * 60
+	if _, err := builder.Build(context.Background(), SessionSemanticBuildRequest{
+		UserID: 7, Context: sessionSemanticContext(t, 1, nil), Policy: policy,
+		Contract: contract, Budget: 20, Now: now,
+	}); !errors.Is(err, ErrSessionSemanticUnavailable) {
+		t.Fatalf("lookback error=%v", err)
+	}
+	if _, err := NewSessionSemanticBuilder(
+		&sessionSemanticFactSourceStub{}, &sessionSemanticVectorSourceStub{},
+		WithSessionSemanticRuntimeLimits(0, time.Hour),
+	); !errors.Is(err, ErrSessionSemanticUnavailable) {
+		t.Fatalf("invalid runtime option error=%v", err)
+	}
+}
+
 func sessionSemanticTestContract(t testing.TB, revision string) domainembedding.MultimodalContractIdentity {
 	t.Helper()
 	contract, err := domainembedding.NewMultimodalContractIdentity(

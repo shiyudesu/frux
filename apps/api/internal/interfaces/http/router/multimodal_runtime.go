@@ -42,9 +42,12 @@ func newMultimodalSearchService(
 	videos multimodalSearchVideoRepository,
 	users domainsearch.UserSearchIndex,
 	semantic applicationsearch.SemanticVideoIndex,
+	sessionRecommendationReady bool,
 	providerFactory multimodalProviderFactory,
 ) (*applicationsearch.Service, error) {
-	dependencies := infraconfig.MultimodalRuntimeDependencies{ExactRetrieval: semantic != nil}
+	dependencies := infraconfig.MultimodalRuntimeDependencies{
+		ExactRetrieval: semantic != nil, SessionRecommendation: sessionRecommendationReady,
+	}
 	options := []applicationsearch.Option{}
 	if cfg.QueryEmbeddingEnabled || cfg.HybridSearchEnabled {
 		if providerFactory == nil {

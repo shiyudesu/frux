@@ -251,6 +251,30 @@ func TestRankerUsesSemanticSimilarityWithoutChangingHashSession(t *testing.T) {
 	}
 }
 
+func TestReadySemanticRuntimeDoesNothingWhenPolicyOmitsProvider(t *testing.T) {
+	now := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	contract := sessionSemanticTestContract(t, "provider-revision")
+	builder := &sessionSemanticInterestBuilderStub{err: errors.New("must not be called")}
+	semantic, _ := NewSemanticSessionProvider(builder, &sessionSemanticExactIndexStub{}, contract)
+	fresh := annotateCandidate(recallCandidate(2, 2, 1, now), domainrecommendation.RecallProviderFresh, 1)
+	policy := rankerPolicy(t, 2, map[string]float64{domainrecommendation.FeatureFreshness: 1})
+	service := New(
+		&rankerTestRepo{}, WithNow(func() time.Time { return now }),
+		WithRecallProviders(
+			semantic,
+			providerFunc{name: domainrecommendation.RecallProviderFresh, run: func(context.Context, RecallRequest) ([]*domainrecommendation.Candidate, error) {
+				return []*domainrecommendation.Candidate{fresh}, nil
+			}},
+		),
+	)
+	execution, err := service.recallCandidates(context.Background(), &domainrecommendation.CandidateRequest{
+		UserID: 7, Scene: "recommend", Context: sessionSemanticContext(t, 1, nil),
+	}, 50, policy)
+	if err != nil || execution == nil || len(execution.candidates) != 1 || builder.calls != 0 || execution.sessionSemantic != nil {
+		t.Fatalf("execution=%#v builder_calls=%d err=%v", execution, builder.calls, err)
+	}
+}
+
 func sessionSemanticRecommendationPolicy(
 	t testing.TB,
 	contract domainembedding.MultimodalContractIdentity,
