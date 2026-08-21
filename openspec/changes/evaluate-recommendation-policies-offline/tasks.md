@@ -14,12 +14,12 @@
 
 ## 3. Chronological cases and baseline registry
 
-- [ ] 3.1 Implement `short-video-session-v1` positive/quick-skip/neutral classification, chronological ordering, held-out target selection, minimum history, bounded session, prior-item exclusion, and closed case exclusions.
-- [ ] 3.2 Implement deterministic Popularity and Recent Interaction baselines with fixed final item-key tie-breaks.
-- [ ] 3.3 Implement Category profile/cosine scoring with deterministic primary-category and missing-category handling.
-- [ ] 3.4 Implement Text, Image, and Multimodal positive-session centroid Exact cosine baselines using only compatible precomputed vectors.
-- [ ] 3.5 Implement Multimodal + Session Interest using bounded positive centroid minus negative quick-skip centroid without model inference.
-- [ ] 3.6 Add leakage, duplicate ordering, target inclusion, neutral/missing behavior, unavailable feature, vector compatibility, and deterministic tie tests.
+- [x] 3.1 Implement `short-video-session-v1` positive/quick-skip/neutral classification, chronological ordering, held-out target selection, minimum history, bounded session, prior-item exclusion, and closed case exclusions.
+- [x] 3.2 Implement deterministic Popularity and Recent Interaction baselines with fixed final item-key tie-breaks.
+- [x] 3.3 Implement Category profile/cosine scoring with deterministic primary-category and missing-category handling.
+- [x] 3.4 Implement Text, Image, and Multimodal positive-session centroid Exact cosine baselines using only compatible precomputed vectors.
+- [x] 3.5 Implement Multimodal + Session Interest using bounded positive centroid minus negative quick-skip centroid without model inference.
+- [x] 3.6 Add leakage, duplicate ordering, target inclusion, neutral/missing behavior, unavailable feature, vector compatibility, and deterministic tie tests.
 
 ## 4. Metrics and aggregation
 

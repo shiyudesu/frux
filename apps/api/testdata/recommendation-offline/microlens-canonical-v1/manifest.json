@@ -11,8 +11,8 @@
   "files": [
     {"role":"interactions","path":"interactions.csv","schema":"microlens-interactions-v1","sha256":"28a75d16abfdd9c8b157b0ac7ff6a82abb70eb73569ef85df45863580919ea98","rows":8},
     {"role":"items","path":"items.csv","schema":"microlens-items-v1","sha256":"bd13470a57c324b41184b2eff0719ec854e898b9909f63c1bfc5954950d79ec3","rows":6},
-    {"role":"text_features","path":"text_features.csv","schema":"canonical-vectors-v1","sha256":"b995093a86245a3b7b26b4827f549b40ee64037a5a414d8045f001734d992016","rows":6},
-    {"role":"image_features","path":"image_features.csv","schema":"canonical-vectors-v1","sha256":"904db9f6ace59b8fc816ba0e88ee8c22252e7915fe00e70c308d28a9ff709647","rows":6},
-    {"role":"multimodal_features","path":"multimodal_features.csv","schema":"canonical-vectors-v1","sha256":"b577cd14da9b60242ba780248036a3378941beef7a2f3261fb3b2b26f2cf35b7","rows":6}
+    {"role":"text_features","path":"text_features.csv","schema":"canonical-vectors-v1","sha256":"8954eb17626b7e7c62d5145ecc4aeb8b0b8d0ddba3f532193a57c2d7ae47d6e1","rows":6},
+    {"role":"image_features","path":"image_features.csv","schema":"canonical-vectors-v1","sha256":"911f44059dde4495e5eec43c003a259c3515c92f7978aa8f1877f16d4f6075e7","rows":6},
+    {"role":"multimodal_features","path":"multimodal_features.csv","schema":"canonical-vectors-v1","sha256":"afea779b7b2419f6108872d3de46442d546f7a2a4658d89a1d05857fce2b2da0","rows":6}
   ]
 }
