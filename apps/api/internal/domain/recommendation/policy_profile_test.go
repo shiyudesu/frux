@@ -260,6 +260,7 @@ func TestRequestLogSamplingAndPayloadBounds(t *testing.T) {
 	componentNames := []string{
 		FeatureContentSimilarity,
 		FeatureSessionSimilarity,
+		FeatureSemanticSimilarity,
 		FeatureHotness,
 		FeatureFreshness,
 		FeatureAuthorAffinity,
@@ -272,7 +273,9 @@ func TestRequestLogSamplingAndPayloadBounds(t *testing.T) {
 		components := make(map[string]float64, MaxRequestLogScoreComponents)
 		for reasonIndex := range reasons {
 			reasons[reasonIndex] = "reason-" + int64String(int64(reasonIndex)) + "-" + strings.Repeat("x", 55)
-			components[componentNames[reasonIndex]] = float64(reasonIndex) / 10
+		}
+		for componentIndex := range componentNames {
+			components[componentNames[componentIndex]] = float64(componentIndex) / 10
 		}
 		maximumPool[index] = LoggedCandidate{
 			VideoID: int64(index + 1), Reasons: reasons, ScoreComponents: components,

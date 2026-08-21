@@ -1017,14 +1017,15 @@ func (s *Service) rankCandidates(ctx context.Context, userID int64, recommendati
 		value.FreshnessScore = freshnessScoreWithHalfLife(now, value.PublishedAt, policy.Config.FreshnessHalfLifeHours)
 		value.Similarity = boundedFloat(normalizedCosine(userVector, vector, hasUserVector) * profileConfidence)
 		components := map[string]float64{
-			domainrecommendation.FeatureContentSimilarity: value.Similarity,
-			domainrecommendation.FeatureSessionSimilarity: normalizedCosine(sessionVector, vector, len(sessionVector) > 0),
-			domainrecommendation.FeatureHotness:           normalizedHotness(value.HotScore, pool),
-			domainrecommendation.FeatureFreshness:         value.FreshnessScore,
-			domainrecommendation.FeatureAuthorAffinity:    normalizedAffinity(features.Profile, value.AuthorID, false),
-			domainrecommendation.FeatureFollowRelation:    boolFeature(features.FollowedAuthors[value.AuthorID]),
-			domainrecommendation.FeatureNegativePenalty:   negativePenalty(features, vector, value, negativeVectorConfidence),
-			domainrecommendation.FeatureExposurePenalty:   exposurePenalty(features.RecentExposures[value.VideoID]),
+			domainrecommendation.FeatureContentSimilarity:  value.Similarity,
+			domainrecommendation.FeatureSessionSimilarity:  normalizedCosine(sessionVector, vector, len(sessionVector) > 0),
+			domainrecommendation.FeatureSemanticSimilarity: boundedFloat(maxFloat(0, value.SourceScores[domainrecommendation.RecallProviderSemanticSession])),
+			domainrecommendation.FeatureHotness:            normalizedHotness(value.HotScore, pool),
+			domainrecommendation.FeatureFreshness:          value.FreshnessScore,
+			domainrecommendation.FeatureAuthorAffinity:     normalizedAffinity(features.Profile, value.AuthorID, false),
+			domainrecommendation.FeatureFollowRelation:     boolFeature(features.FollowedAuthors[value.AuthorID]),
+			domainrecommendation.FeatureNegativePenalty:    negativePenalty(features, vector, value, negativeVectorConfidence),
+			domainrecommendation.FeatureExposurePenalty:    exposurePenalty(features.RecentExposures[value.VideoID]),
 		}
 		value.ScoreComponents = sanitizeComponents(components)
 		value.RankScore = policyScore(value.ScoreComponents, policy.Config.FeatureWeights)

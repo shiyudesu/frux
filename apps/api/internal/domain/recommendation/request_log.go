@@ -14,11 +14,11 @@ const (
 	MaxRequestLogCandidates        = 500
 	MaxRequestLogReasons           = 8
 	MaxRequestLogReasonLength      = 64
-	MaxRequestLogScoreComponents   = 8
+	MaxRequestLogScoreComponents   = 9
 	MaxRequestLogRecallDiagnostics = 64
 	MaxRequestLogDiagnosticCount   = MaxRecallBudget * 16
 	// MaxRequestLogPayloadBytes accommodates every bounded entry in a normal
-	// 500-candidate pool (eight 64-byte reasons and eight score components per
+	// 500-candidate pool (eight 64-byte reasons and nine score components per
 	// candidate) without compacting its ordered explanation prefix.
 	MaxRequestLogPayloadBytes     = 1024 * 1024
 	RecommendationRequestLogScene = "recommend"

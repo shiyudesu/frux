@@ -28,6 +28,14 @@ type RecallRequest struct {
 	Context *domainrecommendation.RecommendationContext
 	Budget  int
 	Now     time.Time
+	Policy  *domainrecommendation.Policy
+}
+
+type SessionSemanticEvidenceProvider interface {
+	RecallWithSessionSemanticEvidence(
+		context.Context,
+		RecallRequest,
+	) ([]*domainrecommendation.Candidate, *domainrecommendation.SessionSemanticEvidence, error)
 }
 
 type ProviderDegradation struct {
@@ -391,6 +399,7 @@ type recallExecution struct {
 	candidates       []*domainrecommendation.Candidate
 	degraded         []ProviderDegradation
 	quotaDiagnostics []domainrecommendation.RecallDiagnostic
+	sessionSemantic  *domainrecommendation.SessionSemanticEvidence
 	healthy          int
 }
 
@@ -410,6 +419,7 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 	type result struct {
 		provider   string
 		candidates []*domainrecommendation.Candidate
+		evidence   *domainrecommendation.SessionSemanticEvidence
 		err        error
 	}
 	results := make(chan result, len(s.providers))
@@ -435,9 +445,18 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 			done := make(chan result, 1)
 			go func() {
 				defer s.releaseRecallSlot()
-				candidates, err := provider.Recall(providerCtx, RecallRequest{
+				request := RecallRequest{
 					UserID: req.UserID, Scene: req.Scene, Context: req.Context, Budget: budget, Now: s.now(),
-				})
+				}
+				if policyDriven {
+					request.Policy = policies[0].Clone()
+				}
+				if evidenced, ok := provider.(SessionSemanticEvidenceProvider); ok {
+					candidates, evidence, err := evidenced.RecallWithSessionSemanticEvidence(providerCtx, request)
+					done <- result{provider: provider.Name(), candidates: candidates, evidence: evidence, err: err}
+					return
+				}
+				candidates, err := provider.Recall(providerCtx, request)
 				done <- result{provider: provider.Name(), candidates: candidates, err: err}
 			}()
 			select {
@@ -456,12 +475,18 @@ func (s *Service) recallCandidates(ctx context.Context, req *domainrecommendatio
 	providerResults := map[string][]*domainrecommendation.Candidate{}
 	healthyProviders := map[string]bool{}
 	for result := range results {
+		if result.evidence != nil {
+			execution.sessionSemantic = result.evidence.Clone()
+		}
 		if result.err != nil {
 			reason := "error"
 			if errors.Is(result.err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				reason = "timeout"
 			} else if errors.Is(result.err, errRecallProviderCapacity) {
 				reason = "capacity"
+			}
+			if result.provider == domainrecommendation.RecallProviderSemanticSession && execution.sessionSemantic == nil && policyDriven {
+				execution.sessionSemantic = sessionSemanticFailureEvidence(policies[0], reason)
 			}
 			execution.degraded = append(execution.degraded, ProviderDegradation{Provider: result.provider, Reason: reason})
 			continue

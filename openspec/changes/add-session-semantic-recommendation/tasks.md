@@ -22,11 +22,11 @@
 
 ## 4. Semantic Recall and ranking integration
 
-- [ ] 4.1 Implement `SemanticSessionProvider` using the builder plus existing `ExactMultimodalSearch`, seed/hard-suppression exclusions, finite positive scores, deterministic confidence scaling, and bounded output.
-- [ ] 4.2 Feed `semantic_session` candidates through existing visibility revalidation, deduplication, Provider-local normalization, quota reservation/underfill, round-robin fill, and common Recall deadline/capacity controls.
-- [ ] 4.3 Populate registered `semantic_similarity` only from valid semantic Provider evidence while preserving hash `session_similarity`, existing feature weights, suppression, diversity, tie-breaking, and fallback.
-- [ ] 4.4 Propagate closed semantic result/degradation metadata through first-page Recall execution without changing public Feed DTOs or Snapshot cursor contracts.
-- [ ] 4.5 Add Provider, Ranker, quota, cancellation, timeout, overlap, underfill, visibility, suppression, and no-external-model-call tests, including race coverage for concurrent requests.
+- [x] 4.1 Implement `SemanticSessionProvider` using the builder plus existing `ExactMultimodalSearch`, seed/hard-suppression exclusions, finite positive scores, deterministic confidence scaling, and bounded output.
+- [x] 4.2 Feed `semantic_session` candidates through existing visibility revalidation, deduplication, Provider-local normalization, quota reservation/underfill, round-robin fill, and common Recall deadline/capacity controls.
+- [x] 4.3 Populate registered `semantic_similarity` only from valid semantic Provider evidence while preserving hash `session_similarity`, existing feature weights, suppression, diversity, tie-breaking, and fallback.
+- [x] 4.4 Propagate closed semantic result/degradation metadata through first-page Recall execution without changing public Feed DTOs or Snapshot cursor contracts.
+- [x] 4.5 Add Provider, Ranker, quota, cancellation, timeout, overlap, underfill, visibility, suppression, and no-external-model-call tests, including race coverage for concurrent requests.
 
 ## 5. Runtime configuration and composition
 
