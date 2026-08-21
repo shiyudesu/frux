@@ -8,8 +8,9 @@
 但当前仓库没有选择或内置正式模型服务，因此所有配置默认 `multimodal.enabled=false`，不会调用模型或
 改变现有产品行为。
 
-多模态路径不训练/微调模型，不扫描历史视频，不创建 HNSW/IVFFlat，也不接入推荐 Policy 或新的
-Recall Provider。开发 Fixture 和功能启用后首次公开的新视频是第一阶段唯一向量来源。
+多模态路径不训练/微调模型，不扫描历史视频，不创建 HNSW/IVFFlat；默认关闭的 Session Semantic
+Recommendation 可在完整策略下复用已有 Fact/Projection 与 Exact，但推荐请求不调用 Provider，也不创建新的
+长期画像或向量存储。开发 Fixture 和功能启用后首次公开的新视频是第一阶段唯一向量来源。
 
 ## 2. Live publication intake
 

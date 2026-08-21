@@ -628,6 +628,11 @@ CI 只使用只读仓库权限和非敏感测试值，不依赖仓库 Secret。�
 
 - 推荐 context 只使用 `domain/recommendation.RecommendationContext`；HTTP 必须严格绑定并拒绝
   超限/未知字段，客户端不提供身份、关系、曝光或任意 metadata。
+- Session Semantic 只能把 current/recent ID 当作有界选择器；未被服务端交付、曝光、观看、互动或
+  已接受反馈事实确认的 ID 不得贡献权重。推荐请求不得调用多模态 Provider、Query Embedding 或发送用户行为。
+- `semantic_session` 必须精确绑定 active contract，使用 PostgreSQL current Fact/Projection 和可取消 Exact；
+  缺失/低 Confidence 是健康 underfill，数据库/Deadline 错误只降级该 Provider。Raw vector、行为正文和高基数 ID
+  不得进入日志或 Prometheus label。
 - `recommendation_policy` 必须经 Domain 校验后才可启用。`EnsureInitialPolicies` 仅以
   `(scene, version)` conflict-do-nothing 插入 bootstrap 版本，API 和 Worker migration 均可安全调用，
   不得在启动时覆盖运营策略。
@@ -636,7 +641,8 @@ CI 只使用只读仓库权限和非敏感测试值，不依赖仓库 Secret。�
   Worker 消费以稳定事件 ID 去重。日志载荷、候选数和保留清理必须有界。
 - Redis snapshot 是优化而非真相：cursor 必须签名并绑定用户/scene/request，页组装必须再次
   校验可见性，Redis 失败必须走确定性 degraded cursor。
-- 推荐 API-flow 测试覆盖 context、认证、Provider 降级、策略、snapshot、反馈和 outcome；
+- 推荐 API-flow 测试覆盖 context、认证、Provider 降级、策略、snapshot、反馈、outcome，以及 Session Semantic
+  正负方向、合同/缺失向量、Confidence underfill、零模型调用和后续页不重算；
   定向并发基准命令为
   `cd apps/api && go test ./internal/application/recommendation -run '^$' -bench '^BenchmarkRecommendBoundedPool$' -benchtime=5s`。
 - 自动审核以 `(video_id, review_version)` 唯一建案，视频 review version 必须为正数。机器结果

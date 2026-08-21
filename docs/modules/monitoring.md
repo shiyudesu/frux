@@ -159,6 +159,12 @@ result 只允许 returned/local_unique/readable/reserved/fill_selected/selected/
 underfill reason 只允许 `insufficient_readable`。采样请求日志可保存同一封闭枚举的有界计数摘要，但不得把
 候选列表、source score、map payload 或 Provider 原始错误写入普通日志或指标标签。
 
+Session Semantic 额外暴露
+`frux_recommendation_session_semantic_operations_total{stage,result,confidence_band}`、
+`frux_recommendation_session_semantic_duration_seconds{stage,result}`、Confidence、兼容向量覆盖率和
+封闭 kind 计数直方图。stage 仅为 builder/provider；result 和 confidence band 使用代码注册集合，
+不得包含 user、request、session、video、contract key、query、vector 或原始错误。
+
 Quota Merge 排障先比较 `returned → local_unique → readable`，再看 reservation/fill/final represented；
 `exhausted=1` 且 `underfill>0` 表示健康 Provider 的可读唯一输出不足，容量应由公共 fill 回收。overlap 高表示
 一个全局视频同时代表多个 Provider，不等同于内容多样性。selected pool 长期低于 policy limit 时，结合

@@ -62,6 +62,8 @@
 | 进度参与兴趣权重 | 有效前台播放进度和完播提升内容兴趣，过短跳过不作为正反馈 |
 | 发布与 HTTP 解耦 | 曝光模块通过事务 Outbox 向 Kafka behavior stream 可靠投递；只有 broker acknowledgement 后才 dispatched，失败保留 pending |
 | 画像投影不影响写入结果 | 反馈和关注事实在各自事务内写入可租约重试的画像 Outbox；Worker 以稳定事件 ID 幂等投影，失败保留待重试 |
+| Session Semantic 默认休眠 | 只有运行时开关和完整策略同时选择 `semantic_session` 时才执行；请求只组合已有视频向量并查询 PostgreSQL Exact，不调用外部模型 |
+| 客户端会话 ID 不等于兴趣证据 | current/recent ID 只限定最多 21 个种子；必须存在服务端交付、曝光、观看、互动或反馈事实才能贡献向量权重 |
 
 ## 5. 测试建议
 
@@ -135,13 +137,15 @@ served_at 和 expires_at；缺卡、不可读或其他未交付的 snapshot 成�
 Worker 按每个已持久化 `recommend` policy（包括禁用和回滚版本）的精确版本和各自保留期分批
 清理请求日志，并在全局批额中轮转 policy 起点，避免最新积压版本耗尽批额、较短 policy 提前删除其他版本的
 评估记录，或让退役版本的日志永久滞留。
-请求日志最大保存 500 个候选、每候选最多 8 个 reasons 和 8 个 score components；完整有效池的紧凑 JSON 负载上限为 1 MiB，
+请求日志最大保存 500 个候选、每候选最多 8 个 reasons 和 9 个 score components；完整有效池的紧凑 JSON 负载上限为 1 MiB，
 因此不会在正常最大池上静默截断排序前缀或解释。启用 Provider Quota Merge 的采样请求还保存最多
 64 条封闭 `phase/provider/result/reason/count` 摘要；摘要不包含原始候选池、source score 或 Provider 错误正文。
+若首页评估了 Session Semantic，日志还可保存 builder version、contract key、封闭结果、Confidence/等级、
+正负信号/兼容向量/排除计数和规范输入摘要；不保存向量分量、原始播放事件或模型请求正文。
 
 ## 8. Recall、排序与 Snapshot
 
-Fresh、Hot、内容相似、已关注作者和会话延续 Provider 并发执行，各自受 policy budget 和
+Fresh、Hot、内容相似、已关注作者、hash 会话延续和可选多模态会话语义 Provider 并发执行，各自受 policy budget 和
 deadline 约束。服务实例还以 16 个全局 provider slots 限制忽略取消的下游调用；超时但未返回的调用持续占用 slot，
 后续请求标记 capacity degraded 并使用有界冷启动回退，而不会无限累积 goroutine 或下游请求。相同视频合并并保留全部 reasons；单 Provider 超时或失败时保留健康结果并
 标记 degraded，返回前重新验证 `published + public + media ready`。本地 hash n-gram embedding
@@ -164,12 +168,14 @@ source score 不跨 Provider 比较，goroutine 完成顺序和 Go map 迭代不
 调用和 Repository Fallback 继续使用响应页派生的有界池。回滚只需停止选择带配额字段的策略，不需要数据库
 Schema 或数据回滚。
 
-视频发布 intake 当前只条件写入 `hash-ngram-v1`，成功后提交独立 embedding Kafka Group 的 Offset。
-多模态向量、Hybrid Search、Similar Videos、Session Semantic Recall 和 ANN 均尚未实施。当前规划以
-`add-multimodal-video-discovery` 为第一条多模态纵向 Change，只处理新公开视频与显式开发 Fixture，
-使用 Exact Cosine，不要求历史 Backfill 或 HNSW。Provider 配额合并由
-`add-recommendation-provider-quota-merge` 负责；两者完成后才接入 Session Semantic Recommendation。
-长期画像、历史重建、HNSW、训练数据导出和权重学习均受
+多模态视频 Job、Fact/Projection、Hybrid Search、Similar Videos 和 Exact 已实现但默认关闭。
+Session Semantic 同样默认休眠：`session-semantic-v1` 只在 current/recent 上下文圈定的范围内读取服务端可信
+交付、曝光、观看、LIKE/FAVORITE 与推荐反馈事实，使用完整 active-contract 视频向量构造短期单位向量。
+`not_interested` 覆盖同视频隐式正向信号并提供有界负方向，`already_seen` 只做排除；缺失向量、合同不匹配、
+Confidence 不足或 Exact 超时均让 `semantic_session` 健康空结果或单 Provider degraded，现有 Hash/Fresh/Hot/
+Following 等路径继续工作。Confidence 同时缩放 `semantic_similarity` 和返回前缀；低覆盖导致既有 Quota Merge
+underfill 并将空余容量交给公共 fill。首页结果进入原 Snapshot，后续页不重算会话向量。
+长期画像、历史重建、HNSW、训练数据导出、Shadow 和正式 Rollout 仍受
 [推荐系统演进路线](../recommendation-roadmap.md)中的后置 Gate 控制。
 
 观看行为 Worker 通过 `frux.recommendation.consume-view.v1` 在 raw fact 与 profile/outcome
@@ -212,6 +218,8 @@ follow 200ms、similarity/session 250ms；半衰期 72h、曝光窗口 7d、snap
 author 0.15、follow 0.10、negative -0.75、exposure -0.40，作者上限为 10。
 `recommend/v2` 仅稳定 hash cohort 的 5%，将 content/session/fresh 调整为
 0.60/0.30/0.15、每作者上限降为 6，其余 v1 参数不变；不会覆盖已有同版本策略。
+两个 bootstrap 版本都不包含 `semantic_session`、`semantic_similarity` 或 `session_semantic` 配置；仅启用
+`multimodal.session_recommendation_enabled` 不会改变请求，必须另建完整且可回滚的策略版本。
 
 扩大 v2 前至少观察 24h：请求错误/降级率、snapshot hit、Provider timeout、profile lag、
 曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用

@@ -3,6 +3,7 @@ package inframetrics
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -511,7 +512,7 @@ func recommendationSessionSemanticConfidenceBand(value string) string {
 }
 
 func boundedMetricRatio(value float64) float64 {
-	if value <= 0 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return 0
 	}
 	if value >= 1 {

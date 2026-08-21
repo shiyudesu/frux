@@ -44,8 +44,8 @@
 
 ## 7. End-to-end verification and documentation
 
-- [ ] 7.1 Add recommendation flow tests proving positive semantic direction, negative suppression, missing-vector fallback, Exact timeout degradation, stable pagination, and coexistence with every existing Provider.
-- [ ] 7.2 Add a reproducible development acceptance fixture/report for `session-semantic-v1` that makes zero external model calls and labels results as technical/offline evidence only.
-- [ ] 7.3 Update recommendation module, architecture/engineering guidance, product capability status, and the recommendation roadmap without describing dormant semantic recall as rolled out.
-- [ ] 7.4 Run targeted race tests, complete Go tests/vet/build, optional PostgreSQL tests, Compose validation, and strict OpenSpec validation.
-- [ ] 7.5 Confirm active bootstrap policies and checked-in flags remain unchanged/disabled and no raw vectors, behavior payloads, user/request/session/video IDs in metric labels, provider calls, Backfill, ANN, or training dependencies were introduced.
+- [x] 7.1 Add recommendation flow tests proving positive semantic direction, negative suppression, missing-vector fallback, Exact timeout degradation, stable pagination, and coexistence with every existing Provider.
+- [x] 7.2 Add a reproducible development acceptance fixture/report for `session-semantic-v1` that makes zero external model calls and labels results as technical/offline evidence only.
+- [x] 7.3 Update recommendation module, architecture/engineering guidance, product capability status, and the recommendation roadmap without describing dormant semantic recall as rolled out.
+- [x] 7.4 Run targeted race tests, complete Go tests/vet/build, optional PostgreSQL tests, Compose validation, and strict OpenSpec validation.
+- [x] 7.5 Confirm active bootstrap policies and checked-in flags remain unchanged/disabled and no raw vectors, behavior payloads, user/request/session/video IDs in metric labels, provider calls, Backfill, ANN, or training dependencies were introduced.

@@ -1,0 +1,118 @@
+{
+  "version": "session-semantic-eval-v1",
+  "kind": "technical_offline",
+  "builder_version": "session-semantic-v1",
+  "lookback_seconds": 7200,
+  "max_seeds": 21,
+  "contract": {
+    "provider_alias": "fixture-provider",
+    "model_alias": "fixture-model",
+    "revision_alias": "fixture-revision-v1",
+    "dimension": 32,
+    "text_canonicalizer": "public-content-v1",
+    "frame_sampling_policy": "representative-frames-v1",
+    "image_preprocessing_policy": "rgb-fit-v1",
+    "fusion_policy": "provider-fusion-v1"
+  },
+  "cases": [
+    {
+      "name": "reinforced-positive-direction",
+      "now": "2026-08-21T10:00:00Z",
+      "current_video_id": 1,
+      "recent_video_ids": [1],
+      "min_positive_signals": 2,
+      "min_confidence": 0.25,
+      "budget": 10,
+      "facts": [
+        {
+          "video_id": 1,
+          "encountered_age_seconds": 0,
+          "signals": [
+            {"kind": "complete", "age_seconds": 30},
+            {"kind": "favorite", "age_seconds": 20}
+          ]
+        }
+      ],
+      "vectors": [
+        {"video_id": 1, "axis": 0, "sign": 1}
+      ],
+      "candidates": [
+        {"video_id": 10, "axis": 0, "sign": 1, "published_age_seconds": 60},
+        {"video_id": 11, "axis": 1, "sign": 1, "published_age_seconds": 30}
+      ],
+      "expected": {
+        "result": "success",
+        "confidence_band": "high",
+        "available": true,
+        "ordered_video_ids": [10]
+      }
+    },
+    {
+      "name": "negative-direction-is-capped",
+      "now": "2026-08-21T10:00:00Z",
+      "current_video_id": 1,
+      "recent_video_ids": [2],
+      "min_positive_signals": 1,
+      "min_confidence": 0.25,
+      "budget": 10,
+      "facts": [
+        {
+          "video_id": 1,
+          "encountered_age_seconds": 0,
+          "signals": [
+            {"kind": "complete", "age_seconds": 30}
+          ]
+        },
+        {
+          "video_id": 2,
+          "encountered_age_seconds": 0,
+          "signals": [
+            {"kind": "not_interested", "age_seconds": 10}
+          ]
+        }
+      ],
+      "vectors": [
+        {"video_id": 1, "axis": 0, "sign": 1},
+        {"video_id": 2, "axis": 1, "sign": 1}
+      ],
+      "candidates": [
+        {"video_id": 10, "axis": 0, "sign": 1, "published_age_seconds": 60},
+        {"video_id": 11, "axis": 1, "sign": 1, "published_age_seconds": 30}
+      ],
+      "expected": {
+        "result": "success",
+        "confidence_band": "medium",
+        "available": true,
+        "ordered_video_ids": [10]
+      }
+    },
+    {
+      "name": "missing-vector-falls-back",
+      "now": "2026-08-21T10:00:00Z",
+      "current_video_id": 1,
+      "recent_video_ids": [],
+      "min_positive_signals": 1,
+      "min_confidence": 0.1,
+      "budget": 10,
+      "facts": [
+        {
+          "video_id": 1,
+          "encountered_age_seconds": 0,
+          "signals": [
+            {"kind": "complete", "age_seconds": 30}
+          ]
+        }
+      ],
+      "vectors": [],
+      "candidates": [
+        {"video_id": 10, "axis": 0, "sign": 1, "published_age_seconds": 60}
+      ],
+      "expected": {
+        "result": "no_compatible_vectors",
+        "confidence_band": "none",
+        "available": false,
+        "ordered_video_ids": []
+      }
+    }
+  ]
+}

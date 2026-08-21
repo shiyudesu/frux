@@ -336,9 +336,15 @@ sequenceDiagram
 ### 4.1 上下文推荐链路
 
 推荐 Feed 的 `context` 经 HTTP 有界归一化后进入 Recommendation Service。服务并发调用
-fresh、hot、内容相似、followed-author、session-continuation Provider，按策略 budget/deadline
+fresh、hot、内容相似、followed-author、hash session-continuation，以及策略可选的
+`semantic_session` Provider，按策略 budget/deadline
 合并并重新验证可见性；失败 Provider 只标记 degraded。策略和画像存于 PostgreSQL，
 Redis 仅保存短期有序 snapshot，带签名的 cursor 绑定用户、scene、request ID 和 policy version。
+
+`semantic_session` 不调用 Query Embedding 或外部模型。current/recent 只圈定最多 21 个种子，
+PostgreSQL 交付/曝光/观看/互动/反馈事实确认可信信号，active-contract Fact/Projection 提供向量；
+Builder 用版本化权重、衰减、负向上限、归一化和 Confidence 生成一次性会话方向，再通过 Exact
+召回。低 Confidence 通过 Provider underfill 将容量归还公共 fill，后续 Snapshot 页不重新计算。
 
 观看/互动/关系的耐久事实分别通过 View Event、Action 和 Follow Outbox 投影为画像；投影延迟
 不会阻塞原接口。采样 `recommendation_request_log` 保存有界请求和候选解释，`recommendation_outcome`
