@@ -2,6 +2,7 @@ package infrarecommendation
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,18 @@ type candidateModel struct {
 type videoVectorModel struct {
 	VideoID       int64
 	EmbeddingJSON string
+}
+
+type sessionSemanticFactRow struct {
+	VideoID         int64
+	EncounteredAt   time.Time
+	CompleteAt      sql.NullTime
+	SustainedAt     sql.NullTime
+	EarlySkipAt     sql.NullTime
+	LikeAt          sql.NullTime
+	FavoriteAt      sql.NullTime
+	NotInterestedAt sql.NullTime
+	AlreadySeenAt   sql.NullTime
 }
 
 func New(db *gorm.DB) *Repository {
@@ -922,6 +935,169 @@ func (r *Repository) LoadVectors(ctx context.Context, videoIDs []int64, model st
 		vectors[model.VideoID] = vector
 	}
 	return vectors, nil
+}
+
+func (r *Repository) LoadSessionSemanticFacts(
+	ctx context.Context,
+	userID int64,
+	videoIDs []int64,
+	cutoff time.Time,
+	now time.Time,
+) ([]applicationrecommendation.SessionSemanticFact, error) {
+	videoIDs = boundedPositiveVideoIDs(videoIDs, domainrecommendation.MaxSessionSemanticSeeds)
+	if r == nil || r.db == nil || userID <= 0 || len(videoIDs) == 0 || cutoff.IsZero() || now.IsZero() || !cutoff.Before(now) {
+		return []applicationrecommendation.SessionSemanticFact{}, nil
+	}
+	cutoff, now = cutoff.UTC(), now.UTC()
+	statement := `
+		WITH latest_view AS (
+			SELECT DISTINCT ON (
+				video_id, event_type, COALESCE(playback_session_id, event_id, id::text)
+			)
+				video_id, event_type, position_ms, watch_ms, duration_ms, completed, occurred_at,
+				sequence, event_id, id
+			FROM video_view_events
+			WHERE user_id = ? AND scene = ? AND video_id IN ?
+			  AND occurred_at >= ? AND occurred_at <= ?
+			ORDER BY video_id, event_type, COALESCE(playback_session_id, event_id, id::text),
+			         sequence DESC NULLS LAST, occurred_at DESC, event_id DESC NULLS LAST, id DESC
+		), playback AS (
+			SELECT video_id,
+			       MAX(occurred_at) FILTER (
+				       WHERE completed OR event_type = 'complete'
+			       ) AS complete_at,
+			       MAX(occurred_at) FILTER (
+				       WHERE event_type = 'progress' AND duration_ms > 0
+				         AND GREATEST(position_ms, watch_ms)::double precision / duration_ms >= 0.5
+			       ) AS sustained_at,
+			       MAX(occurred_at) FILTER (
+				       WHERE event_type = 'skip' AND duration_ms > 0
+				         AND GREATEST(position_ms, watch_ms)::double precision / duration_ms <= 0.2
+			       ) AS early_skip_at
+			FROM latest_view
+			GROUP BY video_id
+		), action_facts AS (
+			SELECT video_id, action_type,
+			       COALESCE(latest_event_occurred_at, updated_at) AS occurred_at
+			FROM interaction_action
+			WHERE user_id = ? AND video_id IN ? AND status = 1
+			  AND action_type IN ('LIKE', 'FAVORITE')
+			  AND recommendation_request_id <> ''
+			  AND COALESCE(latest_event_occurred_at, updated_at) >= ?
+			  AND COALESCE(latest_event_occurred_at, updated_at) <= ?
+		), actions AS (
+			SELECT video_id,
+			       MAX(occurred_at) FILTER (WHERE action_type = 'LIKE') AS like_at,
+			       MAX(occurred_at) FILTER (WHERE action_type = 'FAVORITE') AS favorite_at
+			FROM action_facts
+			GROUP BY video_id
+		), feedback_facts AS (
+			SELECT video_id, feedback_type, created_at
+			FROM recommendation_feedback
+			WHERE user_id = ? AND video_id IN ?
+			  AND feedback_type IN ('not_interested', 'already_seen')
+			  AND created_at >= ? AND created_at <= ?
+		), feedback AS (
+			SELECT video_id,
+			       MAX(created_at) FILTER (WHERE feedback_type = 'not_interested') AS not_interested_at,
+			       MAX(created_at) FILTER (WHERE feedback_type = 'already_seen') AS already_seen_at
+			FROM feedback_facts
+			GROUP BY video_id
+		), encounter_facts AS (
+			SELECT video_id, last_exposed_at AS occurred_at
+			FROM exposures
+			WHERE user_id = ? AND video_id IN ? AND last_scene = ?
+			  AND last_exposed_at >= ? AND last_exposed_at <= ?
+			UNION ALL
+			SELECT video_id, served_at
+			FROM recommendation_served_candidate
+			WHERE user_id = ? AND video_id IN ?
+			  AND served_at >= ? AND served_at <= ?
+			UNION ALL
+			SELECT video_id, occurred_at FROM latest_view
+			UNION ALL
+			SELECT video_id, occurred_at FROM action_facts
+			UNION ALL
+			SELECT video_id, created_at FROM feedback_facts
+		), encounters AS (
+			SELECT video_id, MAX(occurred_at) AS encountered_at
+			FROM encounter_facts
+			GROUP BY video_id
+		)
+		SELECT e.video_id, e.encountered_at,
+		       p.complete_at, p.sustained_at, p.early_skip_at,
+		       a.like_at, a.favorite_at,
+		       f.not_interested_at, f.already_seen_at
+		FROM encounters AS e
+		LEFT JOIN playback AS p ON p.video_id = e.video_id
+		LEFT JOIN actions AS a ON a.video_id = e.video_id
+		LEFT JOIN feedback AS f ON f.video_id = e.video_id
+		ORDER BY e.video_id ASC`
+	arguments := []any{
+		userID, domainrecommendation.RecommendationRequestLogScene, videoIDs, cutoff, now,
+		userID, videoIDs, cutoff, now,
+		userID, videoIDs, cutoff, now,
+		userID, videoIDs, domainrecommendation.RecommendationRequestLogScene, cutoff, now,
+		userID, videoIDs, cutoff, now,
+	}
+	var rows []sessionSemanticFactRow
+	if err := r.db.WithContext(ctx).Raw(statement, arguments...).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	facts := make([]applicationrecommendation.SessionSemanticFact, 0, len(rows))
+	for _, row := range rows {
+		if row.VideoID <= 0 || row.EncounteredAt.IsZero() {
+			continue
+		}
+		fact := applicationrecommendation.SessionSemanticFact{
+			VideoID: row.VideoID, EncounteredAt: row.EncounteredAt.UTC(),
+			Signals: make([]domainrecommendation.SessionSemanticSignal, 0, 7),
+		}
+		appendSessionSemanticSignal(&fact, domainrecommendation.SessionSemanticSignalComplete, row.CompleteAt)
+		appendSessionSemanticSignal(&fact, domainrecommendation.SessionSemanticSignalSustained, row.SustainedAt)
+		appendSessionSemanticSignal(&fact, domainrecommendation.SessionSemanticSignalEarlySkip, row.EarlySkipAt)
+		appendSessionSemanticSignal(&fact, domainrecommendation.SessionSemanticSignalLike, row.LikeAt)
+		appendSessionSemanticSignal(&fact, domainrecommendation.SessionSemanticSignalFavorite, row.FavoriteAt)
+		appendSessionSemanticSignal(&fact, domainrecommendation.SessionSemanticSignalNotInterested, row.NotInterestedAt)
+		appendSessionSemanticSignal(&fact, domainrecommendation.SessionSemanticSignalAlreadySeen, row.AlreadySeenAt)
+		facts = append(facts, fact)
+	}
+	return facts, nil
+}
+
+func appendSessionSemanticSignal(
+	fact *applicationrecommendation.SessionSemanticFact,
+	kind domainrecommendation.SessionSemanticSignalKind,
+	occurredAt sql.NullTime,
+) {
+	if fact == nil || !occurredAt.Valid || occurredAt.Time.IsZero() {
+		return
+	}
+	fact.Signals = append(fact.Signals, domainrecommendation.SessionSemanticSignal{
+		VideoID: fact.VideoID, Kind: kind, OccurredAt: occurredAt.Time.UTC(),
+	})
+}
+
+func boundedPositiveVideoIDs(videoIDs []int64, limit int) []int64 {
+	if limit <= 0 {
+		return nil
+	}
+	values := make([]int64, 0, min(limit, len(videoIDs)))
+	seen := make(map[int64]struct{}, cap(values))
+	for _, videoID := range videoIDs {
+		if videoID <= 0 {
+			continue
+		}
+		if _, exists := seen[videoID]; exists {
+			continue
+		}
+		seen[videoID] = struct{}{}
+		values = append(values, videoID)
+		if len(values) == limit {
+			break
+		}
+	}
+	return values
 }
 
 func (r *Repository) ListRecentExposures(ctx context.Context, userID int64, videoIDs []int64, since time.Time) ([]*domainrecommendation.Exposure, error) {

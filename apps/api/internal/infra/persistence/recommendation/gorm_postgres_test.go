@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	applicationexposure "github.com/shiyudesu/frux/internal/application/exposure"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainexposure "github.com/shiyudesu/frux/internal/domain/exposure"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	infraexposure "github.com/shiyudesu/frux/internal/infra/persistence/exposure"
+	infrainteraction "github.com/shiyudesu/frux/internal/infra/persistence/interaction"
 	"net/url"
 	"os"
 	"strconv"
@@ -22,6 +25,100 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func TestSessionSemanticFactsPostgreSQLAreBoundedTrustedAndCanonical(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("frux_session_semantic_facts_test_%d", time.Now().UnixNano())
+	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+		_ = admin.Close()
+	})
+	sqlDB, err := sql.Open("pgx", recommendationPostgresDSNWithSchema(dsn, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{TranslateError: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(
+		&infraexposure.ExposureModel{}, &infraexposure.ViewEventModel{},
+		&infrainteraction.ActionModel{}, &FeedbackModel{}, &ServedCandidateEvidenceModel{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	cutoff := now.Add(-2 * time.Hour)
+	requestID := "semantic-request"
+	eventID1, eventID2, playback := "view-progress", "view-complete", "playback-1"
+	sequence1, sequence2 := int64(1), int64(2)
+	duration := 100_000
+	rows := []any{
+		&infraexposure.ExposureModel{UserID: 9, VideoID: 1, FirstExposedAt: now.Add(-time.Hour), LastExposedAt: now.Add(-10 * time.Minute), ExposureCount: 1, LastScene: domainrecommendation.RecommendationRequestLogScene},
+		&infraexposure.ExposureModel{UserID: 10, VideoID: 4, FirstExposedAt: now.Add(-time.Hour), LastExposedAt: now.Add(-10 * time.Minute), ExposureCount: 1, LastScene: domainrecommendation.RecommendationRequestLogScene},
+		&infraexposure.ViewEventModel{UserID: 9, VideoID: 1, Scene: domainrecommendation.RecommendationRequestLogScene, RequestID: &requestID, EventType: domainexposure.EventTypeProgress, EventID: &eventID1, PlaybackSessionID: &playback, Sequence: &sequence1, OccurredAt: now.Add(-8 * time.Minute), PositionMs: 60_000, WatchMs: 55_000, DurationMs: &duration},
+		&infraexposure.ViewEventModel{UserID: 9, VideoID: 1, Scene: domainrecommendation.RecommendationRequestLogScene, RequestID: &requestID, EventType: domainexposure.EventTypeComplete, EventID: &eventID2, PlaybackSessionID: &playback, Sequence: &sequence2, OccurredAt: now.Add(-7 * time.Minute), PositionMs: 100_000, WatchMs: 90_000, DurationMs: &duration, Completed: true},
+		&infrainteraction.ActionModel{UserID: 9, VideoID: 1, ActionType: "LIKE", Status: 1, RecommendationRequestID: requestID, LatestEventOccurredAt: timePointer(now.Add(-6 * time.Minute)), UpdatedAt: now.Add(-6 * time.Minute)},
+		&infrainteraction.ActionModel{UserID: 9, VideoID: 2, ActionType: "FAVORITE", Status: 2, RecommendationRequestID: requestID, LatestEventOccurredAt: timePointer(now.Add(-5 * time.Minute)), UpdatedAt: now.Add(-5 * time.Minute)},
+		&ServedCandidateEvidenceModel{UserID: 9, RequestID: requestID, VideoID: 2, EvidenceKind: servedEvidenceKindFirstPage, PolicyVersion: 3, Position: 1, ServedAt: now.Add(-5 * time.Minute), ExpiresAt: now.Add(time.Hour)},
+		&FeedbackModel{UserID: 9, VideoID: 2, RequestID: requestID, FeedbackType: domainrecommendation.FeedbackTypeAlreadySeen, IdempotencyKey: "seen-2", SuppressionScope: domainrecommendation.SuppressionScopeVideo, SuppressionScopeID: 2, SuppressionExpiresAt: now.Add(time.Hour), CreatedAt: now.Add(-4 * time.Minute)},
+		&FeedbackModel{UserID: 9, VideoID: 3, RequestID: requestID, FeedbackType: domainrecommendation.FeedbackTypeNotInterested, IdempotencyKey: "negative-3", SuppressionScope: domainrecommendation.SuppressionScopeVideo, SuppressionScopeID: 3, SuppressionExpiresAt: now.Add(time.Hour), CreatedAt: now.Add(-3 * time.Minute)},
+		&FeedbackModel{UserID: 9, VideoID: 1, RequestID: requestID, FeedbackType: domainrecommendation.FeedbackTypeReduceAuthor, IdempotencyKey: "author-1", SuppressionScope: domainrecommendation.SuppressionScopeAuthor, SuppressionScopeID: 77, SuppressionExpiresAt: now.Add(time.Hour), CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	for _, row := range rows {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatalf("create %T: %v", row, err)
+		}
+	}
+	repo := New(db)
+	facts, err := repo.LoadSessionSemanticFacts(context.Background(), 9, []int64{3, 2, 1, 99, 1}, cutoff, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 3 || facts[0].VideoID != 1 || facts[1].VideoID != 2 || facts[2].VideoID != 3 {
+		t.Fatalf("facts=%#v", facts)
+	}
+	assertSessionSemanticKinds(t, facts[0],
+		domainrecommendation.SessionSemanticSignalComplete,
+		domainrecommendation.SessionSemanticSignalSustained,
+		domainrecommendation.SessionSemanticSignalLike,
+	)
+	assertSessionSemanticKinds(t, facts[1], domainrecommendation.SessionSemanticSignalAlreadySeen)
+	assertSessionSemanticKinds(t, facts[2], domainrecommendation.SessionSemanticSignalNotInterested)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repo.LoadSessionSemanticFacts(cancelled, 9, []int64{1}, cutoff, now); err == nil {
+		t.Fatal("cancelled session semantic fact query succeeded")
+	}
+}
+
+func assertSessionSemanticKinds(
+	t testing.TB,
+	fact applicationrecommendation.SessionSemanticFact,
+	want ...domainrecommendation.SessionSemanticSignalKind,
+) {
+	t.Helper()
+	got := make([]domainrecommendation.SessionSemanticSignalKind, 0, len(fact.Signals))
+	for _, signal := range fact.Signals {
+		got = append(got, signal.Kind)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("video=%d signals=%v want=%v", fact.VideoID, got, want)
+	}
+}
+
+func timePointer(value time.Time) *time.Time { return &value }
 
 func TestPolicyProfileAndRequestLogRepositoryPostgreSQL(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))

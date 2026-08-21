@@ -19,6 +19,8 @@ import (
 
 var _ domainembedding.MultimodalRepository = (*Repository)(nil)
 
+const maxSessionSemanticVectorBatch = 21
+
 func (r *Repository) HandoffMultimodalJob(
 	ctx context.Context,
 	job *domainembedding.MultimodalEmbeddingJob,
@@ -489,6 +491,68 @@ func (r *Repository) FindMultimodalVectorFact(
 		return nil, err
 	}
 	return multimodalFactFromModel(model)
+}
+
+func (r *Repository) LoadSessionSemanticVectors(
+	ctx context.Context,
+	videoIDs []int64,
+	contract domainembedding.MultimodalContractIdentity,
+) (map[int64]*domainembedding.MultimodalVectorFact, error) {
+	validated, err := domainembedding.NewMultimodalContractIdentity(
+		contract.ProviderAlias, contract.ModelAlias, contract.RevisionAlias, contract.Dimension,
+		contract.TextCanonicalizer, contract.FrameSamplingPolicy,
+		contract.ImagePreprocessingPolicy, contract.FusionPolicy,
+	)
+	videoIDs = boundedMultimodalVideoIDs(videoIDs, maxSessionSemanticVectorBatch)
+	if r == nil || r.db == nil || err != nil || !validated.Equal(contract) {
+		return nil, domainembedding.ErrInvalidMultimodalVectorFact
+	}
+	result := make(map[int64]*domainembedding.MultimodalVectorFact, len(videoIDs))
+	if len(videoIDs) == 0 {
+		return result, nil
+	}
+	var models []MultimodalVectorFactModel
+	err = r.db.WithContext(ctx).Raw(`
+		SELECT f.*
+		FROM multimodal_vector_fact AS f
+		JOIN multimodal_projection AS p
+		  ON p.video_id = f.video_id
+		 AND p.contract_key = f.contract_key
+		 AND p.source_hash = f.source_hash
+		 AND p.vector_digest = f.vector_digest
+		WHERE f.video_id IN ? AND f.contract_key = ?
+		ORDER BY f.video_id ASC
+	`, videoIDs, contract.Key()).Scan(&models).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, model := range models {
+		fact, factErr := multimodalFactFromModel(model)
+		if factErr != nil || fact == nil || !fact.Identity.Contract.Equal(contract) {
+			continue
+		}
+		result[fact.VideoID] = fact
+	}
+	return result, nil
+}
+
+func boundedMultimodalVideoIDs(videoIDs []int64, limit int) []int64 {
+	values := make([]int64, 0, min(limit, len(videoIDs)))
+	seen := make(map[int64]struct{}, cap(values))
+	for _, videoID := range videoIDs {
+		if videoID <= 0 {
+			continue
+		}
+		if _, exists := seen[videoID]; exists {
+			continue
+		}
+		seen[videoID] = struct{}{}
+		values = append(values, videoID)
+		if len(values) == limit {
+			break
+		}
+	}
+	return values
 }
 
 func (r *Repository) ListMultimodalReconciliationVideoIDs(

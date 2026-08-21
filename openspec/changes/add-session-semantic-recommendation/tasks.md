@@ -15,10 +15,10 @@
 
 ## 3. PostgreSQL evidence adapters
 
-- [ ] 3.1 Implement one bounded batch query over context seed IDs that verifies recent server encounter/behavior evidence and projects only closed canonical playback signal facts.
-- [ ] 3.2 Join or batch-load current LIKE/FAVORITE state and accepted recommendation feedback without treating `already_seen` or `reduce_author` as negative topic directions.
-- [ ] 3.3 Implement bounded active-contract multimodal vector loading with exact source/contract/current-state checks and no historical fallback or provider call.
-- [ ] 3.4 Add isolated PostgreSQL integration tests for user scoping, arbitrary client IDs, duplicate/out-of-order playback, feedback precedence, mixed vector coverage, contract rotation, bounds, and cancellation.
+- [x] 3.1 Implement one bounded batch query over context seed IDs that verifies recent server encounter/behavior evidence and projects only closed canonical playback signal facts.
+- [x] 3.2 Join or batch-load current LIKE/FAVORITE state and accepted recommendation feedback without treating `already_seen` or `reduce_author` as negative topic directions.
+- [x] 3.3 Implement bounded active-contract multimodal vector loading with exact source/contract/current-state checks and no historical fallback or provider call.
+- [x] 3.4 Add isolated PostgreSQL integration tests for user scoping, arbitrary client IDs, duplicate/out-of-order playback, feedback precedence, mixed vector coverage, contract rotation, bounds, and cancellation.
 
 ## 4. Semantic Recall and ranking integration
 

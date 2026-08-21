@@ -413,6 +413,72 @@ func TestPostgresExactMultimodalSearchFiltersContractsExclusionsAndTies(t *testi
 	}
 }
 
+func TestPostgresSessionSemanticVectorBatchRequiresCurrentProjection(t *testing.T) {
+	db := openEmbeddingPostgres(t)
+	migrateMultimodalEmbeddingTables(t, db)
+	repository := infraembedding.New(db)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	contract := multimodalTestContract(t, "session-revision")
+	other := multimodalTestContract(t, "other-revision")
+	unit := func(dimension, axis int) []float64 {
+		values := make([]float64, dimension)
+		values[axis] = 1
+		return values
+	}
+	createFact := func(videoID int64, selected domainembedding.MultimodalContractIdentity, values []float64, project bool) {
+		sourceHash := domainembedding.MultimodalSourceHash([]byte(fmt.Sprintf("video-%d", videoID)))
+		fact, err := domainembedding.NewMultimodalVectorFact(videoID, &domainembedding.MultimodalVector{
+			Identity: domainembedding.MultimodalVectorIdentity{
+				Contract: selected, SourceHash: sourceHash,
+				VectorDigest: domainembedding.MultimodalVectorDigest(values),
+			},
+			Values: values,
+		}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		embeddingJSON, err := json.Marshal(fact.Values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&infraembedding.MultimodalVectorFactModel{
+			VideoID: videoID, ContractKey: selected.Key(),
+			MultimodalContractColumns: infraembedding.MultimodalContractColumns{
+				ProviderAlias: selected.ProviderAlias, ModelAlias: selected.ModelAlias,
+				RevisionAlias: selected.RevisionAlias, Dimension: selected.Dimension,
+				TextCanonicalizer: selected.TextCanonicalizer, FrameSamplingPolicy: selected.FrameSamplingPolicy,
+				ImagePreprocessingPolicy: selected.ImagePreprocessingPolicy, FusionPolicy: selected.FusionPolicy,
+			},
+			SourceHash: fact.Identity.SourceHash, VectorDigest: fact.Identity.VectorDigest,
+			EmbeddingJSON: string(embeddingJSON), CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if project {
+			projection, err := domainembedding.NewMultimodalProjection(fact, now.Add(-time.Duration(videoID)*time.Minute), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repository.UpsertMultimodalProjection(ctx, projection); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	createFact(1, contract, unit(contract.Dimension, 0), true)
+	createFact(2, contract, unit(contract.Dimension, 1), false)
+	createFact(3, other, unit(other.Dimension, 2), true)
+	vectors, err := repository.LoadSessionSemanticVectors(ctx, []int64{3, 2, 1, 1, -1}, contract)
+	if err != nil || len(vectors) != 1 || vectors[1] == nil || !vectors[1].Identity.Contract.Equal(contract) {
+		t.Fatalf("vectors=%#v err=%v", vectors, err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repository.LoadSessionSemanticVectors(cancelled, []int64{1}, contract); err == nil {
+		t.Fatal("cancelled session semantic vector query succeeded")
+	}
+}
+
 func BenchmarkPostgresExactMultimodalSearch(b *testing.B) {
 	db := openEmbeddingPostgres(b)
 	migrateMultimodalEmbeddingTables(b, db)
