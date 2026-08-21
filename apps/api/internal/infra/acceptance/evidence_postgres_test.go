@@ -36,12 +36,12 @@ func TestEvidenceStoreAgainstIsolatedPostgresSchema(t *testing.T) {
 	}
 	defer func() { _, _ = base.Exec(`DROP SCHEMA "` + schema + `" CASCADE`) }()
 	for _, statement := range []string{
-		`CREATE TABLE review_case (id bigint, video_id bigint, version integer, review_version integer, status text)`,
-		`CREATE TABLE multimodal_embedding_job (id bigint, video_id bigint, contract_key text, state text, attempts integer, failure_code text)`,
-		`CREATE TABLE multimodal_vector_fact (video_id bigint, contract_key text, provider_alias text, model_alias text, revision_alias text, dimension integer, text_canonicalizer text, frame_sampling_policy text, image_preprocessing_policy text, fusion_policy text, embedding_json jsonb, vector_digest text, source_hash text)`,
-		`CREATE TABLE multimodal_projection (video_id bigint, contract_key text, vector_digest text, source_hash text)`,
+		`CREATE TABLE "` + schema + `".review_case (id bigint, video_id bigint, version integer, review_version integer, status text)`,
+		`CREATE TABLE "` + schema + `".multimodal_embedding_job (id bigint, video_id bigint, contract_key text, state text, attempts integer, failure_code text)`,
+		`CREATE TABLE "` + schema + `".multimodal_vector_fact (video_id bigint, contract_key text, provider_alias text, model_alias text, revision_alias text, dimension integer, text_canonicalizer text, frame_sampling_policy text, image_preprocessing_policy text, fusion_policy text, embedding_json jsonb, vector_digest text, source_hash text)`,
+		`CREATE TABLE "` + schema + `".multimodal_projection (video_id bigint, contract_key text, vector_digest text, source_hash text)`,
 	} {
-		if _, err := base.Exec(`SET search_path TO "` + schema + `"; ` + statement); err != nil {
+		if _, err := base.Exec(statement); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -49,17 +49,24 @@ func TestEvidenceStoreAgainstIsolatedPostgresSchema(t *testing.T) {
 	vector := make([]float64, profile.Dimension)
 	vector[0] = 1
 	encoded, _ := json.Marshal(vector)
-	if _, err := base.Exec(`SET search_path TO "`+schema+`";
-		INSERT INTO review_case VALUES (7,13,1,1,'pending_human');
-		INSERT INTO multimodal_embedding_job VALUES (9,13,$1,'succeeded',1,'');
-		INSERT INTO multimodal_vector_fact VALUES (13,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'digest','source');
-		INSERT INTO multimodal_projection VALUES (13,$1,'digest','source')`,
-		profile.Contract.Key(), profile.Contract.ProviderAlias, profile.Contract.ModelAlias,
-		profile.Contract.RevisionAlias, profile.Contract.Dimension, profile.Contract.TextCanonicalizer,
-		profile.Contract.FrameSamplingPolicy, profile.Contract.ImagePreprocessingPolicy,
-		profile.Contract.FusionPolicy, encoded,
-	); err != nil {
-		t.Fatal(err)
+	fixtures := []struct {
+		statement string
+		arguments []any
+	}{
+		{`INSERT INTO "` + schema + `".review_case VALUES (7,13,1,1,'pending_human')`, nil},
+		{`INSERT INTO "` + schema + `".multimodal_embedding_job VALUES (9,13,$1,'succeeded',1,'')`, []any{profile.Contract.Key()}},
+		{`INSERT INTO "` + schema + `".multimodal_vector_fact VALUES (13,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'digest','source')`, []any{
+			profile.Contract.Key(), profile.Contract.ProviderAlias, profile.Contract.ModelAlias,
+			profile.Contract.RevisionAlias, profile.Contract.Dimension, profile.Contract.TextCanonicalizer,
+			profile.Contract.FrameSamplingPolicy, profile.Contract.ImagePreprocessingPolicy,
+			profile.Contract.FusionPolicy, encoded,
+		}},
+		{`INSERT INTO "` + schema + `".multimodal_projection VALUES (13,$1,'digest','source')`, []any{profile.Contract.Key()}},
+	}
+	for _, fixture := range fixtures {
+		if _, err := base.Exec(fixture.statement, fixture.arguments...); err != nil {
+			t.Fatal(err)
+		}
 	}
 	parsed, err := url.Parse(dsn)
 	if err != nil {

@@ -29,7 +29,7 @@
 
 ## 5. Documentation and verification
 
-- [ ] 5.1 Document preparation of dedicated account and three existing vectorized videos, session-only runtime configuration, execution/cleanup commands, immutable behavior retention, and manual scoped policy recovery.
-- [ ] 5.2 Update the recommendation roadmap to place this runner before public-dataset evaluation without describing it as Shadow or Rollout.
-- [ ] 5.3 Run command dry-run tests, targeted race tests, complete Go tests/vet/build, real isolated PostgreSQL tests, Compose validation, and strict OpenSpec validation.
-- [ ] 5.4 Confirm checked-in flags/bootstrap policies remain unchanged, the runner has no upload/embed/provider method, reports `external_model_calls: 0`, and secrets/cursors/raw vectors never enter output.
+- [x] 5.1 Document preparation of dedicated account and three existing vectorized videos, session-only runtime configuration, execution/cleanup commands, immutable behavior retention, and manual scoped policy recovery.
+- [x] 5.2 Update the recommendation roadmap to place this runner before public-dataset evaluation without describing it as Shadow or Rollout.
+- [x] 5.3 Run command dry-run tests, targeted race tests, complete Go tests/vet/build, real isolated PostgreSQL tests, Compose validation, and strict OpenSpec validation.
+- [x] 5.4 Confirm checked-in flags/bootstrap policies remain unchanged, the runner has no upload/embed/provider method, reports `external_model_calls: 0`, and secrets/cursors/raw vectors never enter output.

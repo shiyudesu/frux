@@ -221,6 +221,54 @@ author 0.15、follow 0.10、negative -0.75、exposure -0.40，作者上限为 10
 两个 bootstrap 版本都不包含 `semantic_session`、`semantic_similarity` 或 `session_semantic` 配置；仅启用
 `multimodal.session_recommendation_enabled` 不会改变请求，必须另建完整且可回滚的策略版本。
 
+## 10. Session Semantic 真实运行时验收
+
+`cmd/session-semantic-acceptance` 使用三个已经存在且可读的 active-contract 视频验证真实 API，Runner
+自身不上传媒体、不创建向量 Job，也不调用模型：
+
+- positive seed：完播并收藏，作为 current video；
+- negative seed：早退，作为 recent video；
+- expected target：必须是 positive seed 的正 Exact 邻居，并在 Request Log 中带
+  `semantic_session + semantic_similarity > 0`。
+
+API 启动时需要 `multimodal.enabled=true`、`session_recommendation_enabled=true`、完整 profile/contract、
+PostgreSQL Exact 和 Redis Snapshot；`video_jobs/query_embedding/hybrid/similar` 可以关闭，Adapter 与 Worker
+不需要在线。仓库配置仍默认全部关闭。
+
+复制 `apps/.env.session-semantic-acceptance.example` 为忽略的本地文件并填写专用账号、DSN 和三个
+video ID。默认命令只做健康、合同、Fact/Projection、Exact 和指标前置检查：
+
+```bash
+cd apps/api
+go run ./cmd/session-semantic-acceptance
+```
+
+显式执行和窄清理需要两个 mutation gate：
+
+```bash
+export FRUX_SESSION_SEMANTIC_ACCEPTANCE_ALLOW_MUTATION=true
+go run ./cmd/session-semantic-acceptance \
+  --execute --cleanup \
+  --report /tmp/session-semantic-acceptance-report.json
+```
+
+Runner 创建一条最高版本、1% Cohort、100% 采样的临时策略，并通过稳定 request ID 精确命中该 Cohort；
+任何创建后的失败都会按 policy ID/version 禁用它。`--cleanup` 进一步取消本次收藏并删除已禁用的临时
+策略。完播/早退、Request Log、交付证据和 Snapshot 属于正常不可变/短期事实，按现有保留策略清理，
+Runner 不直接删除。
+
+如果进程在 deferred disable 前被强制终止，报告或终端中的 policy ID/version 可用于精确恢复：
+
+```sql
+UPDATE recommendation_policy
+SET enabled = false
+WHERE id = <runner_policy_id>
+  AND scene = 'recommend'
+  AND version = <runner_policy_version>;
+```
+
+不得用无条件 scene 更新或 `RollbackPolicy` 代替；后者会改变同 scene 的全部 enabled 状态。
+
 扩大 v2 前至少观察 24h：请求错误/降级率、snapshot hit、Provider timeout、profile lag、
 曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用
 `PolicyService.Rollback(ctx, "recommend", 1)`；紧急 SQL 在事务中锁定 v1，关闭同 scene
