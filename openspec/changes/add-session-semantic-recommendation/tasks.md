@@ -7,11 +7,11 @@
 
 ## 2. Session signal and vector builder
 
-- [ ] 2.1 Define narrow application interfaces for bounded trusted session facts and active-contract vector batches; keep user identity, provider clients, and persistence models outside the builder.
-- [ ] 2.2 Implement canonical signal selection for current, complete, sustained, like, favorite, early skip, `not_interested`, `already_seen`, and existing author suppression precedence with duplicate/order stability.
-- [ ] 2.3 Implement registered v1 weights, time decay, positive-evidence requirement, capped negative subtraction, exclusions, finite/dimension checks, L2 normalization, and canonical input digest.
-- [ ] 2.4 Implement deterministic confidence coverage/strength/coherence/freshness terms, confidence bands, eligibility gate, confidence-scaled output bound, and closed healthy-unavailable results.
-- [ ] 2.5 Add table-driven builder and versioned Golden Set tests for reinforcing, contradictory, negative override, exclusion-only, missing-vector, contract-mismatch, near-zero, and replay-determinism cases.
+- [x] 2.1 Define narrow application interfaces for bounded trusted session facts and active-contract vector batches; keep user identity, provider clients, and persistence models outside the builder.
+- [x] 2.2 Implement canonical signal selection for current, complete, sustained, like, favorite, early skip, `not_interested`, `already_seen`, and existing author suppression precedence with duplicate/order stability.
+- [x] 2.3 Implement registered v1 weights, time decay, positive-evidence requirement, capped negative subtraction, exclusions, finite/dimension checks, L2 normalization, and canonical input digest.
+- [x] 2.4 Implement deterministic confidence coverage/strength/coherence/freshness terms, confidence bands, eligibility gate, confidence-scaled output bound, and closed healthy-unavailable results.
+- [x] 2.5 Add table-driven builder and versioned Golden Set tests for reinforcing, contradictory, negative override, exclusion-only, missing-vector, contract-mismatch, near-zero, and replay-determinism cases.
 
 ## 3. PostgreSQL evidence adapters
 

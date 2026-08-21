@@ -131,6 +131,12 @@ func normalizeSessionSemanticPolicyConfiguration(
 	return normalized, nil
 }
 
+func ValidateSessionSemanticPolicyConfiguration(
+	config *SessionSemanticPolicyConfiguration,
+) (*SessionSemanticPolicyConfiguration, error) {
+	return normalizeSessionSemanticPolicyConfiguration(config)
+}
+
 func validSessionSemanticContractKey(value string) bool {
 	if len(value) != SessionSemanticDigestHexLength {
 		return false
