@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 const multimodalEnvFilename = ".env.multimodal"
+const acceptanceEnvFilename = ".env.acceptance"
 
 type MultimodalScope uint8
 
@@ -45,12 +47,39 @@ func LoadMultimodal(scope MultimodalScope) error {
 	return loadMultimodal(scope, workingDirectory)
 }
 
+func LoadAcceptance() error {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", ErrInvalidMultimodalEnv)
+	}
+	path, found, err := findRepositoryEnvFile(workingDirectory, acceptanceEnvFilename)
+	if err != nil || !found {
+		return err
+	}
+	values, err := godotenv.Read(path)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", path, ErrInvalidMultimodalEnv)
+	}
+	for name, value := range values {
+		if !strings.HasPrefix(name, "FRUX_ACCEPTANCE_") {
+			continue
+		}
+		if _, exists := os.LookupEnv(name); exists {
+			continue
+		}
+		if err := os.Setenv(name, value); err != nil {
+			return fmt.Errorf("set %s: %w", name, ErrInvalidMultimodalEnv)
+		}
+	}
+	return nil
+}
+
 func loadMultimodal(scope MultimodalScope, workingDirectory string) error {
 	allowed, err := multimodalVariables(scope)
 	if err != nil {
 		return err
 	}
-	path, found, err := findMultimodalEnvFile(workingDirectory)
+	path, found, err := findRepositoryEnvFile(workingDirectory, multimodalEnvFilename)
 	if err != nil {
 		return err
 	}
@@ -88,6 +117,10 @@ func multimodalVariables(scope MultimodalScope) (map[string]struct{}, error) {
 }
 
 func findMultimodalEnvFile(workingDirectory string) (string, bool, error) {
+	return findRepositoryEnvFile(workingDirectory, multimodalEnvFilename)
+}
+
+func findRepositoryEnvFile(workingDirectory, filename string) (string, bool, error) {
 	workingDirectory, err := filepath.Abs(workingDirectory)
 	if err != nil {
 		return "", false, fmt.Errorf("resolve multimodal environment path: %w", ErrInvalidMultimodalEnv)
@@ -114,10 +147,10 @@ func findMultimodalEnvFile(workingDirectory string) (string, bool, error) {
 	}
 	candidates := make([]string, 0, len(directories)+1)
 	for _, directory := range directories {
-		candidates = append(candidates, filepath.Join(directory, multimodalEnvFilename))
+		candidates = append(candidates, filepath.Join(directory, filename))
 	}
 	if repositoryRoot != "" {
-		candidates = append(candidates, filepath.Join(repositoryRoot, "apps", multimodalEnvFilename))
+		candidates = append(candidates, filepath.Join(repositoryRoot, "apps", filename))
 	}
 	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {

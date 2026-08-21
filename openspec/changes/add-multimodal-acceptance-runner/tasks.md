@@ -24,14 +24,14 @@
   projections, contract identity, vector dimension/norm, attempts, and digest equality.
 - [x] 3.2 Reject incompatible contracts, terminal jobs, non-finite/non-unit vectors, missing
   projections, and source/fact mismatches with closed evidence codes.
-- [ ] 3.3 Add optional isolated PostgreSQL tests that skip explicitly when `FRUX_POSTGRES_TEST_DSN`
+- [x] 3.3 Add optional isolated PostgreSQL tests that skip explicitly when `FRUX_POSTGRES_TEST_DSN`
   is absent and never mutate a non-test schema.
 
 ## 4. Stage Orchestration and Reporting
 
-- [ ] 4.1 Implement the fixed bounded stage machine from preflight through two fixtures, review,
+- [x] 4.1 Implement the fixed bounded stage machine from preflight through two fixtures, review,
   embedding, evidence, Similar, Hybrid, metrics, and optional cleanup.
-- [ ] 4.2 Stop dependent stages on failure, retain all current-run identifiers, and emit one report
+- [x] 4.2 Stop dependent stages on failure, retain all current-run identifiers, and emit one report
   for success, validation-only execution, partial failure, cancellation, or cleanup failure.
 - [x] 4.3 Add atomic optional report-file writing with restrictive permissions while keeping stdout
   JSON free of secrets, raw vectors, signed URLs, media bytes, and raw provider responses.
@@ -40,14 +40,14 @@
 
 - [x] 5.1 Add `cmd/multimodal-acceptance` with validation-only defaults, `--execute`, `--cleanup`,
   report path, query, and bounded timeout options but no secret-bearing flags.
-- [ ] 5.2 Add an ignored acceptance environment example and document dedicated accounts, S3/runtime
+- [x] 5.2 Add an ignored acceptance environment example and document dedicated accounts, S3/runtime
   prerequisites, dry run, confirmed execution, expected billable calls, report interpretation, and cleanup.
 - [x] 5.3 Update the recommendation roadmap to place the runner before real Golden Set collection and
   preserve disabled-by-default multimodal behavior.
 
 ## 6. Verification
 
-- [ ] 6.1 Add fake API, Adapter, metrics, presigned-upload, cancellation, timeout, redirect, malformed
+- [x] 6.1 Add fake API, Adapter, metrics, presigned-upload, cancellation, timeout, redirect, malformed
   response, secret-redaction, partial-run, and cleanup tests.
 - [ ] 6.2 Run command dry-run tests, targeted race tests, complete Go tests/vet/build, Compose validation,
   and strict OpenSpec validation.

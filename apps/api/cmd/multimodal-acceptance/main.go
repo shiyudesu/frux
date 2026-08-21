@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -16,8 +17,6 @@ import (
 	infraacceptance "github.com/shiyudesu/frux/internal/infra/acceptance"
 	infraenvfile "github.com/shiyudesu/frux/internal/infra/envfile"
 )
-
-var errExecutionNotImplemented = errors.New("acceptance execution workflow is not implemented")
 
 type commandOptions struct {
 	execute    bool
@@ -53,7 +52,11 @@ func run(arguments []string, output io.Writer) error {
 		failReport(&report, applicationacceptance.FailureConfiguration)
 		return emitReport(output, options.reportPath, report)
 	}
-	_, configErr := infraacceptance.LoadConfigFromEnv(options.query, options.timeout)
+	if err := infraenvfile.LoadAcceptance(); err != nil {
+		failReport(&report, applicationacceptance.FailureConfiguration)
+		return emitReport(output, options.reportPath, report)
+	}
+	config, configErr := infraacceptance.LoadConfigFromEnv(options.query, options.timeout)
 	if configErr != nil {
 		failReport(&report, applicationacceptance.FailureConfiguration)
 		report.Prerequisites = []applicationacceptance.PrerequisiteResult{{
@@ -79,11 +82,28 @@ func run(arguments []string, output io.Writer) error {
 		}
 		return emitReport(output, options.reportPath, report)
 	}
-	failReport(&report, applicationacceptance.FailureInternal)
-	if err := emitReport(output, options.reportPath, report); err != nil {
+	httpClient, err := infraacceptance.NewHTTPClient(config.HTTPTimeout, config.MaxResponseBytes, nil)
+	if err != nil {
 		return err
 	}
-	return errExecutionNotImplemented
+	apiClient, err := infraacceptance.NewAPIClient(httpClient, config.APIEndpoint)
+	if err != nil {
+		return err
+	}
+	evidence, err := infraacceptance.NewEvidenceStore(config.PostgresDSN)
+	if err != nil {
+		return err
+	}
+	defer evidence.Close()
+	runner, err := infraacceptance.NewRunner(config, httpClient, apiClient, evidence)
+	if err != nil {
+		return err
+	}
+	report, runErr := runner.Run(context.Background(), report)
+	if emitErr := emitReport(output, options.reportPath, report); emitErr != nil {
+		return emitErr
+	}
+	return runErr
 }
 
 func parseOptions(arguments []string) (commandOptions, error) {

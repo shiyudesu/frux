@@ -184,3 +184,35 @@ go run ./cmd/multimodal-provider
 便于用实际调用校准费用；该计数不包含请求内容。官方接口与模型限制以
 [阿里云 Multimodal-Embedding 文档](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)
 为准。
+
+## 11. Automated technical acceptance
+
+验收 Runner 默认只检查本地配置和 Fixture，不访问 API、数据库或模型：
+
+```bash
+cp apps/.env.acceptance.example apps/.env.acceptance
+# 填写专用普通用户、审核管理员、只读 PostgreSQL DSN，以及视频/封面 Fixture 路径
+
+cd apps/api
+go run ./cmd/multimodal-acceptance
+```
+
+原生命令会自动发现 `apps/.env.acceptance`。真实执行前必须由操作者同时设置环境确认并传入命令参数：
+
+```dotenv
+FRUX_ACCEPTANCE_ALLOW_BILLABLE=true
+```
+
+```bash
+go run ./cmd/multimodal-acceptance --execute --report ./acceptance-report.json
+```
+
+执行要求 API、Worker、Adapter、PostgreSQL、Redis、Kafka 和 MinIO 已由现有开发工具启动；媒体必须使用
+S3/MinIO 直传，多模态 Video Jobs、Similar、Query Embedding 和 Hybrid 必须已显式启用。Runner 不启动或停止
+服务、不修改 YAML、不创建/提升管理员，也不绕过审核。它通过现有接口上传两份 Fixture、创建视频、认领并
+批准审核、等待 Job/Fact/Projection、调用 Similar 与 Hybrid，并读取只读数据库和封闭指标。
+
+一次成功执行最多新增两次视频向量调用和一次查询向量调用。报告包含合同、阶段耗时、Job/Asset/Video ID、
+维度、范数、digest 一致性、检索 ID 和 Token 差值，不包含密码、Token、API Key、HMAC、DSN、签名 URL、
+媒体字节或原始向量。默认保留 Fixture 供 Golden Set 使用；`--cleanup` 只通过普通视频删除 API 删除当前运行
+创建的两个视频，不删除账号、对象或历史向量事实。

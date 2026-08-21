@@ -65,6 +65,31 @@ func TestLoadMultimodalIgnoresMissingFileOutsideRepository(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptanceLoadsOnlyAcceptanceVariables(t *testing.T) {
+	root, workingDirectory := multimodalTestRepository(t)
+	writeMultimodalTestEnv(t, filepath.Join(root, "apps", acceptanceEnvFilename), `
+FRUX_ACCEPTANCE_USER_ACCOUNT=acceptance-user
+DASHSCOPE_API_KEY=must-not-load
+`)
+	oldWorkingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWorkingDirectory) })
+	t.Setenv("DASHSCOPE_API_KEY", "existing")
+	_ = os.Unsetenv("FRUX_ACCEPTANCE_USER_ACCOUNT")
+	t.Cleanup(func() { _ = os.Unsetenv("FRUX_ACCEPTANCE_USER_ACCOUNT") })
+	if err := LoadAcceptance(); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("FRUX_ACCEPTANCE_USER_ACCOUNT") != "acceptance-user" || os.Getenv("DASHSCOPE_API_KEY") != "existing" {
+		t.Fatal("acceptance environment scope was not isolated")
+	}
+}
+
 func multimodalTestRepository(t testing.TB) (string, string) {
 	t.Helper()
 	root := t.TempDir()

@@ -156,6 +156,10 @@ go run ./cmd/multimodal-provider
 原生 API、Worker 和 Adapter 命令会在仓库内自动发现 `.env.multimodal`，不需要先执行 `source`。
 已存在的系统环境变量优先；API/Worker 只加载 Frux 侧配置，DashScope API Key 只会加载到 Adapter。
 
+完成运行环境配置后，可复制 `apps/.env.acceptance.example` 为 `apps/.env.acceptance`，使用
+`go run ./cmd/multimodal-acceptance` 执行默认无调用的验收检查；真实验收需要额外的双重计费确认，详见
+[视频向量模块](docs/modules/embedding.md)。
+
 适配器启动时会先执行一次真实的文本向量探测；凭证、Endpoint、模型或返回维度不正确时不会开始监听。
 通过探测后，Frux API/Worker 可连接 `http://127.0.0.1:8099`。具体开关顺序和固定合同见
 [视频向量模块](docs/modules/embedding.md)。
