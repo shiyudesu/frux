@@ -19,3 +19,7 @@ fusion algorithm, or any other policy MUST create another contract identity.
 #### Scenario: Deployment switches between supported profiles
 - **WHEN** configuration changes between the dated and undated Tongyi Flash profiles
 - **THEN** the active contract changes and the projection/retrieval path excludes vectors stored under the other profile
+
+#### Scenario: Durable publication event carries immutable media identity
+- **WHEN** an S3-backed public video publication is persisted to the outbox and delivered through Kafka
+- **THEN** its media asset IDs and video version survive serialization so the multimodal job handoff is created instead of treated as a legacy URL-only event

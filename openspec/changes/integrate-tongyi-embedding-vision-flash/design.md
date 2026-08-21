@@ -81,6 +81,10 @@ normalization creates a new fusion-policy identifier.
 Query requests always use one `{text: ...}` content element and require one `type=text` vector from
 the selected upstream model.
 
+The durable video-publication outbox and Kafka payload must preserve media asset IDs and video version.
+The multimodal handoff intentionally ignores legacy URL-only publication events because their source
+bytes cannot be bound to immutable storage assets.
+
 ### 4. Normalize and bind every upstream result
 
 The upstream response must contain exactly the count, indexes, and types required by the active
