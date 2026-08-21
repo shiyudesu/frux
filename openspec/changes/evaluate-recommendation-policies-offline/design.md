@@ -1,214 +1,196 @@
 ## Context
 
-`persist-recommendation-training-impressions` defines a trusted compact diagnostic contract for actual deliveries, including request/generation/video identity, absolute generation position, policy/schema versions, author/publication metadata, reasons/components, degraded metadata, and served/recorded times. The broad training exporter is future-only and is not a prerequisite here.
+Frux now has a dormant Session Semantic path with a real active-contract vector runtime, trusted
+session facts, Exact recall, sampled request evidence, and Snapshot acceptance. The remaining
+evidence gap is relevance quality under repeatable inputs. A personal deployment cannot reach the
+traffic or randomized exposure needed for a credible online-lift claim, so the evaluation layer must
+combine complementary evidence rather than pretending one small log sample is sufficient.
 
-Production ranking is a linear sum over eight supported bounded components, followed by descending score, descending publication time, descending video ID, and deterministic author/content diversity. Low-data evaluation uses small frozen replay bundles containing candidate components and expected production order, a privacy-reviewed human golden set, and optional observational aggregates. Observed delivered subsets remain incomplete for full-pool or counterfactual conclusions.
+The roadmap names three independent sources:
 
-Replay and golden bundles need candidate `published_at`, pseudonymous `author_key`, bounded topic/source identifiers, and degraded/unknown metadata. Raw user or author identity remains excluded. These fields may later be supported by a training export, but this evaluator owns no exporter dependency.
+1. production scorer replay for implementation parity;
+2. versioned human Golden Sets for semantic direction and suppression;
+3. MicroLens and KuaiRec for public short-video ranking baselines.
 
-No logged randomized assignment propensity exists. The same logged outcomes therefore cannot establish causal or unbiased counterfactual lift for a reordered candidate list.
+KuaiRec documents a v2 package with `small_matrix.csv`/`big_matrix.csv`, watch ratio, timestamps, and
+item categories. MicroLens publishes several releases and processing paths whose raw layouts may
+differ. Frux must therefore parse KuaiRec's documented profile directly while requiring a
+release-specific canonical manifest for MicroLens instead of guessing an upstream layout.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Validate replay-bundle and golden-set hashes, counts, schemas, annotation provenance, and bounded fields before evaluation.
-- Validate baseline and candidate `PolicyConfiguration` files through the same production domain rules.
-- Recompute linear scores from frozen components and replay production ordering/diversity over each candidate set.
-- Require baseline-order parity before candidate interpretation.
-- Compute human semantic relevance, recall coverage, author/topic diversity, and optional observational watch/feedback metrics.
-- Emit deterministic canonical JSON and concise Markdown reports with uncertainty only when the available sample supports it.
-- Make replay limitations, exclusions, missing-label coverage, and non-causal interpretation impossible to overlook.
-- Run with small samples; large user cohorts or clustered bootstrap are never prerequisites.
-- Use the existing Go toolchain and standard library.
+- Run fully offline with bounded local files and zero external model calls.
+- Keep dataset/release/license/checksum provenance explicit and dataset namespaces isolated.
+- Produce deterministic chronological/session evaluation cases without future leakage.
+- Compare simple explainable baselines plus precomputed content/session-vector baselines.
+- Compute standard top-K, coverage, diversity, repetition, and latency metrics with denominators.
+- Preserve exact production replay and blinded human Golden Set evidence as separate tracks.
+- Emit byte-stable JSON/Markdown suitable for CI artifacts and interview demonstrations.
 
 **Non-Goals:**
 
-- Training, optimizing, or recommending policy weights.
-- Creating or activating recommendation policies, changing rollout, or altering online scoring/serving.
-- Claiming causal lift, unbiased counterfactual performance, or applying IPS without valid future propensity fields.
-- Reconstructing recall pools, recomputing feature values, querying production databases, or joining external catalogs.
-- Adding dashboards, schedulers, public APIs, frontend workflows, embeddings, pgvector, or model inference.
+- No raw public-dataset redistribution, automatic download, or license acceptance on the user's behalf.
+- No embedding generation, model inference, fine-tuning, weight learning, collaborative-filter model
+  training, ANN/HNSW, database mutation, API, Worker, Shadow, or Rollout.
+- No cross-dataset identity join or combined headline metric.
+- No causal-lift, statistical-significance, or production-promotion claim.
 
 ## Decisions
 
-### 1. Add a standalone low-data Go evaluator with no runtime service dependencies
+### 1. Use one standalone Go command with three explicit tracks
 
-Add `apps/api/cmd/recommendation-policy-evaluate`. It accepts:
+Add `cmd/recommendation-offline-evaluate` with `public-dataset`, `replay`, and `golden` subcommands.
+The command imports Frux domain packages but never loads service configuration or connects to
+PostgreSQL, Redis, Kafka, HTTP, S3, or a model provider. Each track writes its own report and may be
+run independently.
 
-- one or more `--replay-bundle`;
-- one `--golden-set`;
-- optional `--observations` conforming to the diagnostic identity/time contract;
-- one `--baseline <name>=<path>` and one or more repeatable `--candidate <name>=<path>`;
-- `--output-json` and `--output-markdown`;
-- a validated sorted `--k` list, defaulting to `1,5,10,20`, with values from 1 through 100;
-- optional bounded uncertainty controls, disabled by default;
-- small explicit case/row bounds;
-- explicit safe overwrite behavior.
+The public-dataset command accepts a dataset kind, an operator-owned dataset root, a manifest path,
+one or more K values, explicit case/item/interaction bounds, and JSON/Markdown output paths. Replay
+accepts a frozen production bundle and validated policy files. Golden accepts a versioned annotation
+bundle and named ranking outputs.
 
-The command uses only standard-library JSON, hashing, statistics, and filesystem facilities plus Frux domain packages. It does not load application config or connect to PostgreSQL, Redis, Kafka, HTTP, or model services. It may hold the bounded evaluation cases in memory and fails rather than silently sampling an oversized input.
+Alternative considered: Python/pandas. Rejected for the first version because streaming CSV,
+deterministic ranking, and the required metrics fit the existing Go toolchain; avoiding a second
+runtime makes reports easier to reproduce in CI and on interview machines.
 
-Alternative considered: Python/pandas. Rejected because the metrics do not require an external numerical stack, adding a second dependency/runtime would weaken reproducibility, and shared Go validation/replay logic is central to compatibility.
+### 2. Keep upstream acquisition outside the evaluator
 
-### 2. Fail closed on replay, golden-set, and optional observation integrity
+The evaluator never downloads MicroLens or KuaiRec. A manifest records dataset kind, release,
+source URL, citation, license identifier or explicit `license_status=operator_reviewed`, file paths,
+SHA-256 hashes, row counts, and schema versions. Inputs outside the configured dataset root,
+symlinks escaping the root, hash mismatches, unknown files, or unsupported releases fail closed.
 
-Preflight strictly parses canonical replay and golden manifests, verifies file hashes/counts, annotation schema/rubric versions, generation identity, canonical timestamps/numbers, unique case/candidate IDs, sorted inputs, and privacy exclusions. Optional observations additionally validate `(user_key, request_key, generation, video_id)` and occurred/recorded time semantics. Structural failures abort without partial reports.
+Only synthetic schema fixtures are checked into Frux. Real data roots and generated reports are
+ignored. This avoids redistributing upstream material and accommodates MicroLens releases whose
+terms/layouts require operator review.
 
-Compatibility is explicit rather than best-effort. The report records every input hash and version. No input is required to have been produced by `export-recommendation-training-dataset`.
+### 3. Parse KuaiRec directly and normalize MicroLens through a manifest profile
 
-Alternative considered: skip bad rows and report exclusions. Rejected for structural/schema/integrity failures because partial acceptance can silently change policy comparisons. Semantically valid but unlabeled rows remain in replay and are reported through coverage metrics.
+`kuairec-v2` consumes the documented interaction fields `user_id`, `video_id`, `play_duration`,
+`video_duration`, `timestamp`, and `watch_ratio`, plus `item_categories.csv`. Optional canonical
+feature files may provide text/image/multimodal vectors and author keys. The adapter verifies the
+declared watch ratio against duration values within tolerance and never invents a missing like label.
 
-### 3. Define a small self-contained replay and golden-set profile
+`microlens-canonical-v1` consumes manifest-declared canonical files produced from one named official
+release: interactions (`user_key`, `video_key`, `occurred_at`, `watch_ratio`), items (categories,
+optional author key), and optional precomputed feature vectors. The manifest must record the source
+release and normalization recipe/version. This is intentionally not a guessed parser for every raw
+MicroLens release.
 
-Each replay candidate contains:
+Both adapters emit the same bounded internal records using dataset-local opaque string keys. Keys
+are never parsed as Frux IDs and cannot be merged across datasets.
 
-- `published_at`: trusted candidate publication time in canonical UTC;
-- a pseudonymous `author_key`;
-- one bounded normalized `topic_key` and bounded recall-source list;
-- `degraded_state`: `healthy`, `degraded`, or `unknown`;
-- `degraded_providers`: a bounded, sorted list of normalized provider identifiers when available.
+### 4. Use deterministic chronological session cases and preregistered labels
 
-Replay bundles freeze candidate features, expected baseline order, publication time, grouping keys, sources/topics, and degraded state from a privacy-reviewed fixture or diagnostic capture. Golden cases add a blinded context summary, candidate presentation payload, independent 0-3 semantic relevance judgments, annotator count, adjudicated label, and rubric version. The evaluator reports unknown metadata and never guesses.
+Rows are sorted by user, occurred time, then stable source ordinal. Duplicate user/item/timestamp
+rows or conflicting metadata fail. For each eligible user, the last positive interaction becomes
+the target; only earlier rows form history. A bounded recent window forms the session.
 
-Grouping keys are opaque and local to the bundle. Raw user/author identity, profiles, free-form private context, and key material remain excluded.
+Default public profile `short-video-session-v1` defines:
 
-Alternative considered: use video ID as a proxy for author. Rejected because it cannot reproduce `MaxPerAuthor` or author concentration. Alternative considered: query the live catalog during evaluation. Rejected because reports would no longer be self-contained or repeatable.
+- positive: finite watch ratio `>= 0.8`;
+- quick skip: finite watch ratio `<= 0.2`;
+- neutral: values between the thresholds;
+- minimum earlier history: 3 interactions;
+- session window: latest 20 earlier interactions;
+- candidate universe: all items with required baseline inputs, excluding prior interacted items;
+- target inclusion: required, otherwise the case is excluded with a closed reason.
 
-### 4. Share production policy validation and reject non-replayable policies by default
+Thresholds and bounds are versioned in the report and may only change through a new profile version.
+Neutral rows may contribute recency/category/content history but are not positive relevance targets or
+negative session signals. Missing watch ratio is excluded rather than coerced to zero.
 
-Factor the existing recommendation domain normalization into an exported validation entry point returning a normalized clone of `PolicyConfiguration`; `NewPolicy` continues to call the same function. The evaluator decodes each file strictly, rejects trailing JSON and unknown fields, supplies a bounded report name separately from the raw configuration, and validates all supported feature names, finite weight bounds, total absolute-weight bound, recall/deadline maps, half-lives, diversity, rollout, retention, suppression, and other existing production constraints.
+### 5. Register explainable baselines with explicit availability
 
-Reports include both the exact input-file SHA-256 and a canonical normalized-configuration SHA-256. Duplicate names or duplicate normalized hashes are rejected to avoid ambiguous comparisons.
+The deterministic baseline registry contains:
 
-Only `FeatureWeights` and `Diversity` can be replayed from frozen components and candidate metadata. Differences in recall budgets, provider deadlines, feature generation, exposure/suppression, fallback, rollout, sampling, retention, or snapshot settings are non-replayable.
+- `popularity`: descending positive training count;
+- `recent_interaction`: descending latest eligible interaction time;
+- `category`: cosine over normalized user/category frequency and item category indicators;
+- `text`: cosine between positive-session centroid and precomputed text vectors;
+- `image`: the same over precomputed image vectors;
+- `multimodal`: the same over precomputed multimodal vectors;
+- `multimodal_session`: normalized positive centroid minus bounded negative quick-skip centroid,
+  followed by Exact cosine.
 
-The default command fails before metrics when any candidate has a non-replayable difference. An explicit diagnostic-only override may render the difference inventory, but it omits comparative policy metrics and cannot declare a winner or promotion recommendation.
+All ties use dataset-local item key ascending. Missing required fields make a baseline unavailable for
+the affected case; vectors are never zero-filled. Reports show eligible cases, feature coverage, and
+exclusion reasons per baseline. No baseline is described as the production policy.
 
-Alternative considered: validate only weights/diversity. Rejected because the input is a production `PolicyConfiguration`, and accepting a file production would reject creates a misleading promotion path.
+### 6. Compute deterministic metrics per dataset and baseline
 
-### 5. Use a versioned deterministic score and production ordering contract
+For sorted unique K values from 1 through 100, compute Recall@K, NDCG@K, HitRate@K, and reciprocal
+rank using the single held-out target. Aggregate Catalog Coverage against the eligible item universe,
+distinct category/author coverage when metadata exists, largest category/author share, repeated-item
+and repeated-primary-category runs, and per-case ranking latency (`count`, total, min, max, p50, p95)
+using integer nanoseconds. Optional upstream embedding throughput is copied only from a signed or
+checksum-covered declared measurement file and is never measured through provider calls.
 
-For each candidate, evaluation version `linear-replay/v1`:
+Dataset reports remain separate. A summary may place them side-by-side but cannot average MicroLens
+and KuaiRec into one score.
 
-1. Requires every registered score component exactly once, with finite values in `[0,1]`.
-2. Multiplies normalized component values by normalized policy weights.
-3. Sums in the registry's fixed feature order to avoid Go map iteration nondeterminism.
-4. Rejects a non-finite result.
-5. Sorts by score descending, `published_at` descending, then `video_id` descending.
-6. Applies the production diversity algorithm: author cap, author gap, content-bucket gap, gap-relaxed retry, then stable remainder fallback when caps are infeasible.
+### 7. Keep production replay strict and orthogonal
 
-The content bucket is the lexicographically smallest recall provider, matching production. Baseline replay is compared with logged absolute positions before metric computation. Mismatches are counted and warned because source suppression, absent full-pool candidates, historical arithmetic, or metadata defects can prevent equality.
+Factor the existing policy normalization into an exported normalized-clone validator shared by
+`NewPolicy` and replay. Replay uses frozen score components, publication time, pseudonymous author,
+recall reasons, and expected production order. It reproduces fixed feature-order summation,
+production tie-breaking, and diversity. Canonical fixtures require exact baseline parity.
 
-The report classifies every replay case:
+Only score weights and diversity fields are replayable. Differences in recall, provider deadlines,
+feature generation, suppression, fallback, sampling, rollout, retention, contracts, or Snapshot
+behavior fail comparative replay. A diagnostic-only flag may list differences without policy metrics
+or a recommendation.
 
-- `served_subset_replay`: valid replay over a diagnostic delivered-card subset, with full-pool replay unavailable;
-- `incomplete_metadata`: excluded because required candidate metadata is missing;
-- `invalid_group`: rejected input when identity/position invariants are contradictory.
+### 8. Keep Golden Sets blinded and versioned
 
-Captured full-pool fixtures may declare full-pool replay only when their manifest proves a complete frozen pool. Diagnostic delivered subsets set `full_pool_replay_available=false`. Absolute-position gaps, generation counts, candidate counts, and baseline-order agreement are reported. Canonical production fixtures require 100% exact baseline order; any mismatch invalidates the evaluator build or policy comparison.
+Golden cases cover Query → Relevant Videos, Source Video → Similar Videos, Session Facts → Expected
+Interest Direction, and Negative Feedback → Expected Suppression. Candidate judgments use a 0-3
+rubric, at least two independent blinded annotations, and adjudication when judgments differ by two
+or more points. Reports include agreement, label coverage, semantic NDCG, direction accuracy, and
+suppression accuracy.
 
-Alternative considered: use logged absolute position as the candidate tie-break. Rejected because candidate weights can create new ties and production uses publication time/video ID.
+Golden metrics never consume public-dataset IDs, and public labels never become Frux Golden labels.
 
-### 6. Make blinded human semantic relevance the primary low-data label
+### 9. Publish privacy-safe deterministic reports atomically
 
-The golden rubric scores each candidate from 0 to 3:
+Reports contain schema/tool/profile versions, file hashes/counts, source/citation/license metadata,
+baseline availability, split/exclusion counts, metrics with numerators/denominators, latency, warnings,
+limitations, and `external_model_calls: 0`. They exclude raw rows, vector components, user histories,
+credentials, absolute operator paths, and wall-clock timestamps.
 
-- `0`: irrelevant or clearly undesirable for the stated context;
-- `1`: weakly related but unlikely to satisfy;
-- `2`: relevant and plausibly useful;
-- `3`: highly relevant and strongly matched.
-
-Candidates are presented without policy name or rank. Each case requires at least two independent judgments; disagreements of two or more points require adjudication. Reports include raw judge counts, adjudicated labels, agreement rate, and weighted agreement statistics when defined. Semantic NDCG@K, precision/recall at preregistered relevance thresholds, and pairwise preference accuracy use only adjudicated labels.
-
-### 7. Retain `observational-utility/v1` only for optional observed samples
-
-Each row derives:
-
-- `watch_ratio_term = clamp(watch_ratio, 0, 1)` when present, otherwise `0`;
-- `effective_watch_term = clamp(effective_watch_ms / 30000, 0, 1)`;
-- `quick_skip = exposed && skipped && effective_watch_ms <= 3000 && (watch_ratio is null || watch_ratio <= 0.10)`.
-
-The composite relevance/utility label is:
-
-```text
-clamp(
-  0.35 * watch_ratio_term
-  + 0.15 * effective_watch_term
-  + 0.15 * completed
-  + 0.10 * liked
-  + 0.15 * favorited
-  + 0.10 * followed
-  - 0.20 * quick_skip
-  - 0.35 * eligible_not_interested
-  - 0.25 * eligible_reduce_author
-  - 0.15 * eligible_already_seen,
-  0, 1)
-```
-
-Explicit negative terms apply only when an optional observation says negative labels are eligible. `delivered_unexposed` rows without positive engagement are unlabeled, not zero-relevance negatives. The report includes the formula, constants, quick-skip definition, eligibility rule, and label version.
-
-NDCG@K is computed only for request-policy evaluations whose replayed top K (or all candidates when fewer than K) all have eligible labels. IDCG uses the same observed candidate set and graded label with gain `2^relevance - 1` and logarithmic discount. Requests with no positive gain produce NDCG `0` and remain counted. Missing-label exclusions and complete-label coverage are reported per K.
-
-Alternative considered: reuse an observational bundle's categorical primary-label precedence as the primary relevance score. Rejected because low-data evaluation should be anchored in blinded human semantic judgments, while behavior remains optional diagnosis.
-
-### 8. Compute replay, semantic, recall, diversity, and conditional observational metrics
-
-For baseline and every candidate, at each K:
-
-- baseline-order parity and deterministic score/order diagnostics;
-- semantic NDCG@K, precision/recall, and pairwise preference accuracy over the golden set;
-- recall coverage of adjudicated relevant items overall and by recall source;
-- distinct author and topic coverage, author/topic concentration, largest-group share, and repeated-author/topic runs;
-- optional observational utility and watch metrics only for eligible observed rows;
-- average composite utility;
-- average effective watch milliseconds and watch ratio with separate known denominators;
-- completion, quick-skip, not-interested, reduce-author, already-seen, like, favorite, follow, and combined negative-feedback rates only when the corresponding eligible denominator is greater than zero.
-
-Metrics are also emitted for bounded available slices by source policy version, degraded/healthy state, input/record/feature/source-model schema, and logged absolute-position bands `0`, `1-4`, `5-9`, and `10+`. Small slices are retained with counts rather than hidden.
-
-Data-quality sections include manifest/parsed counts, request/user/item counts, duplicate and invalid counts, label-eligible coverage, known-duration/watch-ratio coverage, exposure/engagement states, absolute-position gaps, baseline-order agreement, source-version distribution, request-size distribution, and exclusions by reason.
-
-Candidate-minus-baseline semantic deltas are paired on identical golden cases. Optional behavior deltas are labeled `observational`; reports state that they do not estimate causal lift or outcomes at unobserved positions. A zero denominator yields `unavailable`, never numeric zero.
-
-### 9. Make uncertainty optional and sample-appropriate
-
-Point estimates, denominators, and case counts are always available when inputs exist. The evaluator does not require a minimum user population or bootstrap to run.
-
-When preregistered and statistically defensible, deterministic case-level bootstrap or exact/binomial intervals may be emitted with explicit independence assumptions and minimum case counts. User-cluster bootstrap is allowed only for optional observations with sufficient independent users; it is never an acceptance prerequisite. Otherwise the report gives an unavailable reason.
-
-These intervals describe only the sampled golden cases or optional observations. They are not causal intervals and do not correct position bias. No IPS/SNIPS/doubly-robust estimator is implemented. A future input with validated randomized propensities requires a new schema and capability change before such estimators can be added.
-
-### 10. Produce canonical atomic JSON and Markdown reports
-
-The JSON report uses structs and sorted arrays rather than maps where ordering matters, finite normalized numbers, fixed field order, no wall-clock generation timestamp, and one trailing newline. It contains input hashes, normalized policies, replay scope, warnings, metric definitions, label definition, sample/exclusion counts, slices, estimates, confidence intervals, and limitations.
-
-The Markdown report is rendered solely from the JSON report model and contains a short input/policy summary, prominent replay/observational/full-pool warnings, top-line baseline/candidate tables, sample coverage, annotation agreement, exclusions, and metric definitions. It is concise and deterministic.
-
-Both outputs are written to permission-restricted sibling partial files, synced, and atomically renamed only after both render successfully. Existing files remain untouched unless safe overwrite is explicit. Failures remove partial files without modifying any input bundle or manifest.
-
-### 11. Keep training independent and deferred
-
-Documentation states that `learn-recommendation-policy-weights` is conditionally deferred and not a prerequisite for semantic evaluation. A future activated learner may consume a versioned report, but cannot move training, optimization, activation, or model inference into this evaluator.
+JSON uses stable struct ordering and normalized numeric rendering. Markdown is rendered from the same
+report value. Both outputs use sibling temporary files, `0600`, fsync, and atomic rename; a partial
+failure preserves existing final outputs.
 
 ## Risks / Trade-offs
 
-- [Served impressions omit unserved recall candidates and outcomes under alternative ranks] → Mark full-pool replay unavailable, report absolute-position gaps and label coverage, position-stratify metrics, and prohibit causal/counterfactual claims.
-- [Candidate policies can change non-replayable recall or feature-generation settings] → Validate the full configuration but enumerate non-replayable differences and limit claims to logged-component score/diversity replay.
-- [Degraded state may be unavailable for unsampled or expired request records] → Preserve an explicit `unknown` slice, report known-state coverage, and never infer healthy state from absence.
-- [Unobserved delivered cards can be mistaken for negatives] → Treat unexposed/unengaged rows as missing labels and never report quick-skip or negative rates without eligible samples.
-- [Oversized replay or observation bundles can exceed evaluator memory] → Preflight manifest counts against bounded operator limits and fail without partial metrics.
-- [Small golden sets can imply stronger evidence than exists] → Report counts, agreement, missing coverage, and optional sample-appropriate intervals without making causal claims.
-- [Golden reports can be brittle across intentional schema changes] → Version label, replay, metric, and report schemas and require explicit golden updates.
+- [MicroLens release layouts or terms vary] → Require an operator-reviewed canonical manifest and do
+  not claim universal raw-format support.
+- [KuaiRec watch ratio is not explicit preference] → Version thresholds, report neutral/missing rows,
+  and avoid causal or production-lift claims.
+- [Precomputed features came from different models] → Record feature source/dimension/normalization
+  per channel and compare only compatible cases.
+- [Simple baselines understate stronger research models] → Present them as engineering baselines, not
+  state of the art; training remains a separate gated change.
+- [Chronological holdout has one target] → Report exact denominators and complement it with Golden
+  Sets rather than manufacturing multiple labels.
+- [Large CSVs exceed local memory] → Stream interactions, enforce manifest bounds, and retain only
+  bounded per-user histories, item aggregates, and final cases.
+- [Latency varies by machine] → Record operation/count statistics as engineering evidence, not a
+  cross-machine benchmark.
 
 ## Migration Plan
 
-1. Finalize the compact diagnostic identity/time contract and create privacy-reviewed replay fixtures; do not wait for the future training exporter.
-2. Define the human rubric, annotation instructions, blinded workflow, adjudication, and a small representative golden set.
-3. Add shared policy validation without changing online policy semantics.
-4. Implement evaluator input validation, production replay/parity, semantic/recall/diversity metrics, optional observational metrics, reporting, and CLI.
-5. Validate canonical baseline parity and golden reports before evaluating operator bundles.
-6. Roll back by removing access to the standalone evaluator binary and deleting local reports; no database, policy, export, or serving state is changed.
+1. Replace the outdated evaluation artifacts with the three-track contract and commit the plan.
+2. Add common contracts, strict manifests, KuaiRec/MicroLens adapters, and synthetic fixtures.
+3. Add deterministic cases, baselines, metrics, reports, and CLI.
+4. Add production replay and Golden Set integration, documentation, and complete verification.
+5. Run checked-in fixtures in CI; real dataset runs remain explicit operator actions.
+6. Roll back by removing the offline command/packages and specs; there is no business migration.
 
 ## Open Questions
 
-The first golden-set rubric and minimum case coverage must be preregistered before annotation. Missing publication/author/topic replay metadata remains a hard input failure; degraded state may remain explicitly unknown but must never be guessed.
+No implementation-blocking question remains. Exact upstream file acquisition and MicroLens release
+normalization are operator inputs because Frux must not silently accept terms or redistribute data.

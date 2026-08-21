@@ -1,57 +1,52 @@
-## 1. Low-Data Input Contracts
+## 1. Common contracts and safe command
 
-**Does not depend on:** `export-recommendation-training-dataset` or `learn-recommendation-policy-weights`.
+- [ ] 1.1 Define closed dataset/track/profile/baseline/metric/report versions, bounded identities, availability values, exclusion codes, and `external_model_calls: 0`.
+- [ ] 1.2 Add strict manifest, relative-path containment, SHA-256, row-count, schema, release, citation, and license-acknowledgement validation with identity-safe errors.
+- [ ] 1.3 Add `cmd/recommendation-offline-evaluate` subcommand parsing, K/bound/output validation, validation-only plan, and no runtime-service imports.
+- [ ] 1.4 Add synthetic checked-in fixtures and ignored operator data/report directories without redistributing public rows.
 
-- [ ] 1.1 Define bounded versioned replay-bundle, golden-set, and optional observation schemas using `(user_key, request_key, generation, video_id)`, generation-relative position, publication time, pseudonymous author/topic keys, reasons/components, degraded metadata, and occurred/recorded semantics.
-- [ ] 1.2 Define the privacy-reviewed blinded 0-3 semantic rubric, annotation instructions, minimum two independent judgments, adjudication for disagreements of at least two points, and agreement reporting.
-- [ ] 1.3 Add strict hashes/counts/schema/privacy validation and deterministic fixtures for complete frozen pools, delivered subsets, human annotations, unknown degraded state, missing metadata, and optional observations.
+## 2. Public dataset adapters
 
-## 2. Shared Policy Validation and Evaluation Domain
+- [ ] 2.1 Implement streaming `kuairec-v2` interaction parsing for documented IDs, durations, timestamp, and watch ratio with consistency tolerance and no synthetic like label.
+- [ ] 2.2 Implement strict KuaiRec category parsing plus optional canonical author/text/image/multimodal feature channels.
+- [ ] 2.3 Implement `microlens-canonical-v1` interaction/item/feature parsing bound to manifest release and normalization recipe rather than guessed raw layouts.
+- [ ] 2.4 Normalize both adapters into isolated dataset-local records and add valid, corrupt, unsupported, duplicate, escaping-path, hash/count, and oversized tests.
 
-- [ ] 2.1 Export the existing recommendation policy normalization/validation entry point for shared use by `NewPolicy` and the evaluator, with regression tests proving existing valid and invalid production configurations retain identical behavior.
-- [ ] 2.2 Define evaluator domain registries for input/rubric/replay/report versions, fixed feature order, policy descriptors, K/case bounds, metric availability, warnings, and bounded identity-safe errors.
-- [ ] 2.3 Strictly decode named baseline/candidate policies, classify replayable differences, and reject non-replayable differences by default; diagnostic-only override may list differences but must suppress comparative metrics and recommendations.
+## 3. Chronological cases and baseline registry
 
-## 3. Input Integrity Reader
+- [ ] 3.1 Implement `short-video-session-v1` positive/quick-skip/neutral classification, chronological ordering, held-out target selection, minimum history, bounded session, prior-item exclusion, and closed case exclusions.
+- [ ] 3.2 Implement deterministic Popularity and Recent Interaction baselines with fixed final item-key tie-breaks.
+- [ ] 3.3 Implement Category profile/cosine scoring with deterministic primary-category and missing-category handling.
+- [ ] 3.4 Implement Text, Image, and Multimodal positive-session centroid Exact cosine baselines using only compatible precomputed vectors.
+- [ ] 3.5 Implement Multimodal + Session Interest using bounded positive centroid minus negative quick-skip centroid without model inference.
+- [ ] 3.6 Add leakage, duplicate ordering, target inclusion, neutral/missing behavior, unavailable feature, vector compatibility, and deterministic tie tests.
 
-- [ ] 3.1 Implement strict replay/golden/optional-observation manifest preflight for versions, hashes, counts, case/candidate bounds, required metadata, and annotation provenance.
-- [ ] 3.2 Strictly decode canonical timestamps and finite numbers, enforce generation/position and unique case/candidate invariants, and reject payloads or errors that expose raw identity.
-- [ ] 3.3 Reconcile manifests with parsed inputs and add valid, empty, corrupted, unsupported, oversized, unsorted, conflicting, incomplete-annotation, and count-mismatch fixtures.
+## 4. Metrics and aggregation
 
-## 4. Production Scorer Replay and Parity
+- [ ] 4.1 Implement Recall@K, NDCG@K, HitRate@K, reciprocal rank, and paired baseline result aggregation with explicit numerators/denominators.
+- [ ] 4.2 Implement Catalog Coverage, category/author coverage and concentration, largest-group share, and repeated item/primary-category runs with availability reasons.
+- [ ] 4.3 Implement per-baseline feature/case coverage, exclusion summaries, dataset counts, and separate dataset result boundaries.
+- [ ] 4.4 Implement deterministic integer-nanosecond ranking latency summaries and checksum-covered optional upstream embedding-throughput evidence.
+- [ ] 4.5 Add metric edge-case, K-bound, empty/unavailable, repeated-run, and exact expected-report tests.
 
-- [ ] 4.1 Implement `linear-replay/v1` using exactly one finite `[0,1]` component per registered feature in fixed order, then sort by descending score, descending `published_at`, and descending video ID; test ties, negative weights, missing/invalid components, and deterministic equal values.
-- [ ] 4.2 Implement production diversity with pseudonymous author equality, lexicographically minimum recall-provider content buckets, author caps, author/content gaps, gap-relaxed retry, and stable infeasible-cap fallback; cover feasible, relaxed, fallback, one-author, and multi-reason cases.
-- [ ] 4.3 Require 100% exact baseline order on canonical production fixtures; report parity, inversions, generation/rank gaps, and candidate counts on diagnostic bundles, and invalidate exact-replay claims on any unexplained mismatch.
-- [ ] 4.4 Distinguish manifest-proven `full_pool_fixture_replay` from `served_subset_replay`; never infer absent candidates or counterfactual outcomes.
+## 5. Production replay and Golden Sets
 
-## 5. Human Golden and Diagnostic Metrics
+- [ ] 5.1 Export the production policy normalized-clone validator and prove `NewPolicy` retains identical valid/invalid behavior.
+- [ ] 5.2 Implement strict named policy decoding, replayable-difference classification, diagnostic-only suppression, and canonical configuration hashes.
+- [ ] 5.3 Implement fixed-feature-order scorer replay, production tie-breaking/diversity, exact canonical parity, and served-subset limitations.
+- [ ] 5.4 Implement versioned Query/Similar/Session Direction/Negative Suppression Golden cases, blinded 0-3 annotations, adjudication, agreement, semantic NDCG, direction, and suppression metrics.
+- [ ] 5.5 Add production parity, non-replayable rejection, diagnostic-only, annotation provenance, incomplete adjudication, and cross-track label rejection tests.
 
-- [ ] 5.1 Implement adjudicated 0-3 semantic labels, judge/agreement summaries, semantic NDCG@K, thresholded precision/recall, and pairwise preference accuracy with explicit case/candidate denominators.
-- [ ] 5.2 Implement recall coverage of adjudicated relevant items overall and by source, plus source contribution and multi-source rates.
-- [ ] 5.3 Implement video/author/topic coverage, HHI/concentration, largest-group share, and repeated author/topic run metrics over frozen candidate pools.
-- [ ] 5.4 Keep `observational-utility/v1` only for optional eligible observations; emit quick-skip and explicit-negative metrics only when denominators are positive, otherwise `unavailable` rather than zero.
-- [ ] 5.5 Add paired baseline/candidate semantic deltas, replay/degraded/schema/position slices, sample-quality summaries, exclusions, and prominent non-causal warnings.
+## 6. Reports and orchestration
 
-## 6. Optional Sample-Appropriate Uncertainty
+- [ ] 6.1 Define canonical public/replay/golden report contracts with provenance, hashes/counts, profiles, availability, metrics, exclusions, latency, limitations, and no raw/vector/path leakage.
+- [ ] 6.2 Implement deterministic JSON and Markdown rendering from one report value with no wall-clock-dependent fields.
+- [ ] 6.3 Implement paired `0600` sibling partial files, sync, atomic publication, safe overwrite, and failure cleanup that preserves existing outputs.
+- [ ] 6.4 Wire all three CLI tracks and add command/filesystem/end-to-end tests proving no DB/Redis/Kafka/HTTP/S3/provider dependency or model call.
 
-- [ ] 6.1 Always emit deterministic point estimates, numerators/denominators, and sample counts without requiring bootstrap or a minimum user population.
-- [ ] 6.2 Add optional preregistered case-level bootstrap, exact/binomial intervals, or user-cluster bootstrap only when their assumptions and minimum samples hold; otherwise emit an explicit unavailable reason.
+## 7. Documentation and verification
 
-## 7. Canonical Reports and Operator CLI
-
-- [ ] 7.1 Define deterministic JSON/Markdown reports containing input/policy hashes, replay scope/parity, rubric/annotation agreement, semantic/recall/diversity metrics, optional observations, metric availability, exclusions, and prominent non-causal limitations.
-- [ ] 7.2 Implement permission-restricted sibling partial files, sync, atomic publication, safe overwrite, and cleanup so both reports publish together, contain no wall-clock-dependent values, preserve existing outputs on failure, and never mutate inputs.
-- [ ] 7.3 Add `apps/api/cmd/recommendation-policy-evaluate` with replay-bundle, golden-set, optional-observations, baseline/candidate, output, K/case-bound, uncertainty, diagnostic-only, and overwrite flags.
-- [ ] 7.4 Add command/filesystem tests and end-to-end small golden fixtures covering exact parity, non-replayable rejection, semantic judgments, recall, author/topic diversity, optional/absent behavior samples, atomic failures, hashes, and repeatability.
-
-## 8. Documentation and Deferred Training Boundary
-
-- [ ] 8.1 Document low-data inputs, annotation rubric/blinding/adjudication, exact baseline parity, replayable policy scope, semantic/recall/diversity metrics, optional behavior denominators, and sample-appropriate uncertainty.
-- [ ] 8.2 Document exporter independence, served-subset/full-pool limits, position bias, no causal-lift claim, default non-replayable rejection, and that deferred weight learning is not a semantic-roadmap prerequisite.
-
-## 9. Validation
-
-- [ ] 9.1 Run targeted policy validation, input reader, replay/parity, golden annotation, semantic/recall/diversity, optional observation, uncertainty, report, CLI/filesystem, and golden tests.
-- [ ] 9.2 Run the relevant Go suite and build `./cmd/feed`, `./cmd/worker`, and `./cmd/recommendation-policy-evaluate`; the future dataset-export binary is not an evaluator prerequisite.
-- [ ] 9.3 Run `openspec validate --all --strict` and confirm proposal, design, both delta specs, low-data inputs, exporter independence, non-causal limits, and deferred training boundary remain coherent.
+- [ ] 7.1 Document operator-owned MicroLens/KuaiRec preparation, source/license acknowledgement, manifests, feature provenance, commands, thresholds, baselines, and metrics.
+- [ ] 7.2 Document dataset isolation, public-vs-Golden-vs-replay evidence boundaries, no causal/promotion claim, and deferred training/Shadow gates.
+- [ ] 7.3 Update the roadmap status and add reproducible fixture commands/reports suitable for CI and interview demonstration.
+- [ ] 7.4 Run targeted tests/race, complete Go tests/vet/build, deterministic report replay, Compose validation, and strict OpenSpec validation.

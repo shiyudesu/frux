@@ -1,34 +1,51 @@
 ## Why
 
-Frux needs a trustworthy way to diagnose and compare recommendation policies before enough user data exists for training or causal inference. The current route therefore centers on deterministic production-scorer replay, a small privacy-reviewed human golden set, and optional observational metrics rather than a large training export.
+Session Semantic Recommendation has passed deterministic, PostgreSQL, and real API/Snapshot
+acceptance, but a personal project cannot obtain enough live users to justify relevance claims from
+online outcomes. Frux therefore needs a reproducible offline gate that combines production replay,
+human Golden Sets, and isolated public short-video datasets before any Shadow proposal.
 
 ## What Changes
 
-- Add a Go operator CLI that validates small versioned replay bundles and blinded human golden sets; optional observational inputs use the shared diagnostic identity/time contract but do not require `export-recommendation-training-dataset`.
-- Load one baseline and one or more candidate `PolicyConfiguration` files through production validation, then deterministically replay the production scorer, tie-breaking, and diversity logic.
-- Require exact baseline-order parity on canonical replay fixtures and report parity on diagnostic cases before interpreting candidate results.
-- Reject policies with recall, feature-generation, suppression, rollout, or other non-replayable differences by default; an explicit diagnostic-only mode may list those differences but cannot rank or recommend the policy.
-- Make human semantic relevance the primary low-data evidence through a versioned 0-3 rubric, blinded annotations, adjudication, and agreement reporting.
-- Report recall coverage and source contribution plus author and topic diversity over the frozen candidate pools.
-- Report quick-skip and explicit-negative feedback only when an eligible observed sample exists; otherwise emit `unavailable` with zero denominator rather than a zero rate.
-- Produce deterministic JSON and concise Markdown with hashes, counts, exclusions, parity, golden-set metrics, optional observational metrics, and prominent non-causal limitations.
-- Keep uncertainty optional and sample-appropriate; no large user-cluster bootstrap is required to run or accept the evaluator.
-- Explicitly exclude training weights, activating policies, online serving changes, A/B dashboards, propensity-free IPS, causal-lift claims, embeddings, pgvector, and model inference.
-- Keep this evaluator independent of the deferred `learn-recommendation-policy-weights` change and usable for the semantic roadmap without it.
+- Add a standalone Go evaluator with independent `replay`, `golden`, and `public-dataset` tracks;
+  it does not start Frux services, query business databases, mutate policy state, or call a model.
+- Add a strict KuaiRec v2 adapter for documented interaction/category inputs and a strict MicroLens
+  manifest adapter for release-specific canonical exports. Dataset IDs and item/user namespaces stay
+  isolated, and Frux does not redistribute or silently download upstream data.
+- Define deterministic chronological/session splits and preregistered watch-ratio rules without
+  converting missing or neutral observations into negative labels.
+- Compare deterministic Popularity, Recent Interaction, Category, Text-only, Image-only,
+  Multimodal, and Multimodal + Session Interest baselines when their required inputs are available.
+- Report Recall@K, NDCG@K, HitRate@K, MRR, Catalog Coverage, category/author diversity,
+  repeated-item/category runs, feature coverage, Exact ranking latency, and optional declared
+  upstream embedding throughput.
+- Retain exact production-scorer replay and versioned blinded Golden Sets as separate evidence. A
+  public-dataset result cannot substitute for production parity, and replay cannot substitute for
+  semantic relevance labels.
+- Emit deterministic canonical JSON and concise Markdown containing dataset/release/checksum
+  provenance, split counts, baseline availability, metric denominators, exclusions, limitations,
+  and `external_model_calls: 0`.
+- Keep training export, learned weights, HNSW, Shadow, Rollout, causal-lift claims, and automatic
+  policy recommendations out of scope.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `recommendation-offline-evaluation`: Low-data deterministic production replay, blinded human golden-set scoring, optional observational diagnostics, and machine/human-readable policy reports.
+- `recommendation-offline-evaluation`: Reproducible production replay, human Golden Set, and
+  MicroLens/KuaiRec baseline evaluation with deterministic reports and zero model calls.
 
 ### Modified Capabilities
 
-- `recommendation-training-dataset`: Define optional future interoperability with the evaluator's identity/time and replay metadata; the dataset exporter is not an evaluator prerequisite.
+None.
 
 ## Impact
 
-- May consume small privacy-reviewed diagnostic bundles aligned with `persist-recommendation-training-impressions`, but does not depend on the future-only dataset exporter and never queries production facts directly.
-- Adds a standalone Go command and offline domain/application packages under `apps/api`, plus fixtures, golden reports, and operator documentation.
-- Uses frozen publication time, pseudonymous author grouping, bounded topic/source/degraded metadata, and human annotations; no raw author ID, public HTTP, frontend, database mutation, or online behavior changes.
-- Weight learning is conditionally deferred and is neither required by nor automatically enabled through this evaluator.
+- New offline Domain/Application/Infrastructure packages and `cmd/recommendation-offline-evaluate`
+  under `apps/api`.
+- Checked-in synthetic schema fixtures and Golden Sets only; real public datasets remain in ignored
+  operator-owned directories and require explicit source/license acknowledgement.
+- Reuse of production policy validation, ranking/diversity contracts, session semantic fixtures, and
+  standard-library CSV/JSON/hash/statistics support; no new runtime dependency or business schema.
+- Recommendation documentation and roadmap evidence; no public API, frontend, production flag,
+  bootstrap policy, model contract, or online serving change.
