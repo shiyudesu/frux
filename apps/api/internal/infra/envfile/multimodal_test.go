@@ -90,6 +90,32 @@ DASHSCOPE_API_KEY=must-not-load
 	}
 }
 
+func TestLoadSessionSemanticAcceptanceIsPrefixIsolated(t *testing.T) {
+	root, workingDirectory := multimodalTestRepository(t)
+	writeMultimodalTestEnv(t, filepath.Join(root, "apps", sessionSemanticAcceptanceEnvFilename), `
+FRUX_SESSION_SEMANTIC_ACCEPTANCE_USER_ACCOUNT=session-user
+FRUX_ACCEPTANCE_USER_ACCOUNT=must-not-load
+`)
+	oldWorkingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWorkingDirectory) })
+	_ = os.Unsetenv("FRUX_SESSION_SEMANTIC_ACCEPTANCE_USER_ACCOUNT")
+	t.Cleanup(func() { _ = os.Unsetenv("FRUX_SESSION_SEMANTIC_ACCEPTANCE_USER_ACCOUNT") })
+	t.Setenv("FRUX_ACCEPTANCE_USER_ACCOUNT", "existing")
+	if err := LoadSessionSemanticAcceptance(); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("FRUX_SESSION_SEMANTIC_ACCEPTANCE_USER_ACCOUNT") != "session-user" ||
+		os.Getenv("FRUX_ACCEPTANCE_USER_ACCOUNT") != "existing" {
+		t.Fatal("session semantic acceptance environment was not isolated")
+	}
+}
+
 func multimodalTestRepository(t testing.TB) (string, string) {
 	t.Helper()
 	root := t.TempDir()

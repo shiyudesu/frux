@@ -1,8 +1,8 @@
 ## 1. Contracts and safe command
 
-- [ ] 1.1 Define versioned report, stage, prerequisite, policy, semantic evidence, metric delta, fixture, and cleanup contracts with closed result/failure values.
-- [ ] 1.2 Add strict environment loading/validation for endpoints, PostgreSQL, dedicated account, profile, three distinct video IDs, timeouts, and optional adapter metrics without value leakage.
-- [ ] 1.3 Implement the two mutation gates and validation-only plan that performs no login, policy, behavior, Feed, or cleanup mutation.
+- [x] 1.1 Define versioned report, stage, prerequisite, policy, semantic evidence, metric delta, fixture, and cleanup contracts with closed result/failure values.
+- [x] 1.2 Add strict environment loading/validation for endpoints, PostgreSQL, dedicated account, profile, three distinct video IDs, timeouts, and optional adapter metrics without value leakage.
+- [x] 1.3 Implement the two mutation gates and validation-only plan that performs no login, policy, behavior, Feed, or cleanup mutation.
 - [ ] 1.4 Add `cmd/session-semantic-acceptance`, atomic `0600` report writing, ignored environment example, and command tests.
 
 ## 2. Fixture and policy evidence

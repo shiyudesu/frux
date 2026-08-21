@@ -12,6 +12,7 @@ import (
 
 const multimodalEnvFilename = ".env.multimodal"
 const acceptanceEnvFilename = ".env.acceptance"
+const sessionSemanticAcceptanceEnvFilename = ".env.session-semantic-acceptance"
 
 type MultimodalScope uint8
 
@@ -62,6 +63,33 @@ func LoadAcceptance() error {
 	}
 	for name, value := range values {
 		if !strings.HasPrefix(name, "FRUX_ACCEPTANCE_") {
+			continue
+		}
+		if _, exists := os.LookupEnv(name); exists {
+			continue
+		}
+		if err := os.Setenv(name, value); err != nil {
+			return fmt.Errorf("set %s: %w", name, ErrInvalidMultimodalEnv)
+		}
+	}
+	return nil
+}
+
+func LoadSessionSemanticAcceptance() error {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", ErrInvalidMultimodalEnv)
+	}
+	path, found, err := findRepositoryEnvFile(workingDirectory, sessionSemanticAcceptanceEnvFilename)
+	if err != nil || !found {
+		return err
+	}
+	values, err := godotenv.Read(path)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", path, ErrInvalidMultimodalEnv)
+	}
+	for name, value := range values {
+		if !strings.HasPrefix(name, "FRUX_SESSION_SEMANTIC_ACCEPTANCE_") {
 			continue
 		}
 		if _, exists := os.LookupEnv(name); exists {
