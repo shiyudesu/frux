@@ -133,3 +133,11 @@ go run ./cmd/recommendation-offline-evaluate golden \
 
 Fixture 中 Content Baseline 优于 Popularity 只是为了验证指标方向，不能引用为真实公开数据集结论。
 真实 MicroLens 与 KuaiRec 必须分别生成报告，不允许合并用户/视频 ID 或平均成一个总分。
+
+## 真实 KuaiRec 运行
+
+2026-08-21 已从官方 Zenodo 下载并校验 KuaiRec 2.0，在 Small Matrix 数值最小的 100 个用户上
+完成真实 chronological 评估。100/100 个用户形成有效 Case；Recent Interaction 的 HitRate@1/20
+为 0.33/0.84，Popularity 为 0.03/0.38，Category 为 0.02/0.21。官方包没有兼容的预计算内容向量，
+因此 Text/Image/Multimodal/Multimodal + Session 按合同显示 unavailable。完整来源、选择规则、hash、
+排除计数和结果见 [KuaiRec 真实离线评估证据](evidence/recommendation-kuairec-real-100.md)。
