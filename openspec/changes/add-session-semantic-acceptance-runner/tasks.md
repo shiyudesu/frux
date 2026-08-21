@@ -3,7 +3,7 @@
 - [x] 1.1 Define versioned report, stage, prerequisite, policy, semantic evidence, metric delta, fixture, and cleanup contracts with closed result/failure values.
 - [x] 1.2 Add strict environment loading/validation for endpoints, PostgreSQL, dedicated account, profile, three distinct video IDs, timeouts, and optional adapter metrics without value leakage.
 - [x] 1.3 Implement the two mutation gates and validation-only plan that performs no login, policy, behavior, Feed, or cleanup mutation.
-- [ ] 1.4 Add `cmd/session-semantic-acceptance`, atomic `0600` report writing, ignored environment example, and command tests.
+- [x] 1.4 Add `cmd/session-semantic-acceptance`, atomic `0600` report writing, ignored environment example, and command tests.
 
 ## 2. Fixture and policy evidence
 
@@ -16,16 +16,16 @@
 
 - [x] 3.1 Extend the bounded acceptance HTTP client with consumer login, `/api/users/me`, view-event, favorite/unfavorite, and Feed query methods that never expose bearer tokens or cursors.
 - [x] 3.2 Implement run-scoped positive completion/favorite and negative early-skip facts with stable event, playback, request, session, and idempotency identities.
-- [ ] 3.3 Execute first-page Feed with positive current/negative recent context, require expected target evidence and signed continuation, then request the Snapshot page.
-- [ ] 3.4 Add fake API tests for success, idempotent replay, authentication, malformed/oversize bodies, missing cursor, target absence, timeout, cancellation, and redirect rejection.
+- [x] 3.3 Execute first-page Feed with positive current/negative recent context, require expected target evidence and signed continuation, then request the Snapshot page.
+- [x] 3.4 Add fake API tests for success, idempotent replay, authentication, malformed/oversize bodies, missing cursor, target absence, timeout, cancellation, and redirect rejection.
 
 ## 4. Metrics, runner, and cleanup
 
-- [ ] 4.1 Collect API Session Semantic and Snapshot counter baselines/deltas plus optional adapter operation deltas with new-series/reset handling.
-- [ ] 4.2 Implement the bounded stage machine from preflight through policy, facts, first page, evidence, Snapshot, metrics, policy disable, and optional cleanup.
-- [ ] 4.3 Guarantee deferred exact-policy disable on every post-creation failure and retain bounded run identities for manual recovery.
-- [ ] 4.4 Verify first-page builder/provider increments, zero Snapshot-page semantic increments, Snapshot create/hit evidence, and zero optional adapter operation deltas.
-- [ ] 4.5 Add runner tests for stage stop/skip, failure classification, cleanup failure, policy-disable failure, report redaction, and complete success.
+- [x] 4.1 Collect API Session Semantic and Snapshot counter baselines/deltas plus optional adapter operation deltas with new-series/reset handling.
+- [x] 4.2 Implement the bounded stage machine from preflight through policy, facts, first page, evidence, Snapshot, metrics, policy disable, and optional cleanup.
+- [x] 4.3 Guarantee deferred exact-policy disable on every post-creation failure and retain bounded run identities for manual recovery.
+- [x] 4.4 Verify first-page builder/provider increments, zero Snapshot-page semantic increments, Snapshot create/hit evidence, and zero optional adapter operation deltas.
+- [x] 4.5 Add runner tests for stage stop/skip, failure classification, cleanup failure, policy-disable failure, report redaction, and complete success.
 
 ## 5. Documentation and verification
 

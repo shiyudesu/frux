@@ -38,3 +38,21 @@ func TestMetricDeltasTreatsNewCounterSeriesAsStartingAtZero(t *testing.T) {
 		t.Fatalf("deltas=%#v", deltas)
 	}
 }
+
+func TestMetricDeltaSumMatchesBoundedLabelSubset(t *testing.T) {
+	before := MetricSnapshot{
+		"frux_recommendation_session_semantic_operations_total{confidence_band=high,result=success,stage=builder}": 2,
+	}
+	after := MetricSnapshot{
+		"frux_recommendation_session_semantic_operations_total{confidence_band=high,result=success,stage=builder}":   3,
+		"frux_recommendation_session_semantic_operations_total{confidence_band=medium,result=success,stage=builder}": 1,
+		"frux_recommendation_session_semantic_operations_total{confidence_band=none,result=timeout,stage=builder}":   9,
+	}
+	delta, available := MetricDeltaSum(before, after,
+		"frux_recommendation_session_semantic_operations_total",
+		map[string]string{"stage": "builder", "result": "success"},
+	)
+	if !available || delta != 2 {
+		t.Fatalf("delta=%d available=%v", delta, available)
+	}
+}

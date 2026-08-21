@@ -15,13 +15,58 @@ import (
 type MetricSnapshot map[string]float64
 
 var acceptanceMetricNames = map[string]struct{}{
-	"frux_tongyi_provider_operations_total":     {},
-	"frux_tongyi_provider_tokens_total":         {},
-	"frux_multimodal_provider_transport_total":  {},
-	"frux_multimodal_projection_total":          {},
-	"frux_multimodal_similar_requests_total":    {},
-	"frux_multimodal_hybrid_requests_total":     {},
-	"frux_multimodal_exact_query_results_total": {},
+	"frux_tongyi_provider_operations_total":                 {},
+	"frux_tongyi_provider_tokens_total":                     {},
+	"frux_multimodal_provider_transport_total":              {},
+	"frux_multimodal_projection_total":                      {},
+	"frux_multimodal_similar_requests_total":                {},
+	"frux_multimodal_hybrid_requests_total":                 {},
+	"frux_multimodal_exact_query_results_total":             {},
+	"frux_recommendation_session_semantic_operations_total": {},
+	"frux_recommendation_snapshot_operations_total":         {},
+}
+
+func MetricDeltaSum(
+	before MetricSnapshot,
+	after MetricSnapshot,
+	name string,
+	requiredLabels map[string]string,
+) (int64, bool) {
+	afterValue, afterFound := metricSum(after, name, requiredLabels)
+	if !afterFound {
+		return 0, false
+	}
+	beforeValue, beforeFound := metricSum(before, name, requiredLabels)
+	if !beforeFound {
+		beforeValue = 0
+	}
+	if afterValue < beforeValue {
+		return 0, false
+	}
+	return int64(math.Round(afterValue - beforeValue)), true
+}
+
+func metricSum(snapshot MetricSnapshot, name string, requiredLabels map[string]string) (float64, bool) {
+	var total float64
+	found := false
+	for key, value := range snapshot {
+		metricName, labels := splitMetricKey(key)
+		if metricName != name {
+			continue
+		}
+		matches := true
+		for label, expected := range requiredLabels {
+			if labels[label] != expected {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			total += value
+			found = true
+		}
+	}
+	return total, found
 }
 
 func ParseMetricSnapshot(content []byte) (MetricSnapshot, error) {
