@@ -13,9 +13,9 @@
   limits, closed status mapping, and no raw-body or secret errors.
 - [x] 2.2 Implement API/Adapter health and Prometheus baseline collection with closed metric names and
   counter-reset-safe delta calculation.
-- [ ] 2.3 Implement consumer/admin login, S3 upload-session creation, presigned PUT, completion, and
+- [x] 2.3 Implement consumer/admin login, S3 upload-session creation, presigned PUT, completion, and
   video creation using run-scoped idempotency keys.
-- [ ] 2.4 Implement review-case polling, claim, approval, Similar Videos, Hybrid Search, and optional
+- [x] 2.4 Implement review-case polling, claim, approval, Similar Videos, Hybrid Search, and optional
   current-run video deletion through existing APIs.
 
 ## 3. Read-only PostgreSQL Evidence

@@ -74,6 +74,18 @@ func (c *HTTPClient) JSON(
 	input any,
 	output any,
 ) error {
+	return c.JSONHeaders(ctx, method, endpoint, bearer, nil, input, output)
+}
+
+func (c *HTTPClient) JSONHeaders(
+	ctx context.Context,
+	method string,
+	endpoint string,
+	bearer string,
+	headers map[string]string,
+	input any,
+	output any,
+) error {
 	var body io.Reader
 	if input != nil {
 		encoded, err := json.Marshal(input)
@@ -91,6 +103,11 @@ func (c *HTTPClient) JSON(
 	}
 	if strings.TrimSpace(bearer) != "" {
 		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearer))
+	}
+	for name, value := range headers {
+		if strings.TrimSpace(name) != "" {
+			request.Header.Set(name, value)
+		}
 	}
 	responseBody, err := c.do(request)
 	if err != nil {
