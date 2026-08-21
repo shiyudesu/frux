@@ -310,7 +310,7 @@ Shadow
 | `project-semantic-user-interest` | 后置 | 第一版使用 Session Context；长期行为达到门槛后重提 |
 | `rebuild-semantic-user-interest` | 后置 | 长期画像存在后才有意义 |
 | `persist-recommendation-training-impressions` | 保留但重定位 | 诊断事实，不自动生成训练数据 |
-| `evaluate-recommendation-policies-offline` | 已完成，待严格验证与归档 | 独立 Production Replay、盲评 Golden Set、KuaiRec v2 与 MicroLens canonical Adapter、7 类 Baseline、确定性 JSON/Markdown；零模型调用，不训练、不自动推荐策略 |
+| `evaluate-recommendation-policies-offline` | 已完成并归档 | 独立 Production Replay、盲评 Golden Set、KuaiRec v2 与 MicroLens canonical Adapter、7 类 Baseline、确定性 JSON/Markdown；零模型调用，不训练、不自动推荐策略 |
 | `shadow-semantic-ann-recall` | 后置并需重命名 | Exact/Semantic Shadow，不应强绑定 ANN |
 | `export-recommendation-training-dataset` | 退出 Active Path | 只有所有训练 Gate 满足后重提 |
 | `learn-recommendation-policy-weights` | 退出 Active Path | 当前不训练、不学习线上权重 |
