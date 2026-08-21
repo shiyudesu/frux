@@ -206,6 +206,36 @@ var (
 		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_invalid_attributions_total", Help: "Rejected recommendation attributions by bounded outcome type."},
 		[]string{"outcome"},
 	)
+	RecommendationSessionSemanticOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_session_semantic_operations_total", Help: "Session semantic operations by bounded stage, result, and confidence band."},
+		[]string{"stage", "result", "confidence_band"},
+	)
+	RecommendationSessionSemanticDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_session_semantic_duration_seconds", Help: "Session semantic operation duration by bounded stage and result.",
+			Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		},
+		[]string{"stage", "result"},
+	)
+	RecommendationSessionSemanticConfidence = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_session_semantic_confidence", Help: "Bounded session semantic confidence.",
+			Buckets: []float64{0, 0.1, 0.25, 0.5, 0.75, 0.9, 1},
+		},
+	)
+	RecommendationSessionSemanticCoverage = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_session_semantic_vector_coverage", Help: "Compatible-vector coverage over eligible session videos.",
+			Buckets: []float64{0, 0.1, 0.25, 0.5, 0.75, 0.9, 1},
+		},
+	)
+	RecommendationSessionSemanticCounts = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_session_semantic_count", Help: "Bounded session semantic evidence and candidate counts by closed kind.",
+			Buckets: []float64{0, 1, 2, 3, 5, 8, 13, 21, 34, 50, 100, 500},
+		},
+		[]string{"kind"},
+	)
 	ReviewEventsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: "frux", Name: "review_events_total", Help: "Automated review events by bounded stage and result."},
 		[]string{"stage", "result"},
@@ -307,6 +337,11 @@ func init() {
 		RecommendationActivePolicyVersion,
 		RecommendationOutcomesTotal,
 		RecommendationInvalidAttributionsTotal,
+		RecommendationSessionSemanticOperationsTotal,
+		RecommendationSessionSemanticDuration,
+		RecommendationSessionSemanticConfidence,
+		RecommendationSessionSemanticCoverage,
+		RecommendationSessionSemanticCounts,
 		ReviewEventsTotal,
 		MediaObjectOperationsTotal,
 		MediaObjectOperationDuration,
@@ -399,13 +434,90 @@ func ObserveRecommendationInvalidAttribution(outcome string) {
 	RecommendationInvalidAttributionsTotal.WithLabelValues(recommendationOutcomeLabel(outcome)).Inc()
 }
 
+func ObserveRecommendationSessionSemantic(
+	stage string,
+	result string,
+	confidenceBand string,
+	confidence float64,
+	eligible int,
+	positive int,
+	negative int,
+	compatible int,
+	excluded int,
+	candidates int,
+	duration time.Duration,
+) {
+	stage = recommendationSessionSemanticStage(stage)
+	result = recommendationSessionSemanticResult(result)
+	confidenceBand = recommendationSessionSemanticConfidenceBand(confidenceBand)
+	RecommendationSessionSemanticOperationsTotal.WithLabelValues(stage, result, confidenceBand).Inc()
+	if duration < 0 {
+		duration = 0
+	}
+	RecommendationSessionSemanticDuration.WithLabelValues(stage, result).Observe(duration.Seconds())
+	confidence = boundedMetricRatio(confidence)
+	RecommendationSessionSemanticConfidence.Observe(confidence)
+	coverage := 0.0
+	if eligible > 0 && compatible > 0 {
+		coverage = boundedMetricRatio(float64(compatible) / float64(eligible))
+	}
+	RecommendationSessionSemanticCoverage.Observe(coverage)
+	for kind, count := range map[string]int{
+		"eligible": eligible, "positive": positive, "negative": negative,
+		"compatible": compatible, "excluded": excluded, "candidates": candidates,
+	} {
+		if count < 0 {
+			count = 0
+		}
+		RecommendationSessionSemanticCounts.WithLabelValues(kind).Observe(float64(count))
+	}
+}
+
 func recommendationProviderLabel(value string) string {
 	switch normalizeLabel(value, "unknown") {
-	case "fresh", "hot", "content_similarity", "followed_author", "session_continuation":
+	case "fresh", "hot", "content_similarity", "followed_author", "session_continuation", "semantic_session":
 		return normalizeLabel(value, "unknown")
 	default:
 		return "unknown"
 	}
+}
+
+func recommendationSessionSemanticStage(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "builder", "provider":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticResult(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "success", "insufficient_evidence", "no_compatible_vectors", "low_confidence",
+		"contract_mismatch", "invalid_vector", "timeout", "unavailable", "error":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticConfidenceBand(value string) string {
+	switch normalizeLabel(value, "none") {
+	case "none", "low", "medium", "high":
+		return normalizeLabel(value, "none")
+	default:
+		return "none"
+	}
+}
+
+func boundedMetricRatio(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+	if value >= 1 {
+		return 1
+	}
+	return value
 }
 func recommendationCandidatePoolProvider(value string) string {
 	if normalizeLabel(value, "unknown") == "all" {

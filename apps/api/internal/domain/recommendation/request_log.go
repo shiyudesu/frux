@@ -58,6 +58,7 @@ type RequestLogInput struct {
 	Snapshot          bool
 	DegradedProviders []string
 	RecallDiagnostics []RecallDiagnostic
+	SessionSemantic   *SessionSemanticEvidence
 	CreatedAt         time.Time
 }
 
@@ -73,6 +74,7 @@ type RecommendationRequestLog struct {
 	Snapshot          bool
 	DegradedProviders []string
 	RecallDiagnostics []RecallDiagnostic
+	SessionSemantic   *SessionSemanticEvidence
 	CreatedAt         time.Time
 }
 
@@ -251,10 +253,19 @@ func NewRecommendationRequestLog(input RequestLogInput) (*RecommendationRequestL
 		}
 		diagnostics = append(diagnostics, diagnostic)
 	}
+	var sessionSemantic *SessionSemanticEvidence
+	if input.SessionSemantic != nil {
+		var err error
+		sessionSemantic, err = NewSessionSemanticEvidence(*input.SessionSemantic)
+		if err != nil {
+			return nil, ErrInvalidRequestLog
+		}
+	}
 	log := &RecommendationRequestLog{
 		RequestID: requestID, UserID: input.UserID, Scene: scene, PolicyVersion: input.PolicyVersion,
 		Context: recommendationContext, Candidates: candidates, Degraded: input.Degraded, Snapshot: input.Snapshot,
-		DegradedProviders: append([]string(nil), input.DegradedProviders...), RecallDiagnostics: diagnostics, CreatedAt: input.CreatedAt.UTC(),
+		DegradedProviders: append([]string(nil), input.DegradedProviders...), RecallDiagnostics: diagnostics,
+		SessionSemantic: sessionSemantic, CreatedAt: input.CreatedAt.UTC(),
 	}
 	if _, err := log.CompactPayload(); err != nil {
 		return nil, err
@@ -267,15 +278,17 @@ func (l *RecommendationRequestLog) CompactPayload() ([]byte, error) {
 		return nil, ErrInvalidRequestLog
 	}
 	payload := struct {
-		Context           *RecommendationContext `json:"context,omitempty"`
-		Candidates        []LoggedCandidate      `json:"candidates"`
-		Degraded          bool                   `json:"degraded"`
-		Snapshot          bool                   `json:"snapshot"`
-		DegradedProviders []string               `json:"degraded_providers,omitempty"`
-		RecallDiagnostics []RecallDiagnostic     `json:"recall_diagnostics,omitempty"`
+		Context           *RecommendationContext   `json:"context,omitempty"`
+		Candidates        []LoggedCandidate        `json:"candidates"`
+		Degraded          bool                     `json:"degraded"`
+		Snapshot          bool                     `json:"snapshot"`
+		DegradedProviders []string                 `json:"degraded_providers,omitempty"`
+		RecallDiagnostics []RecallDiagnostic       `json:"recall_diagnostics,omitempty"`
+		SessionSemantic   *SessionSemanticEvidence `json:"session_semantic,omitempty"`
 	}{
 		Context: l.Context.Clone(), Candidates: l.Candidates, Degraded: l.Degraded, Snapshot: l.Snapshot,
 		DegradedProviders: l.DegradedProviders, RecallDiagnostics: l.RecallDiagnostics,
+		SessionSemantic: l.SessionSemantic.Clone(),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

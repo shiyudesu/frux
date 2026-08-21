@@ -5,9 +5,11 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"time"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+	inframetrics "github.com/shiyudesu/frux/internal/infra/metrics"
 )
 
 type SessionSemanticInterestBuilder interface {
@@ -66,24 +68,32 @@ func (p *SemanticSessionProvider) RecallWithSessionSemanticEvidence(
 		return nil, nil, ErrSessionSemanticUnavailable
 	}
 	if request.Policy.Config.SessionSemantic.ContractKey != p.contract.Key() {
-		return []*domainrecommendation.Candidate{}, sessionSemanticFailureEvidence(
+		evidence := sessionSemanticFailureEvidence(
 			request.Policy, "contract_mismatch",
-		), nil
+		)
+		observeSessionSemantic("builder", evidence, 0, 0)
+		return []*domainrecommendation.Candidate{}, evidence, nil
 	}
+	builderStarted := time.Now()
 	interest, err := p.builder.Build(ctx, SessionSemanticBuildRequest{
 		UserID: request.UserID, Context: request.Context,
 		Policy: request.Policy.Config.SessionSemantic, Contract: p.contract,
 		Budget: request.Budget, Now: request.Now,
 	})
 	if err != nil {
+		observeSessionSemantic("builder", nil, 0, time.Since(builderStarted))
 		return nil, nil, err
 	}
 	if interest == nil || interest.Evidence == nil {
+		observeSessionSemantic("builder", nil, 0, time.Since(builderStarted))
 		return nil, nil, ErrSessionSemanticUnavailable
 	}
+	observeSessionSemantic("builder", interest.Evidence, 0, time.Since(builderStarted))
 	if !interest.Available() {
+		observeSessionSemantic("provider", interest.Evidence, 0, 0)
 		return []*domainrecommendation.Candidate{}, interest.Evidence.Clone(), nil
 	}
+	providerStarted := time.Now()
 	exact, err := p.exact.ExactMultimodalSearch(
 		ctx, p.contract, interest.Vector, interest.Exclusions, interest.OutputLimit,
 	)
@@ -92,7 +102,9 @@ func (p *SemanticSessionProvider) RecallWithSessionSemanticEvidence(
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			reason = "timeout"
 		}
-		return nil, sessionSemanticFailureEvidence(request.Policy, reason), err
+		evidence := sessionSemanticFailureEvidence(request.Policy, reason)
+		observeSessionSemantic("provider", evidence, 0, time.Since(providerStarted))
+		return nil, evidence, err
 	}
 	candidates := make([]*domainrecommendation.Candidate, 0, min(interest.OutputLimit, len(exact)))
 	for _, result := range exact {
@@ -113,7 +125,27 @@ func (p *SemanticSessionProvider) RecallWithSessionSemanticEvidence(
 		}
 	}
 	sortRecallCandidates(candidates)
+	observeSessionSemantic("provider", interest.Evidence, len(candidates), time.Since(providerStarted))
 	return candidates, interest.Evidence.Clone(), nil
+}
+
+func observeSessionSemantic(
+	stage string,
+	evidence *domainrecommendation.SessionSemanticEvidence,
+	candidates int,
+	duration time.Duration,
+) {
+	if evidence == nil {
+		inframetrics.ObserveRecommendationSessionSemantic(
+			stage, "error", "none", 0, 0, 0, 0, 0, 0, candidates, duration,
+		)
+		return
+	}
+	inframetrics.ObserveRecommendationSessionSemantic(
+		stage, string(evidence.Result), string(evidence.ConfidenceBand), evidence.Confidence,
+		evidence.EligibleCount, evidence.PositiveCount, evidence.NegativeCount,
+		evidence.CompatibleCount, evidence.ExcludedCount, candidates, duration,
+	)
 }
 
 func sessionSemanticFailureEvidence(

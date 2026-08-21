@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
+
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
@@ -101,5 +103,27 @@ func TestRecommendationMetricsUseBoundedLabels(t *testing.T) {
 	}
 	if version := testutil.ToFloat64(RecommendationActivePolicyVersion.WithLabelValues("recommend")); version != 7 {
 		t.Fatalf("expected policy version 7, got %v", version)
+	}
+}
+
+func TestSessionSemanticMetricsUseOnlyClosedLabels(t *testing.T) {
+	known := RecommendationSessionSemanticOperationsTotal.WithLabelValues("builder", "success", "high")
+	unknown := RecommendationSessionSemanticOperationsTotal.WithLabelValues("unknown", "unknown", "none")
+	beforeKnown := testutil.ToFloat64(known)
+	beforeUnknown := testutil.ToFloat64(unknown)
+	ObserveRecommendationSessionSemantic("builder", "success", "high", 0.9, 3, 4, 1, 3, 2, 5, time.Millisecond)
+	ObserveRecommendationSessionSemantic("user-42", "raw-provider-body", "session-99", 2, -1, -1, -1, -1, -1, -1, -time.Second)
+	if testutil.ToFloat64(known)-beforeKnown != 1 || testutil.ToFloat64(unknown)-beforeUnknown != 1 {
+		t.Fatal("session semantic metrics did not fold unregistered labels")
+	}
+	if testutil.CollectAndCount(RecommendationSessionSemanticDuration) == 0 ||
+		testutil.CollectAndCount(RecommendationSessionSemanticConfidence) != 1 ||
+		testutil.CollectAndCount(RecommendationSessionSemanticCoverage) != 1 ||
+		testutil.CollectAndCount(RecommendationSessionSemanticCounts) == 0 {
+		t.Fatal("session semantic histograms were not registered")
+	}
+	if recommendationProviderLabel(domainrecommendation.RecallProviderSemanticSession) != domainrecommendation.RecallProviderSemanticSession ||
+		recommendationProviderLabel("video-123") != "unknown" {
+		t.Fatal("semantic provider label was not bounded")
 	}
 }

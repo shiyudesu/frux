@@ -63,6 +63,35 @@ func TestRequestLogModelRoundTripsQuotaDiagnostics(t *testing.T) {
 	}
 }
 
+func TestRequestLogModelRoundTripsSessionSemanticEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	evidence, err := domainrecommendation.NewSessionSemanticEvidence(domainrecommendation.SessionSemanticEvidence{
+		BuilderVersion: domainrecommendation.SessionSemanticBuilderV1,
+		ContractKey:    strings.Repeat("a", domainrecommendation.SessionSemanticDigestHexLength),
+		Result:         domainrecommendation.SessionSemanticResultSuccess,
+		Confidence:     0.75, ConfidenceBand: domainrecommendation.SessionSemanticConfidenceHigh,
+		EligibleCount: 2, PositiveCount: 3, CompatibleCount: 2, ExcludedCount: 2,
+		InputDigest: strings.Repeat("b", domainrecommendation.SessionSemanticDigestHexLength),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := domainrecommendation.NewRecommendationRequestLog(domainrecommendation.RequestLogInput{
+		RequestID: "semantic-request", UserID: 9, Scene: domainrecommendation.RecommendationRequestLogScene,
+		PolicyVersion: 3, CreatedAt: now, SessionSemantic: evidence,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := requestLogFromModel(RequestLogModel{
+		RequestID: log.RequestID, UserID: log.UserID, Scene: log.Scene, PolicyVersion: log.PolicyVersion,
+		PayloadJSON: stringPayload(log), CreatedAt: log.CreatedAt,
+	})
+	if err != nil || !reflect.DeepEqual(restored.SessionSemantic, log.SessionSemantic) {
+		t.Fatalf("restored=%#v log=%#v err=%v", restored, log, err)
+	}
+}
+
 func TestPolicyModelRestoresDisabledQuotaDevelopmentFixture(t *testing.T) {
 	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
 	fresh := domainrecommendation.RecallProviderFresh

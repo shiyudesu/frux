@@ -508,6 +508,12 @@ func (s *Service) recordRequestLog(ctx context.Context, req *domainrecommendatio
 			}
 			return append([]domainrecommendation.RecallDiagnostic(nil), recall.quotaDiagnostics...)
 		}(),
+		SessionSemantic: func() *domainrecommendation.SessionSemanticEvidence {
+			if recall == nil {
+				return nil
+			}
+			return recall.sessionSemantic.Clone()
+		}(),
 	})
 	if err != nil {
 		inframetrics.ObserveRecommendationRequestLogFailure("validation")

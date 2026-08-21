@@ -275,6 +275,70 @@ func TestReadySemanticRuntimeDoesNothingWhenPolicyOmitsProvider(t *testing.T) {
 	}
 }
 
+func TestSessionSemanticEvidenceEntersFirstSnapshotAndIsNotRecomputed(t *testing.T) {
+	now := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	contract := sessionSemanticTestContract(t, "provider-revision")
+	policy := sessionSemanticRecommendationPolicy(t, contract, 4, false)
+	policy.Config.SamplingRatePPM = domainrecommendation.MaxSamplingRatePPM
+	evidence := sessionSemanticSuccessEvidence(t, contract, 1)
+	builder := &sessionSemanticInterestBuilderStub{interest: &SessionSemanticInterest{
+		Vector: sessionSemanticUnitVector(contract.Dimension, 0, 1), Confidence: 1,
+		Band:       domainrecommendation.SessionSemanticConfidenceHigh,
+		Exclusions: []int64{1}, OutputLimit: 3, Evidence: evidence,
+	}}
+	exact := &sessionSemanticExactIndexStub{candidates: []domainembedding.MultimodalExactCandidate{
+		{VideoID: 10, Similarity: 0.9, PublishedAt: now},
+		{VideoID: 11, Similarity: 0.8, PublishedAt: now.Add(-time.Minute)},
+		{VideoID: 12, Similarity: 0.7, PublishedAt: now.Add(-2 * time.Minute)},
+	}}
+	semantic, _ := NewSemanticSessionProvider(builder, exact, contract)
+	visible := map[int64]*domainrecommendation.Candidate{}
+	vectors := map[int64][]float64{}
+	for _, id := range []int64{10, 11, 12} {
+		visible[id] = recallCandidate(id, id, 1, now.Add(-time.Duration(id)*time.Second))
+		vectors[id] = []float64{1, 0}
+	}
+	store := &memorySnapshotStore{}
+	logs := &memoryRequestLogRepository{}
+	signer, err := NewHMACSnapshotCursorSigner("session-semantic-snapshot-secret-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(
+		&rankerTestRepo{vectors: vectors, features: emptyRankingFeatures()},
+		WithNow(func() time.Time { return now }),
+		WithPolicySelector(rankerPolicySelector{policy: policy}),
+		WithRecallProviders(semantic),
+		WithCandidateVisibilityFilter(visibilityCatalog{visible: visible}),
+		WithRequestLogRepository(logs),
+		WithSnapshotPagination(store, signer),
+	)
+	first, err := service.Recommend(context.Background(), CandidateRequest{
+		UserID: 7, Scene: "recommend", RequestID: "semantic-snapshot", Limit: 1,
+		Context: sessionSemanticContext(t, 1, nil),
+	})
+	if err != nil || !first.HasMore || first.NextCursor == "" || len(first.Candidates) != 1 {
+		t.Fatalf("first=%#v err=%v", first, err)
+	}
+	second, err := service.Recommend(context.Background(), CandidateRequest{
+		UserID: 7, Scene: "recommend", RequestID: "semantic-snapshot", Limit: 1,
+		Cursor: first.NextCursor, Context: sessionSemanticContext(t, 1, nil),
+	})
+	if err != nil || len(second.Candidates) != 1 || builder.calls != 1 || exact.calls != 1 {
+		t.Fatalf("second=%#v builder=%d exact=%d err=%v", second, builder.calls, exact.calls, err)
+	}
+	if len(logs.logs) != 1 || logs.logs[0].SessionSemantic == nil ||
+		logs.logs[0].SessionSemantic.Result != domainrecommendation.SessionSemanticResultSuccess ||
+		len(logs.logs[0].Candidates) != 3 {
+		t.Fatalf("logs=%#v", logs.logs)
+	}
+	for _, candidate := range logs.logs[0].Candidates {
+		if candidate.ScoreComponents[domainrecommendation.FeatureSemanticSimilarity] <= 0 {
+			t.Fatalf("candidate=%#v", candidate)
+		}
+	}
+}
+
 func sessionSemanticRecommendationPolicy(
 	t testing.TB,
 	contract domainembedding.MultimodalContractIdentity,

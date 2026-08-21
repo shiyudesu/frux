@@ -316,6 +316,49 @@ func TestRequestLogSamplingAndPayloadBounds(t *testing.T) {
 	}
 }
 
+func TestRequestLogRetainsBoundedSessionSemanticEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	digest := strings.Repeat("a", SessionSemanticDigestHexLength)
+	evidence, err := NewSessionSemanticEvidence(SessionSemanticEvidence{
+		BuilderVersion: SessionSemanticBuilderV1, ContractKey: strings.Repeat("b", SessionSemanticDigestHexLength),
+		Result: SessionSemanticResultSuccess, Confidence: 0.75, ConfidenceBand: SessionSemanticConfidenceHigh,
+		EligibleCount: 3, PositiveCount: 4, NegativeCount: 1, CompatibleCount: 2, ExcludedCount: 3,
+		InputDigest: digest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := NewRecommendationRequestLog(RequestLogInput{
+		RequestID: "semantic-log", UserID: 7, Scene: RecommendationRequestLogScene,
+		PolicyVersion: 3, CreatedAt: now, SessionSemantic: evidence,
+		Candidates: []LoggedCandidate{{
+			VideoID: 9, Reasons: []string{RecallProviderSemanticSession},
+			ScoreComponents: map[string]float64{FeatureSemanticSimilarity: 0.7},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := log.CompactPayload()
+	if err != nil || !strings.Contains(string(payload), `"session_semantic"`) ||
+		strings.Contains(string(payload), "embedding_json") || strings.Contains(string(payload), "raw_event") ||
+		strings.Contains(string(payload), "access_token") {
+		t.Fatalf("payload=%s err=%v", payload, err)
+	}
+	evidence.Result = SessionSemanticResultUnavailable
+	if log.SessionSemantic.Result != SessionSemanticResultSuccess {
+		t.Fatal("request log aliased semantic evidence input")
+	}
+	invalid := *log.SessionSemantic
+	invalid.Confidence = 2
+	if _, err := NewRecommendationRequestLog(RequestLogInput{
+		RequestID: "invalid-semantic-log", UserID: 7, Scene: RecommendationRequestLogScene,
+		PolicyVersion: 3, CreatedAt: now, SessionSemantic: &invalid,
+	}); !errors.Is(err, ErrInvalidRequestLog) {
+		t.Fatalf("invalid semantic evidence error=%v", err)
+	}
+}
+
 func validPolicyConfig(rollout int) PolicyConfiguration {
 	return PolicyConfiguration{
 		FeatureWeights:         map[string]float64{FeatureHotness: 0.5, FeatureFreshness: 0.2},

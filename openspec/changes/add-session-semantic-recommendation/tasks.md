@@ -37,10 +37,10 @@
 
 ## 6. Evidence, metrics, and Snapshot stability
 
-- [ ] 6.1 Extend sampled request-log JSON with a bounded optional session-semantic summary and compaction/validation that excludes raw vectors, raw events, query text, credentials, and unbounded identifiers.
-- [ ] 6.2 Add fixed-cardinality builder/Provider metrics and histograms for result, closed reason, confidence band/value, coverage, signal/vector/candidate counts, underfill, and duration.
-- [ ] 6.3 Verify first-page semantic evidence and score components enter the existing Snapshot ordering and that later pages never rebuild the session vector or rerun Exact retrieval.
-- [ ] 6.4 Add request-log backward compatibility, privacy, size-bound, Snapshot continuation/fallback, and metrics-label tests.
+- [x] 6.1 Extend sampled request-log JSON with a bounded optional session-semantic summary and compaction/validation that excludes raw vectors, raw events, query text, credentials, and unbounded identifiers.
+- [x] 6.2 Add fixed-cardinality builder/Provider metrics and histograms for result, closed reason, confidence band/value, coverage, signal/vector/candidate counts, underfill, and duration.
+- [x] 6.3 Verify first-page semantic evidence and score components enter the existing Snapshot ordering and that later pages never rebuild the session vector or rerun Exact retrieval.
+- [x] 6.4 Add request-log backward compatibility, privacy, size-bound, Snapshot continuation/fallback, and metrics-label tests.
 
 ## 7. End-to-end verification and documentation
 

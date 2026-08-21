@@ -1945,12 +1945,13 @@ func profileFromModel(model UserInterestProfileModel) (*domainrecommendation.Use
 
 func requestLogFromModel(model RequestLogModel) (*domainrecommendation.RecommendationRequestLog, error) {
 	var payload struct {
-		Context           *domainrecommendation.RecommendationContext `json:"context"`
-		Candidates        []domainrecommendation.LoggedCandidate      `json:"candidates"`
-		Degraded          bool                                        `json:"degraded"`
-		Snapshot          bool                                        `json:"snapshot"`
-		DegradedProviders []string                                    `json:"degraded_providers"`
-		RecallDiagnostics []domainrecommendation.RecallDiagnostic     `json:"recall_diagnostics"`
+		Context           *domainrecommendation.RecommendationContext   `json:"context"`
+		Candidates        []domainrecommendation.LoggedCandidate        `json:"candidates"`
+		Degraded          bool                                          `json:"degraded"`
+		Snapshot          bool                                          `json:"snapshot"`
+		DegradedProviders []string                                      `json:"degraded_providers"`
+		RecallDiagnostics []domainrecommendation.RecallDiagnostic       `json:"recall_diagnostics"`
+		SessionSemantic   *domainrecommendation.SessionSemanticEvidence `json:"session_semantic"`
 	}
 	if err := json.Unmarshal([]byte(model.PayloadJSON), &payload); err != nil {
 		return nil, err
@@ -1958,7 +1959,8 @@ func requestLogFromModel(model RequestLogModel) (*domainrecommendation.Recommend
 	return domainrecommendation.NewRecommendationRequestLog(domainrecommendation.RequestLogInput{
 		RequestID: model.RequestID, UserID: model.UserID, Scene: model.Scene, PolicyVersion: model.PolicyVersion,
 		Context: payload.Context, Candidates: payload.Candidates, Degraded: payload.Degraded, Snapshot: payload.Snapshot,
-		DegradedProviders: payload.DegradedProviders, RecallDiagnostics: payload.RecallDiagnostics, CreatedAt: model.CreatedAt,
+		DegradedProviders: payload.DegradedProviders, RecallDiagnostics: payload.RecallDiagnostics,
+		SessionSemantic: payload.SessionSemantic, CreatedAt: model.CreatedAt,
 	})
 }
 
