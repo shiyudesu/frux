@@ -122,6 +122,7 @@ func (c *APIClient) UploadFixture(
 	if err != nil {
 		return CreatedAsset{}, &HTTPError{Code: HTTPFailureRequest}
 	}
+	request.ContentLength = info.Size()
 	for name, value := range session.Upload.Headers {
 		request.Header.Set(name, value)
 	}

@@ -3,6 +3,7 @@ package infraacceptance
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,10 +28,13 @@ func (s *runnerRuntimeStub) CollectMetrics(context.Context, string) (MetricSnaps
 }
 
 type runnerAPIStub struct {
-	deleted   []int64
-	failLogin bool
-	nextAsset int64
-	nextVideo int64
+	deleted        []int64
+	uploadKeys     []string
+	failLogin      bool
+	failReview     bool
+	claimConflicts int
+	nextAsset      int64
+	nextVideo      int64
 }
 
 func (s *runnerAPIStub) Login(context.Context, bool, string, string) (string, error) {
@@ -39,7 +43,8 @@ func (s *runnerAPIStub) Login(context.Context, bool, string, string) (string, er
 	}
 	return "token", nil
 }
-func (s *runnerAPIStub) UploadFixture(context.Context, string, string, string, string) (CreatedAsset, error) {
+func (s *runnerAPIStub) UploadFixture(_ context.Context, _, _, _, key string) (CreatedAsset, error) {
+	s.uploadKeys = append(s.uploadKeys, key)
 	s.nextAsset++
 	return CreatedAsset{ID: 20 + s.nextAsset}, nil
 }
@@ -47,10 +52,17 @@ func (s *runnerAPIStub) CreateVideo(_ context.Context, _ string, media, cover in
 	s.nextVideo++
 	return CreatedVideo{ID: 10 + s.nextVideo, MediaAssetID: media, CoverAssetID: cover}, nil
 }
-func (*runnerAPIStub) ClaimReview(context.Context, string, int64, int) (ReviewLease, error) {
+func (s *runnerAPIStub) ClaimReview(context.Context, string, int64, int) (ReviewLease, error) {
+	if s.claimConflicts > 0 {
+		s.claimConflicts--
+		return ReviewLease{}, &HTTPError{Code: HTTPFailureStatus, Status: 409}
+	}
 	return ReviewLease{LeaseToken: "lease", Version: 2}, nil
 }
-func (*runnerAPIStub) ApproveReview(context.Context, string, int64, int, ReviewLease, string) error {
+func (s *runnerAPIStub) ApproveReview(context.Context, string, int64, int, ReviewLease, string) error {
+	if s.failReview {
+		return errors.New("review")
+	}
 	return nil
 }
 func (*runnerAPIStub) Similar(context.Context, int64) (SimilarResult, error) {
@@ -92,6 +104,11 @@ func TestRunnerCompletesAllStagesAndCleanup(t *testing.T) {
 			t.Fatalf("stage=%#v", stage)
 		}
 	}
+	for _, key := range api.uploadKeys {
+		if !strings.HasPrefix(key, report.RunID+"-") {
+			t.Fatalf("upload key %q is not scoped to run %q", key, report.RunID)
+		}
+	}
 }
 
 func TestRunnerStopsAfterFailureAndSkipsLaterStages(t *testing.T) {
@@ -109,6 +126,30 @@ func TestRunnerStopsAfterFailureAndSkipsLaterStages(t *testing.T) {
 	}
 	if !foundSkipped {
 		t.Fatalf("stages=%#v", report.Stages)
+	}
+}
+
+func TestRunnerRetainsCreatedIdentifiersOnFailure(t *testing.T) {
+	profile, _ := multimodalprofile.Resolve(multimodalprofile.TongyiFlashSnapshotProfile)
+	runner, _ := NewRunner(runnerTestConfig(profile.ID), &runnerRuntimeStub{}, &runnerAPIStub{failReview: true}, &runnerEvidenceStub{contract: profile})
+	report, err := runner.Run(context.Background(), applicationacceptance.NewReport("failed-run", applicationacceptance.ModeExecution, time.Now(), false))
+	if err == nil || report.Failure != applicationacceptance.FailureReview || len(report.Fixtures) != 2 {
+		t.Fatalf("report=%#v err=%v", report, err)
+	}
+	for _, fixture := range report.Fixtures {
+		if fixture.VideoID <= 0 || fixture.MediaAssetID <= 0 || fixture.CoverAssetID <= 0 {
+			t.Fatalf("fixture=%#v", fixture)
+		}
+	}
+}
+
+func TestRunnerRetriesTransientReviewClaimConflict(t *testing.T) {
+	profile, _ := multimodalprofile.Resolve(multimodalprofile.TongyiFlashSnapshotProfile)
+	api := &runnerAPIStub{claimConflicts: 1}
+	runner, _ := NewRunner(runnerTestConfig(profile.ID), &runnerRuntimeStub{}, api, &runnerEvidenceStub{contract: profile})
+	report, err := runner.Run(context.Background(), applicationacceptance.NewReport("retry-run", applicationacceptance.ModeExecution, time.Now(), false))
+	if err != nil || report.Result != applicationacceptance.ResultSuccess || api.claimConflicts != 0 {
+		t.Fatalf("report=%#v conflicts=%d err=%v", report, api.claimConflicts, err)
 	}
 }
 

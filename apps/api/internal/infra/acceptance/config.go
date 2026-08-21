@@ -114,6 +114,9 @@ func validateConfig(config applicationacceptance.Config) error {
 			return &ConfigError{Field: field}
 		}
 	}
+	if strings.EqualFold(config.UserAccount, config.AdminAccount) {
+		return &ConfigError{Field: "FRUX_ACCEPTANCE_ADMIN_ACCOUNT"}
+	}
 	postgresURL, err := url.Parse(strings.TrimSpace(config.PostgresDSN))
 	if err != nil || (postgresURL.Scheme != "postgres" && postgresURL.Scheme != "postgresql") ||
 		postgresURL.Host == "" || strings.TrimSpace(postgresURL.Path) == "" {

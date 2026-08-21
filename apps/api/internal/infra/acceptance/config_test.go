@@ -34,6 +34,15 @@ func TestLoadConfigFromEnvRejectsMissingSecretWithoutValueLeak(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnvRejectsSelfReviewAccount(t *testing.T) {
+	setAcceptanceTestEnvironment(t)
+	t.Setenv("FRUX_ACCEPTANCE_ADMIN_ACCOUNT", "ACCEPTANCE-USER")
+	_, err := LoadConfigFromEnv("", 0)
+	if !errors.Is(err, ErrInvalidAcceptanceConfig) || !strings.Contains(err.Error(), "FRUX_ACCEPTANCE_ADMIN_ACCOUNT") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestLoadConfigFromEnvRejectsRemoteHTTPAndBounds(t *testing.T) {
 	for _, test := range []struct {
 		name  string

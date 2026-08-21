@@ -57,7 +57,12 @@ func MetricDeltas(before, after MetricSnapshot) []applicationacceptance.MetricDe
 	for _, key := range keys {
 		afterValue := after[key]
 		beforeValue, exists := before[key]
-		available := exists && afterValue >= beforeValue
+		available := afterValue >= 0
+		if exists {
+			available = afterValue >= beforeValue
+		} else {
+			beforeValue = 0
+		}
 		value := int64(0)
 		if available {
 			value = int64(math.Round(afterValue - beforeValue))

@@ -31,6 +31,9 @@ func TestAPIClientRunsBoundedProductWorkflow(t *testing.T) {
 			if request.Header.Get("X-Test") != "ok" {
 				t.Error("missing signed upload header")
 			}
+			if request.ContentLength != int64(len("fixture")) {
+				t.Errorf("content length=%d", request.ContentLength)
+			}
 			content, _ := io.ReadAll(request.Body)
 			if string(content) != "fixture" {
 				t.Errorf("content=%q", content)

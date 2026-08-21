@@ -29,3 +29,12 @@ func TestMetricDeltasMarksCounterResetUnavailable(t *testing.T) {
 		t.Fatalf("deltas=%#v", deltas)
 	}
 }
+
+func TestMetricDeltasTreatsNewCounterSeriesAsStartingAtZero(t *testing.T) {
+	deltas := MetricDeltas(MetricSnapshot{}, MetricSnapshot{
+		"frux_tongyi_provider_operations_total{operation=query,result=success}": 1,
+	})
+	if len(deltas) != 1 || !deltas[0].Available || deltas[0].Value != 1 || deltas[0].Operation != "query" {
+		t.Fatalf("deltas=%#v", deltas)
+	}
+}

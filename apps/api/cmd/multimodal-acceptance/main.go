@@ -43,16 +43,9 @@ func run(arguments []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	decision := applicationacceptance.DecideExecution(
-		options.execute,
-		os.Getenv(applicationacceptance.BillableAcknowledgementEnvironment),
-	)
+	decision, environmentErr := loadEnvironmentAndDecide(options.execute)
 	report := applicationacceptance.NewReport(runID, decision.Mode, startedAt, options.cleanup)
-	if err := infraenvfile.LoadMultimodal(infraenvfile.MultimodalFruxRuntime); err != nil {
-		failReport(&report, applicationacceptance.FailureConfiguration)
-		return emitReport(output, options.reportPath, report)
-	}
-	if err := infraenvfile.LoadAcceptance(); err != nil {
+	if environmentErr != nil {
 		failReport(&report, applicationacceptance.FailureConfiguration)
 		return emitReport(output, options.reportPath, report)
 	}
@@ -104,6 +97,25 @@ func run(arguments []string, output io.Writer) error {
 		return emitErr
 	}
 	return runErr
+}
+
+func loadEnvironmentAndDecide(execute bool) (applicationacceptance.ExecutionDecision, error) {
+	if err := infraenvfile.LoadMultimodal(infraenvfile.MultimodalFruxRuntime); err != nil {
+		return applicationacceptance.DecideExecution(
+			execute,
+			os.Getenv(applicationacceptance.BillableAcknowledgementEnvironment),
+		), err
+	}
+	if err := infraenvfile.LoadAcceptance(); err != nil {
+		return applicationacceptance.DecideExecution(
+			execute,
+			os.Getenv(applicationacceptance.BillableAcknowledgementEnvironment),
+		), err
+	}
+	return applicationacceptance.DecideExecution(
+		execute,
+		os.Getenv(applicationacceptance.BillableAcknowledgementEnvironment),
+	), nil
 }
 
 func parseOptions(arguments []string) (commandOptions, error) {

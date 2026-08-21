@@ -42,6 +42,51 @@ func TestRunRequiresBothBillableGates(t *testing.T) {
 	}
 }
 
+func TestLoadEnvironmentBeforeBillableDecision(t *testing.T) {
+	root := t.TempDir()
+	workingDirectory := filepath.Join(root, "apps", "api")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workingDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "apps", ".env.acceptance"),
+		[]byte(applicationacceptance.BillableAcknowledgementEnvironment+"=true\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWorkingDirectory) })
+	oldValue, existed := os.LookupEnv(applicationacceptance.BillableAcknowledgementEnvironment)
+	if err := os.Unsetenv(applicationacceptance.BillableAcknowledgementEnvironment); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(applicationacceptance.BillableAcknowledgementEnvironment, oldValue)
+		} else {
+			_ = os.Unsetenv(applicationacceptance.BillableAcknowledgementEnvironment)
+		}
+	})
+
+	decision, err := loadEnvironmentAndDecide(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Confirmed || decision.Mode != applicationacceptance.ModeExecution {
+		t.Fatalf("decision=%#v", decision)
+	}
+}
+
 func TestRunWritesRestrictedReportWithoutSecrets(t *testing.T) {
 	setCommandAcceptanceEnvironment(t)
 	path := filepath.Join(t.TempDir(), "report.json")

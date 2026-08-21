@@ -70,10 +70,10 @@ func (r *Runner) Run(ctx context.Context, report applicationacceptance.Report) (
 	}{
 		{applicationacceptance.StagePreflight, applicationacceptance.FailurePrerequisite, func(stage context.Context) error { return r.preflight(stage, state, &report) }},
 		{applicationacceptance.StageLogin, applicationacceptance.FailureAuthentication, func(stage context.Context) error { return r.login(stage, state) }},
-		{applicationacceptance.StageUploadFixtureA, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.upload(stage, state, 0) }},
-		{applicationacceptance.StageUploadFixtureB, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.upload(stage, state, 1) }},
-		{applicationacceptance.StageCreateVideoA, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.createVideo(stage, state, 0, report.RunID) }},
-		{applicationacceptance.StageCreateVideoB, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.createVideo(stage, state, 1, report.RunID) }},
+		{applicationacceptance.StageUploadFixtureA, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.upload(stage, state, 0, &report) }},
+		{applicationacceptance.StageUploadFixtureB, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.upload(stage, state, 1, &report) }},
+		{applicationacceptance.StageCreateVideoA, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.createVideo(stage, state, 0, &report) }},
+		{applicationacceptance.StageCreateVideoB, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.createVideo(stage, state, 1, &report) }},
 		{applicationacceptance.StageApproveVideoA, applicationacceptance.FailureReview, func(stage context.Context) error { return r.approve(stage, state, 0, report.RunID) }},
 		{applicationacceptance.StageApproveVideoB, applicationacceptance.FailureReview, func(stage context.Context) error { return r.approve(stage, state, 1, report.RunID) }},
 		{applicationacceptance.StageWaitEmbeddingA, applicationacceptance.FailureEmbedding, func(stage context.Context) error { return r.waitEmbedding(stage, state, 0) }},
@@ -164,36 +164,52 @@ func (r *Runner) login(ctx context.Context, state *runState) error {
 	return err
 }
 
-func (r *Runner) upload(ctx context.Context, state *runState, index int) error {
+func (r *Runner) upload(ctx context.Context, state *runState, index int, report *applicationacceptance.Report) error {
 	label := string(rune('a' + index))
-	video, err := r.api.UploadFixture(ctx, state.userToken, "video", r.config.VideoFixturePath, "acceptance-"+label+"-video")
+	video, err := r.api.UploadFixture(ctx, state.userToken, "video", r.config.VideoFixturePath, report.RunID+"-"+label+"-video")
 	if err != nil {
 		return err
 	}
-	cover, err := r.api.UploadFixture(ctx, state.userToken, "cover", r.config.CoverFixturePath, "acceptance-"+label+"-cover")
+	cover, err := r.api.UploadFixture(ctx, state.userToken, "cover", r.config.CoverFixturePath, report.RunID+"-"+label+"-cover")
 	if err != nil {
 		return err
 	}
 	state.fixtures[index] = applicationacceptance.FixtureEvidence{Label: strings.ToUpper(label), MediaAssetID: video.ID, CoverAssetID: cover.ID}
+	syncFixtureEvidence(state, report)
 	return nil
 }
 
-func (r *Runner) createVideo(ctx context.Context, state *runState, index int, runID string) error {
+func (r *Runner) createVideo(ctx context.Context, state *runState, index int, report *applicationacceptance.Report) error {
 	label := state.fixtures[index].Label
 	created, err := r.api.CreateVideo(ctx, state.userToken, state.fixtures[index].MediaAssetID, state.fixtures[index].CoverAssetID,
 		r.config.Query+" 技术验收 "+label, "multimodal technical acceptance fixture "+label,
-		runID+"-video-"+strings.ToLower(label))
+		report.RunID+"-video-"+strings.ToLower(label))
 	if err != nil {
 		return err
 	}
 	state.videos[index] = created
 	state.fixtures[index].VideoID = created.ID
+	syncFixtureEvidence(state, report)
 	return nil
+}
+
+func syncFixtureEvidence(state *runState, report *applicationacceptance.Report) {
+	if state == nil || report == nil {
+		return
+	}
+	fixtures := make([]applicationacceptance.FixtureEvidence, 0, len(state.fixtures))
+	for _, fixture := range state.fixtures {
+		if fixture.Label != "" {
+			fixtures = append(fixtures, fixture)
+		}
+	}
+	report.Fixtures = fixtures
 }
 
 func (r *Runner) approve(ctx context.Context, state *runState, index int, runID string) error {
 	videoID := state.videos[index].ID
 	var review ReviewCaseEvidence
+	var lease ReviewLease
 	err := r.poll(ctx, func() (bool, error) {
 		value, err := r.evidence.ReviewCase(ctx, videoID)
 		if err != nil {
@@ -204,12 +220,16 @@ func (r *Runner) approve(ctx context.Context, state *runState, index int, runID 
 			return false, err
 		}
 		review = value
+		lease, err = r.api.ClaimReview(ctx, state.adminToken, review.ID, review.Version)
+		if err != nil {
+			var failure *HTTPError
+			if errors.As(err, &failure) && failure.Code == HTTPFailureStatus && failure.Status == 409 {
+				return false, nil
+			}
+			return false, err
+		}
 		return true, nil
 	})
-	if err != nil {
-		return err
-	}
-	lease, err := r.api.ClaimReview(ctx, state.adminToken, review.ID, review.Version)
 	if err != nil {
 		return err
 	}
