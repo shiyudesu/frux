@@ -12,8 +12,9 @@ const (
 	LicenseOperatorReview = "operator_reviewed"
 	ExternalModelCalls    = 0
 
-	MinK = 1
-	MaxK = 100
+	MinK          = 1
+	MaxK          = 100
+	MaxWatchRatio = 1000
 )
 
 type Track string

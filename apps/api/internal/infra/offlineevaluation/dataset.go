@@ -74,7 +74,11 @@ func loadKuaiRecDataset(loaded *LoadedManifest, dataset *domainofflineevaluation
 	if err := parseOptionalFeatures(loaded, dataset, limits, "video_id"); err != nil {
 		return err
 	}
-	return parseKuaiInteractions(loaded.Files[domainofflineevaluation.RoleInteractions], dataset, limits)
+	if err := parseKuaiInteractions(loaded.Files[domainofflineevaluation.RoleInteractions], dataset, limits); err != nil {
+		return err
+	}
+	pruneKuaiRecItemsOutsideSelectedMatrix(dataset)
+	return nil
 }
 
 func loadMicroLensDataset(loaded *LoadedManifest, dataset *domainofflineevaluation.Dataset, limits DatasetLimits) error {
@@ -91,6 +95,7 @@ func loadMicroLensDataset(loaded *LoadedManifest, dataset *domainofflineevaluati
 }
 
 func parseKuaiInteractions(path string, dataset *domainofflineevaluation.Dataset, limits DatasetLimits) error {
+	users := make(map[string]string)
 	return readCSV(path, domainofflineevaluation.RoleInteractions,
 		[]string{"user_id", "video_id", "play_duration", "video_duration", "time", "date", "timestamp", "watch_ratio"},
 		func(record []string, ordinal int64) error {
@@ -98,28 +103,74 @@ func parseKuaiInteractions(path string, dataset *domainofflineevaluation.Dataset
 			item := normalizedDatasetToken(record[1], 128)
 			playDuration, playErr := strconv.ParseFloat(strings.TrimSpace(record[2]), 64)
 			videoDuration, videoErr := strconv.ParseFloat(strings.TrimSpace(record[3]), 64)
-			timestamp, timeErr := strconv.ParseInt(strings.TrimSpace(record[6]), 10, 64)
+			occurredAt, timeErr := parseUnixTimestamp(strings.TrimSpace(record[6]))
 			watchRatio, ratioErr := strconv.ParseFloat(strings.TrimSpace(record[7]), 64)
 			if user == "" || item == "" || playErr != nil || videoErr != nil || timeErr != nil || ratioErr != nil ||
 				!finite(playDuration) || !finite(videoDuration) || !finite(watchRatio) || playDuration < 0 ||
-				videoDuration <= 0 || watchRatio < 0 || watchRatio > 100 || timestamp <= 0 ||
+				videoDuration <= 0 || watchRatio < 0 || watchRatio > domainofflineevaluation.MaxWatchRatio ||
 				math.Abs(playDuration/videoDuration-watchRatio) > 0.01 {
 				return &InputError{Code: FailureValue, Role: domainofflineevaluation.RoleInteractions}
 			}
 			itemKey := domainofflineevaluation.DatasetItemKey(dataset.Kind, item)
-			if _, exists := dataset.Items[itemKey]; !exists {
+			storedItem, exists := dataset.Items[itemKey]
+			if !exists {
 				return &InputError{Code: FailureValue, Role: domainofflineevaluation.RoleInteractions}
+			}
+			userKey := users[user]
+			if userKey == "" {
+				userKey = domainofflineevaluation.DatasetUserKey(dataset.Kind, user)
+				users[user] = userKey
 			}
 			ratio := watchRatio
 			dataset.Interactions = append(dataset.Interactions, domainofflineevaluation.Interaction{
-				UserKey: domainofflineevaluation.DatasetUserKey(dataset.Kind, user), ItemKey: itemKey,
-				OccurredAt: time.Unix(timestamp, 0).UTC(), WatchRatio: &ratio, SourceOrder: ordinal,
+				UserKey: userKey, ItemKey: storedItem.Key,
+				OccurredAt: occurredAt, WatchRatio: &ratio, SourceOrder: ordinal,
 			})
 			if int64(len(dataset.Interactions)) > limits.MaxInteractions {
 				return &InputError{Code: FailureRows, Role: domainofflineevaluation.RoleInteractions}
 			}
 			return nil
 		})
+}
+
+func pruneKuaiRecItemsOutsideSelectedMatrix(dataset *domainofflineevaluation.Dataset) {
+	used := make(map[string]struct{}, len(dataset.Items))
+	for _, interaction := range dataset.Interactions {
+		used[interaction.ItemKey] = struct{}{}
+	}
+	for itemKey := range dataset.Items {
+		if _, exists := used[itemKey]; !exists {
+			delete(dataset.Items, itemKey)
+		}
+	}
+}
+
+func parseUnixTimestamp(value string) (time.Time, error) {
+	parts := strings.Split(value, ".")
+	if len(parts) < 1 || len(parts) > 2 || parts[0] == "" {
+		return time.Time{}, errors.New("invalid timestamp")
+	}
+	seconds, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}, errors.New("invalid timestamp")
+	}
+	nanoseconds := int64(0)
+	if len(parts) == 2 {
+		if parts[1] == "" || len(parts[1]) > 9 {
+			return time.Time{}, errors.New("invalid timestamp")
+		}
+		for _, character := range parts[1] {
+			if character < '0' || character > '9' {
+				return time.Time{}, errors.New("invalid timestamp")
+			}
+		}
+		fraction := parts[1] + strings.Repeat("0", 9-len(parts[1]))
+		nanoseconds, err = strconv.ParseInt(fraction, 10, 64)
+		if err != nil {
+			return time.Time{}, errors.New("invalid timestamp")
+		}
+	}
+	return time.Unix(seconds, nanoseconds).UTC(), nil
 }
 
 func parseMicroInteractions(path string, dataset *domainofflineevaluation.Dataset, limits DatasetLimits) error {
@@ -135,7 +186,7 @@ func parseMicroInteractions(path string, dataset *domainofflineevaluation.Datase
 			var ratio *float64
 			if value := strings.TrimSpace(record[3]); value != "" {
 				parsed, parseErr := strconv.ParseFloat(value, 64)
-				if parseErr != nil || !finite(parsed) || parsed < 0 || parsed > 100 {
+				if parseErr != nil || !finite(parsed) || parsed < 0 || parsed > domainofflineevaluation.MaxWatchRatio {
 					return &InputError{Code: FailureValue, Role: domainofflineevaluation.RoleInteractions}
 				}
 				ratio = &parsed

@@ -154,7 +154,13 @@ func aggregateGroupMetrics(dataset *Dataset, selected []Item, category bool) Gro
 	}
 	largest := int64(0)
 	hhi := 0.0
-	for _, count := range counts {
+	groupKeys := make([]string, 0, len(counts))
+	for key := range counts {
+		groupKeys = append(groupKeys, key)
+	}
+	sort.Strings(groupKeys)
+	for _, key := range groupKeys {
+		count := counts[key]
 		largest = max(largest, count)
 		share := float64(count) / float64(len(ordered))
 		hhi += share * share

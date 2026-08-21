@@ -145,7 +145,13 @@ func categoryScores(dataset *Dataset, evaluationCase EvaluationCase, profile Cas
 			user[category] += weight
 		}
 	}
-	for _, weight := range user {
+	categoryKeys := make([]string, 0, len(user))
+	for category := range user {
+		categoryKeys = append(categoryKeys, category)
+	}
+	sort.Strings(categoryKeys)
+	for _, category := range categoryKeys {
+		weight := user[category]
 		userNorm += weight * weight
 	}
 	if userNorm <= 0 {

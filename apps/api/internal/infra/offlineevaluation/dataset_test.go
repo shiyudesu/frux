@@ -50,6 +50,20 @@ func TestDatasetParsersRejectRatioMismatchDuplicateAndUnknownRawLayout(t *testin
 	if err := parseKuaiInteractions(mismatch, dataset, DefaultDatasetLimits()); err == nil {
 		t.Fatal("expected watch-ratio mismatch")
 	}
+	fractional := filepath.Join(root, "fractional.csv")
+	if err := os.WriteFile(fractional, []byte("user_id,video_id,play_duration,video_duration,time,date,timestamp,watch_ratio\n1,1,3338360,10000,t,d,1593898068.378,333.836\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataset.Interactions = nil
+	if err := parseKuaiInteractions(fractional, dataset, DefaultDatasetLimits()); err != nil ||
+		dataset.Interactions[0].OccurredAt.Nanosecond() != 378000000 || *dataset.Interactions[0].WatchRatio != 333.836 {
+		t.Fatalf("interaction=%#v err=%v", dataset.Interactions, err)
+	}
+	dataset.Items["kuairec:item:unused"] = domainofflineevaluation.Item{Key: "kuairec:item:unused"}
+	pruneKuaiRecItemsOutsideSelectedMatrix(dataset)
+	if _, exists := dataset.Items["kuairec:item:unused"]; exists {
+		t.Fatal("unused Big Matrix item was not pruned from selected matrix")
+	}
 	duplicate := filepath.Join(root, "duplicate.csv")
 	if err := os.WriteFile(duplicate, []byte("video_id,feat\n1,\"[1,1]\"\n"), 0o600); err != nil {
 		t.Fatal(err)
