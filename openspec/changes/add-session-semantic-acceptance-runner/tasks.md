@@ -14,8 +14,8 @@
 
 ## 3. Authenticated product workflow
 
-- [ ] 3.1 Extend the bounded acceptance HTTP client with consumer login, `/api/users/me`, view-event, favorite/unfavorite, and Feed query methods that never expose bearer tokens or cursors.
-- [ ] 3.2 Implement run-scoped positive completion/favorite and negative early-skip facts with stable event, playback, request, session, and idempotency identities.
+- [x] 3.1 Extend the bounded acceptance HTTP client with consumer login, `/api/users/me`, view-event, favorite/unfavorite, and Feed query methods that never expose bearer tokens or cursors.
+- [x] 3.2 Implement run-scoped positive completion/favorite and negative early-skip facts with stable event, playback, request, session, and idempotency identities.
 - [ ] 3.3 Execute first-page Feed with positive current/negative recent context, require expected target evidence and signed continuation, then request the Snapshot page.
 - [ ] 3.4 Add fake API tests for success, idempotent replay, authentication, malformed/oversize bodies, missing cursor, target absence, timeout, cancellation, and redirect rejection.
 

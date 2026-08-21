@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type APIClient struct {
@@ -41,6 +42,13 @@ type SimilarResult struct {
 	VideoIDs  []int64
 }
 
+type SessionFeedPage struct {
+	RequestID  string
+	VideoIDs   []int64
+	NextCursor string
+	HasMore    bool
+}
+
 func NewAPIClient(client *HTTPClient, baseEndpoint string) (*APIClient, error) {
 	baseEndpoint = strings.TrimRight(strings.TrimSpace(baseEndpoint), "/")
 	if client == nil || validateEndpoint(baseEndpoint) != nil {
@@ -67,6 +75,118 @@ func (c *APIClient) Login(ctx context.Context, admin bool, account, password str
 		return "", &HTTPError{Code: HTTPFailureDecode}
 	}
 	return response.AccessToken, nil
+}
+
+func (c *APIClient) Me(ctx context.Context, bearer string) (int64, error) {
+	var response struct {
+		ID int64 `json:"id"`
+	}
+	if err := c.http.JSON(ctx, http.MethodGet, c.base+"/api/users/me", bearer, nil, &response); err != nil {
+		return 0, err
+	}
+	if response.ID <= 0 {
+		return 0, &HTTPError{Code: HTTPFailureDecode}
+	}
+	return response.ID, nil
+}
+
+func (c *APIClient) CreateSessionViewEvent(
+	ctx context.Context,
+	bearer string,
+	videoID int64,
+	requestID string,
+	eventType string,
+	eventID string,
+	playbackSessionID string,
+	sequence int64,
+	positionMS int,
+	watchMS int,
+	durationMS int,
+	completed bool,
+	occurredAt time.Time,
+) error {
+	if videoID <= 0 || strings.TrimSpace(requestID) == "" || strings.TrimSpace(eventID) == "" ||
+		strings.TrimSpace(playbackSessionID) == "" || sequence <= 0 || durationMS <= 0 || occurredAt.IsZero() {
+		return &HTTPError{Code: HTTPFailureRequest}
+	}
+	return c.http.JSON(ctx, http.MethodPost, c.base+"/api/video-view-events", bearer, map[string]any{
+		"video_id": videoID, "scene": "recommend", "request_id": requestID,
+		"event_type": eventType, "event_id": eventID, "playback_session_id": playbackSessionID,
+		"sequence": sequence, "occurred_at": occurredAt.UTC(),
+		"position_ms": positionMS, "watch_ms": watchMS, "duration_ms": durationMS,
+		"completed": completed,
+	}, nil)
+}
+
+func (c *APIClient) SetSessionFavorite(
+	ctx context.Context,
+	bearer string,
+	videoID int64,
+	requestID string,
+	idempotencyKey string,
+	active bool,
+) error {
+	method := http.MethodPut
+	if !active {
+		method = http.MethodDelete
+	}
+	return c.http.JSONHeaders(
+		ctx, method, fmt.Sprintf("%s/api/videos/%d/favorite", c.base, videoID), bearer,
+		map[string]string{
+			"Idempotency-Key":             idempotencyKey,
+			"X-Recommendation-Request-ID": requestID,
+		}, nil, nil,
+	)
+}
+
+func (c *APIClient) SessionFeed(
+	ctx context.Context,
+	bearer string,
+	requestID string,
+	sessionID string,
+	cursor string,
+	positiveVideoID int64,
+	negativeVideoID int64,
+	limit int,
+) (SessionFeedPage, error) {
+	if strings.TrimSpace(requestID) == "" || strings.TrimSpace(sessionID) == "" ||
+		positiveVideoID <= 0 || negativeVideoID <= 0 || limit <= 0 {
+		return SessionFeedPage{}, &HTTPError{Code: HTTPFailureRequest}
+	}
+	var response struct {
+		RequestID string `json:"request_id"`
+		Items     []struct {
+			VideoID int64 `json:"video_id"`
+		} `json:"items"`
+		NextCursor string `json:"next_cursor"`
+		HasMore    bool   `json:"has_more"`
+	}
+	err := c.http.JSON(ctx, http.MethodPost, c.base+"/api/feed-queries", bearer, map[string]any{
+		"scene": "recommend", "cursor": cursor, "limit": limit,
+		"context": map[string]any{
+			"request_id": requestID, "session_id": sessionID, "refresh_index": 0,
+			"recent_video_ids": []int64{negativeVideoID}, "current_video_id": positiveVideoID,
+			"network_class": "unknown", "save_data": false, "viewport_class": "unknown",
+			"playback_capabilities": []string{"mp4"},
+		},
+	}, &response)
+	if err != nil {
+		return SessionFeedPage{}, err
+	}
+	if response.RequestID != requestID {
+		return SessionFeedPage{}, &HTTPError{Code: HTTPFailureDecode}
+	}
+	ids := make([]int64, 0, len(response.Items))
+	for _, item := range response.Items {
+		if item.VideoID <= 0 {
+			return SessionFeedPage{}, &HTTPError{Code: HTTPFailureDecode}
+		}
+		ids = append(ids, item.VideoID)
+	}
+	return SessionFeedPage{
+		RequestID: response.RequestID, VideoIDs: ids,
+		NextCursor: response.NextCursor, HasMore: response.HasMore,
+	}, nil
 }
 
 func (c *APIClient) UploadFixture(
