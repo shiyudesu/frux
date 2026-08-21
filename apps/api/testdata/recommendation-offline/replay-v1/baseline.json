@@ -1,0 +1,49 @@
+{
+  "name": "baseline",
+  "configuration": {
+    "feature_weights": {
+      "content_similarity": 0.7,
+      "session_similarity": 0.25,
+      "hotness": 0.2,
+      "freshness": 0.1,
+      "author_affinity": 0.15,
+      "follow_relation": 0.1,
+      "negative_penalty": -0.75,
+      "exposure_penalty": -0.4
+    },
+    "recall_budgets": {
+      "fresh": 100,
+      "hot": 100,
+      "content_similarity": 100,
+      "followed_author": 100,
+      "session_continuation": 100
+    },
+    "provider_deadlines_ms": {
+      "fresh": 150,
+      "hot": 150,
+      "content_similarity": 250,
+      "followed_author": 200,
+      "session_continuation": 250
+    },
+    "freshness_half_life_hours": 72,
+    "profile_long_term_half_life_hours": 720,
+    "profile_recent_half_life_hours": 24,
+    "exposure_window_hours": 168,
+    "diversity": {
+      "max_per_author": 10,
+      "min_author_gap": 1,
+      "min_content_gap": 1
+    },
+    "rollout_percentage": 100,
+    "snapshot_ttl_seconds": 300,
+    "sampling_rate_ppm": 10000,
+    "retention_days": 30,
+    "minimum_fallback_pool": 1,
+    "hard_suppress_exposures": true,
+    "suppression_hours": {
+      "not_interested": 720,
+      "reduce_author": 336,
+      "already_seen": 168
+    }
+  }
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -27,6 +28,53 @@ func TestCommandDefaultsToValidationWithoutRuntimeCalls(t *testing.T) {
 	}
 	if bytes.Contains(output.Bytes(), []byte(root)) {
 		t.Fatalf("report leaked root: %s", output.Bytes())
+	}
+}
+
+func TestCommandExecutesReplayAndGoldenTracks(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "recommendation-offline")
+	for _, test := range []struct {
+		name      string
+		arguments []string
+		track     string
+	}{
+		{name: "replay", track: "production_replay", arguments: []string{
+			"replay", "--input", filepath.Join(root, "replay-v1", "bundle.json"),
+			"--baseline", filepath.Join(root, "replay-v1", "baseline.json"),
+			"--candidate", filepath.Join(root, "replay-v1", "candidate.json"), "--k", "1,2",
+		}},
+		{name: "golden", track: "human_golden", arguments: []string{
+			"golden", "--input", filepath.Join(root, "golden-v1.json"), "--k", "1,3",
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			jsonPath := filepath.Join(directory, "report.json")
+			markdownPath := filepath.Join(directory, "report.md")
+			arguments := append(append([]string(nil), test.arguments...), "--evaluate", "--output-json", jsonPath, "--output-markdown", markdownPath)
+			var output bytes.Buffer
+			if err := run(arguments, &output, nil); err != nil {
+				t.Fatal(err)
+			}
+			var envelope struct {
+				Track              string `json:"track"`
+				Result             string `json:"result"`
+				ExternalModelCalls int    `json:"external_model_calls"`
+			}
+			if err := json.Unmarshal(output.Bytes(), &envelope); err != nil || envelope.Track != test.track ||
+				envelope.Result != "success" || envelope.ExternalModelCalls != 0 {
+				t.Fatalf("envelope=%#v err=%v", envelope, err)
+			}
+			for _, path := range []string{jsonPath, markdownPath} {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != 0o600 {
+					t.Fatalf("mode=%o", info.Mode().Perm())
+				}
+			}
+		})
 	}
 }
 

@@ -49,8 +49,11 @@ func TestPublicReportIsDeterministicRestrictedAndRedacted(t *testing.T) {
 	}
 	for _, path := range []string{jsonPath, markdownPath} {
 		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("path=%s mode=%v err=%v", path, info.Mode(), err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("path=%s mode=%v", path, info.Mode())
 		}
 	}
 	if err := PublishPublicReport(jsonPath, markdownPath, report, false); err == nil {
@@ -58,5 +61,60 @@ func TestPublicReportIsDeterministicRestrictedAndRedacted(t *testing.T) {
 	}
 	if err := PublishPublicReport(jsonPath, markdownPath, report, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReplayAndGoldenReportsAreDeterministicAndContainNoCandidateIdentity(t *testing.T) {
+	replayRoot := filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "replay-v1")
+	bundle, err := LoadReplayBundle(filepath.Join(replayRoot, "bundle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := LoadNamedPolicy(filepath.Join(replayRoot, "baseline.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := LoadNamedPolicy(filepath.Join(replayRoot, "candidate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayEvaluation, err := applicationofflineevaluation.EvaluateReplay(bundle.Bundle, baseline, []applicationofflineevaluation.NamedPolicy{candidate}, []int{1, 2}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayReport, err := NewReplayReport(bundle.SHA256, baseline, []applicationofflineevaluation.NamedPolicy{candidate}, replayEvaluation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstReplayJSON, firstReplayMarkdown, err := RenderReplayReport(replayReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondReplayJSON, secondReplayMarkdown, _ := RenderReplayReport(replayReport)
+	if !bytes.Equal(firstReplayJSON, secondReplayJSON) || !bytes.Equal(firstReplayMarkdown, secondReplayMarkdown) ||
+		bytes.Contains(firstReplayJSON, []byte(`"video_id"`)) || bytes.Contains(firstReplayJSON, []byte("author-a")) {
+		t.Fatal("replay report is nondeterministic or leaked candidate identity")
+	}
+	goldenPath := filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "golden-v1.json")
+	goldenBundle, err := LoadGoldenBundle(goldenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goldenEvaluation, err := applicationofflineevaluation.EvaluateGolden(goldenBundle.Bundle, []int{1, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	goldenReport, err := NewGoldenReport(goldenBundle.SHA256, goldenEvaluation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstGoldenJSON, firstGoldenMarkdown, err := RenderGoldenReport(goldenReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondGoldenJSON, secondGoldenMarkdown, _ := RenderGoldenReport(goldenReport)
+	if !bytes.Equal(firstGoldenJSON, secondGoldenJSON) || !bytes.Equal(firstGoldenMarkdown, secondGoldenMarkdown) ||
+		bytes.Contains(firstGoldenJSON, []byte("candidate-a")) || bytes.Contains(firstGoldenJSON, []byte(`"judgments"`)) {
+		t.Fatal("Golden report is nondeterministic or leaked annotations")
 	}
 }

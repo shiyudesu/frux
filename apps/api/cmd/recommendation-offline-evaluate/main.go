@@ -28,6 +28,9 @@ type commandOptions struct {
 	root            string
 	manifest        string
 	input           string
+	baseline        string
+	candidates      []string
+	diagnosticOnly  bool
 	outputJSON      string
 	outputMarkdown  string
 	kValues         []int
@@ -50,6 +53,8 @@ type validationReport struct {
 	MaxInteractions    int64                                    `json:"max_interactions,omitempty"`
 	Baselines          []domainofflineevaluation.Baseline       `json:"baselines,omitempty"`
 	Manifest           *infraofflineevaluation.ManifestEvidence `json:"manifest,omitempty"`
+	InputSHA256        string                                   `json:"input_sha256,omitempty"`
+	Policies           []infraofflineevaluation.PolicyEvidence  `json:"policies,omitempty"`
 }
 
 type publicEvaluationExecutor func(
@@ -77,6 +82,10 @@ func run(arguments []string, output io.Writer, executor publicEvaluationExecutor
 		ExternalModelCalls: domainofflineevaluation.ExternalModelCalls,
 	}
 	var loaded *infraofflineevaluation.LoadedManifest
+	var replayBundle *infraofflineevaluation.LoadedReplayBundle
+	var baseline applicationofflineevaluation.NamedPolicy
+	var candidates []applicationofflineevaluation.NamedPolicy
+	var goldenBundle *infraofflineevaluation.LoadedGoldenBundle
 	switch options.track {
 	case domainofflineevaluation.TrackPublicDataset:
 		limits := infraofflineevaluation.DefaultManifestLimits()
@@ -92,24 +101,67 @@ func run(arguments []string, output io.Writer, executor publicEvaluationExecutor
 		report.MaxItems = options.maxItems
 		report.MaxInteractions = options.maxInteractions
 		report.Baselines = domainofflineevaluation.Baselines()
-	case domainofflineevaluation.TrackReplay, domainofflineevaluation.TrackGolden:
-		if err := validateBoundedInput(options.input); err != nil {
+	case domainofflineevaluation.TrackReplay:
+		replayBundle, err = infraofflineevaluation.LoadReplayBundle(options.input)
+		if err != nil {
 			return err
 		}
+		baseline, err = infraofflineevaluation.LoadNamedPolicy(options.baseline)
+		if err != nil {
+			return err
+		}
+		for _, path := range options.candidates {
+			candidate, loadErr := infraofflineevaluation.LoadNamedPolicy(path)
+			if loadErr != nil {
+				return loadErr
+			}
+			candidates = append(candidates, candidate)
+		}
+		report.InputSHA256 = replayBundle.SHA256
+		report.K = append([]int(nil), options.kValues...)
+		report.Policies = append(report.Policies, infraofflineevaluation.PolicyEvidence{
+			Name: baseline.Name, InputSHA256: baseline.InputSHA256, NormalizedSHA256: baseline.NormalizedSHA256,
+		})
+		for _, candidate := range candidates {
+			report.Policies = append(report.Policies, infraofflineevaluation.PolicyEvidence{
+				Name: candidate.Name, InputSHA256: candidate.InputSHA256, NormalizedSHA256: candidate.NormalizedSHA256,
+			})
+		}
+	case domainofflineevaluation.TrackGolden:
+		goldenBundle, err = infraofflineevaluation.LoadGoldenBundle(options.input)
+		if err != nil {
+			return err
+		}
+		report.InputSHA256 = goldenBundle.SHA256
+		report.K = append([]int(nil), options.kValues...)
 	default:
 		return errors.New("invalid evaluation track")
 	}
 	var payload any = report
 	if options.evaluate {
-		if options.track != domainofflineevaluation.TrackPublicDataset || executor == nil {
-			return errors.New("evaluation executor unavailable")
+		switch options.track {
+		case domainofflineevaluation.TrackPublicDataset:
+			if executor == nil {
+				return errors.New("evaluation executor unavailable")
+			}
+			publicReport, executeErr := executor(context.Background(), options, loaded)
+			if executeErr != nil {
+				return executeErr
+			}
+			payload = publicReport
+		case domainofflineevaluation.TrackReplay:
+			replayReport, executeErr := executeReplayEvaluation(options, replayBundle, baseline, candidates)
+			if executeErr != nil {
+				return executeErr
+			}
+			payload = replayReport
+		case domainofflineevaluation.TrackGolden:
+			goldenReport, executeErr := executeGoldenEvaluation(options, goldenBundle)
+			if executeErr != nil {
+				return executeErr
+			}
+			payload = goldenReport
 		}
-		publicReport, executeErr := executor(context.Background(), options, loaded)
-		err = executeErr
-		if err != nil {
-			return err
-		}
-		payload = publicReport
 	}
 	encoded, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
@@ -118,6 +170,52 @@ func run(arguments []string, output io.Writer, executor publicEvaluationExecutor
 	encoded = append(encoded, '\n')
 	_, err = output.Write(encoded)
 	return err
+}
+
+func executeReplayEvaluation(
+	options commandOptions,
+	bundle *infraofflineevaluation.LoadedReplayBundle,
+	baseline applicationofflineevaluation.NamedPolicy,
+	candidates []applicationofflineevaluation.NamedPolicy,
+) (infraofflineevaluation.ReplayReport, error) {
+	if bundle == nil {
+		return infraofflineevaluation.ReplayReport{}, errors.New("replay bundle unavailable")
+	}
+	evaluation, err := applicationofflineevaluation.EvaluateReplay(
+		bundle.Bundle, baseline, candidates, options.kValues, options.diagnosticOnly,
+	)
+	if err != nil {
+		return infraofflineevaluation.ReplayReport{}, err
+	}
+	report, err := infraofflineevaluation.NewReplayReport(bundle.SHA256, baseline, candidates, evaluation)
+	if err != nil {
+		return infraofflineevaluation.ReplayReport{}, err
+	}
+	if err := infraofflineevaluation.PublishReplayReport(options.outputJSON, options.outputMarkdown, report, options.overwrite); err != nil {
+		return infraofflineevaluation.ReplayReport{}, err
+	}
+	return report, nil
+}
+
+func executeGoldenEvaluation(
+	options commandOptions,
+	bundle *infraofflineevaluation.LoadedGoldenBundle,
+) (infraofflineevaluation.GoldenReport, error) {
+	if bundle == nil {
+		return infraofflineevaluation.GoldenReport{}, errors.New("Golden bundle unavailable")
+	}
+	evaluation, err := applicationofflineevaluation.EvaluateGolden(bundle.Bundle, options.kValues)
+	if err != nil {
+		return infraofflineevaluation.GoldenReport{}, err
+	}
+	report, err := infraofflineevaluation.NewGoldenReport(bundle.SHA256, evaluation)
+	if err != nil {
+		return infraofflineevaluation.GoldenReport{}, err
+	}
+	if err := infraofflineevaluation.PublishGoldenReport(options.outputJSON, options.outputMarkdown, report, options.overwrite); err != nil {
+		return infraofflineevaluation.GoldenReport{}, err
+	}
+	return report, nil
 }
 
 func executePublicEvaluation(
@@ -169,6 +267,10 @@ func parseOptions(arguments []string) (commandOptions, error) {
 	flags.StringVar(&options.root, "root", "", "operator-owned dataset root")
 	flags.StringVar(&options.manifest, "manifest", "manifest.json", "dataset-root-relative manifest")
 	flags.StringVar(&options.input, "input", "", "replay or Golden input bundle")
+	flags.StringVar(&options.baseline, "baseline", "", "baseline policy file for replay")
+	var candidatePaths stringList
+	flags.Var(&candidatePaths, "candidate", "candidate policy file for replay (repeatable)")
+	flags.BoolVar(&options.diagnosticOnly, "diagnostic-only", false, "list non-replayable differences without comparative metrics")
 	flags.StringVar(&options.outputJSON, "output-json", "", "canonical JSON report path")
 	flags.StringVar(&options.outputMarkdown, "output-markdown", "", "canonical Markdown report path")
 	var kRaw string
@@ -180,6 +282,7 @@ func parseOptions(arguments []string) (commandOptions, error) {
 	if err := flags.Parse(arguments[1:]); err != nil || flags.NArg() != 0 {
 		return commandOptions{}, errors.New("invalid evaluation options")
 	}
+	options.candidates = append([]string(nil), candidatePaths...)
 	var err error
 	if options.kValues, err = parseK(kRaw); err != nil || options.maxCases < 1 || options.maxCases > 1_000_000 ||
 		options.maxItems < 1 || options.maxItems > 10_000_000 || options.maxInteractions < 1 || options.maxInteractions > 100_000_000 {
@@ -189,8 +292,12 @@ func parseOptions(arguments []string) (commandOptions, error) {
 		if strings.TrimSpace(options.root) == "" || !safeRelativeOption(options.manifest) {
 			return commandOptions{}, errors.New("invalid public dataset options")
 		}
+	} else if track == domainofflineevaluation.TrackReplay {
+		if strings.TrimSpace(options.input) == "" || strings.TrimSpace(options.baseline) == "" || len(options.candidates) == 0 || len(options.candidates) > 20 {
+			return commandOptions{}, errors.New("replay inputs are required")
+		}
 	} else if strings.TrimSpace(options.input) == "" {
-		return commandOptions{}, errors.New("input bundle is required")
+		return commandOptions{}, errors.New("Golden input bundle is required")
 	}
 	if options.evaluate {
 		if !validOutputPair(options.outputJSON, options.outputMarkdown) {
@@ -198,6 +305,21 @@ func parseOptions(arguments []string) (commandOptions, error) {
 		}
 	}
 	return options, nil
+}
+
+type stringList []string
+
+func (v *stringList) String() string {
+	return strings.Join(*v, ",")
+}
+
+func (v *stringList) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("empty path")
+	}
+	*v = append(*v, value)
+	return nil
 }
 
 func parseTrack(value string) (domainofflineevaluation.Track, bool) {
@@ -228,14 +350,6 @@ func parseK(value string) ([]int, error) {
 		return nil, errors.New("invalid K values")
 	}
 	return values, nil
-}
-
-func validateBoundedInput(input string) error {
-	info, err := os.Stat(filepath.Clean(strings.TrimSpace(input)))
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64<<20 {
-		return errors.New("invalid evaluation input")
-	}
-	return nil
 }
 
 func validOutputPair(jsonPath, markdownPath string) bool {

@@ -110,6 +110,10 @@ func PublishPublicReport(jsonPath, markdownPath string, report PublicReport, ove
 	if err != nil {
 		return err
 	}
+	return publishReportPair(jsonPath, markdownPath, jsonContent, markdownContent, overwrite)
+}
+
+func publishReportPair(jsonPath, markdownPath string, jsonContent, markdownContent []byte, overwrite bool) error {
 	jsonPath, markdownPath, directory, err := validateReportPaths(jsonPath, markdownPath, overwrite)
 	if err != nil {
 		return err
@@ -158,6 +162,190 @@ func PublishPublicReport(jsonPath, markdownPath string, report PublicReport, ove
 	removeBackup(jsonBackup)
 	removeBackup(markdownBackup)
 	return nil
+}
+
+type PolicyEvidence struct {
+	Name             string `json:"name"`
+	InputSHA256      string `json:"input_sha256"`
+	NormalizedSHA256 string `json:"normalized_sha256"`
+}
+
+type ReplayReport struct {
+	Version            string                                        `json:"version"`
+	Kind               string                                        `json:"kind"`
+	Track              domainofflineevaluation.Track                 `json:"track"`
+	Result             string                                        `json:"result"`
+	ExternalModelCalls int                                           `json:"external_model_calls"`
+	BundleSHA256       string                                        `json:"bundle_sha256"`
+	Baseline           PolicyEvidence                                `json:"baseline"`
+	Policies           []PolicyEvidence                              `json:"policies"`
+	Evaluation         applicationofflineevaluation.ReplayEvaluation `json:"evaluation"`
+	Limitations        []string                                      `json:"limitations"`
+}
+
+func NewReplayReport(
+	bundleSHA256 string,
+	baseline applicationofflineevaluation.NamedPolicy,
+	policies []applicationofflineevaluation.NamedPolicy,
+	evaluation *applicationofflineevaluation.ReplayEvaluation,
+) (ReplayReport, error) {
+	if !validSHA256(bundleSHA256) || evaluation == nil || !evaluation.BaselineParity ||
+		baseline.Name == "" || !validSHA256(baseline.InputSHA256) || !validSHA256(baseline.NormalizedSHA256) {
+		return ReplayReport{}, ErrInvalidReportOutput
+	}
+	report := ReplayReport{
+		Version: domainofflineevaluation.ReportVersion, Kind: domainofflineevaluation.ReportKind,
+		Track: domainofflineevaluation.TrackReplay, Result: "success",
+		ExternalModelCalls: domainofflineevaluation.ExternalModelCalls, BundleSHA256: bundleSHA256,
+		Baseline:   PolicyEvidence{Name: baseline.Name, InputSHA256: baseline.InputSHA256, NormalizedSHA256: baseline.NormalizedSHA256},
+		Evaluation: *evaluation,
+		Limitations: []string{
+			"replay proves scorer compatibility over frozen candidates and is not a recall or causal-lift estimate",
+			"served-subset replay cannot infer absent candidates or counterfactual outcomes",
+			"non-replayable policy differences suppress comparative metrics",
+			"the evaluator does not recommend or activate a policy",
+		},
+	}
+	for _, policy := range policies {
+		if policy.Name == "" || !validSHA256(policy.InputSHA256) || !validSHA256(policy.NormalizedSHA256) {
+			return ReplayReport{}, ErrInvalidReportOutput
+		}
+		report.Policies = append(report.Policies, PolicyEvidence{Name: policy.Name, InputSHA256: policy.InputSHA256, NormalizedSHA256: policy.NormalizedSHA256})
+	}
+	return report, nil
+}
+
+func RenderReplayReport(report ReplayReport) ([]byte, []byte, error) {
+	if report.Version != domainofflineevaluation.ReportVersion || report.Track != domainofflineevaluation.TrackReplay ||
+		report.ExternalModelCalls != 0 || report.Result != "success" || !validSHA256(report.BundleSHA256) {
+		return nil, nil, ErrInvalidReportOutput
+	}
+	jsonContent, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return nil, nil, err
+	}
+	jsonContent = append(jsonContent, '\n')
+	var markdown bytes.Buffer
+	markdown.WriteString("# Production Recommendation Replay\n\n")
+	fmt.Fprintf(&markdown, "- Scope: `%s`\n", report.Evaluation.Scope)
+	fmt.Fprintf(&markdown, "- Cases: %d\n", report.Evaluation.Cases)
+	fmt.Fprintf(&markdown, "- Baseline parity: %t\n", report.Evaluation.BaselineParity)
+	fmt.Fprintf(&markdown, "- Comparative metrics available: %t\n", report.Evaluation.ComparativeAvailable)
+	fmt.Fprintf(&markdown, "- External model calls: %d\n\n", report.ExternalModelCalls)
+	if len(report.Evaluation.Candidates) > 0 {
+		markdown.WriteString("## Candidate replay\n\n")
+		markdown.WriteString("| Policy | Mean absolute rank shift |\n| --- | ---: |\n")
+		for _, candidate := range report.Evaluation.Candidates {
+			fmt.Fprintf(&markdown, "| `%s` | %.6f |\n", candidate.Name, candidate.MeanAbsoluteRankShift)
+		}
+	}
+	writeLimitations(&markdown, report.Limitations)
+	return jsonContent, markdown.Bytes(), nil
+}
+
+func PublishReplayReport(jsonPath, markdownPath string, report ReplayReport, overwrite bool) error {
+	jsonContent, markdownContent, err := RenderReplayReport(report)
+	if err != nil {
+		return err
+	}
+	return publishReportPair(jsonPath, markdownPath, jsonContent, markdownContent, overwrite)
+}
+
+type GoldenReport struct {
+	Version            string                                        `json:"version"`
+	Kind               string                                        `json:"kind"`
+	Track              domainofflineevaluation.Track                 `json:"track"`
+	Result             string                                        `json:"result"`
+	ExternalModelCalls int                                           `json:"external_model_calls"`
+	BundleSHA256       string                                        `json:"bundle_sha256"`
+	Evaluation         applicationofflineevaluation.GoldenEvaluation `json:"evaluation"`
+	Limitations        []string                                      `json:"limitations"`
+}
+
+func NewGoldenReport(bundleSHA256 string, evaluation *applicationofflineevaluation.GoldenEvaluation) (GoldenReport, error) {
+	if !validSHA256(bundleSHA256) || evaluation == nil || evaluation.Version != applicationofflineevaluation.GoldenVersion {
+		return GoldenReport{}, ErrInvalidReportOutput
+	}
+	return GoldenReport{
+		Version: domainofflineevaluation.ReportVersion, Kind: domainofflineevaluation.ReportKind,
+		Track: domainofflineevaluation.TrackGolden, Result: "success",
+		ExternalModelCalls: domainofflineevaluation.ExternalModelCalls, BundleSHA256: bundleSHA256,
+		Evaluation: *evaluation,
+		Limitations: []string{
+			"Golden Set labels are small human judgments and do not establish online causal lift",
+			"candidate presentation must remain blinded to policy name and rank during annotation",
+			"public dataset watch labels are not accepted as Frux Golden truth",
+			"the evaluator does not recommend or activate a policy",
+		},
+	}, nil
+}
+
+func RenderGoldenReport(report GoldenReport) ([]byte, []byte, error) {
+	if report.Version != domainofflineevaluation.ReportVersion || report.Track != domainofflineevaluation.TrackGolden ||
+		report.ExternalModelCalls != 0 || report.Result != "success" || !validSHA256(report.BundleSHA256) {
+		return nil, nil, ErrInvalidReportOutput
+	}
+	jsonContent, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return nil, nil, err
+	}
+	jsonContent = append(jsonContent, '\n')
+	var markdown bytes.Buffer
+	markdown.WriteString("# Human Recommendation Golden Set\n\n")
+	fmt.Fprintf(&markdown, "- Rubric: `%s`\n", report.Evaluation.Rubric)
+	fmt.Fprintf(&markdown, "- Cases: %d\n", report.Evaluation.Cases)
+	fmt.Fprintf(&markdown, "- Candidates: %d\n", report.Evaluation.Candidates)
+	fmt.Fprintf(&markdown, "- Agreement: %s\n", formatGoldenMetric(report.Evaluation.Agreement))
+	fmt.Fprintf(&markdown, "- External model calls: %d\n\n", report.ExternalModelCalls)
+	markdown.WriteString("## Rankings\n\n")
+	markdown.WriteString("| Ranking | NDCG@1 | Direction accuracy | Suppression accuracy |\n| --- | ---: | ---: | ---: |\n")
+	for _, ranking := range report.Evaluation.Rankings {
+		ndcg := "unavailable"
+		for _, value := range ranking.TopK {
+			if value.K == 1 {
+				ndcg = formatGoldenMetric(value.NDCG)
+				break
+			}
+		}
+		fmt.Fprintf(&markdown, "| `%s` | %s | %s | %s |\n", ranking.Name, ndcg,
+			formatGoldenMetric(ranking.DirectionAccuracy), formatGoldenMetric(ranking.SuppressionAccuracy))
+	}
+	writeLimitations(&markdown, report.Limitations)
+	return jsonContent, markdown.Bytes(), nil
+}
+
+func PublishGoldenReport(jsonPath, markdownPath string, report GoldenReport, overwrite bool) error {
+	jsonContent, markdownContent, err := RenderGoldenReport(report)
+	if err != nil {
+		return err
+	}
+	return publishReportPair(jsonPath, markdownPath, jsonContent, markdownContent, overwrite)
+}
+
+func formatGoldenMetric(metric applicationofflineevaluation.GoldenMetric) string {
+	if !metric.Available {
+		return "unavailable"
+	}
+	return fmt.Sprintf("%.6f", metric.Value)
+}
+
+func writeLimitations(markdown *bytes.Buffer, limitations []string) {
+	markdown.WriteString("\n## Limitations\n\n")
+	for _, limitation := range limitations {
+		fmt.Fprintf(markdown, "- %s.\n", strings.TrimSuffix(limitation, "."))
+	}
+}
+
+func validSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func metricAtK(values []domainofflineevaluation.TopKMetrics, k int, kind string) string {

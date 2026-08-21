@@ -1,0 +1,63 @@
+{
+  "version": "linear-replay-v1",
+  "scope": "full_pool_fixture",
+  "cases": [
+    {
+      "name": "canonical-three-candidate",
+      "expected_order": [1, 2, 3],
+      "candidates": [
+        {
+          "video_id": 1,
+          "author_key": "author-a",
+          "published_at": "1970-01-01T00:01:40Z",
+          "recall_providers": ["fresh"],
+          "score_components": {
+            "content_similarity": 1,
+            "session_similarity": 0,
+            "semantic_similarity": 0,
+            "hotness": 0,
+            "freshness": 0,
+            "author_affinity": 0,
+            "follow_relation": 0,
+            "negative_penalty": 0,
+            "exposure_penalty": 0
+          }
+        },
+        {
+          "video_id": 2,
+          "author_key": "author-b",
+          "published_at": "1970-01-01T00:01:41Z",
+          "recall_providers": ["hot"],
+          "score_components": {
+            "content_similarity": 0,
+            "session_similarity": 0,
+            "semantic_similarity": 0,
+            "hotness": 1,
+            "freshness": 0,
+            "author_affinity": 0,
+            "follow_relation": 0,
+            "negative_penalty": 0,
+            "exposure_penalty": 0
+          }
+        },
+        {
+          "video_id": 3,
+          "author_key": "author-c",
+          "published_at": "1970-01-01T00:01:42Z",
+          "recall_providers": ["fresh"],
+          "score_components": {
+            "content_similarity": 0,
+            "session_similarity": 0,
+            "semantic_similarity": 0,
+            "hotness": 0,
+            "freshness": 0,
+            "author_affinity": 0,
+            "follow_relation": 0,
+            "negative_penalty": 0,
+            "exposure_penalty": 0
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -39,10 +39,10 @@
 
 ## 6. Reports and orchestration
 
-- [ ] 6.1 Define canonical public/replay/golden report contracts with provenance, hashes/counts, profiles, availability, metrics, exclusions, latency, limitations, and no raw/vector/path leakage.
-- [ ] 6.2 Implement deterministic JSON and Markdown rendering from one report value with no wall-clock-dependent fields.
+- [x] 6.1 Define canonical public/replay/golden report contracts with provenance, hashes/counts, profiles, availability, metrics, exclusions, latency, limitations, and no raw/vector/path leakage.
+- [x] 6.2 Implement deterministic JSON and Markdown rendering from one report value with no wall-clock-dependent fields.
 - [x] 6.3 Implement paired `0600` sibling partial files, sync, atomic publication, safe overwrite, and failure cleanup that preserves existing outputs.
-- [ ] 6.4 Wire all three CLI tracks and add command/filesystem/end-to-end tests proving no DB/Redis/Kafka/HTTP/S3/provider dependency or model call.
+- [x] 6.4 Wire all three CLI tracks and add command/filesystem/end-to-end tests proving no DB/Redis/Kafka/HTTP/S3/provider dependency or model call.
 
 ## 7. Documentation and verification
 
