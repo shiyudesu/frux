@@ -269,6 +269,12 @@ WHERE id = <runner_policy_id>
 
 不得用无条件 scene 更新或 `RollbackPolicy` 代替；后者会改变同 scene 的全部 enabled 状态。
 
+2026-08-21 已完成一次真实运行时验收：positive/negative/target 分别使用视频 12/14/13，目标
+Exact 相似度为 0.9693，首屏实际 `semantic_similarity` 为 0.7074，Confidence 为 0.7499
+（medium）。Builder/Provider 首屏各执行一次，Snapshot 页增量均为零，Snapshot write/hit
+各一次；临时策略已禁用并删除，收藏已撤销，Runner 报告 `external_model_calls: 0`。为补足第三个
+真实 Fixture，验收前单独执行过一次视频向量生成；该调用不属于推荐 Runner。
+
 扩大 v2 前至少观察 24h：请求错误/降级率、snapshot hit、Provider timeout、profile lag、
 曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用
 `PolicyService.Rollback(ctx, "recommend", 1)`；紧急 SQL 在事务中锁定 v1，关闭同 scene
