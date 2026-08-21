@@ -1,0 +1,9 @@
+user_key,video_key,occurred_at,watch_ratio
+user-a,video-1,2026-01-01T00:01:00Z,0.9
+user-a,video-2,2026-01-01T00:02:00Z,0.1
+user-a,video-3,2026-01-01T00:03:00Z,0.5
+user-a,video-4,2026-01-01T00:04:00Z,0.85
+user-b,video-2,2026-01-01T00:01:30Z,0.95
+user-b,video-3,2026-01-01T00:02:30Z,0.15
+user-b,video-5,2026-01-01T00:03:30Z,0.6
+user-b,video-6,2026-01-01T00:04:30Z,0.9

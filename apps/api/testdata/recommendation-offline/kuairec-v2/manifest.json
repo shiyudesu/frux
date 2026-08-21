@@ -1,0 +1,18 @@
+{
+  "version": "recommendation-public-dataset-manifest-v1",
+  "dataset": "kuairec",
+  "release": "2.0-synthetic-schema-fixture",
+  "source_url": "https://github.com/chongminggao/KuaiRec",
+  "citation": "Synthetic schema fixture modeled on KuaiRec v2 documented columns; contains no upstream rows",
+  "license_id": "CC-BY-SA-4.0",
+  "license_status": "operator_reviewed",
+  "schema": "kuairec-v2",
+  "files": [
+    {"role":"interactions","path":"small_matrix.csv","schema":"kuairec-interactions-v2","sha256":"547ecf3ad575c87c0507889332905254a5cf70c0fc7c1e9539ae886c5b8837f0","rows":8},
+    {"role":"categories","path":"item_categories.csv","schema":"kuairec-categories-v2","sha256":"76741e5402036ee6799452dfe86176381e36ee83e1bdbfb627a9b6bbcb9b4b21","rows":6},
+    {"role":"authors","path":"authors.csv","schema":"canonical-authors-v1","sha256":"688f8f4ab6426d03220ebc2ad1d042769c88298594cf31637436bd330abb43e5","rows":6},
+    {"role":"text_features","path":"text_features.csv","schema":"canonical-vectors-v1","sha256":"8f17666fd608919dea463328d24d543b50ba2bd1b0e60a0623b7413987a31320","rows":6},
+    {"role":"image_features","path":"image_features.csv","schema":"canonical-vectors-v1","sha256":"b62f123920c56bfd24646150ab9525d0c4cc23f43135b5ad0f518e91a1f1d239","rows":6},
+    {"role":"multimodal_features","path":"multimodal_features.csv","schema":"canonical-vectors-v1","sha256":"d6ed3c883e4cbe7183d98a7e73a591bc2c1d48a67f0dd5830be4264c4e332eee","rows":6}
+  ]
+}

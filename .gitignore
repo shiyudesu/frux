@@ -34,6 +34,8 @@ apps/api/uploads/
 apps/api/feed
 apps/api/worker
 apps/api/multimodal-provider
+apps/api/.offline-data/
+apps/api/.offline-reports/
 .clone-ui/
 docs/interview-questions.md
 docs/resume-highlights.md
