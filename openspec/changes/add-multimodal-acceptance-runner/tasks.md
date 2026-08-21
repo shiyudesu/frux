@@ -20,9 +20,9 @@
 
 ## 3. Read-only PostgreSQL Evidence
 
-- [ ] 3.1 Implement bounded read-only queries for review cases, multimodal jobs, vector facts,
+- [x] 3.1 Implement bounded read-only queries for review cases, multimodal jobs, vector facts,
   projections, contract identity, vector dimension/norm, attempts, and digest equality.
-- [ ] 3.2 Reject incompatible contracts, terminal jobs, non-finite/non-unit vectors, missing
+- [x] 3.2 Reject incompatible contracts, terminal jobs, non-finite/non-unit vectors, missing
   projections, and source/fact mismatches with closed evidence codes.
 - [ ] 3.3 Add optional isolated PostgreSQL tests that skip explicitly when `FRUX_POSTGRES_TEST_DSN`
   is absent and never mutate a non-test schema.
