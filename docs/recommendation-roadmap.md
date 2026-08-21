@@ -299,6 +299,7 @@ Shadow
 | `integrate-tongyi-embedding-vision-flash` | 已完成并归档 | 可选 Tongyi Flash 日期版原生融合或无日期版确定性本地融合合同、百炼 HTTP Adapter、startup/video/query、Exact/Similar/Hybrid 实机验收与成本指标；默认关闭 |
 | `add-multimodal-acceptance-runner` | 已完成、通过真实 Runner 验收并归档 | 默认无调用的验收计划、双重计费门禁、S3/审核/Job/Fact/Projection/Similar/Hybrid 编排与脱敏报告；真实链路已验证 2 次视频向量与 1 次查询向量调用，下一步进入真实 Golden Set 采集 |
 | `add-session-semantic-recommendation` | 已完成、通过零模型调用技术验收并归档 | 使用可信当前/近期会话事实组合已有 active-contract 视频向量，新增默认关闭的 `semantic_session` Exact Recall、`semantic_similarity`、Confidence、Quota Underfill 与脱敏证据；版本化 Golden Set 通过，未 Shadow、未 Rollout |
+| `add-session-semantic-acceptance-runner` | 已提案，待实施 | 使用已有真实 active-contract 视频向量、临时低 Cohort 策略和正常行为/Feed API，验证真实 `semantic_session`、Request Log、Quota、Snapshot 二页复用与推荐阶段零模型调用；不上传、不生成向量 |
 | `fix-recommendation-candidate-pool-truncation` | 已完成并归档 | 当前策略预算内的完整有界候选集进入统一评分，已移除 response-limit 派生的 recency 截断 |
 | `add-recommendation-provider-quota-merge` | 已完成并归档 | 预算总和可高于 pool；显式 Provider Order、Reservation、可见性优先和 Round-Robin Fill 保证至多500条确定输入 |
 | `add-semantic-embedding-service` | 被替代 | 外部文本-only 合同被环境无关多模态合同替代 |
