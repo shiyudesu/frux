@@ -1,10 +1,10 @@
 ## 1. Acceptance Contract and Configuration
 
-- [ ] 1.1 Define versioned technical-acceptance report, stage result, closed failure code, fixture,
+- [x] 1.1 Define versioned technical-acceptance report, stage result, closed failure code, fixture,
   vector evidence, retrieval evidence, metric delta, and cleanup result types.
-- [ ] 1.2 Add strict environment configuration for API/Adapter/metrics endpoints, PostgreSQL DSN,
+- [x] 1.2 Add strict environment configuration for API/Adapter/metrics endpoints, PostgreSQL DSN,
   dedicated user/admin credentials, fixture paths, query text, polling, deadlines, and body limits.
-- [ ] 1.3 Implement the two-gate billable-execution policy and a default validation plan that reports
+- [x] 1.3 Implement the two-gate billable-execution policy and a default validation plan that reports
   maximum model calls without making remote or state-changing requests.
 
 ## 2. Bounded HTTP Workflow Client
