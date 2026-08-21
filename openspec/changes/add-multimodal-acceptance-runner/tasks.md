@@ -9,9 +9,9 @@
 
 ## 2. Bounded HTTP Workflow Client
 
-- [ ] 2.1 Implement one reusable non-redirecting bounded JSON client with bearer handling, response
+- [x] 2.1 Implement one reusable non-redirecting bounded JSON client with bearer handling, response
   limits, closed status mapping, and no raw-body or secret errors.
-- [ ] 2.2 Implement API/Adapter health and Prometheus baseline collection with closed metric names and
+- [x] 2.2 Implement API/Adapter health and Prometheus baseline collection with closed metric names and
   counter-reset-safe delta calculation.
 - [ ] 2.3 Implement consumer/admin login, S3 upload-session creation, presigned PUT, completion, and
   video creation using run-scoped idempotency keys.
