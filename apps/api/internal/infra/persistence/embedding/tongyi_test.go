@@ -24,7 +24,6 @@ func TestTongyiAdapterConfigFromEnvironment(t *testing.T) {
 	t.Setenv("FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR", "127.0.0.1:18099")
 	t.Setenv("FRUX_MULTIMODAL_PROFILE", TongyiStableUpstreamModel)
 	t.Setenv("FRUX_MULTIMODAL_HMAC_SECRET", multimodalTestSecret)
-	t.Setenv("DASHSCOPE_MULTIMODAL_ENDPOINT", "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding")
 	t.Setenv("DASHSCOPE_API_KEY", "sk-test-value")
 	t.Setenv("FRUX_TONGYI_UPSTREAM_TIMEOUT", "5s")
 	t.Setenv("FRUX_TONGYI_MAX_REQUEST_BYTES", "4194304")
@@ -36,7 +35,8 @@ func TestTongyiAdapterConfigFromEnvironment(t *testing.T) {
 	}
 	if config.ListenAddress != "127.0.0.1:18099" || config.UpstreamTimeout != 5*time.Second ||
 		config.MaxInboundRequestBytes != 4<<20 || config.MaxUpstreamResponseBytes != 1<<20 ||
-		config.ShutdownTimeout != 7*time.Second || config.Profile.ID != TongyiStableUpstreamModel {
+		config.ShutdownTimeout != 7*time.Second || config.Profile.ID != TongyiStableUpstreamModel ||
+		config.DashScopeEndpoint != TongyiDefaultEndpoint {
 		t.Fatalf("config=%#v", config)
 	}
 }
@@ -70,7 +70,6 @@ func TestTongyiAdapterConfigRejectsSecretsEndpointsAndBounds(t *testing.T) {
 
 func TestTongyiAdapterConfigRejectsMissingOrUnknownProfileEnvironment(t *testing.T) {
 	t.Setenv("FRUX_MULTIMODAL_HMAC_SECRET", multimodalTestSecret)
-	t.Setenv("DASHSCOPE_MULTIMODAL_ENDPOINT", "https://workspace.example.com/multimodal")
 	t.Setenv("DASHSCOPE_API_KEY", "sk-test-value")
 	for _, profile := range []string{"", "tongyi-embedding-vision-plus"} {
 		t.Run(profile, func(t *testing.T) {

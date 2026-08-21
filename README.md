@@ -143,8 +143,7 @@ docker exec frux-postgres \
 仓库内置 Tongyi Embedding Vision Flash 适配器，可选择
 `tongyi-embedding-vision-flash-2026-03-06` 或 `tongyi-embedding-vision-flash`，但默认不开启，也不会自动调用
 外部 API。复制 [环境变量示例](apps/.env.multimodal.example)，选择一个 `FRUX_MULTIMODAL_PROFILE`，填入当前
-百炼地域/工作空间对应的原生 Multimodal-Embedding Endpoint、API Key 和一段至少32字符的共享 HMAC Secret，
-然后运行：
+百炼 API Key 和一段至少32字符的共享 HMAC Secret，然后运行：
 
 ```bash
 cp apps/.env.multimodal.example apps/.env.multimodal

@@ -30,7 +30,6 @@ var adapterMultimodalVariables = map[string]struct{}{
 	"FRUX_MULTIMODAL_PROFILE":              {},
 	"FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR": {},
 	"FRUX_MULTIMODAL_HMAC_SECRET":          {},
-	"DASHSCOPE_MULTIMODAL_ENDPOINT":        {},
 	"DASHSCOPE_API_KEY":                    {},
 	"FRUX_TONGYI_UPSTREAM_TIMEOUT":         {},
 	"FRUX_TONGYI_MAX_REQUEST_BYTES":        {},

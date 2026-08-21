@@ -153,7 +153,7 @@ Adapter 使用百炼原生 Multimodal-Embedding HTTP API，不依赖 DashScope S
 
 ```bash
 cp apps/.env.multimodal.example apps/.env.multimodal
-# 编辑 apps/.env.multimodal，填写 Profile、共享 HMAC、百炼 Endpoint 和 API Key
+# 编辑 apps/.env.multimodal，填写 Profile、共享 HMAC 和百炼 API Key
 
 cd apps/api
 go run ./cmd/multimodal-provider
@@ -162,7 +162,8 @@ go run ./cmd/multimodal-provider
 从仓库内启动时，API、Worker 和 Adapter 会自动向上查找 `.env.multimodal`，也会识别推荐位置
 `apps/.env.multimodal`，不需要执行 `source`。进程中已存在的环境变量优先于文件。API/Worker 只从文件加载
 `FRUX_MULTIMODAL_PROFILE`、`FRUX_MULTIMODAL_ENDPOINT` 和 `FRUX_MULTIMODAL_HMAC_SECRET`；只有 Adapter
-会加载 `DASHSCOPE_API_KEY`、百炼 Endpoint 与 Tongyi 边界参数。文件缺失时继续使用普通系统环境变量，
+会加载 `DASHSCOPE_API_KEY` 与 Tongyi 边界参数。Adapter 固定调用阿里云共享的 Multimodal-Embedding
+接口，不需要配置业务空间 Endpoint。文件缺失时继续使用普通系统环境变量，
 文件存在但格式错误时启动失败。
 
 `.env.multimodal` 已被 Git 忽略。Docker Compose 不会把宿主机文件挂进容器，使用 Compose 时仍应通过

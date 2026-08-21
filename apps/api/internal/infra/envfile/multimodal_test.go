@@ -36,7 +36,6 @@ func TestLoadMultimodalTongyiAdapterLoadsAdapterSecrets(t *testing.T) {
 	root, workingDirectory := multimodalTestRepository(t)
 	writeMultimodalTestEnv(t, filepath.Join(root, multimodalEnvFilename), `
 FRUX_MULTIMODAL_PROFILE=tongyi-embedding-vision-flash-2026-03-06
-DASHSCOPE_MULTIMODAL_ENDPOINT=https://workspace.example.com/multimodal
 DASHSCOPE_API_KEY='adapter-secret'
 FRUX_TONGYI_UPSTREAM_TIMEOUT=5s
 `)
@@ -45,7 +44,6 @@ FRUX_TONGYI_UPSTREAM_TIMEOUT=5s
 		t.Fatal(err)
 	}
 	if os.Getenv("DASHSCOPE_API_KEY") != "adapter-secret" ||
-		os.Getenv("DASHSCOPE_MULTIMODAL_ENDPOINT") != "https://workspace.example.com/multimodal" ||
 		os.Getenv("FRUX_TONGYI_UPSTREAM_TIMEOUT") != "5s" {
 		t.Fatal("adapter variables were not loaded")
 	}

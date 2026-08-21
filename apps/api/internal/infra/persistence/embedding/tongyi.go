@@ -28,6 +28,7 @@ const (
 	TongyiStableUpstreamModel  = multimodalprofile.TongyiFlashStableProfile
 	TongyiDimension            = multimodalprofile.TongyiDimension
 	TongyiResolutionLevel      = 1
+	TongyiDefaultEndpoint      = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
 	TongyiDefaultListenAddr    = "127.0.0.1:8099"
 	TongyiDefaultTimeout       = 20 * time.Second
 	TongyiDefaultShutdown      = 10 * time.Second
@@ -63,7 +64,7 @@ func LoadTongyiAdapterConfigFromEnv() (TongyiAdapterConfig, error) {
 		Profile:           profile,
 		ListenAddress:     strings.TrimSpace(os.Getenv("FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR")),
 		FruxHMACSecret:    strings.TrimSpace(os.Getenv("FRUX_MULTIMODAL_HMAC_SECRET")),
-		DashScopeEndpoint: strings.TrimSpace(os.Getenv("DASHSCOPE_MULTIMODAL_ENDPOINT")),
+		DashScopeEndpoint: TongyiDefaultEndpoint,
 		DashScopeAPIKey:   strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY")),
 	}
 	if config.ListenAddress == "" {
