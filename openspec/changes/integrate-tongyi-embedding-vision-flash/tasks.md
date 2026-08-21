@@ -72,5 +72,5 @@
   process-specific secret allowlists, tests, and native-development documentation.
 - [x] 7.6 Fix the adapter to the shared public DashScope multimodal endpoint and remove the unused
   workspace-specific endpoint setting from environment files and operator documentation.
-- [ ] 7.7 Preserve immutable media asset IDs and video version in durable publication-outbox events,
+- [x] 7.7 Preserve immutable media asset IDs and video version in durable publication-outbox events,
   add regression coverage, and repeat the real video-vector acceptance run.

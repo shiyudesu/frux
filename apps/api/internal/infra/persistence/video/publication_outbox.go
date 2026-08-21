@@ -63,17 +63,7 @@ func AppendPublicationHandoff(
 	if readyAt.IsZero() {
 		readyAt = video.PublishedAt.UTC()
 	}
-	event := &applicationvideo.PublishedEvent{
-		EventID:     domainmessage.PublicationEventID(video.ID, video.ReviewVersion),
-		VideoID:     video.ID,
-		AuthorID:    video.AuthorID,
-		Title:       strings.TrimSpace(video.Title),
-		Description: strings.TrimSpace(video.Description),
-		MediaURL:    strings.TrimSpace(video.MediaURL),
-		CoverURL:    strings.TrimSpace(video.CoverURL),
-		PublishedAt: video.PublishedAt.UTC(),
-		OccurredAt:  video.PublishedAt.UTC(),
-	}
+	event := publicationEventFromModel(video)
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -133,6 +123,23 @@ func AppendPublicationHandoff(
 			"updated_at": readyAt.UTC(),
 		}),
 	}).Create(model).Error
+}
+
+func publicationEventFromModel(video VideoModel) *applicationvideo.PublishedEvent {
+	return &applicationvideo.PublishedEvent{
+		EventID:      domainmessage.PublicationEventID(video.ID, video.ReviewVersion),
+		VideoID:      video.ID,
+		AuthorID:     video.AuthorID,
+		Title:        strings.TrimSpace(video.Title),
+		Description:  strings.TrimSpace(video.Description),
+		MediaURL:     strings.TrimSpace(video.MediaURL),
+		CoverURL:     strings.TrimSpace(video.CoverURL),
+		MediaAssetID: pointerID(video.MediaAssetID),
+		CoverAssetID: pointerID(video.CoverAssetID),
+		VideoVersion: video.Version,
+		PublishedAt:  video.PublishedAt.UTC(),
+		OccurredAt:   video.PublishedAt.UTC(),
+	}
 }
 
 func (r *Repository) ClaimPublicationEvents(
