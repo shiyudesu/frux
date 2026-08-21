@@ -1,7 +1,7 @@
 ## 1. Common contracts and safe command
 
-- [ ] 1.1 Define closed dataset/track/profile/baseline/metric/report versions, bounded identities, availability values, exclusion codes, and `external_model_calls: 0`.
-- [ ] 1.2 Add strict manifest, relative-path containment, SHA-256, row-count, schema, release, citation, and license-acknowledgement validation with identity-safe errors.
+- [x] 1.1 Define closed dataset/track/profile/baseline/metric/report versions, bounded identities, availability values, exclusion codes, and `external_model_calls: 0`.
+- [x] 1.2 Add strict manifest, relative-path containment, SHA-256, row-count, schema, release, citation, and license-acknowledgement validation with identity-safe errors.
 - [ ] 1.3 Add `cmd/recommendation-offline-evaluate` subcommand parsing, K/bound/output validation, validation-only plan, and no runtime-service imports.
 - [ ] 1.4 Add synthetic checked-in fixtures and ignored operator data/report directories without redistributing public rows.
 
