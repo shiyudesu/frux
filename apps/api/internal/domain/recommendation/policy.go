@@ -100,7 +100,7 @@ func NewPolicy(scene string, version int, enabled bool, config PolicyConfigurati
 	if now.IsZero() {
 		return nil, ErrInvalidCreatedAt
 	}
-	normalized, err := normalizePolicyConfiguration(config)
+	normalized, err := ValidatePolicyConfiguration(config)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func NewPolicy(scene string, version int, enabled bool, config PolicyConfigurati
 }
 
 func RestorePolicy(id int64, scene string, version int, enabled bool, config PolicyConfiguration, createdAt time.Time, updatedAt time.Time) *Policy {
-	normalized, err := normalizePolicyConfiguration(config)
+	normalized, err := ValidatePolicyConfiguration(config)
 	if err != nil {
 		return nil
 	}
@@ -304,6 +304,17 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 		return PolicyConfiguration{}, ErrInvalidPolicyBound
 	}
 	return normalized, nil
+}
+
+// ValidatePolicyConfiguration returns a normalized deep clone using the same
+// production invariants as NewPolicy. Offline tooling can validate policy
+// files without creating policy state or sharing mutable maps with callers.
+func ValidatePolicyConfiguration(config PolicyConfiguration) (PolicyConfiguration, error) {
+	normalized, err := normalizePolicyConfiguration(config)
+	if err != nil {
+		return PolicyConfiguration{}, err
+	}
+	return clonePolicyConfiguration(normalized), nil
 }
 
 func clonePolicyConfiguration(config PolicyConfiguration) PolicyConfiguration {

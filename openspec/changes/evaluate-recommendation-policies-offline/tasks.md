@@ -31,9 +31,9 @@
 
 ## 5. Production replay and Golden Sets
 
-- [ ] 5.1 Export the production policy normalized-clone validator and prove `NewPolicy` retains identical valid/invalid behavior.
-- [ ] 5.2 Implement strict named policy decoding, replayable-difference classification, diagnostic-only suppression, and canonical configuration hashes.
-- [ ] 5.3 Implement fixed-feature-order scorer replay, production tie-breaking/diversity, exact canonical parity, and served-subset limitations.
+- [x] 5.1 Export the production policy normalized-clone validator and prove `NewPolicy` retains identical valid/invalid behavior.
+- [x] 5.2 Implement strict named policy decoding, replayable-difference classification, diagnostic-only suppression, and canonical configuration hashes.
+- [x] 5.3 Implement fixed-feature-order scorer replay, production tie-breaking/diversity, exact canonical parity, and served-subset limitations.
 - [ ] 5.4 Implement versioned Query/Similar/Session Direction/Negative Suppression Golden cases, blinded 0-3 annotations, adjudication, agreement, semantic NDCG, direction, and suppression metrics.
 - [ ] 5.5 Add production parity, non-replayable rejection, diagnostic-only, annotation provenance, incomplete adjudication, and cross-track label rejection tests.
 
