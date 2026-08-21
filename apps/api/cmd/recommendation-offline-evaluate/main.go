@@ -13,13 +13,13 @@ import (
 	"strconv"
 	"strings"
 
+	applicationofflineevaluation "github.com/shiyudesu/frux/internal/application/offlineevaluation"
 	domainofflineevaluation "github.com/shiyudesu/frux/internal/domain/offlineevaluation"
 	infraofflineevaluation "github.com/shiyudesu/frux/internal/infra/offlineevaluation"
 )
 
 const (
 	modeValidation = "validation"
-	modeEvaluation = "evaluation"
 )
 
 type commandOptions struct {
@@ -56,11 +56,10 @@ type publicEvaluationExecutor func(
 	context.Context,
 	commandOptions,
 	*infraofflineevaluation.LoadedManifest,
-	validationReport,
-) (validationReport, error)
+) (infraofflineevaluation.PublicReport, error)
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, nil); err != nil {
+	if err := run(os.Args[1:], os.Stdout, executePublicEvaluation); err != nil {
 		fmt.Fprintln(os.Stderr, "offline recommendation evaluation failed")
 		os.Exit(1)
 	}
@@ -100,23 +99,59 @@ func run(arguments []string, output io.Writer, executor publicEvaluationExecutor
 	default:
 		return errors.New("invalid evaluation track")
 	}
+	var payload any = report
 	if options.evaluate {
 		if options.track != domainofflineevaluation.TrackPublicDataset || executor == nil {
 			return errors.New("evaluation executor unavailable")
 		}
-		report.Mode = modeEvaluation
-		report, err = executor(context.Background(), options, loaded, report)
+		publicReport, executeErr := executor(context.Background(), options, loaded)
+		err = executeErr
 		if err != nil {
 			return err
 		}
+		payload = publicReport
 	}
-	encoded, err := json.MarshalIndent(report, "", "  ")
+	encoded, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
 	encoded = append(encoded, '\n')
 	_, err = output.Write(encoded)
 	return err
+}
+
+func executePublicEvaluation(
+	ctx context.Context,
+	options commandOptions,
+	loaded *infraofflineevaluation.LoadedManifest,
+) (infraofflineevaluation.PublicReport, error) {
+	limits := infraofflineevaluation.DefaultDatasetLimits()
+	limits.MaxInteractions = options.maxInteractions
+	limits.MaxItems = options.maxItems
+	dataset, err := infraofflineevaluation.LoadDataset(loaded, limits)
+	if err != nil {
+		return infraofflineevaluation.PublicReport{}, err
+	}
+	evaluation, err := applicationofflineevaluation.EvaluatePublicDataset(
+		dataset, domainofflineevaluation.DefaultCaseProfile(), options.kValues, options.maxCases,
+	)
+	if err != nil {
+		return infraofflineevaluation.PublicReport{}, err
+	}
+	performance, err := infraofflineevaluation.LoadPerformanceEvidence(loaded)
+	if err != nil {
+		return infraofflineevaluation.PublicReport{}, err
+	}
+	report, err := infraofflineevaluation.NewPublicReport(loaded.Evidence, evaluation, performance)
+	if err != nil {
+		return infraofflineevaluation.PublicReport{}, err
+	}
+	if err := infraofflineevaluation.PublishPublicReport(
+		options.outputJSON, options.outputMarkdown, report, options.overwrite,
+	); err != nil {
+		return infraofflineevaluation.PublicReport{}, err
+	}
+	return report, nil
 }
 
 func parseOptions(arguments []string) (commandOptions, error) {

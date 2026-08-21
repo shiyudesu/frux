@@ -18,11 +18,11 @@ const (
 )
 
 type CaseProfile struct {
-	Version           string
-	PositiveThreshold float64
-	QuickSkipMaximum  float64
-	MinimumHistory    int
-	SessionLimit      int
+	Version           string  `json:"version"`
+	PositiveThreshold float64 `json:"positive_threshold"`
+	QuickSkipMaximum  float64 `json:"quick_skip_maximum"`
+	MinimumHistory    int     `json:"minimum_history"`
+	SessionLimit      int     `json:"session_limit"`
 }
 
 func DefaultCaseProfile() CaseProfile {

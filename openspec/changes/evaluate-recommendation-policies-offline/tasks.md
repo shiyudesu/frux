@@ -27,7 +27,7 @@
 - [x] 4.2 Implement Catalog Coverage, category/author coverage and concentration, largest-group share, and repeated item/primary-category runs with availability reasons.
 - [x] 4.3 Implement per-baseline feature/case coverage, exclusion summaries, dataset counts, and separate dataset result boundaries.
 - [x] 4.4 Implement deterministic ranking work summaries and checksum-covered optional Exact-latency/upstream embedding-throughput evidence.
-- [ ] 4.5 Add metric edge-case, K-bound, empty/unavailable, repeated-run, and exact expected-report tests.
+- [x] 4.5 Add metric edge-case, K-bound, empty/unavailable, repeated-run, and exact expected-report tests.
 
 ## 5. Production replay and Golden Sets
 
@@ -41,7 +41,7 @@
 
 - [ ] 6.1 Define canonical public/replay/golden report contracts with provenance, hashes/counts, profiles, availability, metrics, exclusions, latency, limitations, and no raw/vector/path leakage.
 - [ ] 6.2 Implement deterministic JSON and Markdown rendering from one report value with no wall-clock-dependent fields.
-- [ ] 6.3 Implement paired `0600` sibling partial files, sync, atomic publication, safe overwrite, and failure cleanup that preserves existing outputs.
+- [x] 6.3 Implement paired `0600` sibling partial files, sync, atomic publication, safe overwrite, and failure cleanup that preserves existing outputs.
 - [ ] 6.4 Wire all three CLI tracks and add command/filesystem/end-to-end tests proving no DB/Redis/Kafka/HTTP/S3/provider dependency or model call.
 
 ## 7. Documentation and verification

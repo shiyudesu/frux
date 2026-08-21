@@ -1,9 +1,10 @@
-package applicationofflineevaluation
+package applicationofflineevaluation_test
 
 import (
 	"path/filepath"
 	"testing"
 
+	applicationofflineevaluation "github.com/shiyudesu/frux/internal/application/offlineevaluation"
 	domainofflineevaluation "github.com/shiyudesu/frux/internal/domain/offlineevaluation"
 	infraofflineevaluation "github.com/shiyudesu/frux/internal/infra/offlineevaluation"
 )
@@ -18,7 +19,7 @@ func TestEvaluatePublicDatasetProducesSeparateBaselineMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := EvaluatePublicDataset(dataset, domainofflineevaluation.DefaultCaseProfile(), []int{1, 3}, 10)
+	report, err := applicationofflineevaluation.EvaluatePublicDataset(dataset, domainofflineevaluation.DefaultCaseProfile(), []int{1, 3}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

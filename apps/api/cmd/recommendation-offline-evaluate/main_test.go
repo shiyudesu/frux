@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	domainofflineevaluation "github.com/shiyudesu/frux/internal/domain/offlineevaluation"
 	infraofflineevaluation "github.com/shiyudesu/frux/internal/infra/offlineevaluation"
 )
 
@@ -44,16 +45,17 @@ func TestCommandRequiresExecutorAndOutputPairForEvaluation(t *testing.T) {
 		_ context.Context,
 		_ commandOptions,
 		_ *infraofflineevaluation.LoadedManifest,
-		report validationReport,
-	) (validationReport, error) {
-		report.Result = "success"
-		return report, nil
+	) (infraofflineevaluation.PublicReport, error) {
+		return infraofflineevaluation.PublicReport{
+			Version: domainofflineevaluation.ReportVersion, Kind: domainofflineevaluation.ReportKind,
+			Track: domainofflineevaluation.TrackPublicDataset, Result: "success",
+		}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var report validationReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Mode != modeEvaluation || report.Result != "success" {
+	var report infraofflineevaluation.PublicReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Result != "success" {
 		t.Fatalf("report=%#v err=%v", report, err)
 	}
 }
