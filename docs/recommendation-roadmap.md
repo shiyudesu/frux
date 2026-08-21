@@ -297,6 +297,7 @@ Shadow
 | `add-multimodal-video-discovery` | 已完成并归档 | 默认关闭的环境无关合同、新视频 Job、Exact、Hybrid Search、Similar Videos、Golden Set；正式 Provider/模型合同留给后续独立 Change |
 | `integrate-multimodal-provider-runtime` | 已完成并归档 | 双向签名 HTTP 协议、readiness/contract handshake、API/Worker 接线与 conformance；不选择或内置具体模型 |
 | `integrate-tongyi-embedding-vision-flash` | 已完成并归档 | 可选 Tongyi Flash 日期版原生融合或无日期版确定性本地融合合同、百炼 HTTP Adapter、startup/video/query、Exact/Similar/Hybrid 实机验收与成本指标；默认关闭 |
+| `add-multimodal-acceptance-runner` | 实现中 | 默认无调用的验收计划、双重计费门禁、S3/审核/Job/Fact/Projection/Similar/Hybrid 编排与脱敏报告；完成后再进入真实 Golden Set 采集 |
 | `fix-recommendation-candidate-pool-truncation` | 已完成并归档 | 当前策略预算内的完整有界候选集进入统一评分，已移除 response-limit 派生的 recency 截断 |
 | `add-recommendation-provider-quota-merge` | 已完成并归档 | 预算总和可高于 pool；显式 Provider Order、Reservation、可见性优先和 Round-Robin Fill 保证至多500条确定输入 |
 | `add-semantic-embedding-service` | 被替代 | 外部文本-only 合同被环境无关多模态合同替代 |
