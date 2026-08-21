@@ -30,20 +30,22 @@ const (
 )
 
 const (
-	FeatureContentSimilarity = "content_similarity"
-	FeatureSessionSimilarity = "session_similarity"
-	FeatureHotness           = "hotness"
-	FeatureFreshness         = "freshness"
-	FeatureAuthorAffinity    = "author_affinity"
-	FeatureFollowRelation    = "follow_relation"
-	FeatureNegativePenalty   = "negative_penalty"
-	FeatureExposurePenalty   = "exposure_penalty"
+	FeatureContentSimilarity  = "content_similarity"
+	FeatureSessionSimilarity  = "session_similarity"
+	FeatureHotness            = "hotness"
+	FeatureFreshness          = "freshness"
+	FeatureAuthorAffinity     = "author_affinity"
+	FeatureFollowRelation     = "follow_relation"
+	FeatureNegativePenalty    = "negative_penalty"
+	FeatureExposurePenalty    = "exposure_penalty"
+	FeatureSemanticSimilarity = "semantic_similarity"
 
 	RecallProviderFresh               = "fresh"
 	RecallProviderHot                 = "hot"
 	RecallProviderContentSimilarity   = "content_similarity"
 	RecallProviderFollowedAuthor      = "followed_author"
 	RecallProviderSessionContinuation = "session_continuation"
+	RecallProviderSemanticSession     = "semantic_session"
 )
 
 type DiversityRules struct {
@@ -53,24 +55,25 @@ type DiversityRules struct {
 }
 
 type PolicyConfiguration struct {
-	FeatureWeights               map[string]float64 `json:"feature_weights"`
-	RecallBudgets                map[string]int     `json:"recall_budgets"`
-	ProviderDeadlinesMS          map[string]int     `json:"provider_deadlines_ms"`
-	PreRankPoolLimit             int                `json:"pre_rank_pool_limit,omitempty"`
-	RecallProviderOrder          []string           `json:"recall_provider_order,omitempty"`
-	RecallProviderReservations   map[string]int     `json:"recall_provider_reservations,omitempty"`
-	FreshnessHalfLifeHours       int                `json:"freshness_half_life_hours"`
-	ProfileLongTermHalfLifeHours int                `json:"profile_long_term_half_life_hours"`
-	ProfileRecentHalfLifeHours   int                `json:"profile_recent_half_life_hours"`
-	ExposureWindowHours          int                `json:"exposure_window_hours"`
-	Diversity                    DiversityRules     `json:"diversity"`
-	RolloutPercentage            int                `json:"rollout_percentage"`
-	SnapshotTTLSeconds           int                `json:"snapshot_ttl_seconds"`
-	SamplingRatePPM              int                `json:"sampling_rate_ppm"`
-	RetentionDays                int                `json:"retention_days"`
-	MinimumFallbackPool          int                `json:"minimum_fallback_pool"`
-	HardSuppressExposures        bool               `json:"hard_suppress_exposures"`
-	SuppressionHours             map[string]int     `json:"suppression_hours"`
+	FeatureWeights               map[string]float64                  `json:"feature_weights"`
+	RecallBudgets                map[string]int                      `json:"recall_budgets"`
+	ProviderDeadlinesMS          map[string]int                      `json:"provider_deadlines_ms"`
+	PreRankPoolLimit             int                                 `json:"pre_rank_pool_limit,omitempty"`
+	RecallProviderOrder          []string                            `json:"recall_provider_order,omitempty"`
+	RecallProviderReservations   map[string]int                      `json:"recall_provider_reservations,omitempty"`
+	FreshnessHalfLifeHours       int                                 `json:"freshness_half_life_hours"`
+	ProfileLongTermHalfLifeHours int                                 `json:"profile_long_term_half_life_hours"`
+	ProfileRecentHalfLifeHours   int                                 `json:"profile_recent_half_life_hours"`
+	ExposureWindowHours          int                                 `json:"exposure_window_hours"`
+	Diversity                    DiversityRules                      `json:"diversity"`
+	RolloutPercentage            int                                 `json:"rollout_percentage"`
+	SnapshotTTLSeconds           int                                 `json:"snapshot_ttl_seconds"`
+	SamplingRatePPM              int                                 `json:"sampling_rate_ppm"`
+	RetentionDays                int                                 `json:"retention_days"`
+	MinimumFallbackPool          int                                 `json:"minimum_fallback_pool"`
+	HardSuppressExposures        bool                                `json:"hard_suppress_exposures"`
+	SuppressionHours             map[string]int                      `json:"suppression_hours"`
+	SessionSemantic              *SessionSemanticPolicyConfiguration `json:"session_semantic,omitempty"`
 }
 
 type Policy struct {
@@ -199,6 +202,10 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 		HardSuppressExposures:        config.HardSuppressExposures,
 		SuppressionHours:             make(map[string]int, len(config.SuppressionHours)),
 	}
+	var err error
+	if normalized.SessionSemantic, err = normalizeSessionSemanticPolicyConfiguration(config.SessionSemantic); err != nil {
+		return PolicyConfiguration{}, err
+	}
 	if normalized.MinimumFallbackPool == 0 {
 		normalized.MinimumFallbackPool = 1
 	}
@@ -249,6 +256,14 @@ func normalizePolicyConfiguration(config PolicyConfiguration) (PolicyConfigurati
 	}
 	if totalRecallBudget <= 0 {
 		return PolicyConfiguration{}, ErrInvalidPolicyBound
+	}
+	semanticBudget, semanticProviderSelected := normalized.RecallBudgets[RecallProviderSemanticSession]
+	semanticWeight, semanticFeatureSelected := normalized.FeatureWeights[FeatureSemanticSimilarity]
+	semanticConfigured := normalized.SessionSemantic != nil
+	if semanticProviderSelected || semanticFeatureSelected || semanticConfigured {
+		if !semanticProviderSelected || semanticBudget <= 0 || !semanticFeatureSelected || semanticWeight <= 0 || !semanticConfigured {
+			return PolicyConfiguration{}, ErrInvalidSessionSemanticPolicy
+		}
 	}
 	if len(config.ProviderDeadlinesMS) != len(normalized.RecallBudgets) {
 		return PolicyConfiguration{}, ErrInvalidPolicyConfiguration
@@ -314,6 +329,7 @@ func clonePolicyConfiguration(config PolicyConfiguration) PolicyConfiguration {
 	for key, value := range config.SuppressionHours {
 		cloned.SuppressionHours[key] = value
 	}
+	cloned.SessionSemantic = config.SessionSemantic.Clone()
 	return cloned
 }
 
@@ -459,7 +475,7 @@ func normalizePolicyToken(value string) string {
 
 func validPolicyFeature(value string) bool {
 	switch value {
-	case FeatureContentSimilarity, FeatureSessionSimilarity, FeatureHotness, FeatureFreshness,
+	case FeatureContentSimilarity, FeatureSessionSimilarity, FeatureSemanticSimilarity, FeatureHotness, FeatureFreshness,
 		FeatureAuthorAffinity, FeatureFollowRelation, FeatureNegativePenalty, FeatureExposurePenalty:
 		return true
 	default:
@@ -470,7 +486,7 @@ func validPolicyFeature(value string) bool {
 func validRecallProvider(value string) bool {
 	switch value {
 	case RecallProviderFresh, RecallProviderHot, RecallProviderContentSimilarity,
-		RecallProviderFollowedAuthor, RecallProviderSessionContinuation:
+		RecallProviderFollowedAuthor, RecallProviderSessionContinuation, RecallProviderSemanticSession:
 		return true
 	default:
 		return false

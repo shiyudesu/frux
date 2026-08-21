@@ -1,9 +1,9 @@
 ## 1. Domain contract and policy registration
 
-- [ ] 1.1 Add closed session-semantic signal, result, confidence-band, evidence, builder-version, and configuration types with strict bounds and defensive cloning.
-- [ ] 1.2 Register `semantic_session` and `semantic_similarity` without changing the meaning or defaults of existing Provider and feature names.
-- [ ] 1.3 Extend optional Recommendation policy configuration with a complete session-semantic block, contract-key matching, Provider/feature cross-validation, serialization, cloning, and backward-compatible normalization.
-- [ ] 1.4 Add domain tests for unknown versions/signals, partial configuration, invalid bounds/contracts, existing policy JSON, and unchanged `recommend/v1`/`recommend/v2` behavior.
+- [x] 1.1 Add closed session-semantic signal, result, confidence-band, evidence, builder-version, and configuration types with strict bounds and defensive cloning.
+- [x] 1.2 Register `semantic_session` and `semantic_similarity` without changing the meaning or defaults of existing Provider and feature names.
+- [x] 1.3 Extend optional Recommendation policy configuration with a complete session-semantic block, contract-key matching, Provider/feature cross-validation, serialization, cloning, and backward-compatible normalization.
+- [x] 1.4 Add domain tests for unknown versions/signals, partial configuration, invalid bounds/contracts, existing policy JSON, and unchanged `recommend/v1`/`recommend/v2` behavior.
 
 ## 2. Session signal and vector builder
 
