@@ -49,4 +49,4 @@
 - [x] 7.1 Document operator-owned MicroLens/KuaiRec preparation, source/license acknowledgement, manifests, feature provenance, commands, thresholds, baselines, and metrics.
 - [x] 7.2 Document dataset isolation, public-vs-Golden-vs-replay evidence boundaries, no causal/promotion claim, and deferred training/Shadow gates.
 - [x] 7.3 Update the roadmap status and add reproducible fixture commands/reports suitable for CI and interview demonstration.
-- [ ] 7.4 Run targeted tests/race, complete Go tests/vet/build, deterministic report replay, Compose validation, and strict OpenSpec validation.
+- [x] 7.4 Run targeted tests/race, complete Go tests/vet/build, deterministic report replay, Compose validation, and strict OpenSpec validation.
