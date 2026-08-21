@@ -75,6 +75,17 @@ func TestPolicyValidationAndDeterministicStagedSelection(t *testing.T) {
 	}
 }
 
+func TestPolicyCohortPercentMatchesSelectionIdentity(t *testing.T) {
+	for index := range 100 {
+		requestID := "cohort-" + int64String(int64(index))
+		first := PolicyCohortPercent(42, "recommend", requestID)
+		second := PolicyCohortPercent(42, "recommend", requestID)
+		if first != second || first < 0 || first >= 100 {
+			t.Fatalf("request=%s first=%d second=%d", requestID, first, second)
+		}
+	}
+}
+
 func totalRecallBudget(budgets map[string]int) int {
 	total := 0
 	for _, budget := range budgets {

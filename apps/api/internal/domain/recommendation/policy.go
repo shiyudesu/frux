@@ -156,6 +156,10 @@ func cohortPercent(userID int64, scene string, requestID string) int {
 	return int(hasher.Sum64() % 100)
 }
 
+func PolicyCohortPercent(userID int64, scene string, requestID string) int {
+	return cohortPercent(userID, scene, requestID)
+}
+
 func int64String(value int64) string {
 	if value == 0 {
 		return "0"

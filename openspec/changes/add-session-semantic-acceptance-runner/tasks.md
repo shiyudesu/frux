@@ -7,10 +7,10 @@
 
 ## 2. Fixture and policy evidence
 
-- [ ] 2.1 Implement bounded read-only PostgreSQL checks for readable videos, current Fact/Projection identity, positive seed-to-target Exact similarity, favorite absence, and request-log evidence.
-- [ ] 2.2 Add a scoped GORM policy manager that chooses a unique version, creates a Domain-valid one-percent semantic policy, derives a matching cohort request ID, disables exact runner policy IDs, and optionally deletes only disabled runner policies.
-- [ ] 2.3 Expose/test the stable Domain policy cohort helper without changing selection behavior.
-- [ ] 2.4 Add isolated PostgreSQL tests for fixture bounds, contract mismatch, policy lifecycle, existing-policy preservation, cohort identity, request-log validation, cancellation, and cleanup.
+- [x] 2.1 Implement bounded read-only PostgreSQL checks for readable videos, current Fact/Projection identity, positive seed-to-target Exact similarity, favorite absence, and request-log evidence.
+- [x] 2.2 Add a scoped GORM policy manager that chooses a unique version, creates a Domain-valid one-percent semantic policy, derives a matching cohort request ID, disables exact runner policy IDs, and optionally deletes only disabled runner policies.
+- [x] 2.3 Expose/test the stable Domain policy cohort helper without changing selection behavior.
+- [x] 2.4 Add isolated PostgreSQL tests for fixture bounds, contract mismatch, policy lifecycle, existing-policy preservation, cohort identity, request-log validation, cancellation, and cleanup.
 
 ## 3. Authenticated product workflow
 
