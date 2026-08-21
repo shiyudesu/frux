@@ -70,3 +70,5 @@
   then rerun targeted and complete Go validation before marking the change complete again.
 - [x] 7.5 Automatically load a repository-local `.env.multimodal` with environment precedence,
   process-specific secret allowlists, tests, and native-development documentation.
+- [ ] 7.6 Fix the adapter to the shared public DashScope multimodal endpoint and remove the unused
+  workspace-specific endpoint setting from environment files and operator documentation.

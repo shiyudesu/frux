@@ -93,7 +93,7 @@ unauthenticated liveness endpoint without model or credential details, and expos
 operation/result metrics plus aggregate input-token counters.
 
 #### Scenario: Startup probe succeeds
-- **WHEN** configured credentials and endpoint return a valid vector from the selected model
+- **WHEN** configured credentials and the shared public DashScope endpoint return a valid vector from the selected model
 - **THEN** the HTTP server starts and signed readiness becomes available
 
 #### Scenario: Startup probe fails

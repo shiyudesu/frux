@@ -92,7 +92,7 @@ required output and usage fields are strictly validated and the response body is
 ### 5. Make readiness model-backed
 
 Before serving, the command submits one small text embedding probe to DashScope. Startup fails for
-invalid credentials, wrong endpoint/model, non-768 output, malformed responses, or timeout. After a
+invalid credentials, shared-endpoint/model failures, non-768 output, malformed responses, or timeout. After a
 successful probe, `/v1/ready` answers locally with the selected contract and video/query capabilities;
 normal calls still surface later upstream failures through signed closed errors.
 
@@ -101,10 +101,10 @@ that has never demonstrated access to the selected model.
 
 ### 6. Keep upstream configuration secret and explicit
 
-The command reads configuration from environment variables. The API key and HMAC secret are required;
-the upstream endpoint is required rather than guessed because Alibaba Cloud endpoints can be global
-or workspace/region specific. The listen address, upstream timeout, body limits, and graceful-shutdown
-timeout have bounded defaults.
+The command reads configuration from environment variables. The API key and HMAC secret are required.
+This project uses Alibaba Cloud's shared public DashScope multimodal-embedding endpoint and does not
+support a workspace-specific endpoint setting. The listen address, upstream timeout, body limits, and
+graceful-shutdown timeout have bounded defaults.
 
 No API key, upstream endpoint, raw provider body, request text, image bytes, vector, source hash,
 operation ID, or Alibaba request ID is emitted as a metric label or normal log field.
@@ -135,8 +135,8 @@ upstream settings. Missing files are ignored, but a discovered malformed file fa
 
 1. Build and test the adapter against a fake DashScope server.
 2. Add the binary to the existing API image and document a native/local launch command.
-3. Configure `FRUX_MULTIMODAL_PROFILE`, `DASHSCOPE_MULTIMODAL_ENDPOINT`, `DASHSCOPE_API_KEY`, and the
-   shared Frux provider HMAC secret. Only the adapter process receives the API key.
+3. Configure `FRUX_MULTIMODAL_PROFILE`, `DASHSCOPE_API_KEY`, and the shared Frux provider HMAC secret.
+   Only the adapter process receives the API key.
 4. Point API and Worker at the adapter; their shared profile setting resolves the same exact contract,
    initially keeping all multimodal feature flags false.
 5. Start the adapter, verify readiness, create controlled development videos, and run the real Golden

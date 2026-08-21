@@ -45,8 +45,8 @@ capability-aware profile instead of hard-coding one upstream model.
 
 - Adds `cmd/multimodal-provider` and supporting infrastructure code, but no Python runtime or model
   weights.
-- Adds environment variables for the selected model profile, DashScope endpoint/API key, and adapter
-  listen/security settings.
+- Adds environment variables for the selected model profile, DashScope API key, and adapter
+  listen/security settings while using the shared public DashScope multimodal endpoint.
 - Updates the API container build to include the adapter binary; deployment remains opt-in.
 - Makes real provider calls billable only when the standalone adapter is started and Frux multimodal
   feature flags are explicitly enabled.
