@@ -10,7 +10,7 @@
   "normalization_recipe": "frux-microlens-normalizer-v1",
   "files": [
     {"role":"interactions","path":"interactions.csv","schema":"microlens-interactions-v1","sha256":"28a75d16abfdd9c8b157b0ac7ff6a82abb70eb73569ef85df45863580919ea98","rows":8},
-    {"role":"items","path":"items.csv","schema":"microlens-items-v1","sha256":"10a9577d2e25dd164a616536c0ddba7fabc568477a0104968840d86b50974130","rows":6},
+    {"role":"items","path":"items.csv","schema":"microlens-items-v1","sha256":"bd13470a57c324b41184b2eff0719ec854e898b9909f63c1bfc5954950d79ec3","rows":6},
     {"role":"text_features","path":"text_features.csv","schema":"canonical-vectors-v1","sha256":"b995093a86245a3b7b26b4827f549b40ee64037a5a414d8045f001734d992016","rows":6},
     {"role":"image_features","path":"image_features.csv","schema":"canonical-vectors-v1","sha256":"904db9f6ace59b8fc816ba0e88ee8c22252e7915fe00e70c308d28a9ff709647","rows":6},
     {"role":"multimodal_features","path":"multimodal_features.csv","schema":"canonical-vectors-v1","sha256":"b577cd14da9b60242ba780248036a3378941beef7a2f3261fb3b2b26f2cf35b7","rows":6}

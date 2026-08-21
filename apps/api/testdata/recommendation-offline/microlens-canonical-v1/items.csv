@@ -1,7 +1,7 @@
 video_key,author_key,categories
-video-1,author-a,"[city,rain]"
-video-2,author-b,"[music]"
-video-3,author-c,"[food]"
-video-4,author-a,"[city]"
-video-5,author-d,"[food,travel]"
-video-6,author-e,"[travel]"
+video-1,author-a,"[""city"",""rain""]"
+video-2,author-b,"[""music""]"
+video-3,author-c,"[""food""]"
+video-4,author-a,"[""city""]"
+video-5,author-d,"[""food"",""travel""]"
+video-6,author-e,"[""travel""]"

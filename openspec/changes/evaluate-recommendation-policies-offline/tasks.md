@@ -7,10 +7,10 @@
 
 ## 2. Public dataset adapters
 
-- [ ] 2.1 Implement streaming `kuairec-v2` interaction parsing for documented IDs, durations, timestamp, and watch ratio with consistency tolerance and no synthetic like label.
-- [ ] 2.2 Implement strict KuaiRec category parsing plus optional canonical author/text/image/multimodal feature channels.
-- [ ] 2.3 Implement `microlens-canonical-v1` interaction/item/feature parsing bound to manifest release and normalization recipe rather than guessed raw layouts.
-- [ ] 2.4 Normalize both adapters into isolated dataset-local records and add valid, corrupt, unsupported, duplicate, escaping-path, hash/count, and oversized tests.
+- [x] 2.1 Implement streaming `kuairec-v2` interaction parsing for documented IDs, durations, timestamp, and watch ratio with consistency tolerance and no synthetic like label.
+- [x] 2.2 Implement strict KuaiRec category parsing plus optional canonical author/text/image/multimodal feature channels.
+- [x] 2.3 Implement `microlens-canonical-v1` interaction/item/feature parsing bound to manifest release and normalization recipe rather than guessed raw layouts.
+- [x] 2.4 Normalize both adapters into isolated dataset-local records and add valid, corrupt, unsupported, duplicate, escaping-path, hash/count, and oversized tests.
 
 ## 3. Chronological cases and baseline registry
 

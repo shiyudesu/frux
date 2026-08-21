@@ -19,13 +19,16 @@ import (
 type InputFailure string
 
 const (
-	FailureManifest InputFailure = "manifest"
-	FailurePath     InputFailure = "path"
-	FailureFile     InputFailure = "file"
-	FailureSize     InputFailure = "size"
-	FailureHash     InputFailure = "hash"
-	FailureRows     InputFailure = "rows"
-	FailureCSV      InputFailure = "csv"
+	FailureManifest  InputFailure = "manifest"
+	FailurePath      InputFailure = "path"
+	FailureFile      InputFailure = "file"
+	FailureSize      InputFailure = "size"
+	FailureHash      InputFailure = "hash"
+	FailureRows      InputFailure = "rows"
+	FailureCSV       InputFailure = "csv"
+	FailureSchema    InputFailure = "schema"
+	FailureValue     InputFailure = "value"
+	FailureDuplicate InputFailure = "duplicate"
 )
 
 type InputError struct {
