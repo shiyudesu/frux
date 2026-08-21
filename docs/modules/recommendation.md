@@ -275,6 +275,16 @@ Exact 相似度为 0.9693，首屏实际 `semantic_similarity` 为 0.7074，Conf
 各一次；临时策略已禁用并删除，收藏已撤销，Runner 报告 `external_model_calls: 0`。为补足第三个
 真实 Fixture，验收前单独执行过一次视频向量生成；该调用不属于推荐 Runner。
 
+## 11. 离线评估
+
+`cmd/recommendation-offline-evaluate` 已提供三个零模型调用 Track：MicroLens/KuaiRec 公共数据
+Baseline、生产策略 Replay、人工 Golden Set。公共数据使用独立 manifest、校验和和命名空间；Replay
+只允许 Feature Weights/Diversity 差异；Golden Set 覆盖 Query、Similar、Session Direction 和
+Negative Suppression。完整的数据准备、阈值、命令和非因果边界见
+[推荐离线评估](../recommendation-offline-evaluation.md)。
+
+## 12. 扩大策略前门槛
+
 扩大 v2 前至少观察 24h：请求错误/降级率、snapshot hit、Provider timeout、profile lag、
 曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用
 `PolicyService.Rollback(ctx, "recommend", 1)`；紧急 SQL 在事务中锁定 v1，关闭同 scene

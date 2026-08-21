@@ -41,6 +41,10 @@ func TestPublicReportIsDeterministicRestrictedAndRedacted(t *testing.T) {
 			t.Fatalf("report leaked %q", forbidden)
 		}
 	}
+	expectedMarkdown, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "expected", "kuairec.md"))
+	if err != nil || !bytes.Equal(firstMarkdown, expectedMarkdown) {
+		t.Fatalf("public Markdown snapshot mismatch: %v", err)
+	}
 	directory := t.TempDir()
 	jsonPath := filepath.Join(directory, "report.json")
 	markdownPath := filepath.Join(directory, "report.md")
@@ -95,6 +99,10 @@ func TestReplayAndGoldenReportsAreDeterministicAndContainNoCandidateIdentity(t *
 		bytes.Contains(firstReplayJSON, []byte(`"video_id"`)) || bytes.Contains(firstReplayJSON, []byte("author-a")) {
 		t.Fatal("replay report is nondeterministic or leaked candidate identity")
 	}
+	expectedReplay, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "expected", "replay.md"))
+	if err != nil || !bytes.Equal(firstReplayMarkdown, expectedReplay) {
+		t.Fatalf("replay Markdown snapshot mismatch: %v", err)
+	}
 	goldenPath := filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "golden-v1.json")
 	goldenBundle, err := LoadGoldenBundle(goldenPath)
 	if err != nil {
@@ -116,5 +124,37 @@ func TestReplayAndGoldenReportsAreDeterministicAndContainNoCandidateIdentity(t *
 	if !bytes.Equal(firstGoldenJSON, secondGoldenJSON) || !bytes.Equal(firstGoldenMarkdown, secondGoldenMarkdown) ||
 		bytes.Contains(firstGoldenJSON, []byte("candidate-a")) || bytes.Contains(firstGoldenJSON, []byte(`"judgments"`)) {
 		t.Fatal("Golden report is nondeterministic or leaked annotations")
+	}
+	expectedGolden, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "expected", "golden.md"))
+	if err != nil || !bytes.Equal(firstGoldenMarkdown, expectedGolden) {
+		t.Fatalf("Golden Markdown snapshot mismatch: %v", err)
+	}
+}
+
+func TestMicroLensMarkdownSnapshot(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "microlens-canonical-v1")
+	loaded, err := LoadManifest(root, "manifest.json", DefaultManifestLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataset, err := LoadDataset(loaded, DefaultDatasetLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluation, err := applicationofflineevaluation.EvaluatePublicDataset(dataset, domainofflineevaluation.DefaultCaseProfile(), []int{1, 3}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := NewPublicReport(loaded.Evidence, evaluation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, markdown, err := RenderPublicReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "recommendation-offline", "expected", "microlens.md"))
+	if err != nil || !bytes.Equal(markdown, expected) {
+		t.Fatalf("MicroLens Markdown snapshot mismatch: %v", err)
 	}
 }
