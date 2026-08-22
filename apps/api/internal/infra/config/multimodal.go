@@ -3,12 +3,14 @@ package infraconfig
 import (
 	"encoding/base64"
 	"errors"
+	"math"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 )
 
@@ -27,6 +29,7 @@ const (
 	maxMultimodalResponseBytes        = 8 << 20
 	maxMultimodalImageBytes           = 20 * 1024 * 1024
 	maxMultimodalTotalImageBytes      = 64 * 1024 * 1024
+	maxSessionSemanticShadowBudget    = 100
 )
 
 type MultimodalRuntimeDependencies struct {
@@ -58,11 +61,13 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		return ErrInvalidMultimodalConfig
 	}
 	if !cfg.Enabled && (cfg.VideoJobsEnabled || cfg.QueryEmbeddingEnabled ||
-		cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled || cfg.SessionRecommendationEnabled) {
+		cfg.HybridSearchEnabled || cfg.SimilarVideosEnabled || cfg.SessionRecommendationEnabled ||
+		cfg.SessionShadow.Enabled) {
 		return ErrInvalidMultimodalConfig
 	}
 	if cfg.Enabled && !cfg.VideoJobsEnabled && !cfg.QueryEmbeddingEnabled &&
-		!cfg.HybridSearchEnabled && !cfg.SimilarVideosEnabled && !cfg.SessionRecommendationEnabled {
+		!cfg.HybridSearchEnabled && !cfg.SimilarVideosEnabled && !cfg.SessionRecommendationEnabled &&
+		!cfg.SessionShadow.Enabled {
 		return ErrInvalidMultimodalConfig
 	}
 	if cfg.HybridSearchEnabled && !cfg.QueryEmbeddingEnabled {
@@ -72,6 +77,9 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		if !cfg.Enabled {
 			return ErrInvalidMultimodalConfig
 		}
+	}
+	if cfg.SessionShadow.Enabled && !cfg.SessionRecommendationEnabled {
+		return ErrInvalidMultimodalConfig
 	}
 	if cfg.MaxVideoTextRunes == 0 {
 		cfg.MaxVideoTextRunes = 2048
@@ -256,6 +264,48 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 	sessionLookback, err := time.ParseDuration(cfg.Session.MaxLookback)
 	if err != nil || cfg.Session.MaxSeeds < 1 || cfg.Session.MaxSeeds > 21 ||
 		sessionLookback < time.Minute || sessionLookback > 24*time.Hour {
+		return ErrInvalidMultimodalConfig
+	}
+
+	if cfg.SessionShadow.Budget == 0 {
+		cfg.SessionShadow.Budget = 50
+	}
+	cfg.SessionShadow.Deadline = defaultDuration(cfg.SessionShadow.Deadline, "250ms")
+	if cfg.SessionShadow.MaxInFlight == 0 {
+		cfg.SessionShadow.MaxInFlight = 2
+	}
+	if cfg.SessionShadow.ComparisonLimit == 0 {
+		cfg.SessionShadow.ComparisonLimit = 100
+	}
+	if cfg.SessionShadow.SimulatedPoolLimit == 0 {
+		cfg.SessionShadow.SimulatedPoolLimit = 100
+	}
+	if cfg.SessionShadow.SimulatedTopK == 0 {
+		cfg.SessionShadow.SimulatedTopK = 20
+	}
+	if cfg.SessionShadow.SemanticReservation == 0 {
+		cfg.SessionShadow.SemanticReservation = 10
+	}
+	if cfg.SessionShadow.SemanticWeight == 0 {
+		cfg.SessionShadow.SemanticWeight = 0.25
+	}
+	cfg.SessionShadow.ShutdownTimeout = defaultDuration(cfg.SessionShadow.ShutdownTimeout, "2s")
+	shadowDeadline, shadowDeadlineErr := time.ParseDuration(cfg.SessionShadow.Deadline)
+	shadowShutdown, shadowShutdownErr := time.ParseDuration(cfg.SessionShadow.ShutdownTimeout)
+	if cfg.SessionShadow.SamplePPM < 0 || cfg.SessionShadow.SamplePPM > domainrecommendation.MaxSamplingRatePPM ||
+		cfg.SessionShadow.Budget < 1 || cfg.SessionShadow.Budget > maxSessionSemanticShadowBudget ||
+		shadowDeadlineErr != nil || shadowDeadline < 25*time.Millisecond || shadowDeadline > 500*time.Millisecond ||
+		cfg.SessionShadow.MaxInFlight < 1 || cfg.SessionShadow.MaxInFlight > 16 ||
+		cfg.SessionShadow.ComparisonLimit < 1 || cfg.SessionShadow.ComparisonLimit > domainrecommendation.MaxPolicyPreRankCandidates ||
+		cfg.SessionShadow.SimulatedPoolLimit < domainrecommendation.MinPolicyPreRankCandidates ||
+		cfg.SessionShadow.SimulatedPoolLimit > domainrecommendation.MaxPolicyPreRankCandidates ||
+		cfg.SessionShadow.SimulatedTopK < 1 || cfg.SessionShadow.SimulatedTopK > cfg.SessionShadow.SimulatedPoolLimit ||
+		cfg.SessionShadow.SemanticReservation < 0 ||
+		cfg.SessionShadow.SemanticReservation > cfg.SessionShadow.Budget ||
+		cfg.SessionShadow.SemanticReservation > cfg.SessionShadow.SimulatedPoolLimit ||
+		math.IsNaN(cfg.SessionShadow.SemanticWeight) || math.IsInf(cfg.SessionShadow.SemanticWeight, 0) ||
+		cfg.SessionShadow.SemanticWeight <= 0 || cfg.SessionShadow.SemanticWeight > domainrecommendation.MaxFeatureWeight ||
+		shadowShutdownErr != nil || shadowShutdown < 100*time.Millisecond || shadowShutdown > 10*time.Second {
 		return ErrInvalidMultimodalConfig
 	}
 

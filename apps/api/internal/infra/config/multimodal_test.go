@@ -44,7 +44,12 @@ func TestNormalizeAndValidateMultimodalConfigDisabledDefaults(t *testing.T) {
 		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback ||
 		cfg.Hybrid.PoolLimit != 100 || cfg.Hybrid.LexicalReservation != 20 ||
 		cfg.Hybrid.SemanticReservation != 20 || cfg.Hybrid.CursorTTL != "15m" ||
-		cfg.SessionRecommendationEnabled || cfg.Session.MaxSeeds != 21 || cfg.Session.MaxLookback != "24h" {
+		cfg.SessionRecommendationEnabled || cfg.Session.MaxSeeds != 21 || cfg.Session.MaxLookback != "24h" ||
+		cfg.SessionShadow.Enabled || cfg.SessionShadow.SamplePPM != 0 || cfg.SessionShadow.Budget != 50 ||
+		cfg.SessionShadow.Deadline != "250ms" || cfg.SessionShadow.MaxInFlight != 2 ||
+		cfg.SessionShadow.ComparisonLimit != 100 || cfg.SessionShadow.SimulatedPoolLimit != 100 ||
+		cfg.SessionShadow.SimulatedTopK != 20 || cfg.SessionShadow.SemanticReservation != 10 ||
+		cfg.SessionShadow.SemanticWeight != 0.25 || cfg.SessionShadow.ShutdownTimeout != "2s" {
 		t.Fatalf("unexpected disabled defaults: %#v", cfg)
 	}
 	if err := ValidateMultimodalRuntime(cfg, MultimodalRuntimeDependencies{}); err != nil {
@@ -128,6 +133,20 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 		{name: "unbounded exact limit", mutate: func(c *MultimodalConfig) { c.Exact.MaxLimit = 501 }},
 		{name: "unbounded session seeds", mutate: func(c *MultimodalConfig) { c.Session.MaxSeeds = 22 }},
 		{name: "unbounded session lookback", mutate: func(c *MultimodalConfig) { c.Session.MaxLookback = "25h" }},
+		{name: "shadow without session runtime", mutate: func(c *MultimodalConfig) {
+			c.SessionShadow.Enabled = true
+			c.SessionRecommendationEnabled = false
+		}},
+		{name: "shadow sample ppm", mutate: func(c *MultimodalConfig) { c.SessionShadow.SamplePPM = 1_000_001 }},
+		{name: "shadow budget", mutate: func(c *MultimodalConfig) { c.SessionShadow.Budget = 101 }},
+		{name: "shadow deadline", mutate: func(c *MultimodalConfig) { c.SessionShadow.Deadline = "1s" }},
+		{name: "shadow capacity", mutate: func(c *MultimodalConfig) { c.SessionShadow.MaxInFlight = 17 }},
+		{name: "shadow comparison", mutate: func(c *MultimodalConfig) { c.SessionShadow.ComparisonLimit = 501 }},
+		{name: "shadow pool", mutate: func(c *MultimodalConfig) { c.SessionShadow.SimulatedPoolLimit = 49 }},
+		{name: "shadow top k", mutate: func(c *MultimodalConfig) { c.SessionShadow.SimulatedTopK = 101 }},
+		{name: "shadow reservation", mutate: func(c *MultimodalConfig) { c.SessionShadow.SemanticReservation = 51 }},
+		{name: "shadow weight", mutate: func(c *MultimodalConfig) { c.SessionShadow.SemanticWeight = -0.1 }},
+		{name: "shadow shutdown", mutate: func(c *MultimodalConfig) { c.SessionShadow.ShutdownTimeout = "10ms" }},
 		{name: "unknown hybrid version", mutate: func(c *MultimodalConfig) { c.Hybrid.Version = "unknown" }},
 		{name: "fallback disabled", mutate: func(c *MultimodalConfig) { c.Hybrid.FallbackMode = "none" }},
 		{name: "hybrid pool below page bound", mutate: func(c *MultimodalConfig) { c.Hybrid.PoolLimit = 50 }},
@@ -144,6 +163,28 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 				t.Fatalf("error = %v, want %v", err, ErrInvalidMultimodalConfig)
 			}
 		})
+	}
+}
+
+func TestSessionSemanticShadowConfigRequiresCompleteSessionRuntime(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.VideoJobsEnabled = false
+	cfg.QueryEmbeddingEnabled = false
+	cfg.HybridSearchEnabled = false
+	cfg.SimilarVideosEnabled = false
+	cfg.SessionRecommendationEnabled = true
+	cfg.SessionShadow.Enabled = true
+	cfg.SessionShadow.SamplePPM = 10_000
+	cfg.Provider = MultimodalProviderConfig{}
+	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SessionShadow.Enabled || cfg.SessionShadow.SamplePPM != 10_000 {
+		t.Fatalf("shadow config=%#v", cfg.SessionShadow)
+	}
+	ready := MultimodalRuntimeDependencies{ExactRetrieval: true, SessionRecommendation: true}
+	if err := ValidateMultimodalAPIRuntime(cfg, ready); err != nil {
+		t.Fatalf("shadow runtime rejected: %v", err)
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domaingovernance "github.com/shiyudesu/frux/internal/domain/governance"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
+	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	domainreview "github.com/shiyudesu/frux/internal/domain/review"
 	infrabehaviorstream "github.com/shiyudesu/frux/internal/infra/behaviorstream"
 	infracache "github.com/shiyudesu/frux/internal/infra/cache"
@@ -235,6 +236,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		applicationrecommendation.NewSessionContinuationProvider(recommendationRepo, recommendationRepo),
 	}
 	sessionRecommendationReady := false
+	var semanticSessionProvider *applicationrecommendation.SemanticSessionProvider
 	if cfg.Multimodal.SessionRecommendationEnabled {
 		contract, err := cfg.Multimodal.Contract.Identity()
 		if err != nil {
@@ -259,6 +261,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		if err != nil {
 			return err
 		}
+		semanticSessionProvider = provider
 		recallProviders = append(recallProviders, provider)
 		sessionRecommendationReady = true
 	}
@@ -317,6 +320,20 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		rateLimitIdleTTL,
 	)
 	recommendationService := applicationrecommendation.New(recommendationRepo, recommendationOptions...)
+	shadowEvaluator, shadowErr := newSessionSemanticShadowEvaluator(
+		cfg.Multimodal, semanticSessionProvider, recommendationService,
+	)
+	if shadowErr != nil {
+		return shadowErr
+	}
+	if shadowEvaluator != nil {
+		recommendationService.SetSessionSemanticShadowEvaluator(shadowEvaluator)
+		h.Engine.OnShutdown = append(h.Engine.OnShutdown, func(ctx context.Context) {
+			shutdownCtx, cancel := context.WithTimeout(ctx, shadowEvaluator.ShutdownTimeout())
+			defer cancel()
+			_ = shadowEvaluator.Close(shutdownCtx)
+		})
+	}
 	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
 	feedOptions = append(feedOptions, applicationfeed.WithRecommender(recommendationService))
 	feedService := applicationfeed.New(feedRepo, feedOptions...)
@@ -1110,6 +1127,92 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 
 func validateAPIConfig(cfg *infraconfig.Config) error {
 	return infraconfig.ValidateAPIConfig(cfg)
+}
+
+func newSessionSemanticShadowEvaluator(
+	cfg infraconfig.MultimodalConfig,
+	provider applicationrecommendation.SessionSemanticEvidenceProvider,
+	simulator applicationrecommendation.SessionSemanticShadowSimulator,
+) (*applicationrecommendation.SessionSemanticShadowEvaluator, error) {
+	if !cfg.SessionShadow.Enabled {
+		return nil, nil
+	}
+	if provider == nil || simulator == nil || !cfg.Enabled || !cfg.SessionRecommendationEnabled {
+		return nil, infraconfig.ErrMissingMultimodalDependency
+	}
+	shadowDeadline, err := time.ParseDuration(cfg.SessionShadow.Deadline)
+	if err != nil {
+		return nil, err
+	}
+	shadowShutdown, err := time.ParseDuration(cfg.SessionShadow.ShutdownTimeout)
+	if err != nil {
+		return nil, err
+	}
+	maxLookback, err := time.ParseDuration(cfg.Session.MaxLookback)
+	if err != nil {
+		return nil, err
+	}
+	contract, err := cfg.Contract.Identity()
+	if err != nil {
+		return nil, infraconfig.ErrMissingMultimodalDependency
+	}
+	shadowConfig := applicationrecommendation.SessionSemanticShadowRuntimeConfig{
+		Enabled: cfg.SessionShadow.Enabled, SamplePPM: cfg.SessionShadow.SamplePPM,
+		Budget: cfg.SessionShadow.Budget, Deadline: shadowDeadline,
+		MaxInFlight:         cfg.SessionShadow.MaxInFlight,
+		ComparisonLimit:     cfg.SessionShadow.ComparisonLimit,
+		SimulatedPoolLimit:  cfg.SessionShadow.SimulatedPoolLimit,
+		SimulatedTopK:       cfg.SessionShadow.SimulatedTopK,
+		SemanticReservation: cfg.SessionShadow.SemanticReservation,
+		SemanticWeight:      cfg.SessionShadow.SemanticWeight,
+		ShutdownTimeout:     shadowShutdown, Contract: contract,
+		SessionPolicy: &domainrecommendation.SessionSemanticPolicyConfiguration{
+			BuilderVersion: domainrecommendation.SessionSemanticBuilderV1,
+			ContractKey:    contract.Key(), LookbackSeconds: int(maxLookback / time.Second),
+			MaxSeeds: cfg.Session.MaxSeeds, MinPositiveSignals: 2, MinConfidence: 0.1,
+		},
+	}
+	return applicationrecommendation.NewSessionSemanticShadowEvaluator(
+		shadowConfig, provider, simulator, sessionSemanticShadowMetricsAdapter{},
+	)
+}
+
+type sessionSemanticShadowMetricsAdapter struct{}
+
+func (sessionSemanticShadowMetricsAdapter) ObserveSelection(result string) {
+	inframetrics.ObserveRecommendationSessionSemanticShadowSelection(result)
+}
+
+func (sessionSemanticShadowMetricsAdapter) ObserveAdmission(result string) {
+	inframetrics.ObserveRecommendationSessionSemanticShadowAdmission(result)
+}
+
+func (sessionSemanticShadowMetricsAdapter) ObserveInFlight(delta int) {
+	inframetrics.AddRecommendationSessionSemanticShadowInFlight(delta)
+}
+
+func (sessionSemanticShadowMetricsAdapter) ObserveTerminal(
+	observation applicationrecommendation.SessionSemanticShadowObservation,
+) {
+	comparison := observation.Comparison
+	inframetrics.ObserveRecommendationSessionSemanticShadowTerminal(
+		string(observation.Result), observation.BaselineState, string(observation.ConfidenceBand),
+		map[string]int{
+			"active": comparison.ActiveCount, "semantic": comparison.SemanticCount,
+			"intersection": comparison.IntersectionCount, "unique_semantic": comparison.UniqueSemanticCount,
+			"mixed": comparison.MixedCount, "pool_survival": comparison.SemanticPoolSurvival,
+			"simulated_top_k": comparison.SimulatedTopKCount, "rank_survival": comparison.SemanticRankSurvival,
+			"unique_rank_survival": comparison.UniqueRankSurvival, "active_displaced": comparison.ActiveTopKDisplaced,
+			"semantic_authors": comparison.SemanticAuthorCount, "simulated_authors": comparison.SimulatedAuthorCount,
+		},
+		map[string]float64{
+			"overlap": comparison.OverlapRatio, "unique_contribution": comparison.UniqueContributionRatio,
+			"pool_survival": comparison.PoolSurvivalRatio, "rank_survival": comparison.RankSurvivalRatio,
+			"unique_rank_survival": comparison.UniqueRankSurvivalRatio,
+			"active_displaced":     comparison.ActiveTopKDisplacedRatio,
+		},
+		observation.Duration,
+	)
 }
 
 type MessageWriter struct {

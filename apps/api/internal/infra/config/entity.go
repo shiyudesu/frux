@@ -18,22 +18,23 @@ type Config struct {
 }
 
 type MultimodalConfig struct {
-	Profile                      string                   `yaml:"profile"`
-	Enabled                      bool                     `yaml:"enabled"`
-	VideoJobsEnabled             bool                     `yaml:"video_jobs_enabled"`
-	QueryEmbeddingEnabled        bool                     `yaml:"query_embedding_enabled"`
-	HybridSearchEnabled          bool                     `yaml:"hybrid_search_enabled"`
-	SimilarVideosEnabled         bool                     `yaml:"similar_videos_enabled"`
-	SessionRecommendationEnabled bool                     `yaml:"session_recommendation_enabled"`
-	MaxVideoTextRunes            int                      `yaml:"max_video_text_runes"`
-	Contract                     MultimodalContractConfig `yaml:"contract"`
-	Provider                     MultimodalProviderConfig `yaml:"provider"`
-	Jobs                         MultimodalJobConfig      `yaml:"jobs"`
-	Images                       MultimodalImageConfig    `yaml:"images"`
-	Query                        MultimodalQueryConfig    `yaml:"query"`
-	Exact                        MultimodalExactConfig    `yaml:"exact"`
-	Hybrid                       MultimodalHybridConfig   `yaml:"hybrid"`
-	Session                      MultimodalSessionConfig  `yaml:"session"`
+	Profile                      string                        `yaml:"profile"`
+	Enabled                      bool                          `yaml:"enabled"`
+	VideoJobsEnabled             bool                          `yaml:"video_jobs_enabled"`
+	QueryEmbeddingEnabled        bool                          `yaml:"query_embedding_enabled"`
+	HybridSearchEnabled          bool                          `yaml:"hybrid_search_enabled"`
+	SimilarVideosEnabled         bool                          `yaml:"similar_videos_enabled"`
+	SessionRecommendationEnabled bool                          `yaml:"session_recommendation_enabled"`
+	MaxVideoTextRunes            int                           `yaml:"max_video_text_runes"`
+	Contract                     MultimodalContractConfig      `yaml:"contract"`
+	Provider                     MultimodalProviderConfig      `yaml:"provider"`
+	Jobs                         MultimodalJobConfig           `yaml:"jobs"`
+	Images                       MultimodalImageConfig         `yaml:"images"`
+	Query                        MultimodalQueryConfig         `yaml:"query"`
+	Exact                        MultimodalExactConfig         `yaml:"exact"`
+	Hybrid                       MultimodalHybridConfig        `yaml:"hybrid"`
+	Session                      MultimodalSessionConfig       `yaml:"session"`
+	SessionShadow                MultimodalSessionShadowConfig `yaml:"session_shadow"`
 }
 
 type MultimodalContractConfig struct {
@@ -101,6 +102,20 @@ type MultimodalHybridConfig struct {
 type MultimodalSessionConfig struct {
 	MaxSeeds    int    `yaml:"max_seeds"`
 	MaxLookback string `yaml:"max_lookback"`
+}
+
+type MultimodalSessionShadowConfig struct {
+	Enabled             bool    `yaml:"enabled"`
+	SamplePPM           int     `yaml:"sample_ppm"`
+	Budget              int     `yaml:"budget"`
+	Deadline            string  `yaml:"deadline"`
+	MaxInFlight         int     `yaml:"max_in_flight"`
+	ComparisonLimit     int     `yaml:"comparison_limit"`
+	SimulatedPoolLimit  int     `yaml:"simulated_pool_limit"`
+	SimulatedTopK       int     `yaml:"simulated_top_k"`
+	SemanticReservation int     `yaml:"semantic_reservation"`
+	SemanticWeight      float64 `yaml:"semantic_weight"`
+	ShutdownTimeout     string  `yaml:"shutdown_timeout"`
 }
 
 type SecurityConfig struct {

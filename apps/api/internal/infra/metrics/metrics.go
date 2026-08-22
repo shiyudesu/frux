@@ -237,6 +237,42 @@ var (
 		},
 		[]string{"kind"},
 	)
+	RecommendationSessionSemanticShadowSelectionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_session_semantic_shadow_selections_total", Help: "Session semantic Shadow deterministic selection outcomes."},
+		[]string{"result"},
+	)
+	RecommendationSessionSemanticShadowAdmissionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_session_semantic_shadow_admissions_total", Help: "Session semantic Shadow no-queue admission outcomes."},
+		[]string{"result"},
+	)
+	RecommendationSessionSemanticShadowTerminalsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_session_semantic_shadow_terminals_total", Help: "Session semantic Shadow terminal outcomes by bounded baseline and confidence state."},
+		[]string{"result", "baseline", "confidence_band"},
+	)
+	RecommendationSessionSemanticShadowDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_session_semantic_shadow_duration_seconds", Help: "Session semantic Shadow end-to-end diagnostic duration by terminal result.",
+			Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		},
+		[]string{"result"},
+	)
+	RecommendationSessionSemanticShadowInFlight = prometheus.NewGauge(
+		prometheus.GaugeOpts{Namespace: "frux", Name: "recommendation_session_semantic_shadow_in_flight", Help: "Actual Session Semantic Shadow Provider calls currently holding admission permits."},
+	)
+	RecommendationSessionSemanticShadowCounts = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_session_semantic_shadow_count", Help: "Bounded Session Semantic Shadow candidate and diversity counts.",
+			Buckets: []float64{0, 1, 2, 3, 5, 8, 10, 20, 50, 100, 200, 500},
+		},
+		[]string{"kind"},
+	)
+	RecommendationSessionSemanticShadowRatios = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "frux", Name: "recommendation_session_semantic_shadow_ratio", Help: "Finite bounded Session Semantic Shadow comparison ratios.",
+			Buckets: []float64{0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1},
+		},
+		[]string{"kind"},
+	)
 	ReviewEventsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: "frux", Name: "review_events_total", Help: "Automated review events by bounded stage and result."},
 		[]string{"stage", "result"},
@@ -343,6 +379,13 @@ func init() {
 		RecommendationSessionSemanticConfidence,
 		RecommendationSessionSemanticCoverage,
 		RecommendationSessionSemanticCounts,
+		RecommendationSessionSemanticShadowSelectionsTotal,
+		RecommendationSessionSemanticShadowAdmissionsTotal,
+		RecommendationSessionSemanticShadowTerminalsTotal,
+		RecommendationSessionSemanticShadowDuration,
+		RecommendationSessionSemanticShadowInFlight,
+		RecommendationSessionSemanticShadowCounts,
+		RecommendationSessionSemanticShadowRatios,
 		ReviewEventsTotal,
 		MediaObjectOperationsTotal,
 		MediaObjectOperationDuration,
@@ -474,6 +517,59 @@ func ObserveRecommendationSessionSemantic(
 	}
 }
 
+func ObserveRecommendationSessionSemanticShadowSelection(result string) {
+	RecommendationSessionSemanticShadowSelectionsTotal.WithLabelValues(
+		recommendationSessionSemanticShadowSelection(result),
+	).Inc()
+}
+
+func ObserveRecommendationSessionSemanticShadowAdmission(result string) {
+	RecommendationSessionSemanticShadowAdmissionsTotal.WithLabelValues(
+		recommendationSessionSemanticShadowAdmission(result),
+	).Inc()
+}
+
+func AddRecommendationSessionSemanticShadowInFlight(delta int) {
+	if delta > 0 {
+		RecommendationSessionSemanticShadowInFlight.Add(float64(delta))
+	} else if delta < 0 {
+		RecommendationSessionSemanticShadowInFlight.Sub(float64(-delta))
+	}
+}
+
+func ObserveRecommendationSessionSemanticShadowTerminal(
+	result string,
+	baseline string,
+	confidenceBand string,
+	counts map[string]int,
+	ratios map[string]float64,
+	duration time.Duration,
+) {
+	result = recommendationSessionSemanticShadowTerminal(result)
+	RecommendationSessionSemanticShadowTerminalsTotal.WithLabelValues(
+		result,
+		recommendationSessionSemanticShadowBaseline(baseline),
+		recommendationSessionSemanticConfidenceBand(confidenceBand),
+	).Inc()
+	if duration < 0 {
+		duration = 0
+	}
+	RecommendationSessionSemanticShadowDuration.WithLabelValues(result).Observe(duration.Seconds())
+	for kind, count := range counts {
+		if count < 0 {
+			count = 0
+		}
+		RecommendationSessionSemanticShadowCounts.WithLabelValues(
+			recommendationSessionSemanticShadowCountKind(kind),
+		).Observe(float64(count))
+	}
+	for kind, ratio := range ratios {
+		RecommendationSessionSemanticShadowRatios.WithLabelValues(
+			recommendationSessionSemanticShadowRatioKind(kind),
+		).Observe(boundedMetricRatio(ratio))
+	}
+}
+
 func recommendationProviderLabel(value string) string {
 	switch normalizeLabel(value, "unknown") {
 	case "fresh", "hot", "content_similarity", "followed_author", "session_continuation", "semantic_session":
@@ -508,6 +604,63 @@ func recommendationSessionSemanticConfidenceBand(value string) string {
 		return normalizeLabel(value, "none")
 	default:
 		return "none"
+	}
+}
+
+func recommendationSessionSemanticShadowSelection(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "selected", "not_selected":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticShadowAdmission(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "admitted", "capacity", "closed", "invalid":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticShadowTerminal(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "success", "empty", "timeout", "error", "capacity", "panic", "closed":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticShadowBaseline(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "providers", "repository_fallback", "unknown":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticShadowCountKind(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "active", "semantic", "intersection", "unique_semantic", "mixed", "pool_survival",
+		"simulated_top_k", "rank_survival", "unique_rank_survival", "active_displaced",
+		"semantic_authors", "simulated_authors":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticShadowRatioKind(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "overlap", "unique_contribution", "pool_survival", "rank_survival",
+		"unique_rank_survival", "active_displaced":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
 	}
 }
 

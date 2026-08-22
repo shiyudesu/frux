@@ -127,3 +127,40 @@ func TestSessionSemanticMetricsUseOnlyClosedLabels(t *testing.T) {
 		t.Fatal("semantic provider label was not bounded")
 	}
 }
+
+func TestSessionSemanticShadowMetricsUseOnlyClosedLabels(t *testing.T) {
+	selected := RecommendationSessionSemanticShadowSelectionsTotal.WithLabelValues("selected")
+	unknownSelection := RecommendationSessionSemanticShadowSelectionsTotal.WithLabelValues("unknown")
+	admitted := RecommendationSessionSemanticShadowAdmissionsTotal.WithLabelValues("admitted")
+	unknownAdmission := RecommendationSessionSemanticShadowAdmissionsTotal.WithLabelValues("unknown")
+	success := RecommendationSessionSemanticShadowTerminalsTotal.WithLabelValues("success", "providers", "medium")
+	unknownTerminal := RecommendationSessionSemanticShadowTerminalsTotal.WithLabelValues("unknown", "unknown", "none")
+	before := []float64{
+		testutil.ToFloat64(selected), testutil.ToFloat64(unknownSelection),
+		testutil.ToFloat64(admitted), testutil.ToFloat64(unknownAdmission),
+		testutil.ToFloat64(success), testutil.ToFloat64(unknownTerminal),
+	}
+	ObserveRecommendationSessionSemanticShadowSelection("selected")
+	ObserveRecommendationSessionSemanticShadowSelection("request-42")
+	ObserveRecommendationSessionSemanticShadowAdmission("admitted")
+	ObserveRecommendationSessionSemanticShadowAdmission("video-99")
+	ObserveRecommendationSessionSemanticShadowTerminal(
+		"success", "providers", "medium",
+		map[string]int{"active": 10, "video-123": 5},
+		map[string]float64{"overlap": 0.5, "raw-score-0.123": 2},
+		time.Millisecond,
+	)
+	ObserveRecommendationSessionSemanticShadowTerminal(
+		"raw error body", "user-42", "contract-key", nil, nil, -time.Second,
+	)
+	if testutil.ToFloat64(selected)-before[0] != 1 || testutil.ToFloat64(unknownSelection)-before[1] != 1 ||
+		testutil.ToFloat64(admitted)-before[2] != 1 || testutil.ToFloat64(unknownAdmission)-before[3] != 1 ||
+		testutil.ToFloat64(success)-before[4] != 1 || testutil.ToFloat64(unknownTerminal)-before[5] != 1 {
+		t.Fatal("session semantic Shadow metrics did not fold unregistered labels")
+	}
+	if testutil.CollectAndCount(RecommendationSessionSemanticShadowDuration) == 0 ||
+		testutil.CollectAndCount(RecommendationSessionSemanticShadowCounts) == 0 ||
+		testutil.CollectAndCount(RecommendationSessionSemanticShadowRatios) == 0 {
+		t.Fatal("session semantic Shadow histograms were not registered")
+	}
+}

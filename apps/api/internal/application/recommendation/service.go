@@ -41,6 +41,7 @@ type Service struct {
 	requestLogs    domainrecommendation.RequestLogRepository
 	evidence       domainrecommendation.ServedCandidateEvidenceRepository
 	recallSlots    chan struct{}
+	shadow         *SessionSemanticShadowEvaluator
 }
 
 func applyFeedbackSuppression(candidates []*domainrecommendation.Candidate, features *domainrecommendation.RankingFeatures, config domainrecommendation.PolicyConfiguration) []*domainrecommendation.Candidate {
@@ -264,6 +265,14 @@ func WithRequestLogRepository(repo domainrecommendation.RequestLogRepository) Op
 	return func(s *Service) { s.requestLogs = repo }
 }
 
+// SetSessionSemanticShadowEvaluator attaches a diagnostic-only evaluator
+// during dependency composition before the service starts handling requests.
+func (s *Service) SetSessionSemanticShadowEvaluator(evaluator *SessionSemanticShadowEvaluator) {
+	if s != nil {
+		s.shadow = evaluator
+	}
+}
+
 func (s *Service) Recommend(ctx context.Context, input CandidateRequest) (*CandidateResult, error) {
 	limit := normalizeLimit(input.Limit)
 	scene := strings.ToLower(strings.TrimSpace(input.Scene))
@@ -360,6 +369,17 @@ func (s *Service) recommendFreshPage(ctx context.Context, req *domainrecommendat
 	}
 	ranked = diversifyCandidates(ranked, policy.Config.Diversity)
 	ranked = filterByCursor(ranked, req.Cursor)
+	if s.shadow != nil && req.Scene == domainrecommendation.RecommendationRequestLogScene && req.Cursor == nil {
+		baselineState := "repository_fallback"
+		if recall != nil && recall.healthy > 0 {
+			baselineState = "providers"
+		}
+		s.shadow.TryEvaluate(SessionSemanticShadowRequest{
+			UserID: req.UserID, Scene: req.Scene, RequestID: req.RequestID,
+			Context: req.Context, ActivePolicy: policy, ActiveCandidates: ranked,
+			BaselineState: baselineState, Now: s.now().UTC(),
+		})
+	}
 
 	degraded := forceDegraded || (recall != nil && len(recall.degraded) > 0)
 	if req.Scene == "recommend" && req.Cursor == nil && s.snapshots != nil && s.cursorSigner != nil {

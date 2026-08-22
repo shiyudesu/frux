@@ -1,0 +1,157 @@
+{
+  "schema": "session-semantic-shadow-fixture/v1",
+  "provenance": {
+    "name": "frux-session-semantic-shadow-golden",
+    "release": "v1",
+    "source_path": "testdata/session-semantic-shadow/golden-v1.json",
+    "license": "repository test fixture"
+  },
+  "cases": [
+    {
+      "id": "rain-city-positive",
+      "available": true,
+      "top_k": 3,
+      "active": [
+        {"id": "v1", "author": "a1"},
+        {"id": "v2", "author": "a2"},
+        {"id": "v3", "author": "a2"}
+      ],
+      "semantic": [
+        {"id": "v2", "author": "a2"},
+        {"id": "v4", "author": "a3"}
+      ],
+      "mixed": [
+        {"id": "v1", "author": "a1"},
+        {"id": "v2", "author": "a2"},
+        {"id": "v3", "author": "a2"},
+        {"id": "v4", "author": "a3"}
+      ],
+      "ranked": [
+        {"id": "v4", "author": "a3"},
+        {"id": "v1", "author": "a1"},
+        {"id": "v2", "author": "a2"},
+        {"id": "v3", "author": "a2"}
+      ],
+      "relevant": ["v2", "v4"]
+    },
+    {
+      "id": "food-session",
+      "available": true,
+      "top_k": 3,
+      "active": [
+        {"id": "v5", "author": "a4"},
+        {"id": "v6", "author": "a5"},
+        {"id": "v7", "author": "a6"}
+      ],
+      "semantic": [
+        {"id": "v8", "author": "a7"},
+        {"id": "v6", "author": "a5"}
+      ],
+      "mixed": [
+        {"id": "v5", "author": "a4"},
+        {"id": "v6", "author": "a5"},
+        {"id": "v7", "author": "a6"},
+        {"id": "v8", "author": "a7"}
+      ],
+      "ranked": [
+        {"id": "v8", "author": "a7"},
+        {"id": "v6", "author": "a5"},
+        {"id": "v5", "author": "a4"},
+        {"id": "v7", "author": "a6"}
+      ],
+      "relevant": ["v6", "v8"]
+    },
+    {
+      "id": "sports-negative",
+      "available": true,
+      "top_k": 3,
+      "active": [
+        {"id": "v9", "author": "a8"},
+        {"id": "v10", "author": "a9"},
+        {"id": "v11", "author": "a10"}
+      ],
+      "semantic": [
+        {"id": "v10", "author": "a9"},
+        {"id": "v12", "author": "a11"}
+      ],
+      "mixed": [
+        {"id": "v9", "author": "a8"},
+        {"id": "v10", "author": "a9"},
+        {"id": "v11", "author": "a10"},
+        {"id": "v12", "author": "a11"}
+      ],
+      "ranked": [
+        {"id": "v12", "author": "a11"},
+        {"id": "v9", "author": "a8"},
+        {"id": "v10", "author": "a9"},
+        {"id": "v11", "author": "a10"}
+      ],
+      "relevant": ["v12"]
+    },
+    {
+      "id": "travel-coherence",
+      "available": true,
+      "top_k": 3,
+      "active": [
+        {"id": "v13", "author": "a12"},
+        {"id": "v14", "author": "a13"},
+        {"id": "v15", "author": "a14"}
+      ],
+      "semantic": [
+        {"id": "v16", "author": "a15"},
+        {"id": "v14", "author": "a13"}
+      ],
+      "mixed": [
+        {"id": "v13", "author": "a12"},
+        {"id": "v14", "author": "a13"},
+        {"id": "v15", "author": "a14"},
+        {"id": "v16", "author": "a15"}
+      ],
+      "ranked": [
+        {"id": "v16", "author": "a15"},
+        {"id": "v14", "author": "a13"},
+        {"id": "v13", "author": "a12"},
+        {"id": "v15", "author": "a14"}
+      ],
+      "relevant": ["v14", "v16"]
+    },
+    {
+      "id": "music-diversity",
+      "available": true,
+      "top_k": 3,
+      "active": [
+        {"id": "v17", "author": "a16"},
+        {"id": "v18", "author": "a16"},
+        {"id": "v19", "author": "a17"}
+      ],
+      "semantic": [
+        {"id": "v20", "author": "a18"},
+        {"id": "v17", "author": "a16"}
+      ],
+      "mixed": [
+        {"id": "v17", "author": "a16"},
+        {"id": "v18", "author": "a16"},
+        {"id": "v19", "author": "a17"},
+        {"id": "v20", "author": "a18"}
+      ],
+      "ranked": [
+        {"id": "v20", "author": "a18"},
+        {"id": "v17", "author": "a16"},
+        {"id": "v19", "author": "a17"},
+        {"id": "v18", "author": "a16"}
+      ],
+      "relevant": ["v17", "v20"]
+    },
+    {
+      "id": "missing-vectors",
+      "available": false,
+      "unavailable_reason": "no_vectors",
+      "top_k": 0,
+      "active": [],
+      "semantic": [],
+      "mixed": [],
+      "ranked": [],
+      "relevant": []
+    }
+  ]
+}

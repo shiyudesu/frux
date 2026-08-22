@@ -139,6 +139,18 @@ multimodal:
   session:
     max_seeds: 21
     max_lookback: "24h"
+  session_shadow:
+    enabled: false
+    sample_ppm: 0
+    budget: 50
+    deadline: "250ms"
+    max_in_flight: 2
+    comparison_limit: 100
+    simulated_pool_limit: 100
+    simulated_top_k: 20
+    semantic_reservation: 10
+    semantic_weight: 0.25
+    shutdown_timeout: "2s"
 
 playback:
   telemetry:
