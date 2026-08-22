@@ -326,7 +326,71 @@ go run ./cmd/session-semantic-shadow-eval \
 一致，文件权限为 `0600`，并固定声明 `external_model_calls: 0`。可用或带标签案例少于门槛时状态为
 `inconclusive`；报告不会自动推荐或启用策略，也不构成线上因果提升证据。
 
-## 13. 扩大策略前门槛
+## 13. Session Semantic Rollout
+
+`session-semantic-rollout-v1` 从明确的已有 baseline policy 构造一个新的 disabled policy，不允许手写任意
+Semantic JSON。第一版固定：Semantic budget 50、deadline 250ms、reservation 10、
+`semantic_similarity=0.25`、pool 500、Session 24h/21 seeds/2个正信号/Confidence 0.25，默认 Cohort 1%，
+最大只允许5%。其余排序、抑制、打散、保留和 Snapshot 字段继承 source policy；v1/v2 不被修改。
+
+先生成绑定当前合同的 Shadow 证据：
+
+```bash
+cd apps/api
+go run ./cmd/session-semantic-shadow-eval \
+  --input testdata/session-semantic-shadow/golden-v1.json \
+  --profile tongyi-embedding-vision-flash-2026-03-06 \
+  --json-output /tmp/session-semantic-shadow-report.json \
+  --markdown-output /tmp/session-semantic-shadow-report.md
+```
+
+然后创建忽略的运营配置：
+
+```bash
+cp apps/.env.session-semantic-rollout.example apps/.env.session-semantic-rollout
+```
+
+只读计划和状态：
+
+```bash
+cd apps/api
+go run ./cmd/session-semantic-rollout --action plan
+go run ./cmd/session-semantic-rollout --action status
+```
+
+计划会验证 Shadow schema/tool/合同、零模型调用、至少5个可用且带标签案例、unique contribution、rank
+survival、模拟 NDCG 不低于 active NDCG、PostgreSQL source/target、100% baseline 和 API runtime-ready。
+`/health` 成功不能替代 `frux_recommendation_session_semantic_runtime_ready=1`。
+
+Mutation 必须同时提供命令参数和环境确认：
+
+```bash
+export FRUX_SESSION_SEMANTIC_ROLLOUT_ALLOW_MUTATION=true
+
+# 只创建 disabled target，不影响用户请求
+go run ./cmd/session-semantic-rollout --action create --execute
+
+# 所有门禁通过后只启用 exact target version
+go run ./cmd/session-semantic-rollout --action activate --execute
+
+# Kill Switch：只关闭 exact target，不要求 Shadow/运行时在线
+go run ./cmd/session-semantic-rollout --action disable --execute
+```
+
+Create/activate/disable 都支持同状态 replay；Create 遇到同版本异配置时冲突，不会覆盖。Activate 要求同 scene
+另有 enabled 100% baseline，命中1%稳定 Cohort 的请求选择更高语义版本，其余请求继续落到 v2/v1。日常
+Kill Switch 不使用 `RollbackPolicy`，因为 broad rollback 会关闭同 scene 的所有其他 staged policy；exact
+disable 只改变目标版本并保留历史行、向量、日志和 outcome。
+
+每次命令输出并可原子保存 `0600` JSON，包含 Shadow/config digest、固定 policy diff、合成 Cohort 分桶、
+门禁、target 状态、mutation/replay 和恢复命令，不包含 DSN、凭据、真实用户/请求、候选、向量、路径或
+raw error。扩大到更高比例必须创建新的更高 policy version，当前工具不会原地自动 ramp，也不声称因果提升。
+
+2026-08-22 本地 Docker 验证：Shadow/合同/100% baseline 门禁通过，API 在默认配置下明确报告
+runtime-ready=0；v3 以1%配置成功创建但保持 disabled，显式 activate 被 `prerequisite` 阻止，exact disable
+在不读取 Shadow 或 runtime 时以 replay 完成；v1=100%、v2=5% 全程保持 enabled。
+
+## 14. 扩大策略前门槛
 
 扩大 v2 前至少观察 24h：请求错误/降级率、snapshot hit、Provider timeout、profile lag、
 曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用

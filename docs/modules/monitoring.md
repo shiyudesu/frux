@@ -182,6 +182,17 @@ unique contribution、pool/rank survival、displacement 和 author diversity 集
 capacity 持续增长表示独立 Shadow permit 已满，不是正式 Recall Provider 容量耗尽；in-flight 在 Deadline
 后仍不下降表示下游忽略取消，此时 permit 会继续被占用以阻止诊断 goroutine 无界增长。
 
+Session Semantic Rollout 使用
+`frux_recommendation_session_semantic_runtime_ready` 证明 API 已完整组装 Builder、Provider、active
+contract 与 Exact repository。该值只有0或1；普通 `/health=200`、已有向量事实或 Adapter ready 都不能
+代替它。`cmd/session-semantic-rollout --action activate` 必须读取到唯一的值1，否则 fail closed。
+
+运营命令另记录
+`frux_recommendation_session_semantic_rollout_operations_total{action,result}`。action 只允许
+plan/create/activate/status/disable，result 只允许 success/replay/blocked/error；不得将 scene、policy
+version、contract key、证据路径、DSN 或 raw error 放入标签。日常回滚应使用 exact disable；只有需要关闭
+同 scene 全部 staged policy 时才使用原有 broad rollback。
+
 Quota Merge 排障先比较 `returned → local_unique → readable`，再看 reservation/fill/final represented；
 `exhausted=1` 且 `underfill>0` 表示健康 Provider 的可读唯一输出不足，容量应由公共 fill 回收。overlap 高表示
 一个全局视频同时代表多个 Provider，不等同于内容多样性。selected pool 长期低于 policy limit 时，结合

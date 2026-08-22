@@ -9,7 +9,7 @@
 - [x] 2.1 Extend policy repository contracts with exact idempotent `DisablePolicy(scene, version)` and implement PostgreSQL row locking/validation without changing other policies.
 - [x] 2.2 Harden exact activation preflight to require another enabled 100% baseline policy while preserving existing low-level repository compatibility for non-rollout callers.
 - [x] 2.3 Add application rollout service actions for plan/create/activate/status/disable with target compatibility, existing-target replay/conflict, baseline fallback, and no policy deletion.
-- [ ] 2.4 Add unit and PostgreSQL integration tests for create replay/conflict, activate replay, stable selection, exact disable replay, wrong target rejection, concurrent mutation, and v1/v2 preservation.
+- [x] 2.4 Add unit and PostgreSQL integration tests for create replay/conflict, activate replay, stable selection, exact disable replay, wrong target rejection, concurrent mutation, and v1/v2 preservation.
 
 ## 3. Evidence and Runtime Gates
 
@@ -28,6 +28,6 @@
 ## 5. Observability, Verification, and Operations
 
 - [x] 5.1 Add fixed-label rollout operation metrics for plan/create/activate/status/disable success/replay/blocked/error without scene/version/path/contract/error labels.
-- [ ] 5.2 Document evidence gates, disabled-first lifecycle, runtime readiness, 1% cohort, observation checklist, exact Kill Switch, broad rollback distinction, recovery, and non-causal limits.
-- [ ] 5.3 Run a real local `plan` against Docker PostgreSQL and API metrics, prove activation is blocked while Session Semantic runtime readiness is 0, and record a secret-free operator report.
-- [ ] 5.4 Run focused policy/evidence/readiness/service/repository/command/metrics tests, real PostgreSQL integration tests, `go test ./...`, build API/Worker/rollout entrypoints, rebuild Docker, validate Compose, and run `openspec validate --all --strict`.
+- [x] 5.2 Document evidence gates, disabled-first lifecycle, runtime readiness, 1% cohort, observation checklist, exact Kill Switch, broad rollback distinction, recovery, and non-causal limits.
+- [x] 5.3 Run a real local `plan` against Docker PostgreSQL and API metrics, prove activation is blocked while Session Semantic runtime readiness is 0, and record a secret-free operator report.
+- [x] 5.4 Run focused policy/evidence/readiness/service/repository/command/metrics tests, real PostgreSQL integration tests, `go test ./...`, build API/Worker/rollout entrypoints, rebuild Docker, validate Compose, and run `openspec validate --all --strict`.
