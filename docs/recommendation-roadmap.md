@@ -314,7 +314,7 @@ Shadow
 | `rebuild-semantic-user-interest` | 后置 | 长期画像存在后才有意义 |
 | `persist-recommendation-training-impressions` | 保留但重定位 | 诊断事实，不自动生成训练数据 |
 | `evaluate-recommendation-policies-offline` | 已完成、通过真实 KuaiRec 子集评估并归档 | 独立 Production Replay、盲评 Golden Set、KuaiRec v2 与 MicroLens canonical Adapter、7 类 Baseline、确定性 JSON/Markdown；真实 100 用户 KuaiRec chronological 报告通过字节级复现，零模型调用，不训练、不自动推荐策略 |
-| `add-session-semantic-shadow-evaluation` | 已实现、待归档 | 默认关闭的 SHA-256 PPM 采样、独立 no-queue admission、Exact-only Session Semantic 旁路、Quota/Rank 模拟、固定标签指标、生产结果不变性和低流量确定性报告；未 Rollout |
+| `add-session-semantic-shadow-evaluation` | 已完成并归档 | 默认关闭的 SHA-256 PPM 采样、独立 no-queue admission、Exact-only Session Semantic 旁路、Quota/Rank 模拟、固定标签指标、生产结果不变性和低流量确定性报告；未 Rollout |
 | `shadow-semantic-ann-recall` | 被替代 | 当前 Exact Session Shadow 已由 `add-session-semantic-shadow-evaluation` 实现；旧 Change 绑定 ANN/长期画像，不进入 Active Path |
 | `export-recommendation-training-dataset` | 退出 Active Path | 只有所有训练 Gate 满足后重提 |
 | `learn-recommendation-policy-weights` | 退出 Active Path | 当前不训练、不学习线上权重 |
