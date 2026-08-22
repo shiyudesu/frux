@@ -273,6 +273,13 @@ var (
 		},
 		[]string{"kind"},
 	)
+	RecommendationSessionSemanticRuntimeReady = prometheus.NewGauge(
+		prometheus.GaugeOpts{Namespace: "frux", Name: "recommendation_session_semantic_runtime_ready", Help: "Whether the API composed the complete Session Semantic Builder, Provider, active contract, and Exact runtime."},
+	)
+	RecommendationSessionSemanticRolloutOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: "frux", Name: "recommendation_session_semantic_rollout_operations_total", Help: "Session Semantic rollout operator outcomes by fixed action and result."},
+		[]string{"action", "result"},
+	)
 	ReviewEventsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: "frux", Name: "review_events_total", Help: "Automated review events by bounded stage and result."},
 		[]string{"stage", "result"},
@@ -386,6 +393,8 @@ func init() {
 		RecommendationSessionSemanticShadowInFlight,
 		RecommendationSessionSemanticShadowCounts,
 		RecommendationSessionSemanticShadowRatios,
+		RecommendationSessionSemanticRuntimeReady,
+		RecommendationSessionSemanticRolloutOperationsTotal,
 		ReviewEventsTotal,
 		MediaObjectOperationsTotal,
 		MediaObjectOperationDuration,
@@ -570,6 +579,21 @@ func ObserveRecommendationSessionSemanticShadowTerminal(
 	}
 }
 
+func SetRecommendationSessionSemanticRuntimeReady(ready bool) {
+	if ready {
+		RecommendationSessionSemanticRuntimeReady.Set(1)
+		return
+	}
+	RecommendationSessionSemanticRuntimeReady.Set(0)
+}
+
+func ObserveRecommendationSessionSemanticRollout(action string, result string) {
+	RecommendationSessionSemanticRolloutOperationsTotal.WithLabelValues(
+		recommendationSessionSemanticRolloutAction(action),
+		recommendationSessionSemanticRolloutResult(result),
+	).Inc()
+}
+
 func recommendationProviderLabel(value string) string {
 	switch normalizeLabel(value, "unknown") {
 	case "fresh", "hot", "content_similarity", "followed_author", "session_continuation", "semantic_session":
@@ -658,6 +682,24 @@ func recommendationSessionSemanticShadowRatioKind(value string) string {
 	switch normalizeLabel(value, "unknown") {
 	case "overlap", "unique_contribution", "pool_survival", "rank_survival",
 		"unique_rank_survival", "active_displaced":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticRolloutAction(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "plan", "create", "activate", "status", "disable":
+		return normalizeLabel(value, "unknown")
+	default:
+		return "unknown"
+	}
+}
+
+func recommendationSessionSemanticRolloutResult(value string) string {
+	switch normalizeLabel(value, "unknown") {
+	case "success", "replay", "blocked", "error":
 		return normalizeLabel(value, "unknown")
 	default:
 		return "unknown"

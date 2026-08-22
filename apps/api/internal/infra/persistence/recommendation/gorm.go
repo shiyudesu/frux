@@ -1601,6 +1601,53 @@ func (r *Repository) ActivatePolicy(ctx context.Context, scene string, version i
 	return policyFromModel(activated)
 }
 
+func (r *Repository) DisablePolicy(
+	ctx context.Context,
+	scene string,
+	version int,
+) (*domainrecommendation.Policy, bool, error) {
+	scene = strings.ToLower(strings.TrimSpace(scene))
+	if scene == "" || version <= 0 {
+		return nil, false, domainrecommendation.ErrInvalidPolicyVersion
+	}
+	var target PolicyModel
+	replayed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("scene = ? AND version = ?", scene, version).Take(&target).Error; err != nil {
+			return err
+		}
+		if _, err := policyFromModel(target); err != nil {
+			return err
+		}
+		if !target.Enabled {
+			replayed = true
+			return nil
+		}
+		result := tx.Model(&PolicyModel{}).
+			Where("id = ? AND scene = ? AND version = ? AND enabled = ?", target.ID, scene, version, true).
+			Update("enabled", false)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return domainrecommendation.ErrPolicyNotFound
+		}
+		return tx.Where("id = ?", target.ID).Take(&target).Error
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, domainrecommendation.ErrPolicyNotFound
+		}
+		return nil, false, err
+	}
+	policy, err := policyFromModel(target)
+	if err != nil {
+		return nil, false, err
+	}
+	return policy, replayed, nil
+}
+
 func (r *Repository) RollbackPolicy(ctx context.Context, scene string, version int) (*domainrecommendation.Policy, error) {
 	scene = strings.ToLower(strings.TrimSpace(scene))
 	if scene == "" || version <= 0 {

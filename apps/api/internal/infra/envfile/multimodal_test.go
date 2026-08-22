@@ -116,6 +116,32 @@ FRUX_ACCEPTANCE_USER_ACCOUNT=must-not-load
 	}
 }
 
+func TestLoadSessionSemanticRolloutIsPrefixIsolated(t *testing.T) {
+	root, workingDirectory := multimodalTestRepository(t)
+	writeMultimodalTestEnv(t, filepath.Join(root, "apps", sessionSemanticRolloutEnvFilename), `
+FRUX_SESSION_SEMANTIC_ROLLOUT_TARGET_VERSION=3
+FRUX_SESSION_SEMANTIC_ACCEPTANCE_USER_ACCOUNT=must-not-load
+`)
+	oldWorkingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWorkingDirectory) })
+	_ = os.Unsetenv("FRUX_SESSION_SEMANTIC_ROLLOUT_TARGET_VERSION")
+	t.Cleanup(func() { _ = os.Unsetenv("FRUX_SESSION_SEMANTIC_ROLLOUT_TARGET_VERSION") })
+	t.Setenv("FRUX_SESSION_SEMANTIC_ACCEPTANCE_USER_ACCOUNT", "existing")
+	if err := LoadSessionSemanticRollout(); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("FRUX_SESSION_SEMANTIC_ROLLOUT_TARGET_VERSION") != "3" ||
+		os.Getenv("FRUX_SESSION_SEMANTIC_ACCEPTANCE_USER_ACCOUNT") != "existing" {
+		t.Fatal("session semantic rollout environment was not isolated")
+	}
+}
+
 func multimodalTestRepository(t testing.TB) (string, string) {
 	t.Helper()
 	root := t.TempDir()

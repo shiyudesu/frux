@@ -265,6 +265,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		recallProviders = append(recallProviders, provider)
 		sessionRecommendationReady = true
 	}
+	inframetrics.SetRecommendationSessionSemanticRuntimeReady(sessionRecommendationReady)
 	recommendationOptions := []applicationrecommendation.Option{
 		applicationrecommendation.WithPolicySelector(applicationrecommendation.NewPolicyService(recommendationRepo, nil)),
 		applicationrecommendation.WithRequestLogRepository(recommendationRepo),

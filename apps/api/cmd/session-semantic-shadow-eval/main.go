@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
 	shadowevaluation "github.com/shiyudesu/frux/internal/infra/shadowevaluation"
 )
 
@@ -14,8 +15,11 @@ func main() {
 	jsonOutput := flag.String("json-output", "session-semantic-shadow-report.json", "canonical JSON report path")
 	markdownOutput := flag.String("markdown-output", "session-semantic-shadow-report.md", "canonical Markdown report path")
 	minimumCases := flag.Int("min-cases", 5, "minimum available and labeled cases for a complete report")
+	contractKey := flag.String("contract-key", "", "optional active multimodal contract key for rollout evidence")
+	profile := flag.String("profile", "", "optional registered multimodal profile for rollout evidence")
 	flag.Parse()
-	if flag.NArg() != 0 || strings.TrimSpace(*input) == "" || strings.TrimSpace(*jsonOutput) == "" || strings.TrimSpace(*markdownOutput) == "" {
+	if flag.NArg() != 0 || strings.TrimSpace(*input) == "" || strings.TrimSpace(*jsonOutput) == "" || strings.TrimSpace(*markdownOutput) == "" ||
+		(strings.TrimSpace(*contractKey) != "" && strings.TrimSpace(*profile) != "") {
 		fatal(shadowevaluation.ErrInvalidFixture)
 	}
 	fixture, checksum, err := shadowevaluation.Load(*input)
@@ -25,6 +29,19 @@ func main() {
 	report, err := shadowevaluation.Evaluate(fixture, checksum, *minimumCases)
 	if err != nil {
 		fatal(err)
+	}
+	resolvedContractKey := strings.TrimSpace(*contractKey)
+	if strings.TrimSpace(*profile) != "" {
+		selected, err := multimodalprofile.Resolve(*profile)
+		if err != nil {
+			fatal(err)
+		}
+		resolvedContractKey = selected.Contract.Key()
+	}
+	if resolvedContractKey != "" {
+		if err := shadowevaluation.BindReportContract(report, resolvedContractKey); err != nil {
+			fatal(err)
+		}
 	}
 	if err := shadowevaluation.Write(report, *jsonOutput, *markdownOutput); err != nil {
 		fatal(err)

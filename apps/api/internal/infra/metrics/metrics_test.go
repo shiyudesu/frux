@@ -164,3 +164,22 @@ func TestSessionSemanticShadowMetricsUseOnlyClosedLabels(t *testing.T) {
 		t.Fatal("session semantic Shadow histograms were not registered")
 	}
 }
+
+func TestSessionSemanticRolloutMetricsUseFixedLabels(t *testing.T) {
+	SetRecommendationSessionSemanticRuntimeReady(false)
+	if got := testutil.ToFloat64(RecommendationSessionSemanticRuntimeReady); got != 0 {
+		t.Fatalf("ready=%v", got)
+	}
+	SetRecommendationSessionSemanticRuntimeReady(true)
+	if got := testutil.ToFloat64(RecommendationSessionSemanticRuntimeReady); got != 1 {
+		t.Fatalf("ready=%v", got)
+	}
+	known := RecommendationSessionSemanticRolloutOperationsTotal.WithLabelValues("activate", "success")
+	unknown := RecommendationSessionSemanticRolloutOperationsTotal.WithLabelValues("unknown", "unknown")
+	knownBefore, unknownBefore := testutil.ToFloat64(known), testutil.ToFloat64(unknown)
+	ObserveRecommendationSessionSemanticRollout("activate", "success")
+	ObserveRecommendationSessionSemanticRollout("scene-recommend", "raw error")
+	if testutil.ToFloat64(known)-knownBefore != 1 || testutil.ToFloat64(unknown)-unknownBefore != 1 {
+		t.Fatal("rollout metric labels were not bounded")
+	}
+}

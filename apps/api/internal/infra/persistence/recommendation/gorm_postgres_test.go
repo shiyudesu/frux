@@ -538,6 +538,118 @@ func TestPolicyProfileAndRequestLogRepositoryPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestSessionSemanticRolloutDisablePolicyPostgreSQLIsExactAndIdempotent(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("FRUX_POSTGRES_TEST_DSN is not set; skipping real PostgreSQL integration test")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("frux_semantic_rollout_test_%d", time.Now().UnixNano())
+	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+		_ = admin.Close()
+	})
+	sqlDB, err := sql.Open("pgx", recommendationPostgresDSNWithSchema(dsn, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{TranslateError: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&PolicyModel{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	initial, err := domainrecommendation.InitialRecommendationPolicies(time.Unix(1, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range initial {
+		if _, err := repo.CreatePolicy(context.Background(), policy); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contract, err := domainembedding.NewMultimodalContractIdentity(
+		"provider", "model", "rollout-revision", domainembedding.MinMultimodalDimension,
+		domainembedding.MultimodalTextCanonicalizerV1,
+		domainembedding.MultimodalFrameSamplingPolicyV1,
+		domainembedding.MultimodalImagePreprocessingV1,
+		domainembedding.MultimodalFusionPolicyV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := applicationrecommendation.BuildSessionSemanticRolloutPolicy(initial[1], applicationrecommendation.SessionSemanticRolloutOptions{
+		TargetVersion: 3, RolloutPercentage: 1, Contract: contract, Now: time.Unix(2, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePolicy(context.Background(), plan.Policy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ActivatePolicy(context.Background(), "recommend", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	type disableResult struct {
+		replayed bool
+		err      error
+	}
+	results := make(chan disableResult, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			policy, replayed, disableErr := repo.DisablePolicy(context.Background(), "recommend", 3)
+			if disableErr == nil && (policy == nil || policy.Enabled) {
+				disableErr = errors.New("target remained enabled")
+			}
+			results <- disableResult{replayed: replayed, err: disableErr}
+		}()
+	}
+	wait.Wait()
+	close(results)
+	replays := 0
+	for result := range results {
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.replayed {
+			replays++
+		}
+	}
+	if replays != 1 {
+		t.Fatalf("replays=%d", replays)
+	}
+	policies, err := repo.ListPolicies(context.Background(), "recommend")
+	if err != nil || len(policies) != 3 || !policyByVersionForTest(policies, 1).Enabled ||
+		!policyByVersionForTest(policies, 2).Enabled || policyByVersionForTest(policies, 3).Enabled {
+		t.Fatalf("policies=%#v error=%v", policies, err)
+	}
+	if _, _, err := repo.DisablePolicy(context.Background(), "recommend", 99); !errors.Is(err, domainrecommendation.ErrPolicyNotFound) {
+		t.Fatalf("missing target error=%v", err)
+	}
+}
+
+func policyByVersionForTest(policies []*domainrecommendation.Policy, version int) *domainrecommendation.Policy {
+	for _, policy := range policies {
+		if policy != nil && policy.Version == version {
+			return policy
+		}
+	}
+	return nil
+}
+
 func TestServedCandidateEvidenceReusesExpiredRequestAndSerializesConcurrentWritesPostgreSQL(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("FRUX_POSTGRES_TEST_DSN"))
 	if dsn == "" {

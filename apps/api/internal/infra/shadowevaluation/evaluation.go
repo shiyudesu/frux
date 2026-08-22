@@ -27,6 +27,7 @@ const maxCases = 1000
 const maxCandidateIDLength = 128
 
 var ErrInvalidFixture = errors.New("invalid session semantic shadow fixture")
+var ErrInvalidReport = errors.New("invalid session semantic shadow report")
 var ErrInvalidOutput = errors.New("invalid session semantic shadow output")
 
 type Provenance struct {
@@ -74,6 +75,7 @@ type Report struct {
 	Schema             string           `json:"schema"`
 	ToolVersion        string           `json:"tool_version"`
 	InputSHA256        string           `json:"input_sha256"`
+	ContractKey        string           `json:"contract_key,omitempty"`
 	FixtureSchema      string           `json:"fixture_schema"`
 	Provenance         Provenance       `json:"provenance"`
 	Status             string           `json:"status"`
@@ -139,6 +141,71 @@ func Load(path string) (*Fixture, string, error) {
 	}
 	sum := sha256.Sum256(payload)
 	return &fixture, hex.EncodeToString(sum[:]), nil
+}
+
+func LoadReport(path string) (*Report, string, error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxFixtureBytes {
+		return nil, "", ErrInvalidReport
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", ErrInvalidReport
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var report Report
+	if err := decoder.Decode(&report); err != nil {
+		return nil, "", ErrInvalidReport
+	}
+	if err := ensureJSONEOF(decoder); err != nil || ValidateRolloutReport(&report) != nil {
+		return nil, "", ErrInvalidReport
+	}
+	sum := sha256.Sum256(payload)
+	return &report, hex.EncodeToString(sum[:]), nil
+}
+
+func ValidateRolloutReport(report *Report) error {
+	if report == nil || report.Schema != ReportSchemaV1 || report.ToolVersion != ToolVersionV1 ||
+		report.FixtureSchema != FixtureSchemaV1 || report.Status != "complete" ||
+		report.ExternalModelCalls != 0 || len(report.InputSHA256) != sha256.Size*2 ||
+		len(report.ContractKey) != sha256.Size*2 ||
+		report.Cases.Available < 5 || report.Cases.Labeled < 5 ||
+		report.Cases.Available > report.Cases.Total || report.Cases.Labeled > report.Cases.Available ||
+		report.CandidateMetrics.UniqueSemantic <= 0 || report.CandidateMetrics.RankSurvival <= 0 ||
+		report.CandidateMetrics.UniqueContribution.Samples < 5 ||
+		report.CandidateMetrics.UniqueContribution.Value <= 0 ||
+		report.CandidateMetrics.RankSurvivalRatio.Samples < 5 ||
+		report.CandidateMetrics.RankSurvivalRatio.Value <= 0 ||
+		report.RelevanceMetrics.ActiveNDCG.Samples < 5 ||
+		report.RelevanceMetrics.SimulatedNDCG.Samples < 5 ||
+		!finiteUnit(report.RelevanceMetrics.ActiveNDCG.Value) ||
+		!finiteUnit(report.RelevanceMetrics.SimulatedNDCG.Value) ||
+		report.RelevanceMetrics.SimulatedNDCG.Value < report.RelevanceMetrics.ActiveNDCG.Value {
+		return ErrInvalidReport
+	}
+	if decoded, err := hex.DecodeString(report.InputSHA256); err != nil || len(decoded) != sha256.Size {
+		return ErrInvalidReport
+	}
+	if decoded, err := hex.DecodeString(report.ContractKey); err != nil || len(decoded) != sha256.Size ||
+		report.ContractKey != strings.ToLower(report.ContractKey) {
+		return ErrInvalidReport
+	}
+	return nil
+}
+
+func BindReportContract(report *Report, contractKey string) error {
+	contractKey = strings.ToLower(strings.TrimSpace(contractKey))
+	decoded, err := hex.DecodeString(contractKey)
+	if report == nil || err != nil || len(decoded) != sha256.Size {
+		return ErrInvalidReport
+	}
+	report.ContractKey = contractKey
+	return nil
+}
+
+func finiteUnit(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {
@@ -368,6 +435,9 @@ func renderMarkdown(report *Report) []byte {
 	fmt.Fprintf(&output, "- Status: `%s`\n", report.Status)
 	fmt.Fprintf(&output, "- Tool: `%s`\n", report.ToolVersion)
 	fmt.Fprintf(&output, "- Input SHA-256: `%s`\n", report.InputSHA256)
+	if report.ContractKey != "" {
+		fmt.Fprintf(&output, "- Contract key: `%s`\n", report.ContractKey)
+	}
 	fmt.Fprintf(&output, "- External model calls: `%d`\n", report.ExternalModelCalls)
 	fmt.Fprintf(&output, "- Cases: `%d` total, `%d` available, `%d` labeled, minimum `%d`\n\n",
 		report.Cases.Total, report.Cases.Available, report.Cases.Labeled, report.Cases.Minimum)

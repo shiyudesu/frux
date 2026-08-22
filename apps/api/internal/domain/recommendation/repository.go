@@ -23,6 +23,11 @@ type PolicyRepository interface {
 	ListPolicies(ctx context.Context, scene string) ([]*Policy, error)
 }
 
+type RolloutPolicyRepository interface {
+	PolicyRepository
+	DisablePolicy(ctx context.Context, scene string, version int) (*Policy, bool, error)
+}
+
 type ProfileRepository interface {
 	ApplyProfileEvent(ctx context.Context, event *ProfileEvent) (*UserInterestProfile, bool, error)
 }

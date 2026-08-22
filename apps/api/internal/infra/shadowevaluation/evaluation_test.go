@@ -19,6 +19,9 @@ func TestGoldenFixtureProducesDeterministicReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := BindReportContract(report, checksum); err != nil {
+		t.Fatal(err)
+	}
 	if report.Status != "complete" || report.ExternalModelCalls != 0 ||
 		report.Cases.Total != 6 || report.Cases.Available != 5 || report.Cases.Labeled != 5 ||
 		report.CandidateMetrics.UniqueSemantic != 5 || report.RelevanceMetrics.SimulatedNDCG.Samples != 5 {
@@ -138,6 +141,64 @@ func TestWriteRejectsConflictingOutputs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "same")
 	if err := Write(report, path, path); !errors.Is(err, ErrInvalidOutput) {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestLoadReportAcceptsOnlyCompleteRolloutEvidence(t *testing.T) {
+	fixture, checksum, err := Load(goldenFixturePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := Evaluate(fixture, checksum, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := BindReportContract(report, checksum); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	jsonPath := filepath.Join(directory, "report.json")
+	markdownPath := filepath.Join(directory, "report.md")
+	if err := Write(report, jsonPath, markdownPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded, reportSHA, err := LoadReport(jsonPath)
+	if err != nil || loaded.Status != "complete" || len(reportSHA) != 64 {
+		t.Fatalf("report=%#v sha=%q error=%v", loaded, reportSHA, err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*Report)
+	}{
+		{name: "inconclusive", mutate: func(value *Report) { value.Status = "inconclusive" }},
+		{name: "model calls", mutate: func(value *Report) { value.ExternalModelCalls = 1 }},
+		{name: "missing contract", mutate: func(value *Report) { value.ContractKey = "" }},
+		{name: "few cases", mutate: func(value *Report) { value.Cases.Labeled = 4 }},
+		{name: "no contribution", mutate: func(value *Report) { value.CandidateMetrics.UniqueSemantic = 0 }},
+		{name: "no survival", mutate: func(value *Report) { value.CandidateMetrics.RankSurvival = 0 }},
+		{name: "relevance regression", mutate: func(value *Report) {
+			value.RelevanceMetrics.SimulatedNDCG.Value = value.RelevanceMetrics.ActiveNDCG.Value - 0.01
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clonedPayload, marshalErr := json.Marshal(report)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			var cloned Report
+			if unmarshalErr := json.Unmarshal(clonedPayload, &cloned); unmarshalErr != nil {
+				t.Fatal(unmarshalErr)
+			}
+			test.mutate(&cloned)
+			path := filepath.Join(t.TempDir(), "invalid-report.json")
+			payload, _ := json.Marshal(cloned)
+			if writeErr := os.WriteFile(path, payload, 0o600); writeErr != nil {
+				t.Fatal(writeErr)
+			}
+			if _, _, loadErr := LoadReport(path); !errors.Is(loadErr, ErrInvalidReport) {
+				t.Fatalf("error=%v", loadErr)
+			}
+		})
 	}
 }
 
