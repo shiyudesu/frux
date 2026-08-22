@@ -165,6 +165,23 @@ Session Semantic 额外暴露
 封闭 kind 计数直方图。stage 仅为 builder/provider；result 和 confidence band 使用代码注册集合，
 不得包含 user、request、session、video、contract key、query、vector 或原始错误。
 
+默认关闭的 Session Semantic Shadow 额外暴露：
+
+- `frux_recommendation_session_semantic_shadow_selections_total{result}`：确定性 selected/not_selected；
+- `frux_recommendation_session_semantic_shadow_admissions_total{result}`：admitted/capacity/closed/invalid；
+- `frux_recommendation_session_semantic_shadow_terminals_total{result,baseline,confidence_band}`；
+- `frux_recommendation_session_semantic_shadow_duration_seconds{result}`；
+- `frux_recommendation_session_semantic_shadow_in_flight`；
+- `frux_recommendation_session_semantic_shadow_count{kind}` 与
+  `frux_recommendation_session_semantic_shadow_ratio{kind}`。
+
+terminal result 只允许 success/empty/timeout/error/capacity/panic/closed，baseline 只允许 providers、
+repository_fallback、unknown；count/ratio kind 只允许代码注册的 active、semantic、intersection、
+unique contribution、pool/rank survival、displacement 和 author diversity 集合。Shadow 不持久化逐请求
+候选；指标不得出现 user/request/session/video/candidate、模型或合同字符串、向量、SQL 和 raw error。
+capacity 持续增长表示独立 Shadow permit 已满，不是正式 Recall Provider 容量耗尽；in-flight 在 Deadline
+后仍不下降表示下游忽略取消，此时 permit 会继续被占用以阻止诊断 goroutine 无界增长。
+
 Quota Merge 排障先比较 `returned → local_unique → readable`，再看 reservation/fill/final represented；
 `exhausted=1` 且 `underfill>0` 表示健康 Provider 的可读唯一输出不足，容量应由公共 fill 回收。overlap 高表示
 一个全局视频同时代表多个 Provider，不等同于内容多样性。selected pool 长期低于 policy limit 时，结合

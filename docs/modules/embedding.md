@@ -167,10 +167,16 @@ go run ./cmd/multimodal-provider
 接口，不需要配置业务空间 Endpoint。文件缺失时继续使用普通系统环境变量，
 文件存在但格式错误时启动失败。
 
-`.env.multimodal` 已被 Git 忽略。Docker Compose 不会把宿主机文件挂进容器，使用 Compose 时仍应通过
-`--env-file .env.multimodal` 注入所需变量。`/health` 只表示进程存活；Adapter 必须先用所选模型完成一次
-真实 text embedding probe，之后才会在签名 `/v1/ready` 中报告所选合同 ready。API Key、上游 Endpoint、
-请求内容、向量、source hash 和上游 request ID 不进入正常日志或 Prometheus label。
+`.env.multimodal` 已被 Git 忽略。示例中的 `127.0.0.1:8099` 是**宿主机原生进程边界**：API、Worker 与
+Adapter 都原生运行时可以直接使用。默认 Docker Compose 不启动 Adapter，并且容器内的 `127.0.0.1`
+指向容器自身，因此不得把这份 loopback 文件直接当作可工作的容器 Endpoint 执行
+`docker compose --env-file .env.multimodal up`。默认 Compose 应保持多模态关闭并直接启动；如需让容器内
+API/Worker 连接 Adapter，必须另外提供容器可达且符合 Docker 配置 TLS 边界的 Endpoint。未来若增加
+容器化 Adapter，应使用独立显式 Compose Profile 和内部地址，而不是复用原生 loopback 示例。
+
+`/health` 只表示进程存活；Adapter 必须先用所选模型完成一次真实 text embedding probe，之后才会在
+签名 `/v1/ready` 中报告所选合同 ready。API Key、上游 Endpoint、请求内容、向量、source hash 和上游
+request ID 不进入正常日志或 Prometheus label。
 
 启用顺序：
 

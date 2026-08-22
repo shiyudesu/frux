@@ -283,7 +283,50 @@ Baseline、生产策略 Replay、人工 Golden Set。公共数据使用独立 ma
 Negative Suppression。完整的数据准备、阈值、命令和非因果边界见
 [推荐离线评估](../recommendation-offline-evaluation.md)。
 
-## 12. 扩大策略前门槛
+## 12. Session Semantic Shadow
+
+`multimodal.session_shadow` 提供默认关闭的 Exact-only 旁路评测。它只选择已认证的 Recommendation
+首页请求，使用版本化 SHA-256 PPM 采样，在正式召回、排序、打散和抑制已经产生完整有界顺序后复制
+输入并异步执行；Snapshot retry、后续页和降级 cursor 页不会重复启动 Shadow。
+
+Shadow 复用现有 `session-semantic-v1` Builder、active-contract Fact/Projection 和 PostgreSQL Exact，
+推荐请求期间不调用 Tongyi、query embedding 或其他模型。它使用独立 no-queue `max_in_flight`，在创建
+goroutine 前完成 admission；忽略取消的 Exact 调用会继续持有 permit，不能吞占正式 Recall Provider
+slot。API 关闭时取消生命周期并只等待配置的有界 `shutdown_timeout`。
+
+Shadow 从活动候选保留的 Recall Reason 重建 Provider 序列，在内存中创建不落库的 `shadow-mix-v1`
+策略，加入 Semantic Reservation 与 `semantic_similarity` 后复用 Quota Merge 和现有 Ranker。它只计算
+overlap、unique contribution、pool/rank survival、active displacement 和 author diversity；不会修改或
+写入 active policy、响应候选/分数/degraded、Snapshot、request log、交付证据或 outcome 归因。
+
+所有仓库配置保持：
+
+```yaml
+multimodal:
+  session_shadow:
+    enabled: false
+    sample_ppm: 0
+```
+
+本地启用前必须已经具备完整 Session Semantic + Exact 运行时。停止采样可将 `sample_ppm` 设为0；完整
+回滚设 `enabled=false`，没有数据库迁移或清理动作。`recommend/v1`、`recommend/v2` 不包含 Shadow 或
+Semantic 激活字段。
+
+低流量离线证据使用纯本地命令，不访问 PostgreSQL、Redis、Kafka、HTTP、S3 或模型：
+
+```bash
+cd apps/api
+go run ./cmd/session-semantic-shadow-eval \
+  --input testdata/session-semantic-shadow/golden-v1.json \
+  --json-output /tmp/session-semantic-shadow-report.json \
+  --markdown-output /tmp/session-semantic-shadow-report.md
+```
+
+报告绑定输入 SHA-256、显式 denominator、候选贡献/存活和 Precision/Recall/NDCG，对相同输入保持字节级
+一致，文件权限为 `0600`，并固定声明 `external_model_calls: 0`。可用或带标签案例少于门槛时状态为
+`inconclusive`；报告不会自动推荐或启用策略，也不构成线上因果提升证据。
+
+## 13. 扩大策略前门槛
 
 扩大 v2 前至少观察 24h：请求错误/降级率、snapshot hit、Provider timeout、profile lag、
 曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用

@@ -34,7 +34,7 @@
 
 ## 6. Documentation and Verification
 
-- [ ] 6.1 Document disabled defaults, Exact-only/no-model behavior, sampling, admission, metrics, replay/report workflow, low-traffic limitations, enable/disable order, and rollback in recommendation and monitoring docs.
-- [ ] 6.2 Clarify native `.env.multimodal` loopback versus default Docker Compose boundaries so the host endpoint is not injected into containers as a working Adapter address.
-- [ ] 6.3 Update the recommendation roadmap and module index to mark Session Semantic Shadow implemented but not rolled out, with HNSW, long-term profiles, training, and causal claims still excluded.
-- [ ] 6.4 Run focused configuration/sampler/comparison/evaluator/service/composition/metrics/replay tests, `go test ./...`, build API/Worker/replay entrypoints, validate Compose, and run `openspec validate --all --strict`.
+- [x] 6.1 Document disabled defaults, Exact-only/no-model behavior, sampling, admission, metrics, replay/report workflow, low-traffic limitations, enable/disable order, and rollback in recommendation and monitoring docs.
+- [x] 6.2 Clarify native `.env.multimodal` loopback versus default Docker Compose boundaries so the host endpoint is not injected into containers as a working Adapter address.
+- [x] 6.3 Update the recommendation roadmap and module index to mark Session Semantic Shadow implemented but not rolled out, with HNSW, long-term profiles, training, and causal claims still excluded.
+- [x] 6.4 Run focused configuration/sampler/comparison/evaluator/service/composition/metrics/replay tests, `go test ./...`, build API/Worker/replay entrypoints, validate Compose, and run `openspec validate --all --strict`.
