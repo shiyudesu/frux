@@ -1,14 +1,14 @@
 ## 1. Safe Session Runtime Overrides
 
-- [ ] 1.1 Add strict optional parsing for `FRUX_MULTIMODAL_ENABLED` and `FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED` before multimodal normalization, preserving YAML for absent/blank values.
-- [ ] 1.2 Add unit tests for absent, blank, true/false, invalid, parent/session dependency, profile-only Session runtime, and unchanged checked-in defaults.
-- [ ] 1.3 Add the variables to Frux env-file allowlists and development/production Compose, plus a dedicated `.env.session-semantic-runtime.example` without Adapter secrets/endpoints.
+- [x] 1.1 Add strict optional parsing for `FRUX_MULTIMODAL_ENABLED` and `FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED` before multimodal normalization, preserving YAML for absent/blank values.
+- [x] 1.2 Add unit tests for absent, blank, true/false, invalid, parent/session dependency, profile-only Session runtime, and unchanged checked-in defaults.
+- [x] 1.3 Add the variables to Frux env-file allowlists and development/production Compose, plus a dedicated `.env.session-semantic-runtime.example` without Adapter secrets/endpoints.
 
 ## 2. Existing Rollout Policy Acceptance
 
-- [ ] 2.1 Extend acceptance config/report/state with optional existing policy version, policy mode, target/fallback cohort buckets, fallback version, and managed/created distinctions.
-- [ ] 2.2 Implement store verification for enabled registered rollout target, active contract, enabled 100% baseline, deterministic target request identity, and deterministic non-target fallback selection.
-- [ ] 2.3 Update Runner policy, disable, recovery, and cleanup stages so existing targets are managed/exact-disabled but never deleted, while temporary mode remains backward compatible.
+- [x] 2.1 Extend acceptance config/report/state with optional existing policy version, policy mode, target/fallback cohort buckets, fallback version, and managed/created distinctions.
+- [x] 2.2 Implement store verification for enabled registered rollout target, active contract, enabled 100% baseline, deterministic target request identity, and deterministic non-target fallback selection.
+- [x] 2.3 Update Runner policy, disable, recovery, and cleanup stages so existing targets are managed/exact-disabled but never deleted, while temporary mode remains backward compatible.
 - [ ] 2.4 Add unit and PostgreSQL tests for valid target/fallback, missing/disabled/incompatible target, missing baseline, temporary compatibility, success disable, failure recovery, cleanup non-deletion, and report redaction.
 
 ## 3. Real Active Rollout Verification

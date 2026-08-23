@@ -217,3 +217,12 @@ func int64Env(name string, fallback int64) (int64, error) {
 	}
 	return value, nil
 }
+
+func intEnv(name string, fallback int) (int, error) {
+	value, err := int64Env(name, int64(fallback))
+	converted := int(value)
+	if err != nil || int64(converted) != value {
+		return 0, &ConfigError{Field: name}
+	}
+	return converted, nil
+}

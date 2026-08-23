@@ -76,6 +76,7 @@ type SessionSemanticConfig struct {
 	PositiveSeedVideoID    int64         `json:"-"`
 	NegativeSeedVideoID    int64         `json:"-"`
 	ExpectedTargetVideoID  int64         `json:"-"`
+	ExistingPolicyVersion  int           `json:"-"`
 	PollInterval           time.Duration `json:"-"`
 	StageTimeout           time.Duration `json:"-"`
 	HTTPTimeout            time.Duration `json:"-"`
@@ -90,11 +91,16 @@ type SessionFixtureEvidence struct {
 }
 
 type SessionPolicyEvidence struct {
-	ID             int64 `json:"id,omitempty"`
-	Version        int   `json:"version,omitempty"`
-	RolloutPercent int   `json:"rollout_percent,omitempty"`
-	Disabled       bool  `json:"disabled"`
-	Deleted        bool  `json:"deleted"`
+	ID                    int64  `json:"id,omitempty"`
+	Version               int    `json:"version,omitempty"`
+	RolloutPercent        int    `json:"rollout_percent,omitempty"`
+	Mode                  string `json:"mode,omitempty"`
+	Managed               bool   `json:"managed"`
+	TargetCohortPercent   int    `json:"target_cohort_percent,omitempty"`
+	FallbackCohortPercent int    `json:"fallback_cohort_percent,omitempty"`
+	FallbackPolicyVersion int    `json:"fallback_policy_version,omitempty"`
+	Disabled              bool   `json:"disabled"`
+	Deleted               bool   `json:"deleted"`
 }
 
 type SessionRequestEvidence struct {

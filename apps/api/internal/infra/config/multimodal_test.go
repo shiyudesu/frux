@@ -188,6 +188,60 @@ func TestSessionSemanticShadowConfigRequiresCompleteSessionRuntime(t *testing.T)
 	}
 }
 
+func TestApplyMultimodalEnvironmentOverridesIsStrictAndDefaultPreserving(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		parent      string
+		session     string
+		wantParent  bool
+		wantSession bool
+		wantErr     bool
+	}{
+		{name: "blank preserves yaml", parent: " ", session: "", wantParent: false, wantSession: false},
+		{name: "enable session runtime", parent: "true", session: "TRUE", wantParent: true, wantSession: true},
+		{name: "explicit disable", parent: "false", session: "false", wantParent: false, wantSession: false},
+		{name: "invalid parent", parent: "enabled", session: "true", wantErr: true},
+		{name: "invalid session", parent: "true", session: "yes", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("FRUX_MULTIMODAL_ENABLED", test.parent)
+			t.Setenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", test.session)
+			cfg := MultimodalConfig{}
+			err := applyMultimodalEnvironmentOverrides(&cfg)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error=%v", err)
+			}
+			if err == nil && (cfg.Enabled != test.wantParent || cfg.SessionRecommendationEnabled != test.wantSession) {
+				t.Fatalf("config=%#v", cfg)
+			}
+		})
+	}
+}
+
+func TestSessionOnlyEnvironmentOverrideNeedsNoProvider(t *testing.T) {
+	t.Setenv("FRUX_MULTIMODAL_ENABLED", "true")
+	t.Setenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", "true")
+	cfg := validMultimodalConfig()
+	cfg.Enabled = false
+	cfg.VideoJobsEnabled = false
+	cfg.QueryEmbeddingEnabled = false
+	cfg.HybridSearchEnabled = false
+	cfg.SimilarVideosEnabled = false
+	cfg.SessionRecommendationEnabled = false
+	cfg.Provider = MultimodalProviderConfig{}
+	if err := applyMultimodalEnvironmentOverrides(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateMultimodalAPIRuntime(cfg, MultimodalRuntimeDependencies{
+		ExactRetrieval: true, SessionRecommendation: true,
+	}); err != nil {
+		t.Fatalf("session-only runtime required Provider: %v", err)
+	}
+}
+
 func TestSessionSemanticRuntimeRequiresExactButNotProvider(t *testing.T) {
 	cfg := validMultimodalConfig()
 	cfg.VideoJobsEnabled = false

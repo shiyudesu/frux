@@ -24,6 +24,7 @@ type sessionAcceptanceStore interface {
 	VerifyFixtures(context.Context, applicationacceptance.SessionSemanticConfig) (applicationacceptance.ContractEvidence, applicationacceptance.SessionFixtureEvidence, error)
 	FavoriteActive(context.Context, int64, int64) (bool, error)
 	InstallPolicy(context.Context, string, int64, string) (applicationacceptance.SessionPolicyEvidence, string, error)
+	UsePolicy(context.Context, string, int64, string, int) (applicationacceptance.SessionPolicyEvidence, string, error)
 	DisablePolicy(context.Context, int64, int) error
 	DeleteDisabledPolicy(context.Context, int64, int) error
 	RequestLog(context.Context, int64, string, int64) (SessionRequestLogEvidence, error)
@@ -49,6 +50,7 @@ type sessionRunState struct {
 	sessionID       string
 	policy          applicationacceptance.SessionPolicyEvidence
 	policyCreated   bool
+	policyManaged   bool
 	policyDisabled  bool
 	favoriteCreated bool
 	firstPage       SessionFeedPage
@@ -275,11 +277,19 @@ func (r *SessionRunner) installPolicy(ctx context.Context, state *sessionRunStat
 	if err != nil {
 		return err
 	}
-	state.policy, state.requestID, err = r.store.InstallPolicy(ctx, report.RunID, state.userID, profile.Contract.Key())
+	if r.config.ExistingPolicyVersion > 0 {
+		state.policy, state.requestID, err = r.store.UsePolicy(
+			ctx, report.RunID, state.userID, profile.Contract.Key(), r.config.ExistingPolicyVersion,
+		)
+		state.policyManaged = err == nil
+	} else {
+		state.policy, state.requestID, err = r.store.InstallPolicy(ctx, report.RunID, state.userID, profile.Contract.Key())
+		state.policyCreated = err == nil
+		state.policyManaged = err == nil
+	}
 	if err != nil {
 		return err
 	}
-	state.policyCreated = true
 	report.Policy = &state.policy
 	if report.Request == nil {
 		report.Request = &applicationacceptance.SessionRequestEvidence{}
@@ -457,7 +467,7 @@ func (r *SessionRunner) metrics(ctx context.Context, state *sessionRunState, rep
 }
 
 func (r *SessionRunner) disablePolicy(ctx context.Context, state *sessionRunState, report *applicationacceptance.SessionSemanticReport) error {
-	if !state.policyCreated || state.policyDisabled {
+	if !state.policyManaged || state.policyDisabled {
 		return nil
 	}
 	if err := r.store.DisablePolicy(ctx, state.policy.ID, state.policy.Version); err != nil {
@@ -501,7 +511,7 @@ func (r *SessionRunner) cleanup(ctx context.Context, state *sessionRunState, rep
 }
 
 func (r *SessionRunner) recoverPolicy(state *sessionRunState, report *applicationacceptance.SessionSemanticReport) {
-	if state == nil || !state.policyCreated || state.policyDisabled {
+	if state == nil || !state.policyManaged || state.policyDisabled {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), min(r.config.StageTimeout, 10*time.Second))

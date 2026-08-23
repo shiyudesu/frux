@@ -81,7 +81,13 @@ func (*sessionRunnerStoreStub) FavoriteActive(context.Context, int64, int64) (bo
 	return false, nil
 }
 func (*sessionRunnerStoreStub) InstallPolicy(context.Context, string, int64, string) (applicationacceptance.SessionPolicyEvidence, string, error) {
-	return applicationacceptance.SessionPolicyEvidence{ID: 9, Version: 3, RolloutPercent: 1}, "request", nil
+	return applicationacceptance.SessionPolicyEvidence{ID: 9, Version: 3, RolloutPercent: 1, Mode: "temporary", Managed: true}, "request", nil
+}
+func (*sessionRunnerStoreStub) UsePolicy(context.Context, string, int64, string, int) (applicationacceptance.SessionPolicyEvidence, string, error) {
+	return applicationacceptance.SessionPolicyEvidence{
+		ID: 8, Version: 3, RolloutPercent: 1, Mode: "existing", Managed: true,
+		TargetCohortPercent: 0, FallbackCohortPercent: 37, FallbackPolicyVersion: 1,
+	}, "request", nil
 }
 func (s *sessionRunnerStoreStub) DisablePolicy(context.Context, int64, int) error {
 	s.disableCalls++
@@ -156,6 +162,27 @@ func TestSessionRunnerValidationDoesNotMutate(t *testing.T) {
 		} else if stage.Result != applicationacceptance.ResultSkipped {
 			t.Fatalf("stage=%#v", stage)
 		}
+	}
+}
+
+func TestSessionRunnerUsesAndDisablesExistingPolicyWithoutDeletingIt(t *testing.T) {
+	runtime := sessionRunnerTestRuntime()
+	api := &sessionRunnerAPIStub{}
+	store := &sessionRunnerStoreStub{}
+	config := sessionRunnerTestConfig()
+	config.ExistingPolicyVersion = 3
+	runner, err := NewSessionRunner(config, runtime, api, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := runner.Run(context.Background(), applicationacceptance.NewSessionSemanticReport(
+		"session-run", applicationacceptance.ModeExecution, time.Now(), true,
+	))
+	if err != nil || report.Result != applicationacceptance.ResultSuccess || report.Policy == nil ||
+		report.Policy.Mode != "existing" || !report.Policy.Managed || !report.Policy.Disabled || report.Policy.Deleted ||
+		report.Policy.FallbackPolicyVersion != 1 || report.Policy.FallbackCohortPercent != 37 ||
+		store.disableCalls != 1 || store.deleteCalls != 0 || report.Cleanup == nil || report.Cleanup.PolicyDeleted {
+		t.Fatalf("report=%#v store=%#v error=%v", report, store, err)
 	}
 }
 

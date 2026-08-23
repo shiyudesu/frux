@@ -25,9 +25,11 @@ const (
 var ErrInvalidMultimodalEnv = errors.New("invalid multimodal environment file")
 
 var fruxMultimodalVariables = map[string]struct{}{
-	"FRUX_MULTIMODAL_PROFILE":     {},
-	"FRUX_MULTIMODAL_ENDPOINT":    {},
-	"FRUX_MULTIMODAL_HMAC_SECRET": {},
+	"FRUX_MULTIMODAL_PROFILE":                        {},
+	"FRUX_MULTIMODAL_ENDPOINT":                       {},
+	"FRUX_MULTIMODAL_HMAC_SECRET":                    {},
+	"FRUX_MULTIMODAL_ENABLED":                        {},
+	"FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED": {},
 }
 
 var adapterMultimodalVariables = map[string]struct{}{

@@ -41,6 +41,9 @@ func LoadSessionSemanticConfigFromEnv(
 	if config.ExpectedTargetVideoID, err = int64Env("FRUX_SESSION_SEMANTIC_ACCEPTANCE_TARGET_VIDEO_ID", 0); err != nil {
 		return applicationacceptance.SessionSemanticConfig{}, err
 	}
+	if config.ExistingPolicyVersion, err = intEnv("FRUX_SESSION_SEMANTIC_ACCEPTANCE_POLICY_VERSION", 0); err != nil {
+		return applicationacceptance.SessionSemanticConfig{}, err
+	}
 	if config.PollInterval, err = durationEnv("FRUX_SESSION_SEMANTIC_ACCEPTANCE_POLL_INTERVAL", defaultSessionSemanticPollInterval); err != nil {
 		return applicationacceptance.SessionSemanticConfig{}, err
 	}
@@ -114,6 +117,9 @@ func validateSessionSemanticConfig(config applicationacceptance.SessionSemanticC
 	}
 	if config.MaxResponseBytes < 64<<10 || config.MaxResponseBytes > 8<<20 {
 		return &ConfigError{Field: "FRUX_SESSION_SEMANTIC_ACCEPTANCE_MAX_RESPONSE_BYTES"}
+	}
+	if config.ExistingPolicyVersion < 0 || config.ExistingPolicyVersion > 1_000_000_000 {
+		return &ConfigError{Field: "FRUX_SESSION_SEMANTIC_ACCEPTANCE_POLICY_VERSION"}
 	}
 	return nil
 }

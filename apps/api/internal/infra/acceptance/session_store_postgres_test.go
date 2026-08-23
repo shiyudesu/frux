@@ -13,6 +13,7 @@ import (
 	"time"
 
 	applicationacceptance "github.com/shiyudesu/frux/internal/application/acceptance"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	domainembedding "github.com/shiyudesu/frux/internal/domain/embedding"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	multimodalprofile "github.com/shiyudesu/frux/internal/infra/multimodalprofile"
@@ -136,6 +137,44 @@ func TestSessionStoreAgainstIsolatedPostgres(t *testing.T) {
 	var count int64
 	if err := store.db.Model(&infraskrecommendation.PolicyModel{}).Count(&count).Error; err != nil || count != 2 {
 		t.Fatalf("count=%d err=%v", count, err)
+	}
+	baselinePolicies, err := domainrecommendation.InitialRecommendationPolicies(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rolloutPlan, err := applicationrecommendation.BuildSessionSemanticRolloutPolicy(
+		baselinePolicies[0],
+		applicationrecommendation.SessionSemanticRolloutOptions{
+			TargetVersion: 4, RolloutPercentage: 1, Contract: profile.Contract, Now: now,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRollout, err := domainrecommendation.NewPolicy("recommend", 4, true, rolloutPlan.Policy.Config, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.recommendation.CreatePolicy(context.Background(), activeRollout); err != nil {
+		t.Fatal(err)
+	}
+	existing, existingRequestID, err := store.UsePolicy(
+		context.Background(), "existing-run", 7, profile.Contract.Key(), 4,
+	)
+	if err != nil || existing.Mode != "existing" || !existing.Managed || existing.Version != 4 ||
+		existing.FallbackPolicyVersion != 1 || existing.TargetCohortPercent >= 1 ||
+		existing.FallbackCohortPercent < 1 ||
+		domainrecommendation.SelectPolicy([]*domainrecommendation.Policy{activeRollout, baselinePolicies[0]}, 7, existingRequestID).Version != 4 {
+		t.Fatalf("existing=%#v request=%q error=%v", existing, existingRequestID, err)
+	}
+	if err := store.DisablePolicy(context.Background(), existing.ID, existing.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UsePolicy(context.Background(), "disabled-run", 7, profile.Contract.Key(), 4); err == nil {
+		t.Fatal("disabled rollout policy was accepted")
+	}
+	if err := store.DeleteDisabledPolicy(context.Background(), existing.ID, existing.Version); err != nil {
+		t.Fatal(err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()

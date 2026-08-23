@@ -12,6 +12,7 @@ import (
 	"time"
 
 	applicationacceptance "github.com/shiyudesu/frux/internal/application/acceptance"
+	applicationrecommendation "github.com/shiyudesu/frux/internal/application/recommendation"
 	domainmedia "github.com/shiyudesu/frux/internal/domain/media"
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 	domainvideo "github.com/shiyudesu/frux/internal/domain/video"
@@ -215,7 +216,99 @@ func (s *SessionStore) InstallPolicy(
 	}
 	return applicationacceptance.SessionPolicyEvidence{
 		ID: created.ID, Version: created.Version, RolloutPercent: created.Config.RolloutPercentage,
+		Mode: "temporary", Managed: true,
 	}, requestID, nil
+}
+
+func (s *SessionStore) UsePolicy(
+	ctx context.Context,
+	runID string,
+	userID int64,
+	contractKey string,
+	version int,
+) (applicationacceptance.SessionPolicyEvidence, string, error) {
+	if s == nil || s.recommendation == nil || userID <= 0 || version <= 0 || strings.TrimSpace(contractKey) == "" {
+		return applicationacceptance.SessionPolicyEvidence{}, "", &EvidenceError{Code: EvidenceUnavailable}
+	}
+	policies, err := s.recommendation.ListPolicies(ctx, domainrecommendation.RecommendationRequestLogScene)
+	if err != nil {
+		return applicationacceptance.SessionPolicyEvidence{}, "", err
+	}
+	var target *domainrecommendation.Policy
+	baselineReady := false
+	for _, policy := range policies {
+		if policy == nil {
+			continue
+		}
+		if policy.Version == version {
+			target = policy.Clone()
+		}
+		if policy.Version != version && policy.Enabled && policy.Config.RolloutPercentage == 100 &&
+			!applicationrecommendation.IsSessionSemanticRolloutPolicy(policy) {
+			baselineReady = true
+		}
+	}
+	if target == nil || !target.Enabled || !baselineReady ||
+		!applicationrecommendation.IsSessionSemanticRolloutPolicy(target) ||
+		target.Config.SessionSemantic == nil || target.Config.SessionSemantic.ContractKey != strings.ToLower(strings.TrimSpace(contractKey)) {
+		return applicationacceptance.SessionPolicyEvidence{}, "", &EvidenceError{Code: EvidenceUnavailable}
+	}
+	enabled, err := s.recommendation.ListEnabledPolicies(ctx, domainrecommendation.RecommendationRequestLogScene)
+	if err != nil {
+		return applicationacceptance.SessionPolicyEvidence{}, "", err
+	}
+	targetRequestID, fallbackRequestID, fallbackVersion, err := sessionAcceptanceRolloutRequestIDs(
+		runID, userID, target.Version, enabled,
+	)
+	if err != nil {
+		return applicationacceptance.SessionPolicyEvidence{}, "", err
+	}
+	return applicationacceptance.SessionPolicyEvidence{
+		ID: target.ID, Version: target.Version, RolloutPercent: target.Config.RolloutPercentage,
+		Mode: "existing", Managed: true,
+		TargetCohortPercent: domainrecommendation.PolicyCohortPercent(
+			userID, domainrecommendation.RecommendationRequestLogScene, targetRequestID,
+		),
+		FallbackCohortPercent: domainrecommendation.PolicyCohortPercent(
+			userID, domainrecommendation.RecommendationRequestLogScene, fallbackRequestID,
+		),
+		FallbackPolicyVersion: fallbackVersion,
+	}, targetRequestID, nil
+}
+
+func sessionAcceptanceRolloutRequestIDs(
+	runID string,
+	userID int64,
+	targetVersion int,
+	policies []*domainrecommendation.Policy,
+) (string, string, int, error) {
+	base := strings.TrimSpace(runID)
+	if len(base) > 36 {
+		base = base[:36]
+	}
+	targetRequestID := ""
+	fallbackRequestID := ""
+	fallbackVersion := 0
+	for index := range 100_000 {
+		candidate := fmt.Sprintf("%s-%05d", base, index)
+		if len(candidate) > domainrecommendation.MaxRequestIDLength {
+			continue
+		}
+		selected := domainrecommendation.SelectPolicy(policies, userID, candidate)
+		if selected == nil {
+			continue
+		}
+		if selected.Version == targetVersion && targetRequestID == "" {
+			targetRequestID = candidate
+		} else if selected.Version != targetVersion && fallbackRequestID == "" {
+			fallbackRequestID = candidate
+			fallbackVersion = selected.Version
+		}
+		if targetRequestID != "" && fallbackRequestID != "" {
+			return targetRequestID, fallbackRequestID, fallbackVersion, nil
+		}
+	}
+	return "", "", 0, errors.New("session rollout acceptance cohort unavailable")
 }
 
 func sessionAcceptanceCohortRequestID(runID string, userID int64) (string, error) {

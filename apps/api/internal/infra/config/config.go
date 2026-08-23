@@ -51,6 +51,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(content))), cfg); err != nil {
 		return nil, ErrUnmarshalConfigFailed
 	}
+	if err := applyMultimodalEnvironmentOverrides(&cfg.Multimodal); err != nil {
+		return nil, err
+	}
 	if err := ValidateAPIConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -85,6 +88,30 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func applyMultimodalEnvironmentOverrides(cfg *MultimodalConfig) error {
+	if cfg == nil {
+		return ErrInvalidMultimodalConfig
+	}
+	for _, override := range []struct {
+		name   string
+		target *bool
+	}{
+		{name: "FRUX_MULTIMODAL_ENABLED", target: &cfg.Enabled},
+		{name: "FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", target: &cfg.SessionRecommendationEnabled},
+	} {
+		raw, exists := os.LookupEnv(override.name)
+		if !exists || strings.TrimSpace(raw) == "" {
+			continue
+		}
+		value, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil {
+			return ErrInvalidMultimodalConfig
+		}
+		*override.target = value
+	}
+	return nil
 }
 
 func normalizeAndValidateModerationConfig(cfg *ModerationConfig) error {
