@@ -162,10 +162,24 @@ go run ./cmd/multimodal-provider
 
 从仓库内启动时，API、Worker 和 Adapter 会自动向上查找 `.env.multimodal`，也会识别推荐位置
 `apps/.env.multimodal`，不需要执行 `source`。进程中已存在的环境变量优先于文件。API/Worker 只从文件加载
-`FRUX_MULTIMODAL_PROFILE`、`FRUX_MULTIMODAL_ENDPOINT` 和 `FRUX_MULTIMODAL_HMAC_SECRET`；只有 Adapter
-会加载 `DASHSCOPE_API_KEY` 与 Tongyi 边界参数。Adapter 固定调用阿里云共享的 Multimodal-Embedding
+已注册的 Frux 变量，包括 Profile、Endpoint、HMAC 和两个显式运行时布尔开关；只有 Adapter 会加载
+`DASHSCOPE_API_KEY` 与 Tongyi 边界参数。Adapter 固定调用阿里云共享的 Multimodal-Embedding
 接口，不需要配置业务空间 Endpoint。文件缺失时继续使用普通系统环境变量，
 文件存在但格式错误时启动失败。
+
+仅使用数据库中已有 active-contract 向量执行 Session Semantic 推荐时，不需要启动 Adapter，也不需要
+Endpoint、HMAC 或 API Key。Docker Compose 可使用专用的 Session-only 配置：
+
+```bash
+cd apps
+docker compose --env-file .env.session-semantic-runtime.example up -d api worker
+```
+
+该文件只设置 Profile、`FRUX_MULTIMODAL_ENABLED=true` 和
+`FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true`。两个布尔变量缺失或为空时保留 YAML 值，非法非空值
+会使配置加载失败；仓库 YAML 与普通 Compose 默认仍为关闭。启动后必须确认
+`frux_recommendation_session_semantic_runtime_ready 1`。完成验收后不带该 env 文件重新启动 API/Worker，
+并确认 readiness 回到0。
 
 `.env.multimodal` 已被 Git 忽略。示例中的 `127.0.0.1:8099` 是**宿主机原生进程边界**：API、Worker 与
 Adapter 都原生运行时可以直接使用。默认 Docker Compose 不启动 Adapter，并且容器内的 `127.0.0.1`

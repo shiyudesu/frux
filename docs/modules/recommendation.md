@@ -236,7 +236,8 @@ PostgreSQL Exact 和 Redis Snapshot；`video_jobs/query_embedding/hybrid/similar
 不需要在线。仓库配置仍默认全部关闭。
 
 复制 `apps/.env.session-semantic-acceptance.example` 为忽略的本地文件并填写专用账号、DSN 和三个
-video ID。默认命令只做健康、合同、Fact/Projection、Exact 和指标前置检查：
+video ID。账号应通过正常注册接口创建，并只用于本地验收，因为完播/早退事实按正常保留规则留在该账号下。
+默认命令只做健康、合同、Fact/Projection、Exact 和指标前置检查：
 
 ```bash
 cd apps/api
@@ -257,6 +258,25 @@ Runner 创建一条最高版本、1% Cohort、100% 采样的临时策略，并�
 策略。完播/早退、Request Log、交付证据和 Snapshot 属于正常不可变/短期事实，按现有保留策略清理，
 Runner 不直接删除。
 
+要验收已经显式激活的 rollout target，在本地配置中指定其精确版本，例如：
+
+```dotenv
+FRUX_SESSION_SEMANTIC_ACCEPTANCE_POLICY_VERSION=3
+FRUX_SESSION_SEMANTIC_ACCEPTANCE_ALLOW_MUTATION=true
+```
+
+```bash
+cd apps/api
+go run ./cmd/session-semantic-acceptance \
+  --execute --cleanup \
+  --report /tmp/session-semantic-active-rollout-acceptance.json
+```
+
+existing-policy 模式不创建替代策略。Runner 会先验证目标已启用、属于注册的
+`session-semantic-rollout-v1`、合同兼容，并存在另一个 enabled 100% baseline；随后用正常策略选择器生成稳定的
+目标 Cohort 与 fallback Cohort 证据。无论成功还是管理开始后的失败，Runner 都只精确禁用目标版本；
+`--cleanup` 撤销收藏但不会删除既有策略行，v1/v2 保持不变。
+
 如果进程在 deferred disable 前被强制终止，报告或终端中的 policy ID/version 可用于精确恢复：
 
 ```sql
@@ -274,6 +294,13 @@ Exact 相似度为 0.9693，首屏实际 `semantic_similarity` 为 0.7074，Conf
 （medium）。Builder/Provider 首屏各执行一次，Snapshot 页增量均为零，Snapshot write/hit
 各一次；临时策略已禁用并删除，收藏已撤销，Runner 报告 `external_model_calls: 0`。为补足第三个
 真实 Fixture，验收前单独执行过一次视频向量生成；该调用不属于推荐 Runner。
+
+2026-08-23 又完成了精确 v3 active 1% Cohort 验收：Session-only Docker runtime readiness 为1，容器中
+Adapter Endpoint/HMAC 均为空；正常 Feed 命中 `policy_version=3` 和预期视频13，
+`semantic_similarity=0.9594`，Confidence 为0.99999（high）。Builder/Provider 首屏各执行一次，Snapshot
+后续页增量均为零，write/hit 各一次，`external_model_calls=0`；报告同时证明 fallback Cohort 选择 v1。
+收藏已撤销，v3 被精确禁用但未删除，v1/v2 仍启用。随后不带 Session runtime env 文件重启默认 Compose，
+readiness 回到0。
 
 ## 11. 离线评估
 

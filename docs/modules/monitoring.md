@@ -193,6 +193,12 @@ plan/create/activate/status/disable，result 只允许 success/replay/blocked/er
 version、contract key、证据路径、DSN 或 raw error 放入标签。日常回滚应使用 exact disable；只有需要关闭
 同 scene 全部 staged policy 时才使用原有 broad rollback。
 
+Active rollout 技术验收结束后还要检查持久状态，而不能只看 Runner 成功：目标版本必须
+`enabled=false` 且仍存在，100% baseline 与原有 staged baseline 必须保持原状态；验收收藏必须撤销。
+随后不带 Session-only env 文件重启默认 API/Worker，并确认
+`frux_recommendation_session_semantic_runtime_ready 0`。若 Runner 在管理目标后异常退出，使用报告中的精确
+policy ID/version 禁用该行；不得用 scene 级 broad rollback 代替窄恢复。
+
 Quota Merge 排障先比较 `returned → local_unique → readable`，再看 reservation/fill/final represented；
 `exhausted=1` 且 `underfill>0` 表示健康 Provider 的可读唯一输出不足，容量应由公共 fill 回收。overlap 高表示
 一个全局视频同时代表多个 Provider，不等同于内容多样性。selected pool 长期低于 policy limit 时，结合

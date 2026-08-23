@@ -16,13 +16,14 @@
 - 默认休眠的 Session Semantic Recall、`semantic_similarity`、真实 Runner 验收和零模型调用证据；
 - 默认关闭的 Session Semantic Shadow、独立 no-queue 容量、生产结果隔离、低流量回放与确定性报告；
 - disabled-first Session Semantic Rollout、Shadow/运行时门禁、1%稳定 Cohort 与 exact Kill Switch；
+- Session-only 环境启用、精确 v3 active Cohort 验收、fallback 证据与验收后安全禁用；
 - KuaiRec/MicroLens Adapter、生产策略 Replay 和人工 Golden Set 离线评测框架。
 
 当前尚未正式启用或完成后置 Gate：
 
 - 默认配置下的多模态视频 Job、自然语言 Hybrid Search、Similar 与 Session Semantic；
 - 更大规模真实人工多模态 Golden Set 和长期 Shadow 样本；
-- Session Semantic runtime 的显式环境启用，以及通过门禁后的真实 active 1% Cohort 观察；
+- 面向演示的 Session Semantic 可解释证据呈现，以及任何再次启用后的持续观察；
 - HNSW 或其他 ANN；
 - 历史 Backfill、长期语义画像、训练数据导出和权重学习。
 
@@ -317,6 +318,7 @@ Shadow
 | `evaluate-recommendation-policies-offline` | 已完成、通过真实 KuaiRec 子集评估并归档 | 独立 Production Replay、盲评 Golden Set、KuaiRec v2 与 MicroLens canonical Adapter、7 类 Baseline、确定性 JSON/Markdown；真实 100 用户 KuaiRec chronological 报告通过字节级复现，零模型调用，不训练、不自动推荐策略 |
 | `add-session-semantic-shadow-evaluation` | 已完成并归档 | 默认关闭的 SHA-256 PPM 采样、独立 no-queue admission、Exact-only Session Semantic 旁路、Quota/Rank 模拟、固定标签指标、生产结果不变性和低流量确定性报告；未 Rollout |
 | `rollout-session-semantic-recommendation` | 已完成并归档 | 注册语义策略、合同化 Shadow 证据、runtime-ready 门禁、disabled-first create、1%稳定 Cohort、100% baseline fallback、exact disable 和脱敏运营报告；默认 runtime 下 target 保持 disabled |
+| `accept-session-semantic-active-rollout` | 已完成、待归档 | 通过显式 Session-only runtime 和正常 API 精确验收 active v3 Cohort，证明语义结果、Snapshot 复用、fallback、零模型调用与窄清理；最终 v3 disabled/not deleted，默认 runtime 恢复关闭 |
 | `shadow-semantic-ann-recall` | 被替代 | 当前 Exact Session Shadow 已由 `add-session-semantic-shadow-evaluation` 实现；旧 Change 绑定 ANN/长期画像，不进入 Active Path |
 | `export-recommendation-training-dataset` | 退出 Active Path | 只有所有训练 Gate 满足后重提 |
 | `learn-recommendation-policy-weights` | 退出 Active Path | 当前不训练、不学习线上权重 |
@@ -350,7 +352,7 @@ Track A + Track B
       ↓
   independent rollout controls（已实现，target 默认 disabled）
       ↓
-  explicit runtime enablement + active 1% observation（下一阶段运行操作）
+  explicit runtime enablement + active 1% acceptance（已完成，target 已恢复 disabled）
 
 Later Gates
   ├── Exact capacity exceeded → HNSW proposal
@@ -373,5 +375,5 @@ Later Gates
 - MicroLens/KuaiRec Adapter、Golden Set 和自动报告可复现；
 - Semantic Shadow 与 Active 结果隔离。
 
-下一阶段只处理显式 runtime 启用后的 active 1% 观察和演示证据收口。第一版不要求 HNSW、长期画像、训练、全量历史覆盖
-或统计显著的线上提升。
+下一阶段只处理面向演示的可解释证据收口；任何再次启用或扩大 Cohort 都是新的显式运营决策。第一版不要求
+HNSW、长期画像、训练、全量历史覆盖或统计显著的线上提升。
