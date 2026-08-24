@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Session-only runtime overrides are explicit and environment-scoped
+### Requirement: Session-only runtime overrides are explicit and default-preserving
 Frux SHALL allow the parent multimodal runtime, Session Semantic recommendation, and development full
 rollout flags to be overridden by registered environment variables. Development Compose SHALL select
 a registered profile and enable the Session-only runtime by default. Production SHALL remain off
