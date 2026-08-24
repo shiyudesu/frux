@@ -206,7 +206,7 @@ feed:hot:window:v1:{windowEndUnix}
 
 ## 12. 生产媒体交付
 
-- Web 经 `https://FRUX_S3_DOMAIN:<public-port>` 直接上传私有 MinIO，避免大文件经过 API 进程；
+- Web 经配置的公开 S3 Origin 直接上传私有 MinIO，避免大文件经过 API 进程；
   完成接口只执行有界元数据校验和任务持久化。API/Worker 运行时使用 `http://minio:9000`，不绕行
   NAT 和 Caddy。
 - Worker 只生成一个源分辨率 H.264/AAC faststart MP4；兼容 H.264/AAC 源使用 stream copy，
@@ -219,8 +219,8 @@ feed:hot:window:v1:{windowEndUnix}
 - 公开发布使用数据库 exposure generation 和 v3 虚拟 URL，发布、下架、恢复不复制对象正文。307
   缓存 25 分钟，签名媒体响应缓存 30 分钟；历史 v2 对象验证/修复 protected counterpart 后延迟清理。
 - `media_url` 保留基线兼容，`playback_sources` 增量返回多源，避免旧客户端同步升级。
-- Caddy 只做 S3 反向代理且不改写 Host、path、query、method 或 Range；MinIO 保持私有、path-style
-  和精确高端口 Origin CORS，Console 不公开。
+- 默认 Caddy 模式只做 S3 反向代理且不改写 Host、path、query、method 或 Range；显式直接 IPv4
+  模式使用独立 HTTP S3 端口。MinIO 保持私有、path-style 和精确 Origin CORS，Console 不公开。
 - 重点指标为对象操作耗时、`frux_media_object_outbound_bytes_total{source}`、处理成功/失败、输出
   数量、过期租约、孤儿对象和清理积压；标签不得包含用户、视频、资产、URL 或对象键。
 

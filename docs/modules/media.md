@@ -58,9 +58,9 @@ stream copy 只是 FFmpeg 的一种执行路径。Worker 仍必须运行 ffprobe
 ## 5. 对象存储流量与公开交付
 
 NAT 主机 Prod 的 API/Worker 通过 Compose 网络 `http://minio:9000` 访问私有 Bucket；浏览器上传与
-签名播放使用 `https://FRUX_S3_DOMAIN:<public-port>`。两者都保持 path-style。MinIO CORS 只允许
-完整应用 Origin `https://FRUX_DOMAIN:<public-port>`；Caddy 保持 Host、path、query、method 和
-Range，不提供公开 Console 路由。
+签名播放使用配置的完整公开 S3 Origin。两者都保持 path-style。MinIO CORS 只允许配置的完整应用
+Origin；默认 Caddy 模式强制 HTTPS 并保持 Host、path、query、method 和 Range，显式直接 IPv4
+模式使用同一 IP 的独立 HTTP 应用/S3 端口。两种模式都不提供公开 Console。
 
 新处理结果计算校验和后直接写入确定性的 `processed/{asset}/{profile}/{checksum}/...` 最终键：
 已存在且大小、校验和一致时直接复用；冲突时明确失败，不覆盖已有对象。封面完成后直接把已校验的

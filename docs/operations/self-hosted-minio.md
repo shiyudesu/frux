@@ -8,12 +8,13 @@
 | 用途 | 地址 | 调用方 |
 | --- | --- | --- |
 | 运行时 S3 | `http://minio:9000` | Compose 内的 API、Worker、初始化器 |
-| 浏览器预签名 S3 | `https://FRUX_S3_DOMAIN:<public-port>` | 上传、签名下载和媒体 Range 请求 |
-| 主机 MinIO API | `127.0.0.1:19000` | Caddy 的 S3 主机名反向代理 |
+| 浏览器预签名 S3 | 配置的完整 S3 Origin | 上传、签名下载和媒体 Range 请求 |
+| 主机 MinIO API | 默认 `127.0.0.1:19000`；直接模式 `0.0.0.0:19000` | Caddy 反向代理或直接 S3 端口 |
 | 主机 MinIO Console | `127.0.0.1:19001` | 仅 SSH 隧道 |
 
-`FRUX_DOMAIN` 与 `FRUX_S3_DOMAIN` 必须是不同的裸主机名。浏览器 Origin 和预签名 URL 都包含
-`FRUX_PUBLIC_HTTPS_PORT`；API/Worker 运行时请求不经过 NAT 或 Caddy。S3 保持 path-style、非空
+默认 Caddy 模式要求 `FRUX_DOMAIN` 与 `FRUX_S3_DOMAIN` 是不同裸主机名，并让两个 Origin 使用
+`FRUX_PUBLIC_HTTPS_PORT`。显式直接模式要求两个 Host 是同一 IPv4，但应用和 S3 使用不同 HTTP
+端口。API/Worker 运行时请求始终不经过 NAT、Caddy 或公开宿主机端口。S3 保持 path-style、非空
 Region 和私有 Bucket，应用不自动创建 Bucket。
 
 ## 凭据与 Bucket 权限
@@ -41,11 +42,13 @@ FRUX_S3_BUCKET=<private-bucket-name>
 
 ## CORS
 
-MinIO 只允许一个精确 Origin：
+MinIO 只允许一个配置的精确应用 Origin。默认是：
 
 ```text
 https://FRUX_DOMAIN:<public-port>
 ```
+
+直接模式则是 `http://PUBLIC_IPV4:<app-port>`，不得把两种 Origin 同时改成 `*`。
 
 策略只开放浏览器上传和播放所需的方法与头部，包括 `PUT`、`GET`、`HEAD`、`Content-Type`、
 `Cache-Control`、`Range`、`x-amz-checksum-sha256` 和 `x-amz-meta-sha256`；诊断和播放所需响应头
@@ -55,8 +58,8 @@ https://FRUX_DOMAIN:<public-port>
 可从应用 Origin 验证预检：
 
 ```bash
-export FRUX_APP_ORIGIN="https://FRUX_DOMAIN:<public-port>"
-export FRUX_S3_ORIGIN="https://FRUX_S3_DOMAIN:<public-port>"
+export FRUX_APP_ORIGIN="<完整应用Origin>"
+export FRUX_S3_ORIGIN="<完整S3 Origin>"
 
 curl -i -X OPTIONS \
   "$FRUX_S3_ORIGIN/$FRUX_S3_BUCKET/uploads/cors-test" \
@@ -67,11 +70,12 @@ curl -i -X OPTIONS \
 
 响应只能回显配置的应用 Origin。再用另一个 Origin 重试，响应不得授予 CORS 权限。
 
-## Caddy 与签名请求
+## 公开入口与签名请求
 
 使用仓库模板 `deploy/caddy/frux-nat-minio.Caddyfile`。S3 站点直接代理到
 `127.0.0.1:19000`，不重写 Host、path、query、method 或 Range；这些值可能参与 AWS Signature V4。
-MinIO Console 不得添加 Caddy 路由。
+直接模式不经过 Caddy，浏览器使用独立的公开 S3 端口直接访问 MinIO，也必须保留原 Host、path、
+query、method 和 Range。MinIO Console 在两种模式下都不得添加公开路由或端口映射。
 
 通过 SSH 高端口临时访问 Console：
 
@@ -101,7 +105,7 @@ PostgreSQL 定时备份只覆盖业务数据和媒体元数据，不包含 MinIO
 
 - 重复运行初始化器后，Bucket、应用身份、policy、CORS 和私有状态保持正确。
 - 未签名对象请求返回拒绝。
-- 浏览器能经 `https://FRUX_S3_DOMAIN:<public-port>` 完成视频与封面 PUT。
+- 浏览器能经配置的完整 S3 Origin 完成视频与封面 PUT。
 - API `HeadObject` 校验大小、类型、SHA-256 和 metadata 成功。
 - Worker 能通过 `http://minio:9000` 下载源文件、写入并校验确定性输出。
 - v3 播放保留 25 分钟 307、最长 30 分钟签名媒体缓存、Range、HEAD 和 ETag。

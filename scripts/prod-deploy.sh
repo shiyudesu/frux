@@ -61,14 +61,115 @@ wait_healthy() {
   return 1
 }
 
-prod_domain() {
+prod_env_value() {
+  local name=$1
+  sed -n "s/^${name}=//p" "$FRUX_ROOT/.env.prod" | tail -n 1
+}
+
+prod_env_value_or() {
+  local name=$1
+  local fallback=$2
   local value
-  value=$(sed -n 's/^FRUX_DOMAIN=//p' "$FRUX_ROOT/.env.prod" | tail -n 1)
+
+  value=$(prod_env_value "$name")
+  printf '%s' "${value:-$fallback}"
+}
+
+valid_port() {
+  local value=$1
+  [[ $value =~ ^[1-9][0-9]{0,4}$ ]] && ((value <= 65535))
+}
+
+valid_ipv4() {
+  local value=$1
+  local octets octet
+
+  IFS=. read -r -a octets <<<"$value"
+  [[ ${#octets[@]} -eq 4 ]] || return 1
+  for octet in "${octets[@]}"; do
+    [[ $octet =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+    ((10#$octet <= 255)) || return 1
+  done
+}
+
+prod_hostname() {
+  local name=$1
+  local value
+
+  value=$(prod_env_value "$name")
   [[ $value =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] &&
     [[ $value == *.* ]] &&
     [[ $value != *..* ]] ||
-    die "FRUX_DOMAIN in .env.prod must be an unquoted hostname"
+    die "$name in .env.prod must be an unquoted hostname"
   printf '%s' "$value"
+}
+
+public_app_port() {
+  local legacy
+
+  legacy=$(prod_env_value FRUX_PUBLIC_HTTPS_PORT)
+  prod_env_value_or FRUX_PUBLIC_APP_PORT "$legacy"
+}
+
+public_s3_port() {
+  local legacy
+
+  legacy=$(prod_env_value FRUX_PUBLIC_HTTPS_PORT)
+  prod_env_value_or FRUX_PUBLIC_S3_PORT "$legacy"
+}
+
+validate_public_access_config() {
+  local mode scheme app_host s3_host app_port s3_port bind_address require_https
+  local web_port minio_port
+
+  mode=$(prod_env_value_or FRUX_PUBLIC_ACCESS_MODE caddy-https)
+  scheme=$(prod_env_value_or FRUX_PUBLIC_SCHEME https)
+  app_host=$(prod_env_value FRUX_DOMAIN)
+  s3_host=$(prod_env_value FRUX_S3_DOMAIN)
+  app_port=$(public_app_port)
+  s3_port=$(public_s3_port)
+  bind_address=$(prod_env_value_or FRUX_PUBLIC_BIND_ADDRESS 127.0.0.1)
+  require_https=$(prod_env_value_or FRUX_S3_REQUIRE_PUBLIC_HTTPS true)
+
+  valid_port "$app_port" || die "public application port in .env.prod is invalid"
+  valid_port "$s3_port" || die "public S3 port in .env.prod is invalid"
+
+  case "$mode" in
+    caddy-https)
+      prod_hostname FRUX_DOMAIN >/dev/null
+      prod_hostname FRUX_S3_DOMAIN >/dev/null
+      [[ $app_host != "$s3_host" ]] ||
+        die "caddy-https requires distinct FRUX_DOMAIN and FRUX_S3_DOMAIN values"
+      [[ $scheme == https ]] || die "caddy-https requires FRUX_PUBLIC_SCHEME=https"
+      [[ $app_port == "$s3_port" ]] ||
+        die "caddy-https requires the application and S3 public ports to match"
+      [[ $bind_address == 127.0.0.1 ]] ||
+        die "caddy-https requires FRUX_PUBLIC_BIND_ADDRESS=127.0.0.1"
+      [[ $require_https == true ]] ||
+        die "caddy-https requires FRUX_S3_REQUIRE_PUBLIC_HTTPS=true"
+      ;;
+    direct-http)
+      valid_ipv4 "$app_host" || die "direct-http requires FRUX_DOMAIN to be an IPv4 literal"
+      [[ $app_host == "$s3_host" ]] ||
+        die "direct-http requires FRUX_DOMAIN and FRUX_S3_DOMAIN to use the same IPv4 literal"
+      [[ $scheme == http ]] || die "direct-http requires FRUX_PUBLIC_SCHEME=http"
+      [[ $app_port != "$s3_port" ]] ||
+        die "direct-http requires distinct application and S3 public ports"
+      [[ $bind_address == 0.0.0.0 ]] ||
+        die "direct-http requires FRUX_PUBLIC_BIND_ADDRESS=0.0.0.0"
+      [[ $require_https == false ]] ||
+        die "direct-http requires FRUX_S3_REQUIRE_PUBLIC_HTTPS=false"
+      web_port=$(prod_env_value_or FRUX_WEB_PORT 18080)
+      minio_port=$(prod_env_value_or FRUX_MINIO_API_PORT 19000)
+      [[ $app_port == "$web_port" ]] ||
+        die "direct-http requires FRUX_PUBLIC_APP_PORT to match FRUX_WEB_PORT"
+      [[ $s3_port == "$minio_port" ]] ||
+        die "direct-http requires FRUX_PUBLIC_S3_PORT to match FRUX_MINIO_API_PORT"
+      ;;
+    *)
+      die "FRUX_PUBLIC_ACCESS_MODE must be caddy-https or direct-http"
+      ;;
+  esac
 }
 
 wait_caddy_routes() {
@@ -77,7 +178,7 @@ wait_caddy_routes() {
   local media_probe media_status
   local attempt
 
-  domain=$(prod_domain)
+  domain=$(prod_hostname FRUX_DOMAIN)
   for ((attempt = 1; attempt <= FRUX_HEALTH_ATTEMPTS; attempt++)); do
     health=$(
       "$CURL_BIN" \
@@ -114,6 +215,61 @@ wait_caddy_routes() {
     "$SLEEP_BIN" "$FRUX_HEALTH_SLEEP"
   done
   return 1
+}
+
+wait_direct_routes() {
+  local host app_port web_port
+  local health
+  local media_probe media_status
+  local attempt
+
+  host=$(prod_env_value FRUX_DOMAIN)
+  app_port=$(public_app_port)
+  web_port=$(prod_env_value_or FRUX_WEB_PORT 18080)
+  for ((attempt = 1; attempt <= FRUX_HEALTH_ATTEMPTS; attempt++)); do
+    health=$(
+      "$CURL_BIN" \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        --header "Host: $host:$app_port" \
+        "http://127.0.0.1:$web_port/health" 2>/dev/null || true
+    )
+    media_probe=$(
+      "$CURL_BIN" \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        --include \
+        --write-out $'\n%{http_code}' \
+        --header "Host: $host:$app_port" \
+        "http://127.0.0.1:$web_port/media/processed/not-public.mp4" 2>/dev/null || true
+    )
+    media_status=${media_probe##*$'\n'}
+    if grep -q '"ready":true' <<<"$health" &&
+      [[ $media_status == 404 ]] &&
+      grep -Eiq '^cache-control:[[:space:]]*private,[[:space:]]*no-store[[:space:]]*$' <<<"$media_probe" &&
+      "$CURL_BIN" \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        --header "Host: $host:$app_port" \
+        "http://127.0.0.1:$web_port/" >/dev/null 2>&1; then
+      return 0
+    fi
+    "$SLEEP_BIN" "$FRUX_HEALTH_SLEEP"
+  done
+  return 1
+}
+
+wait_public_routes() {
+  case "$(prod_env_value_or FRUX_PUBLIC_ACCESS_MODE caddy-https)" in
+    caddy-https) wait_caddy_routes ;;
+    direct-http) wait_direct_routes ;;
+    *) return 1 ;;
+  esac
 }
 
 wait_worker_ready() {
@@ -208,7 +364,7 @@ restore_release() {
 
   compose_release "$previous" --profile worker pull api web worker || true
   compose_release "$previous" --profile worker up -d || return 1
-  wait_compose_ready "$previous"
+  wait_compose_ready "$previous" && wait_public_routes
 }
 
 prune_releases() {
@@ -290,6 +446,8 @@ main() {
     exit 0
   }
 
+  validate_public_access_config
+
   if [[ ! -L $current_link ]]; then
     if [[ -n $(
       "$DOCKER_BIN" ps -aq \
@@ -361,7 +519,7 @@ main() {
     wait_compose_ready "$release_dir" || deploy_ok=false
   fi
   if [[ $deploy_ok == true ]]; then
-    wait_caddy_routes || deploy_ok=false
+    wait_public_routes || deploy_ok=false
   fi
 
   if [[ $deploy_ok != true ]]; then
@@ -389,4 +547,6 @@ main() {
   echo "Prod deployment updated to $digest_ref."
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

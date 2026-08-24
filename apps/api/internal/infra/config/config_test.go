@@ -439,20 +439,23 @@ func TestLoadConfigResolvesMultimodalProfileFromEnvironment(t *testing.T) {
 
 func TestLoadProdConfigUsesMinIOAndSingleKafka(t *testing.T) {
 	environment := map[string]string{
-		"FRUX_DOMAIN":              "frux.example.com",
-		"FRUX_PUBLIC_HTTPS_PORT":   "18443",
-		"FRUX_S3_DOMAIN":           "s3.frux.example.com",
-		"FRUX_JWT_CONSUMER_SECRET": "prod-consumer-jwt-secret-123456",
-		"FRUX_JWT_ADMIN_SECRET":    "prod-admin-jwt-secret-123456789",
-		"FRUX_HMAC_SECRET":         "prod-application-hmac-secret-123456",
-		"FRUX_INTERNAL_TOKEN":      "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y",
-		"FRUX_POSTGRES_USER":       "frux",
-		"FRUX_POSTGRES_PASSWORD":   "database-secret",
-		"FRUX_POSTGRES_DATABASE":   "frux",
-		"FRUX_REDIS_PASSWORD":      "redis-secret",
-		"FRUX_S3_ACCESS_KEY":       "frux-app",
-		"FRUX_S3_SECRET_KEY":       "minio-application-secret",
-		"FRUX_S3_BUCKET":           "frux-media",
+		"FRUX_DOMAIN":                  "frux.example.com",
+		"FRUX_S3_DOMAIN":               "s3.frux.example.com",
+		"FRUX_PUBLIC_SCHEME":           "https",
+		"FRUX_PUBLIC_APP_PORT":         "18443",
+		"FRUX_PUBLIC_S3_PORT":          "18443",
+		"FRUX_S3_REQUIRE_PUBLIC_HTTPS": "true",
+		"FRUX_JWT_CONSUMER_SECRET":     "prod-consumer-jwt-secret-123456",
+		"FRUX_JWT_ADMIN_SECRET":        "prod-admin-jwt-secret-123456789",
+		"FRUX_HMAC_SECRET":             "prod-application-hmac-secret-123456",
+		"FRUX_INTERNAL_TOKEN":          "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y",
+		"FRUX_POSTGRES_USER":           "frux",
+		"FRUX_POSTGRES_PASSWORD":       "database-secret",
+		"FRUX_POSTGRES_DATABASE":       "frux",
+		"FRUX_REDIS_PASSWORD":          "redis-secret",
+		"FRUX_S3_ACCESS_KEY":           "frux-app",
+		"FRUX_S3_SECRET_KEY":           "minio-application-secret",
+		"FRUX_S3_BUCKET":               "frux-media",
 	}
 	for name, value := range environment {
 		t.Setenv(name, value)
@@ -485,6 +488,41 @@ func TestLoadProdConfigUsesMinIOAndSingleKafka(t *testing.T) {
 		len(cfg.Kafka.Brokers) != 1 ||
 		cfg.Kafka.Brokers[0] != "kafka:9092" {
 		t.Fatalf("prod runtime config = %+v", cfg)
+	}
+}
+
+func TestLoadProdConfigSupportsExplicitDirectIPHTTP(t *testing.T) {
+	environment := map[string]string{
+		"FRUX_DOMAIN":                  "203.0.113.10",
+		"FRUX_S3_DOMAIN":               "203.0.113.10",
+		"FRUX_PUBLIC_SCHEME":           "http",
+		"FRUX_PUBLIC_APP_PORT":         "18080",
+		"FRUX_PUBLIC_S3_PORT":          "19000",
+		"FRUX_S3_REQUIRE_PUBLIC_HTTPS": "false",
+		"FRUX_JWT_CONSUMER_SECRET":     "prod-consumer-jwt-secret-123456",
+		"FRUX_JWT_ADMIN_SECRET":        "prod-admin-jwt-secret-123456789",
+		"FRUX_HMAC_SECRET":             "prod-application-hmac-secret-123456",
+		"FRUX_INTERNAL_TOKEN":          "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y",
+		"FRUX_POSTGRES_USER":           "frux",
+		"FRUX_POSTGRES_PASSWORD":       "database-secret",
+		"FRUX_POSTGRES_DATABASE":       "frux",
+		"FRUX_REDIS_PASSWORD":          "redis-secret",
+		"FRUX_S3_ACCESS_KEY":           "frux-app",
+		"FRUX_S3_SECRET_KEY":           "minio-application-secret",
+		"FRUX_S3_BUCKET":               "frux-media",
+	}
+	for name, value := range environment {
+		t.Setenv(name, value)
+	}
+
+	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.prod.yaml"))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Media.PublicBaseURL != "http://203.0.113.10:18080/media" ||
+		cfg.Media.S3.PresignEndpoint != "http://203.0.113.10:19000" ||
+		cfg.Media.S3.RequirePublicHTTPS {
+		t.Fatalf("direct-IP media config = %+v", cfg.Media)
 	}
 }
 

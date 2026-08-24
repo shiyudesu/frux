@@ -45,6 +45,11 @@ docker compose down -v
 
 ## NAT 主机 Prod 结构
 
+Prod 支持两种公开入口。默认且推荐的是域名 + Caddy HTTPS；`direct-http` 仅用于个人、预生产或
+连通性验证，使用一个公网 IPv4 和两个不同端口，不提供传输加密。
+
+### 默认：域名与 Caddy HTTPS
+
 ```text
 公网分配的 HTTPS 高端口/tcp ──NAT──> 主机 443/tcp
 公网分配的 SSH 高端口/tcp   ──NAT──> 主机 22/tcp
@@ -80,6 +85,28 @@ API / Worker → http://minio:9000 → 私有 FRUX_S3_BUCKET
 Web、API、MinIO API 和 MinIO Console 只绑定宿主机回环地址。PostgreSQL、Redis、Kafka 和 Worker
 不发布宿主机端口。MinIO Console 没有公开 Caddy 路由，只能通过 SSH 高端口建立隧道访问。
 
+### 可选：直接 IPv4 与双 HTTP 端口
+
+```text
+http://PUBLIC_IPV4:18080
+    └─ Web nginx
+       ├─ /api/*、/uploads/*、/media/*、/health → Compose 私网 API:8080
+       └─ 其他路径                              → SPA
+
+http://PUBLIC_IPV4:19000
+    └─ MinIO S3 API
+
+SSH Tunnel → 127.0.0.1:19001 → MinIO Console
+```
+
+此模式只把 Web 和 MinIO S3 API 绑定到 `0.0.0.0`。API 的诊断端口和 MinIO Console 仍绑定
+`127.0.0.1`，PostgreSQL、Redis、Kafka 和 Worker 仍不发布端口。应用 Origin 与 S3 Origin 必须使用
+同一 IPv4、不同端口，MinIO CORS 仍只允许精确应用 Origin。
+
+直接 IP 只改变寻址方式，不能作为规避备案、接入商策略或防火墙规则的合规依据；HTTP 还会让登录和
+预签名 URL 暴露给链路观察者。中国大陆服务器对公网提供互联网信息服务时，应按实际业务向接入商和
+主管部门确认备案要求。
+
 Prod运行GHCR中的固定Digest镜像。服务器不Clone仓库，也不安装Go或Node。CI通过且你批准
 `production` Environment后，GitHub发布新的部署包；服务器通过systemd每小时检查一次。
 
@@ -92,6 +119,7 @@ apps/docker-compose.prod.yml
 apps/.env.prod.example
 apps/.env.release.example
 scripts/postgres-backup.sh
+scripts/prod-deploy.sh
 .github/workflows/deploy.yml
 ```
 
@@ -108,9 +136,9 @@ Prod Compose 创建私有 `FRUX_S3_BUCKET` 和持久化 `minio_data` Volume。Mi
 ```text
 浏览器请求上传会话
     ↓
-API按 https://FRUX_S3_DOMAIN:<public-port> 返回短期签名PUT
+API按配置的公开 S3 Origin 返回短期签名PUT
     ↓
-浏览器经Caddy直传MinIO
+浏览器经Caddy HTTPS或直接S3端口直传MinIO
     ↓
 API用HeadObject校验大小、类型和SHA-256
     ↓
@@ -136,12 +164,14 @@ API校验v3 generation、variant和视频当前公开资格
     └─ 历史v2/MPD/分片：兼容读取并逐步迁移
 ```
 
-视频字节经专用 S3 主机名和 Caddy 从 MinIO 提供；API 只处理授权、小型 MPD 清单和重定向。Caddy
-不能改写签名请求的 Host、path、query、method 或 Range。原视频、私密视频、审核样本和未知对象
+视频字节经配置的公开 S3 Origin 从 MinIO 提供；API 只处理授权、小型 MPD 清单和重定向。Caddy
+模式不能改写签名请求的 Host、path、query、method 或 Range，直接 IP 模式则让请求原样到达 MinIO。
+原视频、私密视频、审核样本和未知对象
 不会获得公开签名地址。发布、下架和恢复只修改 PostgreSQL exposure，不复制 MinIO 对象；旧v2对象迁移后
 至少保留30分钟再清理。
 
-MinIO CORS 只允许完整应用 Origin `https://FRUX_DOMAIN:<public-port>`，并仅开放上传和播放所需的
+MinIO CORS 只允许配置的完整应用 Origin，默认是 `https://FRUX_DOMAIN:<public-port>`，直接 IP
+模式是 `http://PUBLIC_IPV4:<app-port>`；它仅开放上传和播放所需的
 方法、请求头和响应头。详细配置与验证见 [自托管 MinIO](operations/self-hosted-minio.md)。
 
 ## 数据和新部署
@@ -153,7 +183,7 @@ MinIO CORS 只允许完整应用 Origin `https://FRUX_DOMAIN:<public-port>`，�
 首次部署：
 
 1. 在新 NAT 主机创建空持久卷和全新 Secret。
-2. 配置两个 DNS 主机名、固定 NAT 映射和 DNS-01 证书。
+2. 选择默认的两个 DNS 主机名、固定 NAT 映射和 DNS-01 证书，或显式配置一个 IPv4 与两个 HTTP 端口。
 3. 启动包含 API、Worker、MinIO 和初始化器的完整 Compose。
 4. 完成注册、上传、处理、审核、发布、Range 播放、重启和备份验收。
 5. 切换公开链接，但保留旧主机和雨云 Bucket 至少 72 小时。
@@ -168,7 +198,7 @@ Prod部署包固定API和Web镜像Digest。部署代理会：
 1. 验证部署包文件和SHA-256。
 2. 拉取镜像。
 3. 更新Compose并启动API、Web、Worker、MinIO和初始化器。
-4. 检查API、Web、本地443 Caddy路由、MinIO、数据库备份和Worker Kafka状态。
+4. 检查API、Web、所选公开入口、MinIO、数据库备份和Worker Kafka状态。
 5. 失败时恢复上一版本。
 
 镜像回滚保留 PostgreSQL、Redis、Kafka、上传、备份和 `minio_data` Volume；不要使用

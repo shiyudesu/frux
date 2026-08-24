@@ -19,13 +19,15 @@
 
 生产对象存储 bucket 始终保持私有，公开播放也只使用短期签名 GET。API/Worker 通过
 `http://minio:9000` 使用 Bucket-scoped 应用凭据；MinIO Root 凭据只供服务和初始化器使用，不能
-注入应用容器。浏览器只接收 `https://FRUX_S3_DOMAIN:<public-port>` 的对象级预签名 URL，签名 URL
-不包含 JWT、Cookie 或长期凭据。下架立即拒绝新签名，但已缓存 307 或已签发 URL 最多可继续使用
-30 分钟。
+注入应用容器。浏览器只接收配置的公开 S3 Origin 上的对象级预签名 URL，签名 URL 不包含 JWT、
+Cookie 或长期凭据。默认公开 Origin 强制 HTTPS；显式直接 IPv4 模式允许 HTTP，但会把页面、登录、
+JWT 和预签名 URL 暴露给链路观察者，只适合个人或预生产试运行。下架立即拒绝新签名，但已缓存 307
+或已签发 URL 最多可继续使用 30 分钟。
 
-MinIO CORS 只允许精确 Origin `https://FRUX_DOMAIN:<public-port>` 和上传/播放所需方法、头部；不能
-使用通配 Origin。主机 Caddy 不改写签名请求的 Host、path、query、method 或 Range。MinIO Console
-只绑定 `127.0.0.1:19001` 并通过 SSH 隧道访问；DNS-01 API 凭据使用最小权限并保存在仓库之外。
+MinIO CORS 只允许配置的精确应用 Origin 和上传/播放所需方法、头部，不能使用通配 Origin。主机
+Caddy 模式不改写签名请求的 Host、path、query、method 或 Range；直接模式只公开 Web 与 MinIO
+S3 API。MinIO Console 始终绑定 `127.0.0.1:19001` 并通过 SSH 隧道访问；DNS-01 API 凭据使用最小
+权限并保存在仓库之外。
 
 ## 处理与清理
 

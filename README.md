@@ -21,7 +21,7 @@ Frux 使用 Go、React、PostgreSQL、Redis、Kafka 和 S3 兼容对象存储，
 
 ## 在线体验
 
-公开 NAT 演示地址使用完整高端口 Origin：`https://frux.shiyudesu.com:<public-port>`。
+公开 NAT 演示地址默认使用完整 HTTPS 高端口 Origin：`https://frux.shiyudesu.com:<public-port>`。
 
 **郑重说明：**
 
@@ -107,8 +107,10 @@ Compose 内的服务仍使用原始容器端口；MinIO 预签名地址和浏览
 
 > `docker compose down -v` 会删除 PostgreSQL、Redis、Kafka 和 MinIO 的本地数据卷。
 
-该 Compose 文件只用于本地开发，并始终使用 MinIO。Prod 使用 NAT 高端口入口和私有自托管
-MinIO，操作见 [Prod操作手册](docs/operations/prod.md) 与
+该 Compose 文件只用于本地开发，并始终使用 MinIO。Prod 默认使用域名、Caddy 和 NAT HTTPS
+高端口，也提供显式的单 IPv4/双 HTTP 端口个人试运行模式；两种模式都使用私有自托管 MinIO。
+直接 IP 模式不代表免除备案或云厂商要求，且 HTTP 不适合承载公开生产账号。操作见
+[Prod操作手册](docs/operations/prod.md) 与
 [自托管MinIO](docs/operations/self-hosted-minio.md)。旧部署的雨云设置保留在
 [雨云对象存储（旧部署）](docs/operations/rainyun-object-storage.md)。
 Prod由GitHub Actions构建并推送公开GHCR镜像；服务器不Clone仓库，也不开放部署Webhook或保存

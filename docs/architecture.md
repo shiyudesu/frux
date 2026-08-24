@@ -51,10 +51,10 @@ flowchart LR
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
-NAT 主机 Prod 将对象存储分成两个端点：API/Worker 通过 Compose 网络访问
-`http://minio:9000`，浏览器使用 `https://FRUX_S3_DOMAIN:<public-port>` 的预签名 URL。主机
-systemd Caddy 在本地 443 根据 `FRUX_DOMAIN` 和 `FRUX_S3_DOMAIN` 分流；公网分配的 HTTPS 高端口
-只由 NAT 转发到本地 443。MinIO Bucket 保持私有，Console 只绑定回环地址并通过 SSH 隧道访问。
+NAT 主机 Prod 将对象存储分成两个端点：API/Worker 始终通过 Compose 网络访问
+`http://minio:9000`，浏览器使用配置的公开 S3 Origin。默认模式由 systemd Caddy 在本地 443 根据
+`FRUX_DOMAIN` 和 `FRUX_S3_DOMAIN` 分流；显式直接 IPv4 模式让 Web 与 MinIO S3 API 分别绑定两个
+HTTP 端口。MinIO Bucket 保持私有，Console 在两种模式下都只绑定回环地址并通过 SSH 隧道访问。
 
 ## 2. API 内部分层
 
@@ -681,8 +681,8 @@ max staleness 后使用 failure default。请求和消费热路径不访问控�
 flowchart LR
   Web["Web 上传页"] -->|"创建上传会话"| API["Hertz API"]
   API -->|"返回预签名 PUT"| Web
-  Web -->|"公开高端口 PUT/GET/Range"| Caddy["Caddy S3 主机名"]
-  Caddy -->|"保持签名请求不变"| S3[("私有 MinIO Bucket")]
+  Web -->|"公开 S3 Origin PUT/GET/Range"| PublicS3["Caddy S3 主机名或直接 S3 端口"]
+  PublicS3 -->|"保持签名请求不变"| S3[("私有 MinIO Bucket")]
   Web -->|"完成会话"| API
   API -->|"提交资产与 PostgreSQL job；尽力发布唤醒"| MQ["Kafka command"]
   MQ --> Worker["Media Worker"]
@@ -699,9 +699,11 @@ flowchart LR
 幂等回执和审计，再由耐久 Outbox 驱动视频侧状态改为处理中。
 
 - 本地开发继续支持 `/api/uploads` 和受保护 `/uploads/*`；生产模式通过 `media.backend=s3` 使用上传会话。
-- Prod 运行时 S3 endpoint 为 `http://minio:9000`，浏览器 presign endpoint 为
-  `https://FRUX_S3_DOMAIN:<public-port>`；保持 path-style、私有 Bucket 和精确应用 Origin CORS。
-- Caddy 的 S3 路由不得改写 Host、path、query、method 或 Range，MinIO Console 不进入公开路由。
+- Prod 运行时 S3 endpoint 为 `http://minio:9000`，浏览器 presign endpoint 为配置的完整公开 S3
+  Origin；保持 path-style、私有 Bucket 和精确应用 Origin CORS。默认强制 HTTPS，只有显式直接 IPv4
+  模式允许 HTTP 与独立 S3 端口。
+- Caddy 的 S3 路由不得改写 Host、path、query、method 或 Range；直接模式让请求原样到达 MinIO。
+  MinIO Console 不进入任何公开路由。
 - `media_asset` 保存原始资产，`media_variant` 为新任务保存单个源分辨率基线，并继续兼容历史清晰度、
   manifest 和 segment；`media_processing_job` 使用版本、租约和尝试次数保证重复消息安全。
 - 转码输出的 asset metadata、variants、cleanup/job 最终 transition 在一个 PostgreSQL 事务内先验证

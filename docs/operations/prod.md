@@ -17,7 +17,9 @@ main CI通过
 一个 Kafka Broker 和单节点 MinIO，不是高可用架构。本流程不迁移旧 PostgreSQL、Redis、Kafka 或
 雨云对象；旧部署用于短期回滚。
 
-## NAT、DNS 与公开 Origin
+## 公开入口模式
+
+默认使用 `caddy-https`：
 
 开始前向主机提供商确认固定 TCP 映射：
 
@@ -42,6 +44,21 @@ https://FRUX_S3_DOMAIN:<public-port>
 
 主机 Caddy 仍监听本地 443，部署代理也继续通过 `127.0.0.1:443` 检查路由。不要把 Caddy 改为监听
 公网高端口。
+
+显式的 `direct-http` 模式用于个人、预生产或临时连通性验证：
+
+```text
+http://PUBLIC_IPV4:<app-port> -> 主机 Web 端口
+http://PUBLIC_IPV4:<s3-port>  -> 主机 MinIO S3 API 端口
+```
+
+两个 Origin 使用同一个 IPv4，但端口必须不同。此模式没有 Caddy 或 TLS，只公开 Web 与 MinIO S3
+API；API 诊断端口、MinIO Console、PostgreSQL、Redis、Kafka 和 Worker 仍保持私有。
+
+直接 IP 访问不是备案豁免。工信部现行《非经营性互联网信息服务备案管理办法》明确把“仅能通过互联网
+IP 地址访问的网站”纳入境内非经营性互联网信息服务备案范围。启用前请向接入商确认实际要求；若要
+对公网承载账号、Token 或上传流量，应优先完成合规手续并使用 HTTPS。官方条文见
+[工信部《非经营性互联网信息服务备案管理办法》](https://www.miit.gov.cn/gyhxxhb/jgsj/cyzcyfgs/bmgz/xxtxl/art/2024/art_84a0cfa0ebd049bbbe751dca9a008e56.html)。
 
 ## 一次性设置GitHub
 
@@ -81,6 +98,7 @@ apps/docker-compose.prod.yml
 apps/.env.prod.example
 apps/.env.release.example
 scripts/postgres-backup.sh
+scripts/prod-deploy.sh
 .github/workflows/deploy.yml
 ```
 
@@ -114,7 +132,7 @@ Runner上执行无Secret CI。
 - curl
 - OpenSSL
 - systemd
-- Caddy（由 systemd 管理）
+- Caddy（默认 `caddy-https` 模式，由 systemd 管理；`direct-http` 不需要）
 
 同时确认 Docker 可用、数据盘持久，并为镜像、PostgreSQL、Kafka、MinIO 和备份预留足够空间。
 Docker 日志必须配置有界轮转，避免单机磁盘被容器日志耗尽。
@@ -138,9 +156,15 @@ sudo editor /opt/frux/.env.prod
 
 | 配置 | 内容 |
 | --- | --- |
-| `FRUX_DOMAIN` | Frux域名，例如 `frux.example.com` |
-| `FRUX_S3_DOMAIN` | 独立的 MinIO S3 域名，例如 `s3.frux.example.com` |
-| `FRUX_PUBLIC_HTTPS_PORT` | 提供商分配并转发到本地 443 的 HTTPS 高端口 |
+| `FRUX_PUBLIC_ACCESS_MODE` | 默认 `caddy-https`；显式 IP 模式填 `direct-http` |
+| `FRUX_PUBLIC_SCHEME` | 默认 `https`；`direct-http` 填 `http` |
+| `FRUX_DOMAIN` | Caddy 模式填应用域名；直接模式填公网 IPv4 |
+| `FRUX_S3_DOMAIN` | Caddy 模式填独立 S3 域名；直接模式填与 `FRUX_DOMAIN` 相同的 IPv4 |
+| `FRUX_PUBLIC_HTTPS_PORT` | Caddy/NAT 公开 HTTPS 高端口，也是新端口变量的兼容回退值 |
+| `FRUX_PUBLIC_APP_PORT` | 可选显式应用 Origin 端口；直接模式必须等于 `FRUX_WEB_PORT` |
+| `FRUX_PUBLIC_S3_PORT` | 可选显式 S3 Origin 端口；直接模式必须等于 `FRUX_MINIO_API_PORT` |
+| `FRUX_PUBLIC_BIND_ADDRESS` | Caddy 模式保持 `127.0.0.1`；直接模式显式填 `0.0.0.0` |
+| `FRUX_S3_REQUIRE_PUBLIC_HTTPS` | Caddy 模式保持 `true`；直接模式显式填 `false` |
 | `FRUX_JWT_CONSUMER_SECRET` | 至少 32 字节的消费端 JWT 随机密钥 |
 | `FRUX_JWT_ADMIN_SECRET` | 与消费端不同的至少 32 字节后台 JWT 随机密钥 |
 | `FRUX_JWT_LEGACY_SECRET` | 可选；升级前旧共享密钥，仅迁移窗口使用 |
@@ -173,17 +197,41 @@ MinIO Root 和 MinIO 应用凭据必须分别生成，Root 与应用凭据不得
 确认新 Web 与新 key ring 正常后清空两个 legacy 变量。截止时间后旧无 `kid` Token 会被拒绝，回滚时
 必须同时恢复兼容校验配置，数据库中的 Refresh Session 表可保留。
 
-`FRUX_DOMAIN` 和 `FRUX_S3_DOMAIN` 只填域名，不要加协议、端口、引号或末尾斜杠：
+默认 Caddy 模式保持兼容配置；Host 值不加协议、端口、引号或末尾斜杠：
 
 ```dotenv
+FRUX_PUBLIC_ACCESS_MODE=caddy-https
+FRUX_PUBLIC_SCHEME=https
 FRUX_DOMAIN=frux.example.com
 FRUX_S3_DOMAIN=s3.frux.example.com
 FRUX_PUBLIC_HTTPS_PORT=<public-port>
+FRUX_PUBLIC_APP_PORT=
+FRUX_PUBLIC_S3_PORT=
+FRUX_PUBLIC_BIND_ADDRESS=127.0.0.1
+FRUX_S3_REQUIRE_PUBLIC_HTTPS=true
 ```
 
 Prod 的运行时 S3 Endpoint 固定为 Compose 网络中的 `http://minio:9000`；浏览器预签名 Endpoint 为
 `https://FRUX_S3_DOMAIN:<public-port>`。保持 path-style、非空 Region、私有 Bucket，并关闭应用侧
 自动建 Bucket；`minio-init` 负责幂等创建 Bucket、应用身份、Bucket policy 和精确 CORS。
+
+直接 IPv4 模式必须成组修改，不能只把域名替换成 IP：
+
+```dotenv
+FRUX_PUBLIC_ACCESS_MODE=direct-http
+FRUX_PUBLIC_SCHEME=http
+FRUX_DOMAIN=你的公网IPv4
+FRUX_S3_DOMAIN=你的公网IPv4
+FRUX_PUBLIC_HTTPS_PORT=
+FRUX_PUBLIC_APP_PORT=18080
+FRUX_PUBLIC_S3_PORT=19000
+FRUX_PUBLIC_BIND_ADDRESS=0.0.0.0
+FRUX_S3_REQUIRE_PUBLIC_HTTPS=false
+FRUX_WEB_PORT=18080
+FRUX_MINIO_API_PORT=19000
+```
+
+部署代理会拒绝不同 IP、相同端口、HTTPS 开关不一致、公开端口与宿主机映射不一致等组合。
 
 ### 签发 DNS-01 证书
 
@@ -287,6 +335,38 @@ curl "https://FRUX_DOMAIN:<public-port>/health"
 curl "https://FRUX_S3_DOMAIN:<public-port>/minio/health/live"
 ```
 
+### 配置直接 IPv4 HTTP 入口
+
+此节替代证书与 Caddy 配置，不与它们叠加。先安装本文后面的最新拉取代理，再修改 `.env.prod`；旧版
+代理只会检查本地 Caddy 443，会把直接模式误判为部署失败。
+
+主机或 NAT 提供商必须让公开端口与宿主机端口保持一致：
+
+```text
+PUBLIC_IPV4:18080/tcp -> 主机 18080/tcp
+PUBLIC_IPV4:19000/tcp -> 主机 19000/tcp
+SSH端口               -> 主机 22/tcp
+```
+
+安全组和主机防火墙只放行应用端口、S3 端口和 SSH。不要放行 `18081`、`19001`、PostgreSQL、Redis、
+Kafka 或 Worker 端口。确认端口未占用后启动部署：
+
+```bash
+sudo ss -ltnp | grep -E ':(18080|18081|19000|19001)\s' || true
+sudo systemctl start frux-deploy.service
+```
+
+从外部网络验证：
+
+```bash
+curl "http://PUBLIC_IPV4:18080/health"
+curl "http://PUBLIC_IPV4:19000/minio/health/live"
+```
+
+浏览器入口是 `http://PUBLIC_IPV4:18080`。MinIO S3 端口不是管理后台，访问根路径返回 XML 或拒绝是
+正常现象；Console 仍只能使用下面的 SSH 隧道。HTTP 会明文传输登录请求、JWT、页面和预签名 URL，
+不要把该模式当作正式公网生产入口。
+
 MinIO Console 只能通过 SSH 映射访问：
 
 ```bash
@@ -362,7 +442,7 @@ sudo systemctl start frux-deploy.service
 2. 验证文件白名单和SHA-256。
 3. 拉取固定Digest的API/Web镜像。
 4. 更新Compose并启动MinIO、初始化器、API、Web和Worker。
-5. 检查API、Web、本地443 Caddy路由、MinIO依赖、数据库备份和Worker Kafka状态。
+5. 检查API、Web、当前模式的本地公开路由、MinIO依赖、数据库备份和Worker Kafka状态。
 6. 失败时恢复上一版本。
 
 服务器只保留：
@@ -519,14 +599,14 @@ docker compose -p frux-prod -f docker-compose.prod.yml down -v
 1. 注册、登录和后台账号设置。
 2. 视频与封面预签名PUT，确认精确Origin CORS和API `HeadObject`校验。
 3. Worker下载、FFmpeg处理、确定性输出写入和审核发布。
-4. `https://FRUX_DOMAIN:<public-port>/media/...` 的307、Range、HEAD、ETag和拖动播放。
+4. 当前应用 Origin 下 `/media/...` 的307、Range、HEAD、ETag和拖动播放。
 5. 匿名访问 `uploads/*`、`processed/*`、`moderation/*` 和存储 `media/*` 返回拒绝。
 6. 重启Compose但不删除Volume，确认数据库、Kafka、Redis和MinIO对象仍可用。
 7. PostgreSQL备份成功，并确认MinIO快照或外部镜像状态。
 8. 观察内存、磁盘、Worker readiness、MinIO流量和错误日志。
 
-验收通过后，把对外文档和入口切换到完整地址 `https://FRUX_DOMAIN:<public-port>`。旧主机和旧雨云
-Bucket保持不变并至少保留72小时。
+验收通过后，把对外文档和入口切换到当前完整应用 Origin。旧主机和旧雨云 Bucket 保持不变并至少
+保留72小时。直接 HTTP 只适合短期试运行；对公众长期开放前应完成适用备案并迁移到 HTTPS。
 
 验收失败时恢复旧公开入口，不删除旧主机或雨云Bucket，也不尝试把新主机期间的数据库或对象写入
 合并回旧部署。必要时先保存新主机最后一份PostgreSQL备份用于诊断；回滚意味着明确接受fresh deployment

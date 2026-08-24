@@ -24,7 +24,6 @@ trap cleanup EXIT
 
 for name in \
   FRUX_DOMAIN \
-  FRUX_PUBLIC_HTTPS_PORT \
   FRUX_S3_DOMAIN \
   FRUX_MINIO_ROOT_USER \
   FRUX_MINIO_ROOT_PASSWORD \
@@ -33,6 +32,20 @@ for name in \
   FRUX_S3_BUCKET; do
   [[ -n ${!name:-} ]] || {
     printf 'missing required environment variable: %s\n' "$name" >&2
+    exit 1
+  }
+done
+
+public_scheme=${FRUX_PUBLIC_SCHEME:-https}
+public_app_port=${FRUX_PUBLIC_APP_PORT:-${FRUX_PUBLIC_HTTPS_PORT:-}}
+public_s3_port=${FRUX_PUBLIC_S3_PORT:-${FRUX_PUBLIC_HTTPS_PORT:-}}
+[[ $public_scheme == http || $public_scheme == https ]] || {
+  echo "FRUX_PUBLIC_SCHEME must be http or https" >&2
+  exit 1
+}
+for port in "$public_app_port" "$public_s3_port"; do
+  [[ $port =~ ^[1-9][0-9]{0,4}$ ]] && ((port <= 65535)) || {
+    echo "public application and S3 ports must be valid TCP ports" >&2
     exit 1
   }
 done
@@ -86,7 +99,7 @@ for object_name in "${object_names[@]}"; do
   }
 done
 
-allowed_origin="https://${FRUX_DOMAIN}:${FRUX_PUBLIC_HTTPS_PORT}"
+allowed_origin="${public_scheme}://${FRUX_DOMAIN}:${public_app_port}"
 allowed_headers=$(
   curl \
     --silent \

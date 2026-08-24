@@ -195,6 +195,50 @@ jobs:
               "Prod deployment readiness must include MinIO"
           )
           PY
+
+          FRUX_PUBLIC_ACCESS_MODE=direct-http \
+          FRUX_PUBLIC_SCHEME=http \
+          FRUX_DOMAIN=203.0.113.10 \
+          FRUX_S3_DOMAIN=203.0.113.10 \
+          FRUX_PUBLIC_HTTPS_PORT= \
+          FRUX_PUBLIC_APP_PORT=18080 \
+          FRUX_PUBLIC_S3_PORT=19000 \
+          FRUX_PUBLIC_BIND_ADDRESS=0.0.0.0 \
+          FRUX_S3_REQUIRE_PUBLIC_HTTPS=false \
+          docker compose \
+            --env-file apps/.env.release.example \
+            -f apps/docker-compose.prod.yml \
+            config --format json >"$RUNNER_TEMP/frux-prod-direct-compose.json"
+          python3 - "$RUNNER_TEMP/frux-prod-direct-compose.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              services = json.load(handle)["services"]
+
+          assert all(
+              port.get("host_ip") == "127.0.0.1"
+              for port in services["api"].get("ports", [])
+          ), "direct-IP mode must keep API loopback-only"
+
+          web_ports = services["web"].get("ports", [])
+          assert len(web_ports) == 1
+          assert web_ports[0].get("host_ip") == "0.0.0.0"
+          assert int(web_ports[0]["published"]) == 18080
+
+          minio_ports = services["minio"].get("ports", [])
+          minio_api = next(port for port in minio_ports if int(port["target"]) == 9000)
+          minio_console = next(port for port in minio_ports if int(port["target"]) == 9001)
+          assert minio_api.get("host_ip") == "0.0.0.0"
+          assert int(minio_api["published"]) == 19000
+          assert minio_console.get("host_ip") == "127.0.0.1"
+
+          api_environment = services["api"]["environment"]
+          assert api_environment["FRUX_PUBLIC_SCHEME"] == "http"
+          assert str(api_environment["FRUX_PUBLIC_APP_PORT"]) == "18080"
+          assert str(api_environment["FRUX_PUBLIC_S3_PORT"]) == "19000"
+          assert str(api_environment["FRUX_S3_REQUIRE_PUBLIC_HTTPS"]).lower() == "false"
+          PY
           bash scripts/validate-prod-minio.sh
 
       - name: Validate OpenSpec

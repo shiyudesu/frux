@@ -343,10 +343,11 @@ Fact 必须包含 Topic/Partition/Offset、原 Event ID、Replay ID、reason cod
 生产媒体使用 `domain/media` 中的 `MediaObjectStore` 和 `MediaURLResolver` 窄接口。S3/MinIO、CDN、ffprobe/ffmpeg 和本地文件实现放在 `internal/infra/media`；Domain、Application 和 HTTP DTO 不导入 AWS SDK 类型。直传会话绑定 owner、kind、精确对象键、大小、SHA-256 和过期时间，完成前必须执行 HEAD 校验。公共输出使用不可变内容寻址键，原始/私密资源使用短期签名 URL，访问令牌不得进入对象 URL。
 
 Prod 对象存储配置必须分离运行时和浏览器端点：API/Worker 只访问 Compose 内的
-`http://minio:9000`，presign 使用 `https://FRUX_S3_DOMAIN:<public-port>`；保持 path-style、
-非空 Region、私有 Bucket 和精确 `https://FRUX_DOMAIN:<public-port>` CORS。MinIO Root 凭据只供
-服务与初始化器使用，API/Worker 只获得 Bucket-scoped 应用凭据。主机 Caddy 不得改写签名请求的
-Host、path、query、method 或 Range，也不得公开 Console。兼容 H.264/AAC 可以 stream copy，但
+`http://minio:9000`，presign 使用配置的完整公开 S3 Origin；保持 path-style、非空 Region、私有
+Bucket 和精确应用 Origin CORS。默认模式强制 HTTPS；只有显式直接 IPv4 模式可用同一 IP 的独立
+HTTP 应用/S3 端口。MinIO Root 凭据只供服务与初始化器使用，API/Worker 只获得 Bucket-scoped
+应用凭据。主机 Caddy 不得改写签名请求的 Host、path、query、method 或 Range，也不得公开
+Console；直接模式同样只允许公开 Web 和 MinIO S3 API。兼容 H.264/AAC 可以 stream copy，但
 Worker、ffprobe 和 FFmpeg 仍是当前 durable media job 的必需依赖。
 
 ## 9. HTTP API 规范

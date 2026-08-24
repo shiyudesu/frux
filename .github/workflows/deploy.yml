@@ -100,6 +100,7 @@ jobs:
             apps/.env.prod.example
             apps/.env.release.example
             scripts/postgres-backup.sh
+            scripts/prod-deploy.sh
             .github/workflows/deploy.yml
           )
 
