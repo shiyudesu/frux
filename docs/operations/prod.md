@@ -245,6 +245,19 @@ FRUX_MINIO_API_PORT=19000
 [工信部 ICP 备案办事指南](https://ythzxfw.miit.gov.cn/bssx/alx/dxhhlw/art/2025/art_88c400fc83904008bcf5b11bc08ec18f.html)、
 [阿里云备案服务器检查说明](https://help.aliyun.com/zh/icp-filing/basic-icp-service/user-guide/icp-filing-server-access-information-check)。
 
+已有服务器先更新一次主机部署代理。`/usr/local/sbin/frux-deploy` 是服务器自有文件，不会被 GHCR bundle
+自动覆盖；把 `<reviewed-commit-sha>` 换成已经推送并检查过、包含本功能的 Commit：
+
+```bash
+sudo curl -fsSL \
+  "https://raw.githubusercontent.com/shiyudesu/frux/<reviewed-commit-sha>/scripts/prod-deploy.sh" \
+  -o /usr/local/sbin/frux-deploy.next
+sudo bash -n /usr/local/sbin/frux-deploy.next
+sudo chown root:root /usr/local/sbin/frux-deploy.next
+sudo chmod 755 /usr/local/sbin/frux-deploy.next
+sudo mv /usr/local/sbin/frux-deploy.next /usr/local/sbin/frux-deploy
+```
+
 在 `/opt/frux/.env.prod` 中一次性填写完整配置；生产部署器会拒绝只开一半、任意 HTTP 主机、复用应用
 HMAC、缺少 Key 或非法字节上限：
 

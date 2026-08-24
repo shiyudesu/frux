@@ -109,6 +109,9 @@ SSH Tunnel → 127.0.0.1:19001 → MinIO Console
 
 Prod运行GHCR中的固定Digest镜像。服务器不Clone仓库，也不安装Go或Node。CI通过且你批准
 `production` Environment后，GitHub发布新的部署包；服务器通过systemd每小时检查一次。
+主机上的 `/usr/local/sbin/frux-deploy` 属于服务器自有引导程序，不在签名 bundle 内自动替换；部署器
+自身发生功能变更时，需要按 [Prod 操作手册](operations/prod.md#启用生产多模态链路) 从已审核 Commit
+原子更新一次，再应用新的环境变量。
 
 只有这些路径变化才会构建镜像并请求Prod审批：
 
