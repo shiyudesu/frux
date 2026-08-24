@@ -201,7 +201,8 @@ jobs:
           FRUX_DOMAIN=203.0.113.10 \
           FRUX_S3_DOMAIN=203.0.113.10 \
           FRUX_PUBLIC_HTTPS_PORT='' \
-          FRUX_PUBLIC_APP_PORT=18080 \
+          FRUX_PUBLIC_APP_PORT=18082 \
+          FRUX_WEB_PORT=18082 \
           FRUX_PUBLIC_S3_PORT=19000 \
           FRUX_PUBLIC_BIND_ADDRESS=0.0.0.0 \
           FRUX_S3_REQUIRE_PUBLIC_HTTPS=false \
@@ -224,7 +225,7 @@ jobs:
           web_ports = services["web"].get("ports", [])
           assert len(web_ports) == 1
           assert web_ports[0].get("host_ip") == "0.0.0.0"
-          assert int(web_ports[0]["published"]) == 18080
+          assert int(web_ports[0]["published"]) == 18082
 
           minio_ports = services["minio"].get("ports", [])
           minio_api = next(port for port in minio_ports if int(port["target"]) == 9000)
@@ -235,7 +236,7 @@ jobs:
 
           api_environment = services["api"]["environment"]
           assert api_environment["FRUX_PUBLIC_SCHEME"] == "http"
-          assert str(api_environment["FRUX_PUBLIC_APP_PORT"]) == "18080"
+          assert str(api_environment["FRUX_PUBLIC_APP_PORT"]) == "18082"
           assert str(api_environment["FRUX_PUBLIC_S3_PORT"]) == "19000"
           assert str(api_environment["FRUX_S3_REQUIRE_PUBLIC_HTTPS"]).lower() == "false"
           PY

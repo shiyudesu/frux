@@ -88,7 +88,7 @@ Web、API、MinIO API 和 MinIO Console 只绑定宿主机回环地址。Postgre
 ### 可选：直接 IPv4 与双 HTTP 端口
 
 ```text
-http://PUBLIC_IPV4:18080
+http://PUBLIC_IPV4:18082
     └─ Web nginx
        ├─ /api/*、/uploads/*、/media/*、/health → Compose 私网 API:8080
        └─ 其他路径                              → SPA

@@ -496,7 +496,7 @@ func TestLoadProdConfigSupportsExplicitDirectIPHTTP(t *testing.T) {
 		"FRUX_DOMAIN":                  "203.0.113.10",
 		"FRUX_S3_DOMAIN":               "203.0.113.10",
 		"FRUX_PUBLIC_SCHEME":           "http",
-		"FRUX_PUBLIC_APP_PORT":         "18080",
+		"FRUX_PUBLIC_APP_PORT":         "18082",
 		"FRUX_PUBLIC_S3_PORT":          "19000",
 		"FRUX_S3_REQUIRE_PUBLIC_HTTPS": "false",
 		"FRUX_JWT_CONSUMER_SECRET":     "prod-consumer-jwt-secret-123456",
@@ -519,7 +519,7 @@ func TestLoadProdConfigSupportsExplicitDirectIPHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.Media.PublicBaseURL != "http://203.0.113.10:18080/media" ||
+	if cfg.Media.PublicBaseURL != "http://203.0.113.10:18082/media" ||
 		cfg.Media.S3.PresignEndpoint != "http://203.0.113.10:19000" ||
 		cfg.Media.S3.RequirePublicHTTPS {
 		t.Fatalf("direct-IP media config = %+v", cfg.Media)

@@ -223,11 +223,11 @@ FRUX_PUBLIC_SCHEME=http
 FRUX_DOMAIN=你的公网IPv4
 FRUX_S3_DOMAIN=你的公网IPv4
 FRUX_PUBLIC_HTTPS_PORT=
-FRUX_PUBLIC_APP_PORT=18080
+FRUX_PUBLIC_APP_PORT=18082
 FRUX_PUBLIC_S3_PORT=19000
 FRUX_PUBLIC_BIND_ADDRESS=0.0.0.0
 FRUX_S3_REQUIRE_PUBLIC_HTTPS=false
-FRUX_WEB_PORT=18080
+FRUX_WEB_PORT=18082
 FRUX_MINIO_API_PORT=19000
 ```
 
@@ -343,7 +343,7 @@ curl "https://FRUX_S3_DOMAIN:<public-port>/minio/health/live"
 主机或 NAT 提供商必须让公开端口与宿主机端口保持一致：
 
 ```text
-PUBLIC_IPV4:18080/tcp -> 主机 18080/tcp
+PUBLIC_IPV4:18082/tcp -> 主机 18082/tcp
 PUBLIC_IPV4:19000/tcp -> 主机 19000/tcp
 SSH端口               -> 主机 22/tcp
 ```
@@ -352,18 +352,18 @@ SSH端口               -> 主机 22/tcp
 Kafka 或 Worker 端口。确认端口未占用后启动部署：
 
 ```bash
-sudo ss -ltnp | grep -E ':(18080|18081|19000|19001)\s' || true
+sudo ss -ltnp | grep -E ':(18081|18082|19000|19001)\s' || true
 sudo systemctl start frux-deploy.service
 ```
 
 从外部网络验证：
 
 ```bash
-curl "http://PUBLIC_IPV4:18080/health"
+curl "http://PUBLIC_IPV4:18082/health"
 curl "http://PUBLIC_IPV4:19000/minio/health/live"
 ```
 
-浏览器入口是 `http://PUBLIC_IPV4:18080`。MinIO S3 端口不是管理后台，访问根路径返回 XML 或拒绝是
+浏览器入口是 `http://PUBLIC_IPV4:18082`。MinIO S3 端口不是管理后台，访问根路径返回 XML 或拒绝是
 正常现象；Console 仍只能使用下面的 SSH 隧道。HTTP 会明文传输登录请求、JWT、页面和预签名 URL，
 不要把该模式当作正式公网生产入口。
 
