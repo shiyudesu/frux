@@ -101,8 +101,10 @@ func applyMultimodalEnvironmentOverrides(cfg *MultimodalConfig) error {
 	}{
 		{name: "FRUX_MULTIMODAL_ENABLED", target: &cfg.Enabled},
 		{name: "FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED", target: &cfg.VideoJobsEnabled},
+		{name: "FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK", target: &cfg.Provider.AllowInsecurePrivateNetwork},
 		{name: "FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", target: &cfg.SessionRecommendationEnabled},
 		{name: "FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED", target: &cfg.Session.DevelopmentFullRolloutEnabled},
+		{name: "FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED", target: &cfg.Session.ProductionFullRolloutEnabled},
 	} {
 		raw, exists := os.LookupEnv(override.name)
 		if !exists || strings.TrimSpace(raw) == "" {
@@ -297,8 +299,16 @@ func ValidateAPIConfig(cfg *Config) error {
 		cfg.Environment != "local" && cfg.Environment != "test" {
 		return ErrInvalidMultimodalConfig
 	}
+	if cfg.Multimodal.Session.ProductionFullRolloutEnabled &&
+		cfg.Environment != "staging" && cfg.Environment != "production" {
+		return ErrInvalidMultimodalConfig
+	}
 	if cfg.Multimodal.Provider.AllowInsecureLocal &&
 		cfg.Environment != "local" && cfg.Environment != "test" {
+		return ErrInvalidMultimodalConfig
+	}
+	if cfg.Multimodal.Provider.AllowInsecurePrivateNetwork &&
+		cfg.Environment != "staging" && cfg.Environment != "production" {
 		return ErrInvalidMultimodalConfig
 	}
 	return nil

@@ -12,7 +12,11 @@ import (
 )
 
 const DevelopmentSessionSemanticSourceVersion = 2
-const DevelopmentSessionSemanticPolicyVersion = 4
+const FullSessionSemanticPolicyVersion = 4
+
+// DevelopmentSessionSemanticPolicyVersion remains an alias for rollout tooling that predates the
+// production opt-in. The immutable policy version and contents are shared by both environments.
+const DevelopmentSessionSemanticPolicyVersion = FullSessionSemanticPolicyVersion
 
 type SessionSemanticRolloutLifecycleInput struct {
 	SourceVersion     int
@@ -64,9 +68,9 @@ func NewSessionSemanticRolloutService(
 	return &SessionSemanticRolloutService{repo: repo, now: now}
 }
 
-// EnsureDevelopmentFullSessionSemanticPolicy makes the accepted Session Semantic policy the
-// effective policy for every local/test request without rewriting an existing policy version.
-func EnsureDevelopmentFullSessionSemanticPolicy(
+// EnsureFullSessionSemanticPolicy makes the accepted Session Semantic policy the effective policy
+// for every explicitly authorized environment without rewriting an existing policy version.
+func EnsureFullSessionSemanticPolicy(
 	ctx context.Context,
 	repo domainrecommendation.RolloutPolicyRepository,
 	contract domainembedding.MultimodalContractIdentity,
@@ -75,7 +79,7 @@ func EnsureDevelopmentFullSessionSemanticPolicy(
 	service := NewSessionSemanticRolloutService(repo, now)
 	input := SessionSemanticRolloutLifecycleInput{
 		SourceVersion:     DevelopmentSessionSemanticSourceVersion,
-		TargetVersion:     DevelopmentSessionSemanticPolicyVersion,
+		TargetVersion:     FullSessionSemanticPolicyVersion,
 		RolloutPercentage: FullSessionSemanticRolloutPercentage,
 		AllowFullRollout:  true,
 		Contract:          contract,
@@ -97,7 +101,7 @@ func EnsureDevelopmentFullSessionSemanticPolicy(
 		return nil, ErrRecommendationPolicyRepositoryUnavailable
 	}
 	for _, policy := range policies {
-		if policy == nil || policy.Version == DevelopmentSessionSemanticPolicyVersion ||
+		if policy == nil || policy.Version == FullSessionSemanticPolicyVersion ||
 			!policy.Enabled || !IsSessionSemanticRolloutPolicy(policy) {
 			continue
 		}

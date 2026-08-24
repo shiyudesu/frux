@@ -50,15 +50,16 @@ type MultimodalContractConfig struct {
 }
 
 type MultimodalProviderConfig struct {
-	Endpoint           string `yaml:"endpoint"`
-	HMACSecret         string `yaml:"hmac_secret"`
-	ProtocolVersion    string `yaml:"protocol_version"`
-	AllowInsecureLocal bool   `yaml:"allow_insecure_local"`
-	StartupTimeout     string `yaml:"startup_timeout"`
-	Deadline           string `yaml:"deadline"`
-	AdmissionLimit     int    `yaml:"admission_limit"`
-	MaxRequestBytes    int64  `yaml:"max_request_bytes"`
-	MaxResponseBytes   int64  `yaml:"max_response_bytes"`
+	Endpoint                    string `yaml:"endpoint"`
+	HMACSecret                  string `yaml:"hmac_secret"`
+	ProtocolVersion             string `yaml:"protocol_version"`
+	AllowInsecureLocal          bool   `yaml:"allow_insecure_local"`
+	AllowInsecurePrivateNetwork bool   `yaml:"allow_insecure_private_network"`
+	StartupTimeout              string `yaml:"startup_timeout"`
+	Deadline                    string `yaml:"deadline"`
+	AdmissionLimit              int    `yaml:"admission_limit"`
+	MaxRequestBytes             int64  `yaml:"max_request_bytes"`
+	MaxResponseBytes            int64  `yaml:"max_response_bytes"`
 }
 
 type MultimodalJobConfig struct {
@@ -104,6 +105,7 @@ type MultimodalSessionConfig struct {
 	MaxSeeds                      int    `yaml:"max_seeds"`
 	MaxLookback                   string `yaml:"max_lookback"`
 	DevelopmentFullRolloutEnabled bool   `yaml:"development_full_rollout_enabled"`
+	ProductionFullRolloutEnabled  bool   `yaml:"production_full_rollout_enabled"`
 }
 
 type MultimodalSessionShadowConfig struct {

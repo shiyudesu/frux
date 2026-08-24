@@ -175,6 +175,10 @@ func TestHTTPMultimodalProviderRejectsInvalidConfiguration(t *testing.T) {
 			c.Endpoint = "http://provider.example.com"
 			c.AllowInsecureLocal = true
 		}},
+		{name: "arbitrary private http", mutate: func(c *MultimodalHTTPProviderConfig) {
+			c.Endpoint = "http://provider.internal:8099"
+			c.AllowInsecurePrivateNetwork = true
+		}},
 		{name: "endpoint userinfo", mutate: func(c *MultimodalHTTPProviderConfig) { c.Endpoint = "https://user@provider.example.com" }},
 		{name: "endpoint query", mutate: func(c *MultimodalHTTPProviderConfig) { c.Endpoint = "https://provider.example.com?token=x" }},
 		{name: "short secret", mutate: func(c *MultimodalHTTPProviderConfig) { c.HMACSecret = "short" }},
@@ -199,6 +203,21 @@ func TestHTTPMultimodalProviderAllowsExactLocalComposeHostname(t *testing.T) {
 	provider, err := NewHTTPMultimodalProvider(MultimodalHTTPProviderConfig{
 		Endpoint: "http://multimodal-provider:8099", HMACSecret: multimodalTestSecret,
 		ProtocolVersion: MultimodalProviderProtocolV1, AllowInsecureLocal: true,
+		Timeout: time.Second, MaxRequestBytes: 2 << 20, MaxResponseBytes: 1 << 20,
+		MaxVideoTextRunes: 128, MaxQueryRunes: 64, MaxImages: 4,
+		MaxImageBytes: 64 << 10, MaxTotalImageBytes: 64 << 10, MaxImagePixels: 4_000_000,
+		AllowedMIMETypes: []string{"image/jpeg"},
+	}, contract)
+	if err != nil || provider == nil {
+		t.Fatalf("provider=%#v error=%v", provider, err)
+	}
+}
+
+func TestHTTPMultimodalProviderAllowsExactPrivateComposeHostname(t *testing.T) {
+	contract := multimodalHTTPTestContract(t)
+	provider, err := NewHTTPMultimodalProvider(MultimodalHTTPProviderConfig{
+		Endpoint: "http://multimodal-provider:8099", HMACSecret: multimodalTestSecret,
+		ProtocolVersion: MultimodalProviderProtocolV1, AllowInsecurePrivateNetwork: true,
 		Timeout: time.Second, MaxRequestBytes: 2 << 20, MaxResponseBytes: 1 << 20,
 		MaxVideoTextRunes: 128, MaxQueryRunes: 64, MaxImages: 4,
 		MaxImageBytes: 64 << 10, MaxTotalImageBytes: 64 << 10, MaxImagePixels: 4_000_000,

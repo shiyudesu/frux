@@ -201,7 +201,7 @@ func TestSessionSemanticRolloutActivationRequiresFullBaseline(t *testing.T) {
 	}
 }
 
-func TestEnsureDevelopmentFullSessionSemanticPolicyIsIdempotentAndRetiresStagedTargets(t *testing.T) {
+func TestEnsureFullSessionSemanticPolicyIsIdempotentAndRetiresStagedTargets(t *testing.T) {
 	repo := newSessionSemanticRolloutMemoryRepo(t)
 	service := NewSessionSemanticRolloutService(repo, func() time.Time { return time.Unix(100, 0).UTC() })
 	stagedInput := SessionSemanticRolloutLifecycleInput{
@@ -215,10 +215,10 @@ func TestEnsureDevelopmentFullSessionSemanticPolicyIsIdempotentAndRetiresStagedT
 	if _, err := service.Activate(context.Background(), stagedInput); err != nil {
 		t.Fatal(err)
 	}
-	full, err := EnsureDevelopmentFullSessionSemanticPolicy(
+	full, err := EnsureFullSessionSemanticPolicy(
 		context.Background(), repo, stagedInput.Contract, func() time.Time { return time.Unix(200, 0).UTC() },
 	)
-	if err != nil || full == nil || full.Version != DevelopmentSessionSemanticPolicyVersion ||
+	if err != nil || full == nil || full.Version != FullSessionSemanticPolicyVersion ||
 		!full.Enabled || full.Config.RolloutPercentage != FullSessionSemanticRolloutPercentage {
 		t.Fatalf("full=%#v error=%v", full, err)
 	}
@@ -229,14 +229,14 @@ func TestEnsureDevelopmentFullSessionSemanticPolicyIsIdempotentAndRetiresStagedT
 	}
 	for index := range 1_000 {
 		selected := domainrecommendation.SelectPolicy(policies, int64(index+1), "development-full-"+intString(index))
-		if selected == nil || selected.Version != DevelopmentSessionSemanticPolicyVersion {
+		if selected == nil || selected.Version != FullSessionSemanticPolicyVersion {
 			t.Fatalf("index=%d selected=%#v", index, selected)
 		}
 	}
-	replayed, err := EnsureDevelopmentFullSessionSemanticPolicy(
+	replayed, err := EnsureFullSessionSemanticPolicy(
 		context.Background(), repo, stagedInput.Contract, func() time.Time { return time.Unix(300, 0).UTC() },
 	)
-	if err != nil || replayed == nil || replayed.Version != DevelopmentSessionSemanticPolicyVersion {
+	if err != nil || replayed == nil || replayed.Version != FullSessionSemanticPolicyVersion {
 		t.Fatalf("replayed=%#v error=%v", replayed, err)
 	}
 	policies, _ = repo.ListPolicies(context.Background(), domainrecommendation.RecommendationRequestLogScene)
@@ -245,13 +245,13 @@ func TestEnsureDevelopmentFullSessionSemanticPolicyIsIdempotentAndRetiresStagedT
 	}
 }
 
-func TestEnsureDevelopmentFullSessionSemanticPolicyRejectsConflictingV4(t *testing.T) {
+func TestEnsureFullSessionSemanticPolicyRejectsConflictingV4(t *testing.T) {
 	repo := newSessionSemanticRolloutMemoryRepo(t)
 	contract := sessionSemanticTestContract(t, "development-conflict")
 	plan, err := BuildSessionSemanticRolloutPolicy(
 		repo.policies[2],
 		SessionSemanticRolloutOptions{
-			TargetVersion:     DevelopmentSessionSemanticPolicyVersion,
+			TargetVersion:     FullSessionSemanticPolicyVersion,
 			RolloutPercentage: FullSessionSemanticRolloutPercentage,
 			AllowFullRollout:  true,
 			Contract:          contract,
@@ -263,13 +263,13 @@ func TestEnsureDevelopmentFullSessionSemanticPolicyRejectsConflictingV4(t *testi
 	}
 	conflicting := plan.Policy.Clone()
 	conflicting.Config.FeatureWeights[domainrecommendation.FeatureSemanticSimilarity] = 0.5
-	repo.policies[DevelopmentSessionSemanticPolicyVersion] = conflicting
-	if _, err := EnsureDevelopmentFullSessionSemanticPolicy(
+	repo.policies[FullSessionSemanticPolicyVersion] = conflicting
+	if _, err := EnsureFullSessionSemanticPolicy(
 		context.Background(), repo, contract, func() time.Time { return time.Unix(200, 0).UTC() },
 	); !errors.Is(err, ErrSessionSemanticRolloutConflict) {
 		t.Fatalf("error=%v", err)
 	}
-	if repo.policies[DevelopmentSessionSemanticPolicyVersion].Config.FeatureWeights[domainrecommendation.FeatureSemanticSimilarity] != 0.5 {
+	if repo.policies[FullSessionSemanticPolicyVersion].Config.FeatureWeights[domainrecommendation.FeatureSemanticSimilarity] != 0.5 {
 		t.Fatal("conflicting policy was overwritten")
 	}
 }

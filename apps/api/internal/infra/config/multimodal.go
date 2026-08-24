@@ -85,6 +85,16 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		(!cfg.Enabled || !cfg.SessionRecommendationEnabled) {
 		return ErrInvalidMultimodalConfig
 	}
+	if cfg.Session.ProductionFullRolloutEnabled &&
+		(!cfg.Enabled || !cfg.SessionRecommendationEnabled) {
+		return ErrInvalidMultimodalConfig
+	}
+	if cfg.Session.DevelopmentFullRolloutEnabled && cfg.Session.ProductionFullRolloutEnabled {
+		return ErrInvalidMultimodalConfig
+	}
+	if cfg.Provider.AllowInsecureLocal && cfg.Provider.AllowInsecurePrivateNetwork {
+		return ErrInvalidMultimodalConfig
+	}
 	if cfg.MaxVideoTextRunes == 0 {
 		cfg.MaxVideoTextRunes = 2048
 	}
@@ -164,9 +174,12 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 			endpoint.RawQuery != "" || endpoint.Fragment != "" {
 			return ErrInvalidMultimodalConfig
 		}
+		allowedLocalHTTP := cfg.Provider.AllowInsecureLocal &&
+			isLocalMultimodalProviderEndpoint(endpoint.Hostname())
+		allowedPrivateHTTP := cfg.Provider.AllowInsecurePrivateNetwork &&
+			isPrivateMultimodalProviderEndpoint(endpoint.Hostname())
 		if endpoint.Scheme != "https" &&
-			(endpoint.Scheme != "http" || !cfg.Provider.AllowInsecureLocal ||
-				!isLocalMultimodalProviderEndpoint(endpoint.Hostname())) {
+			(endpoint.Scheme != "http" || (!allowedLocalHTTP && !allowedPrivateHTTP)) {
 			return ErrInvalidMultimodalConfig
 		}
 	}
@@ -347,6 +360,10 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 
 func isLocalMultimodalProviderEndpoint(host string) bool {
 	return isLocalEndpoint(host) || strings.EqualFold(strings.TrimSpace(host), "multimodal-provider")
+}
+
+func isPrivateMultimodalProviderEndpoint(host string) bool {
+	return strings.EqualFold(strings.TrimSpace(host), "multimodal-provider")
 }
 
 func multimodalContractConfig(identity domainembedding.MultimodalContractIdentity) MultimodalContractConfig {

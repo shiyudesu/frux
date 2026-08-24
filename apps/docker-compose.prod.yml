@@ -192,6 +192,29 @@ services:
     networks:
       - backend
 
+  multimodal-provider:
+    profiles: ["multimodal"]
+    image: ${FRUX_API_IMAGE:?load .env.release}
+    command: ["./frux-multimodal-provider"]
+    environment:
+      FRUX_MULTIMODAL_PROFILE: ${FRUX_MULTIMODAL_PROFILE:-}
+      FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR: 0.0.0.0:8099
+      FRUX_MULTIMODAL_HMAC_SECRET: ${FRUX_MULTIMODAL_HMAC_SECRET:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      FRUX_TONGYI_UPSTREAM_TIMEOUT: ${FRUX_TONGYI_UPSTREAM_TIMEOUT:-20s}
+      FRUX_TONGYI_MAX_REQUEST_BYTES: ${FRUX_TONGYI_MAX_REQUEST_BYTES:-25165824}
+      FRUX_TONGYI_MAX_RESPONSE_BYTES: ${FRUX_TONGYI_MAX_RESPONSE_BYTES:-2097152}
+      FRUX_TONGYI_SHUTDOWN_TIMEOUT: ${FRUX_TONGYI_SHUTDOWN_TIMEOUT:-10s}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8099/health >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - backend
+
   api:
     image: ${FRUX_API_IMAGE:?load .env.release}
     environment: &app-environment
@@ -216,12 +239,10 @@ services:
       FRUX_S3_SECRET_KEY: ${FRUX_S3_SECRET_KEY:?set FRUX_S3_SECRET_KEY}
       FRUX_S3_BUCKET: ${FRUX_S3_BUCKET:?set FRUX_S3_BUCKET}
       FRUX_MULTIMODAL_PROFILE: ${FRUX_MULTIMODAL_PROFILE:-}
-      FRUX_MULTIMODAL_ENDPOINT: ${FRUX_MULTIMODAL_ENDPOINT:-}
-      FRUX_MULTIMODAL_HMAC_SECRET: ${FRUX_MULTIMODAL_HMAC_SECRET:-}
       FRUX_MULTIMODAL_ENABLED: ${FRUX_MULTIMODAL_ENABLED:-}
-      FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED: ${FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED:-}
       FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED: ${FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED:-}
       FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED: ${FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED:-}
+      FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED: ${FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -253,6 +274,10 @@ services:
     command: ["./frux-worker"]
     environment:
       <<: *app-environment
+      FRUX_MULTIMODAL_ENDPOINT: ${FRUX_MULTIMODAL_ENDPOINT:-}
+      FRUX_MULTIMODAL_HMAC_SECRET: ${FRUX_MULTIMODAL_HMAC_SECRET:-}
+      FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED: ${FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED:-}
+      FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK: ${FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -262,6 +287,9 @@ services:
         condition: service_started
       minio-init:
         condition: service_completed_successfully
+      multimodal-provider:
+        condition: service_healthy
+        required: false
     volumes:
       - ./api/configs/config.prod.yaml:/app/configs/config.yaml:ro
     healthcheck:

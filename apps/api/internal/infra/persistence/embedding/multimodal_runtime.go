@@ -27,9 +27,10 @@ func NewReadyHTTPMultimodalProvider(
 	}
 	provider, err := NewHTTPMultimodalProvider(MultimodalHTTPProviderConfig{
 		Endpoint: cfg.Provider.Endpoint, HMACSecret: cfg.Provider.HMACSecret,
-		ProtocolVersion:    cfg.Provider.ProtocolVersion,
-		AllowInsecureLocal: cfg.Provider.AllowInsecureLocal,
-		Timeout:            deadline, MaxRequestBytes: cfg.Provider.MaxRequestBytes,
+		ProtocolVersion:             cfg.Provider.ProtocolVersion,
+		AllowInsecureLocal:          cfg.Provider.AllowInsecureLocal,
+		AllowInsecurePrivateNetwork: cfg.Provider.AllowInsecurePrivateNetwork,
+		Timeout:                     deadline, MaxRequestBytes: cfg.Provider.MaxRequestBytes,
 		MaxResponseBytes:   cfg.Provider.MaxResponseBytes,
 		MaxIdleConnections: cfg.Provider.AdmissionLimit,
 		MaxVideoTextRunes:  cfg.MaxVideoTextRunes,

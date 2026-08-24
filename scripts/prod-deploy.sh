@@ -29,14 +29,20 @@ safe_release_path() {
 
 compose_release() {
   local release=$1
+  local -a compose_args
   shift
-  "$DOCKER_BIN" compose \
-    --progress plain \
-    --env-file "$FRUX_ROOT/.env.prod" \
-    --env-file "$release/apps/.env.release" \
-    -p frux-prod \
-    -f "$release/apps/docker-compose.prod.yml" \
-    "$@"
+
+  compose_args=(
+    --progress plain
+    --env-file "$FRUX_ROOT/.env.prod"
+    --env-file "$release/apps/.env.release"
+    -p frux-prod
+    -f "$release/apps/docker-compose.prod.yml"
+  )
+  if multimodal_deployment_enabled; then
+    compose_args+=(--profile multimodal)
+  fi
+  "$DOCKER_BIN" compose "${compose_args[@]}" "$@"
 }
 
 wait_healthy() {
@@ -73,6 +79,94 @@ prod_env_value_or() {
 
   value=$(prod_env_value "$name")
   printf '%s' "${value:-$fallback}"
+}
+
+multimodal_deployment_enabled() {
+  case "${FRUX_DEPLOY_MULTIMODAL_OVERRIDE:-}" in
+    true) return 0 ;;
+    false) return 1 ;;
+    "") ;;
+    *) die "FRUX_DEPLOY_MULTIMODAL_OVERRIDE must be true or false" ;;
+  esac
+  [[ $(prod_env_value_or FRUX_MULTIMODAL_DEPLOYMENT_ENABLED false) == true ]]
+}
+
+validate_multimodal_deployment_config() {
+  local enabled profile endpoint hmac api_key application_hmac
+  local runtime video_jobs session production_full development_full private_http
+  local upstream_timeout shutdown_timeout max_request_bytes max_response_bytes
+  local name value
+
+  enabled=$(prod_env_value_or FRUX_MULTIMODAL_DEPLOYMENT_ENABLED false)
+  [[ $enabled == true || $enabled == false ]] ||
+    die "FRUX_MULTIMODAL_DEPLOYMENT_ENABLED must be true or false"
+  runtime=$(prod_env_value_or FRUX_MULTIMODAL_ENABLED false)
+  video_jobs=$(prod_env_value_or FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED false)
+  session=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED false)
+  production_full=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED false)
+  development_full=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED false)
+  private_http=$(prod_env_value_or FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK false)
+  for name in \
+    FRUX_MULTIMODAL_ENABLED \
+    FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED \
+    FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED \
+    FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED \
+    FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED \
+    FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK; do
+    value=$(prod_env_value_or "$name" false)
+    [[ $value == true || $value == false ]] || die "$name must be true or false"
+  done
+
+  if [[ $enabled == false ]]; then
+    [[ $runtime != true && $video_jobs != true && $session != true &&
+      $production_full != true && $development_full != true && $private_http != true ]] ||
+      die "multimodal feature flags require FRUX_MULTIMODAL_DEPLOYMENT_ENABLED=true"
+    return 0
+  fi
+
+  profile=$(prod_env_value FRUX_MULTIMODAL_PROFILE)
+  endpoint=$(prod_env_value FRUX_MULTIMODAL_ENDPOINT)
+  hmac=$(prod_env_value FRUX_MULTIMODAL_HMAC_SECRET)
+  api_key=$(prod_env_value DASHSCOPE_API_KEY)
+  application_hmac=$(prod_env_value FRUX_HMAC_SECRET)
+  upstream_timeout=$(prod_env_value_or FRUX_TONGYI_UPSTREAM_TIMEOUT 20s)
+  shutdown_timeout=$(prod_env_value_or FRUX_TONGYI_SHUTDOWN_TIMEOUT 10s)
+  max_request_bytes=$(prod_env_value_or FRUX_TONGYI_MAX_REQUEST_BYTES 25165824)
+  max_response_bytes=$(prod_env_value_or FRUX_TONGYI_MAX_RESPONSE_BYTES 2097152)
+  case "$profile" in
+    tongyi-embedding-vision-flash-2026-03-06|tongyi-embedding-vision-flash) ;;
+    *) die "FRUX_MULTIMODAL_PROFILE is not a registered production profile" ;;
+  esac
+  [[ $endpoint == http://multimodal-provider:8099 ]] ||
+    die "FRUX_MULTIMODAL_ENDPOINT must use the private multimodal-provider service"
+  [[ ${#hmac} -ge 32 && ${#hmac} -le 512 ]] ||
+    die "FRUX_MULTIMODAL_HMAC_SECRET must contain between 32 and 512 characters"
+  [[ -n $api_key ]] || die "DASHSCOPE_API_KEY is required for multimodal deployment"
+  [[ $hmac != "$application_hmac" ]] ||
+    die "FRUX_MULTIMODAL_HMAC_SECRET must differ from FRUX_HMAC_SECRET"
+  [[ $upstream_timeout =~ ^[1-9][0-9]*(ms|s|m)$ ]] ||
+    die "FRUX_TONGYI_UPSTREAM_TIMEOUT must be a positive simple duration"
+  [[ $shutdown_timeout =~ ^[1-9][0-9]*(ms|s|m)$ ]] ||
+    die "FRUX_TONGYI_SHUTDOWN_TIMEOUT must be a positive simple duration"
+  [[ $max_request_bytes =~ ^[1-9][0-9]{0,9}$ ]] ||
+    die "FRUX_TONGYI_MAX_REQUEST_BYTES must be a positive integer"
+  [[ $max_response_bytes =~ ^[1-9][0-9]{0,9}$ ]] ||
+    die "FRUX_TONGYI_MAX_RESPONSE_BYTES must be a positive integer"
+  ((max_request_bytes <= 64 * 1024 * 1024)) ||
+    die "FRUX_TONGYI_MAX_REQUEST_BYTES exceeds the 64 MiB deployment limit"
+  ((max_response_bytes <= max_request_bytes)) ||
+    die "FRUX_TONGYI_MAX_RESPONSE_BYTES must not exceed the request bound"
+  [[ $runtime == true && $video_jobs == true && $session == true &&
+    $production_full == true && $private_http == true ]] ||
+    die "production multimodal runtime, video jobs, Session, full rollout, and private HTTP must be enabled together"
+  [[ $development_full != true ]] ||
+    die "development full rollout must remain disabled in production"
+}
+
+release_supports_multimodal() {
+  local release=$1
+
+  grep -Eq '^[[:space:]]{2}multimodal-provider:' "$release/apps/docker-compose.prod.yml"
 }
 
 valid_port() {
@@ -302,6 +396,9 @@ wait_worker_ready() {
 wait_compose_ready() {
   local release=$1
 
+  if multimodal_deployment_enabled; then
+    wait_healthy "$release" multimodal-provider || return 1
+  fi
   wait_healthy "$release" minio &&
     wait_healthy "$release" api &&
     wait_healthy "$release" web &&
@@ -359,12 +456,46 @@ validate_bundle() {
     "$release/apps/.env.release" || die "release SHA is invalid"
 }
 
-restore_release() {
+restore_release_without_multimodal() {
   local previous=$1
 
-  compose_release "$previous" --profile worker pull api web worker || true
-  compose_release "$previous" --profile worker up -d || return 1
-  wait_compose_ready "$previous" && wait_public_routes
+  (
+    export FRUX_DEPLOY_MULTIMODAL_OVERRIDE=false
+    export FRUX_MULTIMODAL_PROFILE=
+    export FRUX_MULTIMODAL_ENDPOINT=
+    export FRUX_MULTIMODAL_HMAC_SECRET=
+    export FRUX_MULTIMODAL_ENABLED=false
+    export FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=false
+    export FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=false
+    export FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false
+    export FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=false
+    export FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK=false
+    if release_supports_multimodal "$previous"; then
+      compose_release "$previous" --profile multimodal rm -sf multimodal-provider >/dev/null 2>&1 || true
+    fi
+    compose_release "$previous" --profile worker pull api web worker || true
+    compose_release "$previous" --profile worker up -d || return 1
+    wait_compose_ready "$previous" && wait_public_routes
+  )
+}
+
+restore_release() {
+  local previous=$1
+  local previous_multimodal_enabled=${2:-false}
+
+  if [[ $previous_multimodal_enabled != true ]] ||
+    ! multimodal_deployment_enabled ||
+    ! release_supports_multimodal "$previous"; then
+    restore_release_without_multimodal "$previous"
+    return
+  fi
+  compose_release "$previous" --profile worker pull api web worker multimodal-provider || true
+  if compose_release "$previous" --profile worker up -d &&
+    wait_compose_ready "$previous" && wait_public_routes; then
+    return 0
+  fi
+  echo "Previous multimodal profile was unhealthy; retrying rollback with multimodal disabled." >&2
+  restore_release_without_multimodal "$previous"
 }
 
 prune_releases() {
@@ -415,10 +546,11 @@ prune_images() {
 }
 
 main() {
-  local lock_file releases_dir prod_env current_link digest_file
-  local digest_ref digest_id release_dir incoming container
-  local previous_release deploy_ok
-  local link_temp digest_temp
+  local lock_file releases_dir prod_env current_link digest_file config_digest_file multimodal_state_file
+  local digest_ref digest_id release_dir incoming container config_digest
+  local previous_release previous_multimodal_enabled deploy_ok desired_multimodal_enabled
+  local -a pull_services
+  local link_temp digest_temp config_digest_temp multimodal_state_temp
 
   require_command "$DOCKER_BIN"
   require_command "$FLOCK_BIN"
@@ -436,6 +568,8 @@ main() {
   prod_env="$FRUX_ROOT/.env.prod"
   current_link="$FRUX_ROOT/current"
   digest_file="$FRUX_ROOT/.deployed-digest"
+  config_digest_file="$FRUX_ROOT/.deployed-config-digest"
+  multimodal_state_file="$FRUX_ROOT/.deployed-multimodal"
   lock_file="$FRUX_ROOT/.deploy.lock"
 
   mkdir -p "$releases_dir"
@@ -447,6 +581,16 @@ main() {
   }
 
   validate_public_access_config
+  validate_multimodal_deployment_config
+  config_digest=$(sha256sum "$prod_env" | awk '{print $1}')
+  desired_multimodal_enabled=false
+  if multimodal_deployment_enabled; then
+    desired_multimodal_enabled=true
+  fi
+  previous_multimodal_enabled=false
+  if [[ -f $multimodal_state_file ]] && [[ $(<"$multimodal_state_file") == true ]]; then
+    previous_multimodal_enabled=true
+  fi
 
   if [[ ! -L $current_link ]]; then
     if [[ -n $(
@@ -478,6 +622,7 @@ main() {
 
   if [[ -f $digest_file && -L $current_link ]] &&
     [[ $(<"$digest_file") == "$digest_ref" ]] &&
+    [[ -f $config_digest_file && $(<"$config_digest_file") == "$config_digest" ]] &&
     [[ -f "$(readlink -f "$current_link")/apps/docker-compose.prod.yml" ]]; then
     echo "Prod deployment is already current."
     exit 0
@@ -511,7 +656,11 @@ main() {
   fi
 
   deploy_ok=true
-  compose_release "$release_dir" --profile worker pull api web worker || deploy_ok=false
+  pull_services=(api web worker)
+  if multimodal_deployment_enabled; then
+    pull_services+=(multimodal-provider)
+  fi
+  compose_release "$release_dir" --profile worker pull "${pull_services[@]}" || deploy_ok=false
   if [[ $deploy_ok == true ]]; then
     compose_release "$release_dir" --profile worker up -d || deploy_ok=false
   fi
@@ -524,7 +673,8 @@ main() {
 
   if [[ $deploy_ok != true ]]; then
     echo "New Prod release is unhealthy; restoring the previous release." >&2
-    if [[ -n $previous_release ]] && restore_release "$previous_release"; then
+    compose_release "$release_dir" --profile multimodal rm -sf multimodal-provider >/dev/null 2>&1 || true
+    if [[ -n $previous_release ]] && restore_release "$previous_release" "$previous_multimodal_enabled"; then
       echo "Previous Prod release restored." >&2
       safe_release_path "$release_dir" ||
         die "refusing to remove an unsafe failed release path"
@@ -538,10 +688,16 @@ main() {
 
   link_temp="$FRUX_ROOT/.current.$$"
   digest_temp="$FRUX_ROOT/.deployed-digest.$$"
+  config_digest_temp="$FRUX_ROOT/.deployed-config-digest.$$"
+  multimodal_state_temp="$FRUX_ROOT/.deployed-multimodal.$$"
   ln -s "$release_dir" "$link_temp"
   mv -Tf "$link_temp" "$current_link"
   printf '%s\n' "$digest_ref" >"$digest_temp"
+  printf '%s\n' "$config_digest" >"$config_digest_temp"
+  printf '%s\n' "$desired_multimodal_enabled" >"$multimodal_state_temp"
   mv "$digest_temp" "$digest_file"
+  mv "$config_digest_temp" "$config_digest_file"
+  mv "$multimodal_state_temp" "$multimodal_state_file"
   prune_releases "$release_dir" "$previous_release"
   prune_images "$release_dir" "$previous_release"
   echo "Prod deployment updated to $digest_ref."

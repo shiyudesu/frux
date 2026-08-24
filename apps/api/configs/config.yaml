@@ -132,6 +132,7 @@ multimodal:
     hmac_secret: "${FRUX_MULTIMODAL_HMAC_SECRET}"
     protocol_version: "frux-multimodal-v1"
     allow_insecure_local: true
+    allow_insecure_private_network: false
     startup_timeout: "3s"
     deadline: "15s"
     admission_limit: 2
@@ -141,6 +142,7 @@ multimodal:
     max_seeds: 21
     max_lookback: "24h"
     development_full_rollout_enabled: false
+    production_full_rollout_enabled: false
   session_shadow:
     enabled: false
     sample_ppm: 0

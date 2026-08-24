@@ -248,6 +248,35 @@ func TestNormalizeAndValidateMultimodalConfigAllowsExactLocalComposeProvider(t *
 	}
 }
 
+func TestNormalizeAndValidateMultimodalConfigAllowsExactPrivateComposeProvider(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.Provider.Endpoint = "http://multimodal-provider:8099"
+	cfg.Provider.AllowInsecurePrivateNetwork = true
+	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Provider.AllowInsecureLocal = true
+	if err := normalizeAndValidateMultimodalConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("mutually enabled insecure modes error=%v", err)
+	}
+}
+
+func TestApplyMultimodalProductionEnvironmentOverrides(t *testing.T) {
+	t.Setenv("FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK", "true")
+	t.Setenv("FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED", "true")
+	cfg := MultimodalConfig{}
+	if err := applyMultimodalEnvironmentOverrides(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provider.AllowInsecurePrivateNetwork || !cfg.Session.ProductionFullRolloutEnabled {
+		t.Fatalf("config=%#v", cfg)
+	}
+	t.Setenv("FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK", "yes")
+	if err := applyMultimodalEnvironmentOverrides(&MultimodalConfig{}); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("private-network error=%v", err)
+	}
+}
+
 func TestSessionOnlyEnvironmentOverrideNeedsNoProvider(t *testing.T) {
 	t.Setenv("FRUX_MULTIMODAL_ENABLED", "true")
 	t.Setenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", "true")
@@ -280,6 +309,25 @@ func TestDevelopmentFullRolloutRequiresSessionRuntime(t *testing.T) {
 	cfg := validMultimodalConfig()
 	cfg.Session.DevelopmentFullRolloutEnabled = true
 	cfg.SessionRecommendationEnabled = false
+	if err := normalizeAndValidateMultimodalConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestProductionFullRolloutRequiresSessionRuntime(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.Session.ProductionFullRolloutEnabled = true
+	cfg.SessionRecommendationEnabled = false
+	if err := normalizeAndValidateMultimodalConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestDevelopmentAndProductionFullRolloutAreMutuallyExclusive(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.SessionRecommendationEnabled = true
+	cfg.Session.DevelopmentFullRolloutEnabled = true
+	cfg.Session.ProductionFullRolloutEnabled = true
 	if err := normalizeAndValidateMultimodalConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
 		t.Fatalf("error=%v", err)
 	}

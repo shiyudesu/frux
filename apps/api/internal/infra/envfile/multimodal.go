@@ -30,8 +30,10 @@ var fruxMultimodalVariables = map[string]struct{}{
 	"FRUX_MULTIMODAL_HMAC_SECRET":                              {},
 	"FRUX_MULTIMODAL_ENABLED":                                  {},
 	"FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED":                       {},
+	"FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK":           {},
 	"FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED":           {},
 	"FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED": {},
+	"FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED":  {},
 }
 
 var adapterMultimodalVariables = map[string]struct{}{

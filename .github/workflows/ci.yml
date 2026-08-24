@@ -152,6 +152,7 @@ jobs:
               -f apps/docker-compose.prod.yml \
               config --profiles
           )
+          grep -qx multimodal <<<"$profiles"
           for service in worker minio minio-init; do
             if grep -qx "$service" <<<"$profiles"; then
               echo "Required Prod service must not use an optional Compose profile: $service"
@@ -193,6 +194,12 @@ jobs:
               deploy_script = handle.read()
           assert 'wait_healthy "$release" minio' in deploy_script, (
               "Prod deployment readiness must include MinIO"
+          )
+          assert 'wait_healthy "$release" multimodal-provider' in deploy_script, (
+              "Multimodal deployment readiness must include Adapter"
+          )
+          assert '.deployed-config-digest' in deploy_script, (
+              "Prod deployment must re-apply same-image environment changes"
           )
           PY
 
@@ -240,6 +247,105 @@ jobs:
           assert str(api_environment["FRUX_PUBLIC_S3_PORT"]) == "19000"
           assert str(api_environment["FRUX_S3_REQUIRE_PUBLIC_HTTPS"]).lower() == "false"
           PY
+
+          FRUX_MULTIMODAL_DEPLOYMENT_ENABLED=true \
+          FRUX_MULTIMODAL_PROFILE=tongyi-embedding-vision-flash-2026-03-06 \
+          FRUX_MULTIMODAL_ENDPOINT=http://multimodal-provider:8099 \
+          FRUX_MULTIMODAL_HMAC_SECRET=CI-Only-Multimodal-HMAC-Secret-123! \
+          FRUX_MULTIMODAL_ENABLED=true \
+          FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true \
+          FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true \
+          FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false \
+          FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true \
+          FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK=true \
+          DASHSCOPE_API_KEY=ci-dashscope-key \
+          docker compose \
+            --profile multimodal \
+            --env-file apps/.env.release.example \
+            -f apps/docker-compose.prod.yml \
+            config --format json >"$RUNNER_TEMP/frux-prod-multimodal-compose.json"
+          python3 - "$RUNNER_TEMP/frux-prod-multimodal-compose.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              services = json.load(handle)["services"]
+
+          adapter = services["multimodal-provider"]
+          assert not adapter.get("ports"), "Adapter must not publish a host port"
+          assert set(adapter["networks"]) == {"backend"}, "Adapter must be backend-only"
+          assert adapter.get("healthcheck", {}).get("test"), "Adapter must have a healthcheck"
+          assert adapter.get("profiles") == ["multimodal"]
+
+          api_environment = services["api"]["environment"]
+          worker_environment = services["worker"]["environment"]
+          adapter_environment = adapter["environment"]
+          for environment in (api_environment, worker_environment):
+              assert "DASHSCOPE_API_KEY" not in environment
+          for name in (
+              "FRUX_MULTIMODAL_ENDPOINT",
+              "FRUX_MULTIMODAL_HMAC_SECRET",
+              "FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED",
+              "FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK",
+          ):
+              assert name not in api_environment, f"API must not receive {name}"
+
+          assert adapter_environment["DASHSCOPE_API_KEY"] == "ci-dashscope-key"
+          assert worker_environment["FRUX_MULTIMODAL_ENDPOINT"] == "http://multimodal-provider:8099"
+          assert worker_environment["FRUX_MULTIMODAL_HMAC_SECRET"] == "CI-Only-Multimodal-HMAC-Secret-123!"
+          assert str(worker_environment["FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED"]).lower() == "true"
+          assert str(worker_environment["FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK"]).lower() == "true"
+          assert str(api_environment["FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED"]).lower() == "true"
+          dependency = services["worker"]["depends_on"]["multimodal-provider"]
+          assert dependency["condition"] == "service_healthy"
+          assert dependency["required"] is False
+          PY
+
+          FRUX_PUBLIC_ACCESS_MODE=direct-http \
+          FRUX_PUBLIC_SCHEME=http \
+          FRUX_DOMAIN=203.0.113.10 \
+          FRUX_S3_DOMAIN=203.0.113.10 \
+          FRUX_PUBLIC_HTTPS_PORT='' \
+          FRUX_PUBLIC_APP_PORT=18082 \
+          FRUX_WEB_PORT=18082 \
+          FRUX_PUBLIC_S3_PORT=19000 \
+          FRUX_PUBLIC_BIND_ADDRESS=0.0.0.0 \
+          FRUX_S3_REQUIRE_PUBLIC_HTTPS=false \
+          FRUX_MULTIMODAL_DEPLOYMENT_ENABLED=true \
+          FRUX_MULTIMODAL_PROFILE=tongyi-embedding-vision-flash \
+          FRUX_MULTIMODAL_ENDPOINT=http://multimodal-provider:8099 \
+          FRUX_MULTIMODAL_HMAC_SECRET=CI-Only-Multimodal-HMAC-Secret-123! \
+          FRUX_MULTIMODAL_ENABLED=true \
+          FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true \
+          FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true \
+          FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false \
+          FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true \
+          FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK=true \
+          DASHSCOPE_API_KEY=ci-dashscope-key \
+          docker compose \
+            --profile multimodal \
+            --env-file apps/.env.release.example \
+            -f apps/docker-compose.prod.yml \
+            config --format json >"$RUNNER_TEMP/frux-prod-direct-multimodal-compose.json"
+          python3 - "$RUNNER_TEMP/frux-prod-direct-multimodal-compose.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              services = json.load(handle)["services"]
+
+          assert not services["multimodal-provider"].get("ports")
+          assert all(
+              port.get("host_ip") == "127.0.0.1"
+              for port in services["api"].get("ports", [])
+          )
+          assert services["web"]["ports"][0].get("host_ip") == "0.0.0.0"
+          minio_api = next(
+              port for port in services["minio"]["ports"] if int(port["target"]) == 9000
+          )
+          assert minio_api.get("host_ip") == "0.0.0.0"
+          PY
+          bash scripts/prod-deploy_test.sh
           bash scripts/validate-prod-minio.sh
 
       - name: Validate OpenSpec

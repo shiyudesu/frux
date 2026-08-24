@@ -264,15 +264,16 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		semanticSessionProvider = provider
 		recallProviders = append(recallProviders, provider)
 		sessionRecommendationReady = true
-		if cfg.Multimodal.Session.DevelopmentFullRolloutEnabled {
-			policy, err := applicationrecommendation.EnsureDevelopmentFullSessionSemanticPolicy(
+		if cfg.Multimodal.Session.DevelopmentFullRolloutEnabled ||
+			cfg.Multimodal.Session.ProductionFullRolloutEnabled {
+			policy, err := applicationrecommendation.EnsureFullSessionSemanticPolicy(
 				context.Background(), recommendationRepo, contract, nil,
 			)
 			if err != nil {
 				return err
 			}
 			log.Printf(
-				"development Session Semantic policy active: version=%d rollout_percentage=%d",
+				"Session Semantic full policy active: version=%d rollout_percentage=%d",
 				policy.Version, policy.Config.RolloutPercentage,
 			)
 		}

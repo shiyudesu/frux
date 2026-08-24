@@ -43,22 +43,23 @@ var ErrInvalidMultimodalHTTPProvider = errors.New("invalid multimodal HTTP provi
 var ErrMultimodalProviderNotReady = errors.New("multimodal provider not ready")
 
 type MultimodalHTTPProviderConfig struct {
-	Endpoint           string
-	HMACSecret         string
-	ProtocolVersion    string
-	AllowInsecureLocal bool
-	Timeout            time.Duration
-	MaxRequestBytes    int64
-	MaxResponseBytes   int64
-	MaxIdleConnections int
-	MaxVideoTextRunes  int
-	MaxQueryRunes      int
-	MaxImages          int
-	MaxImageBytes      int
-	MaxTotalImageBytes int
-	MaxImagePixels     int64
-	AllowedMIMETypes   []string
-	Observer           MultimodalHTTPObserver
+	Endpoint                    string
+	HMACSecret                  string
+	ProtocolVersion             string
+	AllowInsecureLocal          bool
+	AllowInsecurePrivateNetwork bool
+	Timeout                     time.Duration
+	MaxRequestBytes             int64
+	MaxResponseBytes            int64
+	MaxIdleConnections          int
+	MaxVideoTextRunes           int
+	MaxQueryRunes               int
+	MaxImages                   int
+	MaxImageBytes               int
+	MaxTotalImageBytes          int
+	MaxImagePixels              int64
+	AllowedMIMETypes            []string
+	Observer                    MultimodalHTTPObserver
 }
 
 type MultimodalHTTPObserver interface {
@@ -199,8 +200,11 @@ func NewHTTPMultimodalProvider(
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, ErrInvalidMultimodalHTTPProvider
 	}
+	allowedLocalHTTP := config.AllowInsecureLocal && multimodalLocalHost(parsed.Hostname())
+	allowedPrivateHTTP := config.AllowInsecurePrivateNetwork &&
+		strings.EqualFold(strings.TrimSpace(parsed.Hostname()), "multimodal-provider")
 	if parsed.Scheme != "https" &&
-		(parsed.Scheme != "http" || !config.AllowInsecureLocal || !multimodalLocalHost(parsed.Hostname())) {
+		(parsed.Scheme != "http" || (!allowedLocalHTTP && !allowedPrivateHTTP)) {
 		return nil, ErrInvalidMultimodalHTTPProvider
 	}
 	maxIdleConnections := config.MaxIdleConnections
