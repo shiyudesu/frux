@@ -21,4 +21,4 @@
 ## 4. Documentation and Completion
 
 - [x] 4.1 Update recommendation, multimodal, monitoring, module index, environment examples, and roadmap documentation for development-default full rollout and production opt-in behavior.
-- [ ] 4.2 Sync delta specs, archive the completed change, and leave the worktree clean with the development stack healthy.
+- [x] 4.2 Sync delta specs, archive the completed change, and leave the worktree clean with the development stack healthy.
