@@ -165,7 +165,8 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 			return ErrInvalidMultimodalConfig
 		}
 		if endpoint.Scheme != "https" &&
-			(endpoint.Scheme != "http" || !cfg.Provider.AllowInsecureLocal || !isLocalEndpoint(endpoint.Hostname())) {
+			(endpoint.Scheme != "http" || !cfg.Provider.AllowInsecureLocal ||
+				!isLocalMultimodalProviderEndpoint(endpoint.Hostname())) {
 			return ErrInvalidMultimodalConfig
 		}
 	}
@@ -342,6 +343,10 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		return ErrInvalidMultimodalConfig
 	}
 	return nil
+}
+
+func isLocalMultimodalProviderEndpoint(host string) bool {
+	return isLocalEndpoint(host) || strings.EqualFold(strings.TrimSpace(host), "multimodal-provider")
 }
 
 func multimodalContractConfig(identity domainembedding.MultimodalContractIdentity) MultimodalContractConfig {

@@ -16,6 +16,7 @@ type Config struct {
 	CoverFixturePath      string        `json:"-"`
 	ExpectedProfile       string        `json:"-"`
 	Query                 string        `json:"-"`
+	IngestionOnly         bool          `json:"-"`
 	PollInterval          time.Duration `json:"-"`
 	StageTimeout          time.Duration `json:"-"`
 	HTTPTimeout           time.Duration `json:"-"`

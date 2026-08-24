@@ -131,7 +131,7 @@ multimodal:
     endpoint: "${FRUX_MULTIMODAL_ENDPOINT}"
     hmac_secret: "${FRUX_MULTIMODAL_HMAC_SECRET}"
     protocol_version: "frux-multimodal-v1"
-    allow_insecure_local: false
+    allow_insecure_local: true
     startup_timeout: "3s"
     deadline: "15s"
     admission_limit: 2

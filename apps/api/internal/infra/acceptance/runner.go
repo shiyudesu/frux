@@ -63,11 +63,12 @@ type runState struct {
 
 func (r *Runner) Run(ctx context.Context, report applicationacceptance.Report) (applicationacceptance.Report, error) {
 	state := &runState{}
-	steps := []struct {
+	type acceptanceStep struct {
 		name applicationacceptance.StageName
 		code applicationacceptance.FailureCode
 		fn   func(context.Context) error
-	}{
+	}
+	steps := []acceptanceStep{
 		{applicationacceptance.StagePreflight, applicationacceptance.FailurePrerequisite, func(stage context.Context) error { return r.preflight(stage, state, &report) }},
 		{applicationacceptance.StageLogin, applicationacceptance.FailureAuthentication, func(stage context.Context) error { return r.login(stage, state) }},
 		{applicationacceptance.StageUploadFixtureA, applicationacceptance.FailureUpload, func(stage context.Context) error { return r.upload(stage, state, 0, &report) }},
@@ -79,10 +80,21 @@ func (r *Runner) Run(ctx context.Context, report applicationacceptance.Report) (
 		{applicationacceptance.StageWaitEmbeddingA, applicationacceptance.FailureEmbedding, func(stage context.Context) error { return r.waitEmbedding(stage, state, 0) }},
 		{applicationacceptance.StageWaitEmbeddingB, applicationacceptance.FailureEmbedding, func(stage context.Context) error { return r.waitEmbedding(stage, state, 1) }},
 		{applicationacceptance.StageVerifyFactProjection, applicationacceptance.FailureEvidence, func(context.Context) error { r.populateEvidence(state, &report); return nil }},
-		{applicationacceptance.StageSimilar, applicationacceptance.FailureSimilar, func(stage context.Context) error { return r.similar(stage, state, &report) }},
-		{applicationacceptance.StageHybrid, applicationacceptance.FailureHybrid, func(stage context.Context) error { return r.hybrid(stage, state, &report) }},
-		{applicationacceptance.StageMetrics, applicationacceptance.FailureMetrics, func(stage context.Context) error { return r.metrics(stage, state, &report) }},
 	}
+	if r.config.IngestionOnly {
+		markAcceptanceStage(&report, applicationacceptance.StageSimilar, applicationacceptance.ResultSkipped)
+		markAcceptanceStage(&report, applicationacceptance.StageHybrid, applicationacceptance.ResultSkipped)
+	} else {
+		steps = append(steps,
+			acceptanceStep{applicationacceptance.StageSimilar, applicationacceptance.FailureSimilar, func(stage context.Context) error { return r.similar(stage, state, &report) }},
+			acceptanceStep{applicationacceptance.StageHybrid, applicationacceptance.FailureHybrid, func(stage context.Context) error { return r.hybrid(stage, state, &report) }},
+		)
+	}
+	steps = append(steps, acceptanceStep{
+		applicationacceptance.StageMetrics,
+		applicationacceptance.FailureMetrics,
+		func(stage context.Context) error { return r.metrics(stage, state, &report) },
+	})
 	for _, step := range steps {
 		if err := r.stage(ctx, &report, step.name, step.code, step.fn); err != nil {
 			r.finishFailure(&report, step.name, err)
@@ -100,6 +112,18 @@ func (r *Runner) Run(ctx context.Context, report applicationacceptance.Report) (
 	report.Result = applicationacceptance.ResultSuccess
 	report.FinishedAt = r.now()
 	return report, nil
+}
+
+func markAcceptanceStage(report *applicationacceptance.Report, name applicationacceptance.StageName, result applicationacceptance.Result) {
+	if report == nil {
+		return
+	}
+	for index := range report.Stages {
+		if report.Stages[index].Name == name {
+			report.Stages[index].Result = result
+			return
+		}
+	}
 }
 
 func (r *Runner) stage(parent context.Context, report *applicationacceptance.Report, name applicationacceptance.StageName, code applicationacceptance.FailureCode, fn func(context.Context) error) error {
@@ -146,7 +170,11 @@ func (r *Runner) preflight(ctx context.Context, state *runState, report *applica
 	if err != nil {
 		return err
 	}
-	if baseline["frux_multimodal_provider_transport_total{operation=readiness,result=success}"] < 2 ||
+	requiredReadiness := float64(2)
+	if r.config.IngestionOnly {
+		requiredReadiness = 1
+	}
+	if baseline["frux_multimodal_provider_transport_total{operation=readiness,result=success}"] < requiredReadiness ||
 		baseline["frux_tongyi_provider_operations_total{operation=startup,result=success}"] < 1 {
 		return errors.New("multimodal runtime readiness evidence missing")
 	}

@@ -27,6 +27,22 @@ func TestRunDefaultsToNonBillableValidation(t *testing.T) {
 	}
 }
 
+func TestRunIngestionOnlyPlansTwoModelCalls(t *testing.T) {
+	setCommandAcceptanceEnvironment(t)
+	var output bytes.Buffer
+	if err := run([]string{"--ingestion-only"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var report applicationacceptance.Report
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Mode != applicationacceptance.ModeValidation || report.Result != applicationacceptance.ResultSuccess ||
+		report.PlannedModelCalls != 2 {
+		t.Fatalf("report=%#v", report)
+	}
+}
+
 func TestRunRequiresBothBillableGates(t *testing.T) {
 	setCommandAcceptanceEnvironment(t)
 	var output bytes.Buffer

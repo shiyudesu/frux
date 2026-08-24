@@ -643,7 +643,7 @@ func validMultimodalProviderErrorCode(value string) bool {
 
 func multimodalLocalHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "multimodal-provider" {
 		return true
 	}
 	address, err := netip.ParseAddr(host)

@@ -100,6 +100,7 @@ func applyMultimodalEnvironmentOverrides(cfg *MultimodalConfig) error {
 		target *bool
 	}{
 		{name: "FRUX_MULTIMODAL_ENABLED", target: &cfg.Enabled},
+		{name: "FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED", target: &cfg.VideoJobsEnabled},
 		{name: "FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", target: &cfg.SessionRecommendationEnabled},
 		{name: "FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED", target: &cfg.Session.DevelopmentFullRolloutEnabled},
 	} {
@@ -293,6 +294,10 @@ func ValidateAPIConfig(cfg *Config) error {
 		return ErrInvalidKafkaConfig
 	}
 	if cfg.Multimodal.Session.DevelopmentFullRolloutEnabled &&
+		cfg.Environment != "local" && cfg.Environment != "test" {
+		return ErrInvalidMultimodalConfig
+	}
+	if cfg.Multimodal.Provider.AllowInsecureLocal &&
 		cfg.Environment != "local" && cfg.Environment != "test" {
 		return ErrInvalidMultimodalConfig
 	}

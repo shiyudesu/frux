@@ -29,6 +29,7 @@ var fruxMultimodalVariables = map[string]struct{}{
 	"FRUX_MULTIMODAL_ENDPOINT":                                 {},
 	"FRUX_MULTIMODAL_HMAC_SECRET":                              {},
 	"FRUX_MULTIMODAL_ENABLED":                                  {},
+	"FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED":                       {},
 	"FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED":           {},
 	"FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED": {},
 }

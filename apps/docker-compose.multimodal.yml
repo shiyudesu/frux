@@ -1,0 +1,35 @@
+# Optional billable development overlay.
+# Start with: docker compose --env-file .env.multimodal -f docker-compose.yml -f docker-compose.multimodal.yml up -d --build
+services:
+  multimodal-provider:
+    image: frux-api:local
+    pull_policy: never
+    container_name: frux-multimodal-provider
+    command: ["./frux-multimodal-provider"]
+    env_file:
+      - ./.env.multimodal
+    environment:
+      FRUX_MULTIMODAL_PROFILE: ${FRUX_MULTIMODAL_PROFILE:-tongyi-embedding-vision-flash-2026-03-06}
+      FRUX_MULTIMODAL_PROVIDER_LISTEN_ADDR: 0.0.0.0:8099
+      FRUX_MULTIMODAL_HMAC_SECRET: frux-local-compose-multimodal-hmac-2026-change-before-sharing
+      FRUX_TONGYI_UPSTREAM_TIMEOUT: ${FRUX_TONGYI_UPSTREAM_TIMEOUT:-20s}
+      FRUX_TONGYI_MAX_REQUEST_BYTES: ${FRUX_TONGYI_MAX_REQUEST_BYTES:-25165824}
+      FRUX_TONGYI_MAX_RESPONSE_BYTES: ${FRUX_TONGYI_MAX_RESPONSE_BYTES:-2097152}
+      FRUX_TONGYI_SHUTDOWN_TIMEOUT: ${FRUX_TONGYI_SHUTDOWN_TIMEOUT:-10s}
+    ports:
+      - "127.0.0.1:${FRUX_MULTIMODAL_PROVIDER_HOST_PORT:-8099}:8099"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8099/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  worker:
+    environment:
+      FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED: "true"
+      FRUX_MULTIMODAL_ENDPOINT: http://multimodal-provider:8099
+      FRUX_MULTIMODAL_HMAC_SECRET: frux-local-compose-multimodal-hmac-2026-change-before-sharing
+    depends_on:
+      multimodal-provider:
+        condition: service_healthy

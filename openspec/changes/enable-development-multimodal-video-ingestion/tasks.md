@@ -1,15 +1,15 @@
 ## 1. Configuration and Transport Boundary
 
-- [ ] 1.1 Add a strict optional `FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED` override and Frux env-file allowlist coverage.
-- [ ] 1.2 Allow only the exact `multimodal-provider` HTTP hostname under local/test insecure-local configuration while retaining production HTTPS enforcement.
-- [ ] 1.3 Add configuration tests for blank/true/false/invalid video-job overrides, exact Docker hostname acceptance, arbitrary hostname rejection, and production rejection.
+- [x] 1.1 Add a strict optional `FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED` override and Frux env-file allowlist coverage.
+- [x] 1.2 Allow only the exact `multimodal-provider` HTTP hostname under local/test insecure-local configuration while retaining production HTTPS enforcement.
+- [x] 1.3 Add configuration tests for blank/true/false/invalid video-job overrides, exact Docker hostname acceptance, arbitrary hostname rejection, and production rejection.
 
 ## 2. Development Compose Ingestion
 
-- [ ] 2.1 Add `docker-compose.multimodal.yml` with a health-gated Adapter service and Worker-only video-job/provider configuration.
-- [ ] 2.2 Ensure DashScope API key is injected only into Adapter while Worker receives only Profile, internal Endpoint, and HMAC.
-- [ ] 2.3 Add ignored local Compose metadata so this machine keeps the multimodal overlay active without committing credentials.
-- [ ] 2.4 Validate base Compose remains non-billable and overlay Compose fails closed when required local credentials are absent.
+- [x] 2.1 Add `docker-compose.multimodal.yml` with a health-gated Adapter service and Worker-only video-job/provider configuration.
+- [x] 2.2 Ensure DashScope API key is injected only into Adapter while Worker receives only Profile, internal Endpoint, and HMAC.
+- [x] 2.3 Add ignored local Compose metadata so this machine keeps the multimodal overlay active without committing credentials.
+- [x] 2.4 Validate base Compose remains non-billable and overlay Compose fails closed when required local credentials are absent.
 
 ## 3. Real Runtime Verification
 

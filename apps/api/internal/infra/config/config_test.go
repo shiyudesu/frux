@@ -423,6 +423,17 @@ func TestValidateAPIConfigScopesDevelopmentFullRolloutToLocalAndTest(t *testing.
 	}
 }
 
+func TestValidateAPIConfigRejectsInsecureMultimodalProviderOutsideLocal(t *testing.T) {
+	for _, environment := range []string{"staging", "production"} {
+		cfg := finalRuntimeConfig(InternalConfig{})
+		cfg.Environment = environment
+		cfg.Multimodal.Provider.AllowInsecureLocal = true
+		if err := ValidateAPIConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+			t.Fatalf("environment=%s error=%v", environment, err)
+		}
+	}
+}
+
 func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	token := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
 	t.Setenv("FRUX_INTERNAL_TOKEN", token)

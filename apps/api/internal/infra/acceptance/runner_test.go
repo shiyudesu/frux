@@ -33,6 +33,8 @@ type runnerAPIStub struct {
 	failLogin      bool
 	failReview     bool
 	claimConflicts int
+	similarCalls   int
+	hybridCalls    int
 	nextAsset      int64
 	nextVideo      int64
 }
@@ -65,10 +67,15 @@ func (s *runnerAPIStub) ApproveReview(context.Context, string, int64, int, Revie
 	}
 	return nil
 }
-func (*runnerAPIStub) Similar(context.Context, int64) (SimilarResult, error) {
+
+func (s *runnerAPIStub) Similar(context.Context, int64) (SimilarResult, error) {
+	s.similarCalls++
 	return SimilarResult{Available: true, VideoIDs: []int64{12}}, nil
 }
-func (*runnerAPIStub) Hybrid(context.Context, string) ([]int64, error) { return []int64{12, 11}, nil }
+func (s *runnerAPIStub) Hybrid(context.Context, string) ([]int64, error) {
+	s.hybridCalls++
+	return []int64{12, 11}, nil
+}
 func (s *runnerAPIStub) DeleteVideo(_ context.Context, _ string, id int64) error {
 	s.deleted = append(s.deleted, id)
 	return nil
@@ -107,6 +114,31 @@ func TestRunnerCompletesAllStagesAndCleanup(t *testing.T) {
 	for _, key := range api.uploadKeys {
 		if !strings.HasPrefix(key, report.RunID+"-") {
 			t.Fatalf("upload key %q is not scoped to run %q", key, report.RunID)
+		}
+	}
+}
+
+func TestRunnerIngestionOnlyStopsAfterFactProjectionAndMetrics(t *testing.T) {
+	profile, _ := multimodalprofile.Resolve(multimodalprofile.TongyiFlashSnapshotProfile)
+	api := &runnerAPIStub{}
+	config := runnerTestConfig(profile.ID)
+	config.IngestionOnly = true
+	runner, err := NewRunner(config, &runnerRuntimeStub{}, api, &runnerEvidenceStub{contract: profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := runner.Run(
+		context.Background(),
+		applicationacceptance.NewReport("ingestion-run", applicationacceptance.ModeExecution, time.Now(), false),
+	)
+	if err != nil || report.Result != applicationacceptance.ResultSuccess || len(report.Vectors) != 2 ||
+		api.similarCalls != 0 || api.hybridCalls != 0 {
+		t.Fatalf("report=%#v similar=%d hybrid=%d error=%v", report, api.similarCalls, api.hybridCalls, err)
+	}
+	for _, stage := range report.Stages {
+		if (stage.Name == applicationacceptance.StageSimilar || stage.Name == applicationacceptance.StageHybrid) &&
+			stage.Result != applicationacceptance.ResultSkipped {
+			t.Fatalf("stage=%#v", stage)
 		}
 	}
 }

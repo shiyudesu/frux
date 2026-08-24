@@ -3,8 +3,8 @@
 The API already consumes persisted active-contract vectors for100% development Session Semantic
 recommendation. The Worker has a complete durable multimodal job runtime and the image already contains
 the Tongyi Adapter binary, but development Compose starts neither the Adapter nor video jobs. The
-repository-local `.env.multimodal` contains the selected profile, Frux HMAC, and DashScope API key;
-those values must be distributed without giving the upstream key to API or Worker.
+repository-local `.env.multimodal` contains the selected profile and DashScope API key; Compose must
+provide a separate local transport secret without giving the upstream key to API or Worker.
 
 ## Goals / Non-Goals
 
@@ -41,8 +41,9 @@ would fail or perform an unexpected paid startup probe without credentials.
 ### 2. Keep credentials process-scoped
 
 Only the Adapter uses Compose `env_file: .env.multimodal`, so only it receives `DASHSCOPE_API_KEY`.
-Worker receives explicit Profile, internal Endpoint, and HMAC values through the overlay. API remains
-Session-only and receives neither the upstream key nor the video-job provider settings.
+The overlay overrides Adapter and Worker with the same development-only transport HMAC; Worker also
+receives the Profile and internal Endpoint. API remains Session-only and receives neither the
+upstream key nor the video-job provider settings.
 
 Alternative considered: mount `.env.multimodal` into every container. Rejected because filesystem
 access would still expose the upstream key to API/Worker even if their loaders ignored it.

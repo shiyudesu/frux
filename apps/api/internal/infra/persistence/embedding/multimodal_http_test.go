@@ -194,6 +194,21 @@ func TestHTTPMultimodalProviderRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestHTTPMultimodalProviderAllowsExactLocalComposeHostname(t *testing.T) {
+	contract := multimodalHTTPTestContract(t)
+	provider, err := NewHTTPMultimodalProvider(MultimodalHTTPProviderConfig{
+		Endpoint: "http://multimodal-provider:8099", HMACSecret: multimodalTestSecret,
+		ProtocolVersion: MultimodalProviderProtocolV1, AllowInsecureLocal: true,
+		Timeout: time.Second, MaxRequestBytes: 2 << 20, MaxResponseBytes: 1 << 20,
+		MaxVideoTextRunes: 128, MaxQueryRunes: 64, MaxImages: 4,
+		MaxImageBytes: 64 << 10, MaxTotalImageBytes: 64 << 10, MaxImagePixels: 4_000_000,
+		AllowedMIMETypes: []string{"image/jpeg"},
+	}, contract)
+	if err != nil || provider == nil {
+		t.Fatalf("provider=%#v error=%v", provider, err)
+	}
+}
+
 func TestHTTPMultimodalProviderReadinessRejectsMismatch(t *testing.T) {
 	contract := multimodalHTTPTestContract(t)
 	tests := []struct {

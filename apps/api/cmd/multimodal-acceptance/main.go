@@ -19,11 +19,12 @@ import (
 )
 
 type commandOptions struct {
-	execute    bool
-	cleanup    bool
-	reportPath string
-	query      string
-	timeout    time.Duration
+	execute       bool
+	cleanup       bool
+	ingestionOnly bool
+	reportPath    string
+	query         string
+	timeout       time.Duration
 }
 
 func main() {
@@ -45,6 +46,9 @@ func run(arguments []string, output io.Writer) error {
 	}
 	decision, environmentErr := loadEnvironmentAndDecide(options.execute)
 	report := applicationacceptance.NewReport(runID, decision.Mode, startedAt, options.cleanup)
+	if options.ingestionOnly {
+		report.PlannedModelCalls = 2
+	}
 	if environmentErr != nil {
 		failReport(&report, applicationacceptance.FailureConfiguration)
 		return emitReport(output, options.reportPath, report)
@@ -60,6 +64,7 @@ func run(arguments []string, output io.Writer) error {
 		}
 		return configErr
 	}
+	config.IngestionOnly = options.ingestionOnly
 	report.Prerequisites = []applicationacceptance.PrerequisiteResult{{
 		Name: "configuration", Result: applicationacceptance.ResultSuccess,
 	}}
@@ -124,6 +129,7 @@ func parseOptions(arguments []string) (commandOptions, error) {
 	var options commandOptions
 	flags.BoolVar(&options.execute, "execute", false, "execute the explicitly confirmed billable workflow")
 	flags.BoolVar(&options.cleanup, "cleanup", false, "delete only videos created by this run after verification")
+	flags.BoolVar(&options.ingestionOnly, "ingestion-only", false, "stop after video Fact/Projection and metrics verification")
 	flags.StringVar(&options.reportPath, "report", "", "optional JSON report path")
 	flags.StringVar(&options.query, "query", "", "hybrid acceptance query")
 	flags.DurationVar(&options.timeout, "timeout", 0, "per-stage timeout override")
