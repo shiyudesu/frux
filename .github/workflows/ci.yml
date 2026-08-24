@@ -200,7 +200,7 @@ jobs:
           FRUX_PUBLIC_SCHEME=http \
           FRUX_DOMAIN=203.0.113.10 \
           FRUX_S3_DOMAIN=203.0.113.10 \
-          FRUX_PUBLIC_HTTPS_PORT= \
+          FRUX_PUBLIC_HTTPS_PORT='' \
           FRUX_PUBLIC_APP_PORT=18080 \
           FRUX_PUBLIC_S3_PORT=19000 \
           FRUX_PUBLIC_BIND_ADDRESS=0.0.0.0 \
