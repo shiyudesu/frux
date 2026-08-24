@@ -131,6 +131,9 @@ Compose 内的服务仍使用原始容器端口；MinIO 预签名地址和浏览
 [Prod操作手册](docs/operations/prod.md) 与
 [自托管MinIO](docs/operations/self-hosted-minio.md)。旧部署的雨云设置保留在
 [雨云对象存储（旧部署）](docs/operations/rainyun-object-storage.md)。
+Prod 默认不调用付费模型；显式启用完整多模态配置后，会在不开放 Adapter 端口的前提下为新公开视频
+生成向量，并让 Session Semantic v4 全量使用已有向量。公网使用 HTTPS 还是直接 IP HTTP 不影响这条
+Docker 私网链路，精确变量和回滚见 [生产多模态链路](docs/operations/prod.md#启用生产多模态链路)。
 Prod由GitHub Actions构建并推送公开GHCR镜像；服务器不Clone仓库，也不开放部署Webhook或保存
 GitHub部署SSH Key，而是通过systemd每小时主动检查已批准的部署包。
 

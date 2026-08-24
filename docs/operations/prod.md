@@ -233,6 +233,127 @@ FRUX_MINIO_API_PORT=19000
 
 部署代理会拒绝不同 IP、相同端口、HTTPS 开关不一致、公开端口与宿主机映射不一致等组合。
 
+### 启用生产多模态链路
+
+公网访问和模型调用是两个独立边界。即使站点暂时使用 `direct-http`，Worker 到 Adapter 仍只走 Docker
+`backend` 网络；`multimodal-provider` 没有宿主机端口，不经过公网 IP、域名或 Caddy。内部请求和响应使用
+独立 HMAC 签名，但 HTTP 不提供传输机密性，因此不得给 Adapter 增加 `ports`、host network 或公网反代。
+
+未备案不等于“只能使用 HTTP”，也不意味着换成 HTTPS、IP 或非标准端口就免除备案。工信部办事指南与
+云厂商接入规则都把中国大陆服务器对公网提供网站服务作为备案判断边界；具体业务请向服务器接入商确认。
+本节只是工程部署说明，不是法律意见。参考：
+[工信部 ICP 备案办事指南](https://ythzxfw.miit.gov.cn/bssx/alx/dxhhlw/art/2025/art_88c400fc83904008bcf5b11bc08ec18f.html)、
+[阿里云备案服务器检查说明](https://help.aliyun.com/zh/icp-filing/basic-icp-service/user-guide/icp-filing-server-access-information-check)。
+
+在 `/opt/frux/.env.prod` 中一次性填写完整配置；生产部署器会拒绝只开一半、任意 HTTP 主机、复用应用
+HMAC、缺少 Key 或非法字节上限：
+
+```dotenv
+FRUX_MULTIMODAL_DEPLOYMENT_ENABLED=true
+FRUX_MULTIMODAL_PROFILE=tongyi-embedding-vision-flash-2026-03-06
+FRUX_MULTIMODAL_ENDPOINT=http://multimodal-provider:8099
+FRUX_MULTIMODAL_HMAC_SECRET=<独立生成的至少32字符随机值>
+FRUX_MULTIMODAL_ENABLED=true
+FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true
+FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true
+FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false
+FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true
+FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK=true
+
+DASHSCOPE_API_KEY=<百炼API Key>
+FRUX_TONGYI_UPSTREAM_TIMEOUT=20s
+FRUX_TONGYI_MAX_REQUEST_BYTES=25165824
+FRUX_TONGYI_MAX_RESPONSE_BYTES=2097152
+FRUX_TONGYI_SHUTDOWN_TIMEOUT=10s
+```
+
+也可以把 Profile 改为 `tongyi-embedding-vision-flash`。前者由模型生成融合向量，后者由 Adapter 对独立的
+文本/图片向量做本地均值融合；不要修改 Endpoint 主机名。多模态 HMAC 必须与 `FRUX_HMAC_SECRET` 不同：
+
+```bash
+openssl rand -base64 48 | tr -d '\n'
+```
+
+保存后触发部署。部署器会对 `.env.prod` 计算摘要，因此即使镜像 Digest 没变，环境变化也会重新应用：
+
+```bash
+sudo systemctl start frux-deploy.service
+sudo journalctl -u frux-deploy.service -n 200 -o cat
+```
+
+启用时会额外拉起 Adapter，真实 startup probe 成功后它才健康；Worker 随后完成签名 readiness/contract
+handshake，API 最后幂等确保不可变 v4=100% 生效并精确关闭其他语义 target。已有 v4 内容不兼容时启动会
+失败而不会覆盖策略。部署器会恢复上一 release；若上一版不支持多模态，则以多模态全关的基线回退，并
+移除失败 release 的 Adapter 容器。
+
+验证容器、端口和 Secret 边界：
+
+```bash
+sudo -i
+set -a
+. /opt/frux/.env.prod
+set +a
+release=$(readlink -f /opt/frux/current)
+compose=(docker compose --profile multimodal \
+  --env-file /opt/frux/.env.prod \
+  --env-file "$release/apps/.env.release" \
+  -p frux-prod \
+  -f "$release/apps/docker-compose.prod.yml")
+
+"${compose[@]}" ps api worker multimodal-provider
+test -z "$("${compose[@]}" port multimodal-provider 8099 2>/dev/null)"
+"${compose[@]}" exec -T api sh -ec \
+  'test -z "${DASHSCOPE_API_KEY+x}" && test -z "${FRUX_MULTIMODAL_ENDPOINT+x}" && test -z "${FRUX_MULTIMODAL_HMAC_SECRET+x}"'
+"${compose[@]}" exec -T worker sh -ec \
+  'test -z "${DASHSCOPE_API_KEY+x}" && test -n "$FRUX_MULTIMODAL_ENDPOINT" && test -n "$FRUX_MULTIMODAL_HMAC_SECRET"'
+"${compose[@]}" exec -T multimodal-provider sh -ec \
+  'test -n "$DASHSCOPE_API_KEY" && wget -qO- http://127.0.0.1:8099/health'
+```
+
+随后通过正常页面上传、审核并首次公开一个小视频。新视频应进入
+`multimodal_embedding_job → multimodal_vector_fact → multimodal_projection`；Feed 请求只读取已有 Exact
+向量，不调用模型。可从容器内部检查指标和数据库状态：
+
+```bash
+"${compose[@]}" exec -T multimodal-provider \
+  wget -qO- http://127.0.0.1:8099/metrics | grep '^frux_tongyi_'
+"${compose[@]}" exec -T worker \
+  wget -qO- http://127.0.0.1:9091/metrics | grep '^frux_multimodal_'
+"${compose[@]}" exec -T postgres psql \
+  -U "$FRUX_POSTGRES_USER" -d "$FRUX_POSTGRES_DATABASE" \
+  -c "SELECT id, video_id, state, attempts, error_code, updated_at FROM multimodal_embedding_job ORDER BY id DESC LIMIT 10;" \
+  -c "SELECT version, enabled, config_json->>'rollout_percentage' AS rollout FROM recommendation_policy WHERE scene='recommend' ORDER BY version;"
+```
+
+该 Profile 会在每次 Adapter 重新创建时产生一次很小的文本 startup probe，并在每个新公开视频 Job 上产生
+一次视频向量调用；失败后重试可能增加调用。Query Embedding、Hybrid Search 和 Similar Videos 仍未启用，
+刷 Feed 不产生百炼调用。按 2026-08-24 百炼北京区官方原价，两个可选 Profile 的图片/文本输入均为
+0.15 元/百万 Token；本项目实测两个小视频合计 1,680 input tokens，约 0.000252 元，若内容复杂度相近，
+1,000 个视频约 0.126 元。实际 Token、活动价、网络和存储费用以账单为准：
+[Tongyi Embedding Vision Flash 计费](https://help.aliyun.com/zh/model-studio/tongyi-embedding-vision-flash)。
+
+要停止所有新模型调用，把以下值一起改为 `false`，保留 Profile、Endpoint、HMAC、Key 和已有向量不会产生
+调用，然后再次启动部署服务：
+
+```dotenv
+FRUX_MULTIMODAL_DEPLOYMENT_ENABLED=false
+FRUX_MULTIMODAL_ENABLED=false
+FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=false
+FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=false
+FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false
+FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=false
+FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK=false
+```
+
+如果还要让推荐立即回到 v1/v2，在重启前精确关闭 v4；不要删除策略或向量：
+
+```bash
+"${compose[@]}" exec -T postgres psql \
+  -U "$FRUX_POSTGRES_USER" -d "$FRUX_POSTGRES_DATABASE" \
+  -c "UPDATE recommendation_policy SET enabled=false, updated_at=NOW() WHERE scene='recommend' AND version=4 AND enabled=true;"
+sudo systemctl start frux-deploy.service
+```
+
 ### 签发 DNS-01 证书
 
 HTTP-01 和 TLS-ALPN-01 无法通过公网 80/443 到达此 NAT 主机。使用 DNS 服务商 API 通过 DNS-01

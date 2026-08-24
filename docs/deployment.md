@@ -226,19 +226,24 @@ Kafka的完整要求见 [Kafka event backbone](kafka.md)，故障处理见
 
 ## 可选 Tongyi 多模态 Adapter
 
-API 镜像同时包含 `frux-multimodal-provider`，但 Compose 和 Kubernetes 默认都不启动它。Adapter 只需要
+API 镜像同时包含 `frux-multimodal-provider`，但 Compose 和 Kubernetes 默认都不启动它。生产 Compose
+可通过显式 `multimodal` profile 启动 Adapter。Adapter 只需要
 公网访问百炼，不访问 PostgreSQL、Redis、Kafka 或对象存储；视频图片由 Worker 通过签名的 Frux 协议
 以内联 Base64 发送。
 
 同机开发可以让 Adapter 监听 `127.0.0.1:8099`，API/Worker 使用
-`FRUX_MULTIMODAL_ENDPOINT=http://127.0.0.1:8099` 并设置 `allow_insecure_local=true`。跨主机或容器网络
-部署必须在 Adapter 前终止 TLS，并让 Frux 使用 HTTPS Endpoint；不要为了容器互联放宽非 loopback HTTP
-限制。百炼 API Key 只注入 Adapter，不能注入 API/Worker。`FRUX_MULTIMODAL_PROFILE` 则必须在 API、
-Worker 和 Adapter 中保持一致；当前允许选择带日期的原生融合档位或无日期的本地均值融合档位。
+`FRUX_MULTIMODAL_ENDPOINT=http://127.0.0.1:8099` 并设置 `allow_insecure_local=true`。单机生产 Compose
+使用独立的 `allow_insecure_private_network=true`，只接受精确地址
+`http://multimodal-provider:8099`；Adapter 只连接 backend 网络且不发布宿主机端口。任意其他容器、私网或
+公网 HTTP 主机仍会被拒绝，跨主机部署必须在 Adapter 前终止 TLS。请求和响应继续使用独立 HMAC 做完整性
+校验，但内部 HTTP 本身不提供机密性，因此不能把 Adapter 端口映射到宿主机或公网。
+
+百炼 API Key 只注入 Adapter，不能注入 API/Worker。Worker 只接收 Adapter Endpoint 和独立 HMAC；API
+只接收 Profile、Session runtime 与生产全量策略开关。`FRUX_MULTIMODAL_PROFILE` 必须在 API、Worker 和
+Adapter 中保持一致；当前允许选择带日期的原生融合档位或无日期的本地均值融合档位。
 
 原生仓库开发可把配置保存为 `apps/.env.multimodal`，三个 Go 命令会自动发现它，且只有 Adapter 会加载
 其中的 DashScope 凭证。容器部署不会自动读取宿主机上的该文件，仍需使用 Compose/Kubernetes 的环境变量
 注入机制；不要把 `.env.multimodal` 复制进镜像。
 
-部署和回滚步骤见 [视频向量模块](modules/embedding.md)。没有完成真实 startup probe 与 Golden Set 前，
-保持全部 multimodal feature flags 为 false。
+生产环境的精确变量、成本、验证和回滚步骤见 [Prod 部署](operations/prod.md#启用生产多模态链路)。

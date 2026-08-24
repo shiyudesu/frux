@@ -6,8 +6,8 @@
 向量事实、Exact Projection、查询向量和媒体帧准备能力。Application 合同不规定 Python、Go、ONNX、
 本地/远程服务、模型家族、硬件或供应商；Infrastructure 已提供签名 HTTP Provider Adapter 和进程接线，
 开发基础 Compose 默认只启用复用已有向量的 Session Semantic 路径；显式多模态覆盖可进一步启动 Adapter
-和视频 Job，使之后发布的视频自动生成向量。Query、Hybrid、Similar 和生产配置仍保持关闭，不会因刷 Feed
-调用模型。
+和视频 Job，使之后发布的视频自动生成向量。生产 Compose 也提供默认关闭、完整配置才可启用的私有
+Adapter Profile。Query、Hybrid 和 Similar 仍保持关闭，不会因刷 Feed 调用模型。
 
 多模态路径不训练/微调模型，不扫描历史视频，不创建 HNSW/IVFFlat；Session Semantic
 Recommendation 可在完整策略下复用已有 Fact/Projection 与 Exact，但推荐请求不调用 Provider，也不创建新的
@@ -183,7 +183,8 @@ docker compose up -d api worker
 开发 Compose 为 Profile、`FRUX_MULTIMODAL_ENABLED`、
 `FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED` 和开发全量策略提供默认值；都可以被显式环境变量覆盖。
 布尔值非法时配置加载失败。启动后 `frux_recommendation_session_semantic_runtime_ready` 应为1。
-`.env.session-semantic-runtime.example` 保留为显式配置参考；生产 Compose 不继承这些开发默认值。
+`.env.session-semantic-runtime.example` 保留为显式配置参考；生产 Compose 不继承这些开发默认值，而使用
+独立生产开关。
 
 要同时启用新视频向量生产，使用付费覆盖：
 
@@ -203,10 +204,9 @@ Profile、`http://multimodal-provider:8099` 和本地 Compose HMAC，API 不接�
 Adapter 都原生运行时可以直接使用。默认 Docker Compose 不启动 Adapter，并且容器内的 `127.0.0.1`
 指向容器自身，因此不得把这份 loopback 文件直接当作可工作的容器 Endpoint 执行
 `docker compose --env-file .env.multimodal up`。默认开发 Compose 只开启无需 Provider 的 Session Semantic；
-如需让容器内
-API/Worker 连接 Adapter，必须另外提供容器可达且符合 Docker 配置 TLS 边界的 Endpoint。Session-only
-推荐不使用该 Endpoint。未来若增加
-容器化 Adapter，应使用独立显式 Compose Profile 和内部地址，而不是复用原生 loopback 示例。
+如需让容器内 Worker 连接 Adapter，应使用 `docker-compose.multimodal.yml` 覆盖。生产 Compose 则使用
+`multimodal` Profile、精确内部地址 `http://multimodal-provider:8099` 和仅生产可用的私网授权开关；该
+HTTP 例外不接受任意主机，也不发布 Adapter 端口。Session-only 推荐不使用该 Endpoint。
 
 `/health` 只表示进程存活；Adapter 必须先用所选模型完成一次真实 text embedding probe，之后才会在
 签名 `/v1/ready` 中报告所选合同 ready。API Key、上游 Endpoint、请求内容、向量、source hash 和上游

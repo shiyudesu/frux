@@ -186,8 +186,8 @@ Session Semantic Rollout 使用
 `frux_recommendation_session_semantic_runtime_ready` 证明 API 已完整组装 Builder、Provider、active
 contract 与 Exact repository。该值只有0或1；普通 `/health=200`、已有向量事实或 Adapter ready 都不能
 代替它。`cmd/session-semantic-rollout --action activate` 必须读取到唯一的值1，否则 fail closed。
-开发 Compose 默认应为1，并由 v4=100%承接全部推荐请求；生产仍默认0。开发环境若该值为0，属于配置或
-依赖故障，而不再是预期的休眠状态。
+开发 Compose 默认应为1，并由 v4=100%承接全部推荐请求；生产默认0，完整启用生产多模态配置后应为1。
+已启用环境若该值为0，属于配置或依赖故障，而不是预期的休眠状态。
 
 运营命令另记录
 `frux_recommendation_session_semantic_rollout_operations_total{action,result}`。action 只允许

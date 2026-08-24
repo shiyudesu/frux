@@ -428,7 +428,8 @@ FRUX_SESSION_SEMANTIC_ROLLOUT_PERCENTAGE=100
 FRUX_SESSION_SEMANTIC_ROLLOUT_ALLOW_FULL=true
 ```
 
-生产配置仍默认关闭开发 full-rollout 标志，不能通过普通1%～5%配置意外扩大到100%。
+生产配置仍默认关闭全部 full-rollout 标志。显式生产开关只允许 staging/production，并复用相同不可变
+v4 内容；开发与生产开关互斥，不能通过普通1%～5%配置意外扩大到100%。
 
 2026-08-22 本地 Docker 验证：Shadow/合同/100% baseline 门禁通过，API 在默认配置下明确报告
 runtime-ready=0；v3 以1%配置成功创建但保持 disabled，显式 activate 被 `prerequisite` 阻止，exact disable
@@ -445,7 +446,8 @@ enabled。容器没有 Adapter Endpoint/HMAC，推荐请求仍为零外部模型
 
 ## 14. 生产启用门槛
 
-开发 v4=100%只用于让低流量项目实际走到新链路，不等于已经证明生产收益。生产启用前仍应至少观察一个
-完整窗口：请求错误/降级率、snapshot hit、Provider timeout、profile lag、曝光到播放/完播率和负反馈率
-不得劣于 baseline。语义策略异常时优先执行 exact disable，使请求立即回落到仍启用的 v1/v2；只有需要关闭
-同 scene 全部 staged policy 时才使用 `PolicyService.Rollback`。保留日志、Outbox 和事实以便调查。
+生产现在支持通过闭集配置显式启用私有 Adapter、新视频 Job、Session runtime 和 v4=100%，默认仍关闭。
+这让低流量个人项目能实际走到新链路，不等于已经证明收益；启用后应观察请求错误/降级率、snapshot hit、
+Provider timeout、profile lag、曝光到播放/完播率和负反馈率。语义策略异常时优先执行 exact disable，使请求
+立即回落到仍启用的 v1/v2；只有需要关闭同 scene 全部 staged policy 时才使用 `PolicyService.Rollback`。
+保留日志、Outbox 和事实以便调查。

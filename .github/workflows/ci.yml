@@ -47,8 +47,8 @@ jobs:
       - name: Run Go tests
         run: go test ./...
 
-      - name: Build API and Worker
-        run: go build ./cmd/feed ./cmd/worker
+      - name: Build API, Worker, and Multimodal Adapter
+        run: go build ./cmd/feed ./cmd/worker ./cmd/multimodal-provider
 
   web:
     name: Web

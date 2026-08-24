@@ -19,6 +19,6 @@
 
 ## 4. Verification and Documentation
 
-- [ ] 4.1 Run config/unit/deploy-script tests, `go test ./...`, builds, production Compose validation for both public modes and multimodal states, Docker smoke checks, and strict OpenSpec validation.
-- [ ] 4.2 Document direct-IP/ICP limitations, private Adapter HTTP, exact server environment values, activation verification, cost, and rollback.
+- [x] 4.1 Run config/unit/deploy-script tests, `go test ./...`, builds, production Compose validation for both public modes and multimodal states, Docker smoke checks, and strict OpenSpec validation.
+- [x] 4.2 Document direct-IP/ICP limitations, private Adapter HTTP, exact server environment values, activation verification, cost, and rollback.
 - [ ] 4.3 Sync delta specs, archive the change, and provide the remaining server-side secret/deployment actions.
