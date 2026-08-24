@@ -19,6 +19,7 @@
 - Session-only 环境启用、精确 v3 active Cohort 验收、fallback 证据与验收后安全禁用；
 - 不改写历史策略的 v4=100% 开发全量接入，以及生产默认关闭边界；
 - 隔离 DashScope Key 的开发 Adapter 覆盖，以及新公开视频 Job → Fact → Projection 自动链路；
+- 默认关闭、闭集校验的生产私有 Adapter、新视频 Job、Session runtime 与 v4=100% 显式启用能力；
 - KuaiRec/MicroLens Adapter、生产策略 Replay 和人工 Golden Set 离线评测框架。
 
 当前尚未正式启用或完成后置 Gate：
@@ -323,6 +324,7 @@ Shadow
 | `accept-session-semantic-active-rollout` | 已完成并归档 | 通过显式 Session-only runtime 和正常 API 精确验收 active v3 Cohort，证明语义结果、Snapshot 复用、fallback、零模型调用与窄清理；最终 v3 disabled/not deleted，默认 runtime 恢复关闭 |
 | `enable-session-semantic-development-default` | 已完成并归档 | 开发 Compose 默认组装 Session-only runtime，并幂等创建/激活不可变 v4=100%、精确关闭其他语义 target；生产继续显式 opt-in |
 | `enable-development-multimodal-video-ingestion` | 已完成并归档 | 显式付费 Compose 覆盖启动健康门禁 Adapter 和 Worker 视频 Job；新公开视频自动生成 active-contract Fact/Projection，API/Worker 不接收 DashScope Key |
+| `enable-production-multimodal-runtime` | 已完成并归档 | 生产 Compose 私网 Adapter、严格 Secret 隔离和配置闭集、生产 v4=100%、环境摘要重部署、健康门禁及兼容旧 release 的安全回滚；服务器仍需显式填写 Key/HMAC/开关并部署 |
 | `shadow-semantic-ann-recall` | 被替代 | 当前 Exact Session Shadow 已由 `add-session-semantic-shadow-evaluation` 实现；旧 Change 绑定 ANN/长期画像，不进入 Active Path |
 | `export-recommendation-training-dataset` | 退出 Active Path | 只有所有训练 Gate 满足后重提 |
 | `learn-recommendation-policy-weights` | 退出 Active Path | 当前不训练、不学习线上权重 |
@@ -361,6 +363,8 @@ Track A + Track B
   development full rollout v4=100%（已实现并启用）
       ↓
   new-video multimodal ingestion（已实现，本机付费覆盖启用）
+      ↓
+  production private Adapter + v4 full rollout（已实现，服务器显式 opt-in）
 
 Later Gates
   ├── Exact capacity exceeded → HNSW proposal
@@ -383,5 +387,6 @@ Later Gates
 - MicroLens/KuaiRec Adapter、Golden Set 和自动报告可复现；
 - Semantic Shadow 与 Active 结果隔离。
 
-下一阶段优先扩充多类别内容样本、冷启动体验和真实刷 Feed 的反馈效果；生产启用仍是新的显式运营决策。
+下一阶段优先扩充多类别内容样本、冷启动体验和真实刷 Feed 的反馈效果；生产能力已实现但默认关闭，服务器
+是否实际启用由 `/opt/frux/.env.prod` 与最近一次成功部署共同决定。
 第一版不要求 HNSW、长期画像、训练、全量历史覆盖或统计显著的线上提升。

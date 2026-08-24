@@ -102,6 +102,23 @@ exact-disable every other enabled registered semantic rollout target after v4 ac
 - **WHEN** v4 activation succeeds while another registered semantic target remains enabled
 - **THEN** each other semantic target is exact-disabled and non-semantic v1/v2 states remain unchanged
 
+### Requirement: Production full rollout is explicit and environment-scoped
+Frux SHALL support a production full-rollout flag that is valid only in staging/production, requires
+the parent and Session runtimes, and is mutually exclusive with the development full-rollout flag.
+When enabled, API startup SHALL idempotently reconcile the same immutable compatible v4=100% policy.
+
+#### Scenario: Production full rollout is enabled
+- **WHEN** Session runtime composes under production with the explicit production full-rollout flag
+- **THEN** API ensures v4 exists and is enabled, exact-disables other semantic targets, and retains v1/v2
+
+#### Scenario: Production flag is used locally
+- **WHEN** local/test configuration enables the production full-rollout flag
+- **THEN** configuration fails before startup
+
+#### Scenario: Development and production flags are both set
+- **WHEN** both environment-scoped full-rollout flags are true
+- **THEN** configuration fails before startup or policy mutation
+
 ### Requirement: Full rollout requires an explicit operator acknowledgement
 The rollout operator SHALL preserve the normal1-5% limit unless an explicit full-rollout
 acknowledgement authorizes exactly100%. Create and activate MUST still require the existing mutation

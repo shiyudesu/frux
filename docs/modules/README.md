@@ -18,7 +18,7 @@
 | 分发 | 曝光与观看历史 | [exposure.md](exposure.md) | 已实现 |
 | 分发 | 推荐 | [recommendation.md](recommendation.md) | 已实现 |
 | 分发 | 推荐 Shadow 评测 | [recommendation.md#12-session-semantic-shadow](recommendation.md#12-session-semantic-shadow) | 已实现（默认关闭） |
-| 分发 | 推荐语义发布 | [recommendation.md#13-session-semantic-rollout](recommendation.md#13-session-semantic-rollout) | 已实现（开发全量、生产关闭） |
+| 分发 | 推荐语义发布 | [recommendation.md#13-session-semantic-rollout](recommendation.md#13-session-semantic-rollout) | 已实现（开发默认全量、生产显式 opt-in） |
 | 治理 | 审核 | [review.md](review.md) | 规划中 |
 | 治理 | 后台权限与运营入口 | [admin.md](admin.md) | 部分实现 |
 | 治理 | 后台操作审计 | [admin-audit.md](admin-audit.md) | 已实现 |
