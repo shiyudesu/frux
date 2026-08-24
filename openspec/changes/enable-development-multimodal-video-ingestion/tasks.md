@@ -13,10 +13,10 @@
 
 ## 3. Real Runtime Verification
 
-- [ ] 3.1 Build and start the overlay, verify the real startup probe, Adapter health/metrics, and signed Worker readiness.
-- [ ] 3.2 Publish one eligible development video or execute an equivalent isolated real workflow through normal APIs.
-- [ ] 3.3 Verify the new video reaches succeeded Job, active-contract Fact, current Projection, and becomes eligible for Exact/Session Semantic retrieval.
-- [ ] 3.4 Verify API/Worker environments contain no DashScope key, model-call counters are bounded, and v4 remains enabled at100%.
+- [x] 3.1 Build and start the overlay, verify the real startup probe, Adapter health/metrics, and signed Worker readiness.
+- [x] 3.2 Publish one eligible development video or execute an equivalent isolated real workflow through normal APIs.
+- [x] 3.3 Verify the new video reaches succeeded Job, active-contract Fact, current Projection, and becomes eligible for Exact/Session Semantic retrieval.
+- [x] 3.4 Verify API/Worker environments contain no DashScope key, model-call counters are bounded, and v4 remains enabled at100%.
 
 ## 4. Tests, Documentation, and Completion
 

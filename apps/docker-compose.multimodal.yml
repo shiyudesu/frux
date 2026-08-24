@@ -33,3 +33,5 @@ services:
     depends_on:
       multimodal-provider:
         condition: service_healthy
+    ports:
+      - "127.0.0.1:${FRUX_WORKER_METRICS_HOST_PORT:-9091}:9091"
