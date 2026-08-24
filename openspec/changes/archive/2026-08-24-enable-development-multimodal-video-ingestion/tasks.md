@@ -22,4 +22,4 @@
 
 - [x] 4.1 Add focused config/env/Compose/runtime tests and run real PostgreSQL tests, `go test ./...`, entrypoint builds, Docker build, and strict OpenSpec validation.
 - [x] 4.2 Update README, embedding/recommendation/monitoring/product/roadmap documentation with the paid overlay command, cost boundary, rollback, and new-video semantics.
-- [ ] 4.3 Sync delta specs, archive the change, and leave the full local stack healthy with a clean worktree.
+- [x] 4.3 Sync delta specs, archive the change, and leave the full local stack healthy with a clean worktree.
