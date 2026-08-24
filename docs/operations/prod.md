@@ -258,6 +258,11 @@ sudo chmod 755 /usr/local/sbin/frux-deploy.next
 sudo mv /usr/local/sbin/frux-deploy.next /usr/local/sbin/frux-deploy
 ```
 
+首次从不含生产 Adapter 的旧 release 升级时使用两阶段发布：先保持所有生产多模态布尔值为 `false`，发布并
+部署新 bundle；确认 `/opt/frux/current/apps/docker-compose.prod.yml` 已包含 `multimodal-provider` 后，再执行
+下面的完整启用。这样旧版本始终是可用回退基线。新版部署器也会在 Compose 变更前拒绝用旧 bundle 直接
+开启 Profile；同一 bundle 因环境配置重部署失败时会保留当前 release 目录。
+
 在 `/opt/frux/.env.prod` 中一次性填写完整配置；生产部署器会拒绝只开一半、任意 HTTP 主机、复用应用
 HMAC、缺少 Key 或非法字节上限：
 

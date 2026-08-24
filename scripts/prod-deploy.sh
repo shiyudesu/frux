@@ -169,6 +169,14 @@ release_supports_multimodal() {
   grep -Eq '^[[:space:]]{2}multimodal-provider:' "$release/apps/docker-compose.prod.yml"
 }
 
+validate_release_multimodal_support() {
+  local release=$1
+
+  if multimodal_deployment_enabled && ! release_supports_multimodal "$release"; then
+    die "approved deployment bundle does not support the multimodal profile; deploy it with multimodal disabled first"
+  fi
+}
+
 valid_port() {
   local value=$1
   [[ $value =~ ^[1-9][0-9]{0,4}$ ]] && ((value <= 65535))
@@ -647,6 +655,7 @@ main() {
   else
     validate_bundle "$release_dir"
   fi
+  validate_release_multimodal_support "$release_dir"
 
   previous_release=
   if [[ -L $current_link ]]; then
@@ -676,9 +685,13 @@ main() {
     compose_release "$release_dir" --profile multimodal rm -sf multimodal-provider >/dev/null 2>&1 || true
     if [[ -n $previous_release ]] && restore_release "$previous_release" "$previous_multimodal_enabled"; then
       echo "Previous Prod release restored." >&2
-      safe_release_path "$release_dir" ||
-        die "refusing to remove an unsafe failed release path"
-      rm -rf -- "$release_dir"
+      if [[ $release_dir != "$previous_release" ]]; then
+        safe_release_path "$release_dir" ||
+          die "refusing to remove an unsafe failed release path"
+        rm -rf -- "$release_dir"
+      else
+        echo "Current release bundle retained after failed configuration re-apply." >&2
+      fi
     else
       compose_release "$release_dir" --profile worker down >/dev/null 2>&1 || true
       echo "No healthy previous release was restored; failed bundle retained at $release_dir." >&2

@@ -94,4 +94,11 @@ if release_supports_multimodal "$FRUX_ROOT/old"; then
 fi
 release_supports_multimodal "$FRUX_ROOT/new"
 
+write_valid_multimodal_env
+if (validate_release_multimodal_support "$FRUX_ROOT/old" >/dev/null 2>&1); then
+  echo 'Legacy release accepted an enabled multimodal deployment' >&2
+  exit 1
+fi
+validate_release_multimodal_support "$FRUX_ROOT/new"
+
 echo 'Prod deployment multimodal validation tests passed.'
