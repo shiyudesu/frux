@@ -168,8 +168,9 @@ source score 不跨 Provider 比较，goroutine 完成顺序和 Go map 迭代不
 调用和 Repository Fallback 继续使用响应页派生的有界池。回滚只需停止选择带配额字段的策略，不需要数据库
 Schema 或数据回滚。
 
-多模态视频 Job、Hybrid Search 和 Similar Videos 已实现但默认关闭；已有 Fact/Projection 与 Exact 可被
-开发环境的 Session Semantic 直接复用。`session-semantic-v1` 只在 current/recent 上下文圈定的范围内读取服务端可信
+多模态视频 Job、Hybrid Search 和 Similar Videos 已实现；基础 Compose 关闭视频 Job，付费多模态覆盖则让
+之后发布的合格视频自动生成 Fact/Projection。已有和新增的 active-contract Projection 都可被开发环境的
+Session Semantic 直接复用。`session-semantic-v1` 只在 current/recent 上下文圈定的范围内读取服务端可信
 交付、曝光、观看、LIKE/FAVORITE 与推荐反馈事实，使用完整 active-contract 视频向量构造短期单位向量。
 `not_interested` 覆盖同视频隐式正向信号并提供有界负方向，`already_seen` 只做排除；缺失向量、合同不匹配、
 Confidence 不足或 Exact 超时均让 `semantic_session` 健康空结果或单 Provider degraded，现有 Hash/Fresh/Hot/
@@ -436,6 +437,11 @@ runtime-ready=0；v3 以1%配置成功创建但保持 disabled，显式 activate
 2026-08-24 开发默认全量接入验证：普通 `docker compose up -d api worker` 无需专用 runtime env，API
 报告 runtime-ready=1 并幂等激活 v4=100%；10000个确定性样本全部选择 v4，v3 被精确禁用，v1/v2 保持
 enabled。容器没有 Adapter Endpoint/HMAC，推荐请求仍为零外部模型调用路径。
+
+同日启用付费视频摄取覆盖并完成 ingestion-only 真实验收：通过正常注册、上传、创建和审核接口发布视频
+25/26，两个 Job 均在首次尝试 succeeded，分别生成768维 active-contract Fact/Projection；Adapter 视频调用
+增量为2。API/Worker 均无 DashScope Key，v4 继续保持100%，因此这些新视频具备进入 Session Semantic Exact
+候选的向量条件。
 
 ## 14. 生产启用门槛
 

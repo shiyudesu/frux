@@ -5,8 +5,9 @@
 视频向量模块同时保留稳定的 `hash-ngram-v1` 基线，以及可独立启用的多模态合同、Durable Job、权威
 向量事实、Exact Projection、查询向量和媒体帧准备能力。Application 合同不规定 Python、Go、ONNX、
 本地/远程服务、模型家族、硬件或供应商；Infrastructure 已提供签名 HTTP Provider Adapter 和进程接线，
-开发 Compose 默认只启用复用已有向量的 Session Semantic 路径；视频 Job、Query、Hybrid、Similar 和
-生产配置仍保持关闭，不会因刷 Feed 调用模型。
+开发基础 Compose 默认只启用复用已有向量的 Session Semantic 路径；显式多模态覆盖可进一步启动 Adapter
+和视频 Job，使之后发布的视频自动生成向量。Query、Hybrid、Similar 和生产配置仍保持关闭，不会因刷 Feed
+调用模型。
 
 多模态路径不训练/微调模型，不扫描历史视频，不创建 HNSW/IVFFlat；Session Semantic
 Recommendation 可在完整策略下复用已有 Fact/Projection 与 Exact，但推荐请求不调用 Provider，也不创建新的
@@ -26,6 +27,10 @@ Embedding 使用 `frux.embedding.video-published.v1` 独立 Group 消费保留 3
 启用 `video_jobs_enabled` 时，第4步完成后还会按完整合同与 source hash 幂等创建/刷新
 `multimodal_embedding_job`。Kafka 只等待这次 PostgreSQL handoff，不等待媒体准备或 Provider 推理；
 确定性无效输入注册 terminal/no-op，数据库 handoff 失败保持 retryable。
+
+开发多模态 Compose 覆盖会为 Worker 设置该开关。新视频通过正常上传、审核和首次公开后自动进入 Job；
+成功结果写入权威 Fact，再由 Projection Reconciler 投影到 Exact。关闭覆盖不会影响视频发布，也不会删除
+已经生成的向量。
 
 重复或回放事件使用相同文本 hash，不创建重复事实，也不刷新未变化记录的 `updated_at`。文本变化时
 更新同一模型行。Feed 使用独立 Group，因此 embedding 延迟或失败不会阻塞 Feed fanout。
@@ -180,6 +185,20 @@ docker compose up -d api worker
 布尔值非法时配置加载失败。启动后 `frux_recommendation_session_semantic_runtime_ready` 应为1。
 `.env.session-semantic-runtime.example` 保留为显式配置参考；生产 Compose 不继承这些开发默认值。
 
+要同时启用新视频向量生产，使用付费覆盖：
+
+```bash
+cd apps
+docker compose --env-file .env.multimodal \
+  -f docker-compose.yml -f docker-compose.multimodal.yml \
+  up -d --build
+```
+
+覆盖文件启动 `multimodal-provider`，其真实 startup probe 成功并通过健康检查后，Worker 才启动
+`video_jobs_enabled=true` 的任务执行器。Adapter 是唯一接收 `DASHSCOPE_API_KEY` 的容器；Worker 只接收
+Profile、`http://multimodal-provider:8099` 和本地 Compose HMAC，API 不接收模型 Key 或视频 Job Endpoint。
+本仓库当前机器使用忽略的 `apps/.env` 自动选择该覆盖；删除该本地文件即可恢复基础 Compose 行为。
+
 `.env.multimodal` 已被 Git 忽略。示例中的 `127.0.0.1:8099` 是**宿主机原生进程边界**：API、Worker 与
 Adapter 都原生运行时可以直接使用。默认 Docker Compose 不启动 Adapter，并且容器内的 `127.0.0.1`
 指向容器自身，因此不得把这份 loopback 文件直接当作可工作的容器 Endpoint 执行
@@ -228,6 +247,16 @@ FRUX_ACCEPTANCE_ALLOW_BILLABLE=true
 ```bash
 go run ./cmd/multimodal-acceptance --execute --report ./acceptance-report.json
 ```
+
+只验证上传、审核、Job、Fact、Projection 和成本指标，不启用 Similar/Hybrid 时使用：
+
+```bash
+go run ./cmd/multimodal-acceptance \
+  --ingestion-only --execute \
+  --report /tmp/multimodal-ingestion-acceptance.json
+```
+
+该模式计划两次视频向量调用，`similar` 与 `hybrid` 阶段明确记为 skipped。
 
 执行要求 API、Worker、Adapter、PostgreSQL、Redis、Kafka 和 MinIO 已由现有开发工具启动；媒体必须使用
 S3/MinIO 直传，多模态 Video Jobs、Similar、Query Embedding 和 Hybrid 必须已显式启用。Runner 不启动或停止

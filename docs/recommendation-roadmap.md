@@ -18,6 +18,7 @@
 - disabled-first Session Semantic Rollout、Shadow/运行时门禁、1%稳定 Cohort 与 exact Kill Switch；
 - Session-only 环境启用、精确 v3 active Cohort 验收、fallback 证据与验收后安全禁用；
 - 不改写历史策略的 v4=100% 开发全量接入，以及生产默认关闭边界；
+- 隔离 DashScope Key 的开发 Adapter 覆盖，以及新公开视频 Job → Fact → Projection 自动链路；
 - KuaiRec/MicroLens Adapter、生产策略 Replay 和人工 Golden Set 离线评测框架。
 
 当前尚未正式启用或完成后置 Gate：
@@ -321,6 +322,7 @@ Shadow
 | `rollout-session-semantic-recommendation` | 已完成并归档 | 注册语义策略、合同化 Shadow 证据、runtime-ready 门禁、disabled-first create、1%稳定 Cohort、100% baseline fallback、exact disable 和脱敏运营报告；默认 runtime 下 target 保持 disabled |
 | `accept-session-semantic-active-rollout` | 已完成并归档 | 通过显式 Session-only runtime 和正常 API 精确验收 active v3 Cohort，证明语义结果、Snapshot 复用、fallback、零模型调用与窄清理；最终 v3 disabled/not deleted，默认 runtime 恢复关闭 |
 | `enable-session-semantic-development-default` | 已完成并归档 | 开发 Compose 默认组装 Session-only runtime，并幂等创建/激活不可变 v4=100%、精确关闭其他语义 target；生产继续显式 opt-in |
+| `enable-development-multimodal-video-ingestion` | 已完成、待归档 | 显式付费 Compose 覆盖启动健康门禁 Adapter 和 Worker 视频 Job；新公开视频自动生成 active-contract Fact/Projection，API/Worker 不接收 DashScope Key |
 | `shadow-semantic-ann-recall` | 被替代 | 当前 Exact Session Shadow 已由 `add-session-semantic-shadow-evaluation` 实现；旧 Change 绑定 ANN/长期画像，不进入 Active Path |
 | `export-recommendation-training-dataset` | 退出 Active Path | 只有所有训练 Gate 满足后重提 |
 | `learn-recommendation-policy-weights` | 退出 Active Path | 当前不训练、不学习线上权重 |
@@ -357,6 +359,8 @@ Track A + Track B
   active 1% acceptance（已完成并恢复 disabled）
       ↓
   development full rollout v4=100%（已实现并启用）
+      ↓
+  new-video multimodal ingestion（已实现，本机付费覆盖启用）
 
 Later Gates
   ├── Exact capacity exceeded → HNSW proposal

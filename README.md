@@ -72,6 +72,24 @@ cd apps
 docker compose up --build
 ```
 
+基础 Compose 不启动付费模型 Adapter，新视频仍可正常发布，但不会自动生成多模态向量。要让之后发布的
+公开视频自动进入 Tongyi 视频向量 Job，先填写 `apps/.env.multimodal`，再使用显式覆盖：
+
+```bash
+cp apps/.env.multimodal.example apps/.env.multimodal
+# 填写 DASHSCOPE_API_KEY；Profile 可在两个已注册模型间选择
+
+export FRUX_INTERNAL_TOKEN="$(openssl rand -base64 48 | tr -d '\n')"
+cd apps
+docker compose --env-file .env.multimodal \
+  -f docker-compose.yml -f docker-compose.multimodal.yml \
+  up -d --build
+```
+
+该覆盖会执行一次真实模型启动探测，之后每个新的合格公开视频通常产生一次视频向量调用。DashScope Key
+只进入 Adapter；API 和 Worker 不接收该 Key。关闭付费摄取可只用基础 Compose 重新创建 Worker，并停止
+`multimodal-provider`。
+
 如果宿主机端口已被其他项目占用，可以只修改 Frux 的宿主机映射端口：
 
 ```bash
@@ -100,7 +118,7 @@ Compose 内的服务仍使用原始容器端口；MinIO 预签名地址和浏览
 | 操作 | 命令 |
 | --- | --- |
 | 后台启动 | `cd apps && docker compose up -d --build` |
-| 查看日志 | `cd apps && docker compose logs -f api worker web` |
+| 查看日志 | `cd apps && docker compose logs -f api worker multimodal-provider web` |
 | 停止服务 | `cd apps && docker compose down` |
 | 校验配置 | `cd apps && docker compose config` |
 | 清空本地数据 | `cd apps && docker compose down -v` |

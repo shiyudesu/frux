@@ -224,6 +224,8 @@ operation 仅为 readiness/video/query，result 复用 success/retryable/termina
 Tongyi 上游适配器暴露 `frux_tongyi_provider_operations_total{operation,result}`、duration 和
 `frux_tongyi_provider_tokens_total{operation,token_type}`；operation 仅为 startup/video/query，
 token_type 仅为 input/image/text/output。Token 计数用于成本估算，不携带文本、图片或请求标识。
+开发付费覆盖启动时应看到一次 `startup{success}`；每个首次成功的新视频通常增加一次 `video{success}`。
+Adapter 不健康时 Worker 不应开始视频 Job runtime。API/Worker 环境中不得存在 `DASHSCOPE_API_KEY`。
 标签只允许封闭 state/operation/result/mode/contribution；provider/model/revision 使用配置 alias 进入
 受限管理响应，不作为这些指标标签。禁止 user/video/request/session ID、query、图片、向量、URL、
 credential、claim token、source hash、map payload 或 raw error。
