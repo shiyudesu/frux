@@ -39,7 +39,7 @@ processes without a selected profile would fail startup and production intent wo
 The registered policy builder accepts staged1-5% policies and an explicitly authorized100% full
 rollout. Development reconciliation builds v4 from semantic-free v2 and the active multimodal
 contract, creates it disabled if absent, then activates it. A conflicting v4 causes startup failure
-rather than overwrite. Once v4 is active, any enabled lower registered semantic target is exact-disabled;
+rather than overwrite. Once v4 is active, any other enabled registered semantic target is exact-disabled;
 v1/v2 remain unchanged as emergency baselines.
 
 Alternative considered: update v3 `rollout_percentage` directly in PostgreSQL. Rejected because it

@@ -193,25 +193,30 @@ func TestApplyMultimodalEnvironmentOverridesIsStrictAndDefaultPreserving(t *test
 		name        string
 		parent      string
 		session     string
+		full        string
 		wantParent  bool
 		wantSession bool
+		wantFull    bool
 		wantErr     bool
 	}{
-		{name: "blank preserves yaml", parent: " ", session: "", wantParent: false, wantSession: false},
-		{name: "enable session runtime", parent: "true", session: "TRUE", wantParent: true, wantSession: true},
-		{name: "explicit disable", parent: "false", session: "false", wantParent: false, wantSession: false},
+		{name: "blank preserves yaml", parent: " ", session: "", full: " ", wantParent: false, wantSession: false},
+		{name: "enable development full runtime", parent: "true", session: "TRUE", full: "true", wantParent: true, wantSession: true, wantFull: true},
+		{name: "explicit disable", parent: "false", session: "false", full: "false", wantParent: false, wantSession: false},
 		{name: "invalid parent", parent: "enabled", session: "true", wantErr: true},
 		{name: "invalid session", parent: "true", session: "yes", wantErr: true},
+		{name: "invalid full rollout", parent: "true", session: "true", full: "yes", wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("FRUX_MULTIMODAL_ENABLED", test.parent)
 			t.Setenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", test.session)
+			t.Setenv("FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED", test.full)
 			cfg := MultimodalConfig{}
 			err := applyMultimodalEnvironmentOverrides(&cfg)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("error=%v", err)
 			}
-			if err == nil && (cfg.Enabled != test.wantParent || cfg.SessionRecommendationEnabled != test.wantSession) {
+			if err == nil && (cfg.Enabled != test.wantParent || cfg.SessionRecommendationEnabled != test.wantSession ||
+				cfg.Session.DevelopmentFullRolloutEnabled != test.wantFull) {
 				t.Fatalf("config=%#v", cfg)
 			}
 		})
@@ -221,6 +226,7 @@ func TestApplyMultimodalEnvironmentOverridesIsStrictAndDefaultPreserving(t *test
 func TestSessionOnlyEnvironmentOverrideNeedsNoProvider(t *testing.T) {
 	t.Setenv("FRUX_MULTIMODAL_ENABLED", "true")
 	t.Setenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", "true")
+	t.Setenv("FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED", "true")
 	cfg := validMultimodalConfig()
 	cfg.Enabled = false
 	cfg.VideoJobsEnabled = false
@@ -235,10 +241,22 @@ func TestSessionOnlyEnvironmentOverrideNeedsNoProvider(t *testing.T) {
 	if err := normalizeAndValidateMultimodalConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
+	if !cfg.Session.DevelopmentFullRolloutEnabled {
+		t.Fatal("development full rollout override was not applied")
+	}
 	if err := ValidateMultimodalAPIRuntime(cfg, MultimodalRuntimeDependencies{
 		ExactRetrieval: true, SessionRecommendation: true,
 	}); err != nil {
 		t.Fatalf("session-only runtime required Provider: %v", err)
+	}
+}
+
+func TestDevelopmentFullRolloutRequiresSessionRuntime(t *testing.T) {
+	cfg := validMultimodalConfig()
+	cfg.Session.DevelopmentFullRolloutEnabled = true
+	cfg.SessionRecommendationEnabled = false
+	if err := normalizeAndValidateMultimodalConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("error=%v", err)
 	}
 }
 

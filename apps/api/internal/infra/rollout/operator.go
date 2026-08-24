@@ -160,7 +160,8 @@ func (r *Runner) Execute(
 
 	input := applicationrecommendation.SessionSemanticRolloutLifecycleInput{
 		SourceVersion: config.SourceVersion, TargetVersion: config.TargetVersion,
-		RolloutPercentage: config.RolloutPercentage, Contract: config.Contract,
+		RolloutPercentage: config.RolloutPercentage, AllowFullRollout: config.AllowFullRollout,
+		Contract:         config.Contract,
 		EvidenceAccepted: evidenceAccepted, RuntimeReady: runtimeReady,
 	}
 

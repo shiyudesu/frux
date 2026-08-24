@@ -81,6 +81,10 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 	if cfg.SessionShadow.Enabled && !cfg.SessionRecommendationEnabled {
 		return ErrInvalidMultimodalConfig
 	}
+	if cfg.Session.DevelopmentFullRolloutEnabled &&
+		(!cfg.Enabled || !cfg.SessionRecommendationEnabled) {
+		return ErrInvalidMultimodalConfig
+	}
 	if cfg.MaxVideoTextRunes == 0 {
 		cfg.MaxVideoTextRunes = 2048
 	}

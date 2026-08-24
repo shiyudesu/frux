@@ -78,6 +78,27 @@ func TestBuildSessionSemanticRolloutPolicyRejectsUnsafeInputs(t *testing.T) {
 	}
 }
 
+func TestBuildSessionSemanticRolloutPolicyAllowsExplicitFullRollout(t *testing.T) {
+	contract := sessionSemanticTestContract(t, "full-rollout")
+	options := SessionSemanticRolloutOptions{
+		TargetVersion: 4, RolloutPercentage: FullSessionSemanticRolloutPercentage,
+		Contract: contract, Now: time.Unix(100, 0).UTC(),
+	}
+	if _, err := BuildSessionSemanticRolloutPolicy(sessionSemanticRolloutBaseline(t), options); err != ErrInvalidSessionSemanticRollout {
+		t.Fatalf("full rollout without authorization error=%v", err)
+	}
+	options.AllowFullRollout = true
+	plan, err := BuildSessionSemanticRolloutPolicy(sessionSemanticRolloutBaseline(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Policy.Config.RolloutPercentage != FullSessionSemanticRolloutPercentage ||
+		plan.Cohort.Selected != plan.Cohort.Samples || plan.Cohort.Fallback != 0 ||
+		!IsSessionSemanticRolloutPolicy(plan.Policy) {
+		t.Fatalf("plan=%#v", plan)
+	}
+}
+
 func TestSessionSemanticRolloutCohortSelectsTargetAndFallsBack(t *testing.T) {
 	contract := sessionSemanticTestContract(t, "rollout-revision")
 	plan, err := BuildSessionSemanticRolloutPolicy(sessionSemanticRolloutBaseline(t), SessionSemanticRolloutOptions{

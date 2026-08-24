@@ -263,17 +263,20 @@ func (s *SessionStore) UsePolicy(
 	if err != nil {
 		return applicationacceptance.SessionPolicyEvidence{}, "", err
 	}
-	return applicationacceptance.SessionPolicyEvidence{
+	evidence := applicationacceptance.SessionPolicyEvidence{
 		ID: target.ID, Version: target.Version, RolloutPercent: target.Config.RolloutPercentage,
 		Mode: "existing", Managed: true,
 		TargetCohortPercent: domainrecommendation.PolicyCohortPercent(
 			userID, domainrecommendation.RecommendationRequestLogScene, targetRequestID,
 		),
-		FallbackCohortPercent: domainrecommendation.PolicyCohortPercent(
+	}
+	if fallbackRequestID != "" {
+		evidence.FallbackCohortPercent = domainrecommendation.PolicyCohortPercent(
 			userID, domainrecommendation.RecommendationRequestLogScene, fallbackRequestID,
-		),
-		FallbackPolicyVersion: fallbackVersion,
-	}, targetRequestID, nil
+		)
+		evidence.FallbackPolicyVersion = fallbackVersion
+	}
+	return evidence, targetRequestID, nil
 }
 
 func sessionAcceptanceRolloutRequestIDs(
@@ -289,6 +292,14 @@ func sessionAcceptanceRolloutRequestIDs(
 	targetRequestID := ""
 	fallbackRequestID := ""
 	fallbackVersion := 0
+	targetFullRollout := false
+	for _, policy := range policies {
+		if policy != nil && policy.Version == targetVersion &&
+			policy.Config.RolloutPercentage == applicationrecommendation.FullSessionSemanticRolloutPercentage {
+			targetFullRollout = true
+			break
+		}
+	}
 	for index := range 100_000 {
 		candidate := fmt.Sprintf("%s-%05d", base, index)
 		if len(candidate) > domainrecommendation.MaxRequestIDLength {
@@ -304,7 +315,7 @@ func sessionAcceptanceRolloutRequestIDs(
 			fallbackRequestID = candidate
 			fallbackVersion = selected.Version
 		}
-		if targetRequestID != "" && fallbackRequestID != "" {
+		if targetRequestID != "" && (targetFullRollout || fallbackRequestID != "") {
 			return targetRequestID, fallbackRequestID, fallbackVersion, nil
 		}
 	}

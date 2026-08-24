@@ -406,6 +406,23 @@ func TestValidateAPIConfigRequiresKafkaRedisAndStrongInternalToken(t *testing.T)
 	}
 }
 
+func TestValidateAPIConfigScopesDevelopmentFullRolloutToLocalAndTest(t *testing.T) {
+	for _, environment := range []string{"local", "test"} {
+		cfg := finalRuntimeConfig(InternalConfig{})
+		cfg.Kafka.Environment = environment
+		cfg.Multimodal.Session.DevelopmentFullRolloutEnabled = true
+		if err := ValidateAPIConfig(&cfg); err != nil {
+			t.Fatalf("environment=%s error=%v", environment, err)
+		}
+	}
+	cfg := finalRuntimeConfig(InternalConfig{})
+	cfg.Kafka.Environment = "staging"
+	cfg.Multimodal.Session.DevelopmentFullRolloutEnabled = true
+	if err := ValidateAPIConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestLoadConfigExpandsInternalTokenFromEnvironment(t *testing.T) {
 	token := "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y"
 	t.Setenv("FRUX_INTERNAL_TOKEN", token)

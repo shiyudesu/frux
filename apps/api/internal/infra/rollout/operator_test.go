@@ -196,6 +196,27 @@ func TestRunnerRejectsEvidenceReadinessAndTargetConflicts(t *testing.T) {
 	}
 }
 
+func TestRunnerPlansExplicitFullDevelopmentRollout(t *testing.T) {
+	repo := newRolloutMemoryRepo(t)
+	service := applicationrecommendation.NewSessionSemanticRolloutService(repo, func() time.Time { return time.Unix(100, 0).UTC() })
+	config := rolloutTestConfig(t, ActionPlan)
+	config.TargetVersion = applicationrecommendation.DevelopmentSessionSemanticPolicyVersion
+	config.RolloutPercentage = applicationrecommendation.FullSessionSemanticRolloutPercentage
+	config.AllowFullRollout = true
+	runner := NewRunner(
+		service,
+		func(string) (*shadowevaluation.Report, string, error) {
+			return &shadowevaluation.Report{ContractKey: config.Contract.Key()}, strings.Repeat("b", 64), nil
+		},
+		func(context.Context, string, time.Duration, int64) (bool, error) { return true, nil },
+	)
+	report, err := runner.Execute(context.Background(), config, false, "")
+	if err != nil || report.Result != "planned" || !report.RuntimeReady || !report.BaselineReady || report.ActivationReady ||
+		report.Cohort.Selected != report.Cohort.Samples || report.Cohort.Fallback != 0 {
+		t.Fatalf("report=%#v error=%v", report, err)
+	}
+}
+
 func TestOperatorReportIsPermissionRestrictedAndSecretFree(t *testing.T) {
 	report := OperatorReport{
 		Schema: OperatorReportSchemaV1, ToolVersion: OperatorToolVersionV1,

@@ -28,7 +28,7 @@ exact disable.
 ### Requirement: Development full rollout is reconciled as an immutable policy version
 When configured for local/test development, API startup SHALL ensure a compatible100% Session Semantic
 v4 policy exists and is enabled. It SHALL NOT rewrite an existing policy configuration and SHALL
-exact-disable enabled lower registered semantic rollout targets after v4 activation.
+exact-disable every other enabled registered semantic rollout target after v4 activation.
 
 #### Scenario: Development database contains only bootstrap policies
 - **WHEN** the Session runtime composes successfully with development full rollout enabled
@@ -42,9 +42,9 @@ exact-disable enabled lower registered semantic rollout targets after v4 activat
 - **WHEN** the persisted v4 configuration or contract differs from the registered development plan
 - **THEN** API startup fails without overwriting the policy
 
-#### Scenario: Older semantic rollout is enabled
-- **WHEN** v4 activation succeeds while v3 or another lower registered semantic target remains enabled
-- **THEN** each older semantic target is exact-disabled and non-semantic v1/v2 states remain unchanged
+#### Scenario: Another semantic rollout is enabled
+- **WHEN** v4 activation succeeds while another registered semantic target remains enabled
+- **THEN** each other semantic target is exact-disabled and non-semantic v1/v2 states remain unchanged
 
 ### Requirement: Full rollout requires an explicit operator acknowledgement
 The rollout operator SHALL preserve the normal1-5% limit unless an explicit full-rollout

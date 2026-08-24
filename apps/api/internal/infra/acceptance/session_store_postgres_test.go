@@ -176,6 +176,41 @@ func TestSessionStoreAgainstIsolatedPostgres(t *testing.T) {
 	if err := store.DeleteDisabledPolicy(context.Background(), existing.ID, existing.Version); err != nil {
 		t.Fatal(err)
 	}
+	fullPlan, err := applicationrecommendation.BuildSessionSemanticRolloutPolicy(
+		baselinePolicies[0],
+		applicationrecommendation.SessionSemanticRolloutOptions{
+			TargetVersion:     5,
+			RolloutPercentage: applicationrecommendation.FullSessionSemanticRolloutPercentage,
+			AllowFullRollout:  true,
+			Contract:          profile.Contract,
+			Now:               now,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullRollout, err := domainrecommendation.NewPolicy("recommend", 5, true, fullPlan.Policy.Config, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdFull, err := store.recommendation.CreatePolicy(context.Background(), fullRollout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullEvidence, fullRequestID, err := store.UsePolicy(
+		context.Background(), "full-run", 7, profile.Contract.Key(), 5,
+	)
+	if err != nil || fullRequestID == "" || fullEvidence.RolloutPercent != 100 ||
+		fullEvidence.FallbackPolicyVersion != 0 || fullEvidence.FallbackCohortPercent != 0 ||
+		domainrecommendation.SelectPolicy([]*domainrecommendation.Policy{fullRollout, baselinePolicies[0]}, 7, fullRequestID).Version != 5 {
+		t.Fatalf("full=%#v request=%q error=%v", fullEvidence, fullRequestID, err)
+	}
+	if err := store.DisablePolicy(context.Background(), createdFull.ID, createdFull.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteDisabledPolicy(context.Background(), createdFull.ID, createdFull.Version); err != nil {
+		t.Fatal(err)
+	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, _, err := store.VerifyFixtures(cancelled, config); err == nil {

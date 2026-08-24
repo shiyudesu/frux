@@ -24,6 +24,7 @@ const (
 )
 
 const MutationGate = "FRUX_SESSION_SEMANTIC_ROLLOUT_ALLOW_MUTATION"
+const FullRolloutGate = "FRUX_SESSION_SEMANTIC_ROLLOUT_ALLOW_FULL"
 
 var ErrInvalidRolloutConfig = errors.New("invalid session semantic rollout configuration")
 
@@ -35,6 +36,7 @@ type Config struct {
 	SourceVersion     int
 	TargetVersion     int
 	RolloutPercentage int
+	AllowFullRollout  bool
 	HTTPTimeout       time.Duration
 	MaxResponseBytes  int64
 	Contract          domainembedding.MultimodalContractIdentity
@@ -62,6 +64,9 @@ func LoadConfigFromEnv(action Action) (Config, error) {
 	if config.RolloutPercentage, err = rolloutIntEnv("FRUX_SESSION_SEMANTIC_ROLLOUT_PERCENTAGE", 1); err != nil {
 		return Config{}, err
 	}
+	if config.AllowFullRollout, err = rolloutBoolEnv(FullRolloutGate, false); err != nil {
+		return Config{}, err
+	}
 	if config.HTTPTimeout, err = rolloutDurationEnv("FRUX_SESSION_SEMANTIC_ROLLOUT_HTTP_TIMEOUT", 3*time.Second); err != nil {
 		return Config{}, err
 	}
@@ -79,6 +84,7 @@ func LoadConfigFromEnv(action Action) (Config, error) {
 		config.ExpectedProfile = ""
 		config.SourceVersion = 0
 		config.RolloutPercentage = 0
+		config.AllowFullRollout = false
 	}
 	if err := validateConfig(config); err != nil {
 		return Config{}, err
@@ -125,8 +131,8 @@ func validateConfig(config Config) error {
 		return nil
 	}
 	if config.SourceVersion <= 0 || config.TargetVersion <= config.SourceVersion ||
-		config.RolloutPercentage < applicationrecommendation.MinSessionSemanticRolloutPercentage ||
-		config.RolloutPercentage > applicationrecommendation.MaxSessionSemanticRolloutPercentage || config.ExpectedProfile == "" {
+		!validConfiguredRolloutPercentage(config.RolloutPercentage, config.AllowFullRollout) ||
+		config.ExpectedProfile == "" {
 		return ErrInvalidRolloutConfig
 	}
 	if (config.Action == ActionPlan || config.Action == ActionCreate || config.Action == ActionActivate) &&
@@ -134,6 +140,26 @@ func validateConfig(config Config) error {
 		return ErrInvalidRolloutConfig
 	}
 	return nil
+}
+
+func validConfiguredRolloutPercentage(percentage int, allowFull bool) bool {
+	if percentage >= applicationrecommendation.MinSessionSemanticRolloutPercentage &&
+		percentage <= applicationrecommendation.MaxSessionSemanticRolloutPercentage {
+		return true
+	}
+	return allowFull && percentage == applicationrecommendation.FullSessionSemanticRolloutPercentage
+}
+
+func rolloutBoolEnv(name string, fallback bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, ErrInvalidRolloutConfig
+	}
+	return parsed, nil
 }
 
 func rolloutIntEnv(name string, fallback int) (int, error) {

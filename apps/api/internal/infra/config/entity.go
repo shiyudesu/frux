@@ -100,8 +100,9 @@ type MultimodalHybridConfig struct {
 }
 
 type MultimodalSessionConfig struct {
-	MaxSeeds    int    `yaml:"max_seeds"`
-	MaxLookback string `yaml:"max_lookback"`
+	MaxSeeds                      int    `yaml:"max_seeds"`
+	MaxLookback                   string `yaml:"max_lookback"`
+	DevelopmentFullRolloutEnabled bool   `yaml:"development_full_rollout_enabled"`
 }
 
 type MultimodalSessionShadowConfig struct {

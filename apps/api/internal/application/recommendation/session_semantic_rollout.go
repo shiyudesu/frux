@@ -16,6 +16,7 @@ import (
 const SessionSemanticRolloutProfileV1 = "session-semantic-rollout-v1"
 const MinSessionSemanticRolloutPercentage = 1
 const MaxSessionSemanticRolloutPercentage = 5
+const FullSessionSemanticRolloutPercentage = 100
 
 var ErrInvalidSessionSemanticRollout = errors.New("invalid session semantic rollout")
 var ErrSessionSemanticRolloutConflict = errors.New("session semantic rollout conflict")
@@ -24,6 +25,7 @@ var ErrSessionSemanticRolloutBlocked = errors.New("session semantic rollout bloc
 type SessionSemanticRolloutOptions struct {
 	TargetVersion     int
 	RolloutPercentage int
+	AllowFullRollout  bool
 	Contract          domainembedding.MultimodalContractIdentity
 	Now               time.Time
 }
@@ -73,8 +75,8 @@ func BuildSessionSemanticRolloutPolicy(
 	)
 	if source == nil || strings.ToLower(strings.TrimSpace(source.Scene)) != domainrecommendation.RecommendationRequestLogScene ||
 		options.TargetVersion <= source.Version || options.TargetVersion > domainrecommendation.MaxPolicyVersion ||
-		options.RolloutPercentage < MinSessionSemanticRolloutPercentage ||
-		options.RolloutPercentage > MaxSessionSemanticRolloutPercentage || options.Now.IsZero() ||
+		!validSessionSemanticRolloutPercentage(options.RolloutPercentage, options.AllowFullRollout) ||
+		options.Now.IsZero() ||
 		contractErr != nil || !contract.Equal(options.Contract) || !rolloutBaselineCompatible(source.Config) {
 		return nil, ErrInvalidSessionSemanticRollout
 	}
@@ -138,6 +140,13 @@ func BuildSessionSemanticRolloutPolicy(
 		},
 		Cohort: BuildSessionSemanticRolloutCohortSummary(options.RolloutPercentage, 10_000),
 	}, nil
+}
+
+func validSessionSemanticRolloutPercentage(percentage int, allowFull bool) bool {
+	if percentage >= MinSessionSemanticRolloutPercentage && percentage <= MaxSessionSemanticRolloutPercentage {
+		return true
+	}
+	return allowFull && percentage == FullSessionSemanticRolloutPercentage
 }
 
 func rolloutBaselineCompatible(config domainrecommendation.PolicyConfiguration) bool {

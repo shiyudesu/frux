@@ -100,6 +100,7 @@ func applyMultimodalEnvironmentOverrides(cfg *MultimodalConfig) error {
 	}{
 		{name: "FRUX_MULTIMODAL_ENABLED", target: &cfg.Enabled},
 		{name: "FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", target: &cfg.SessionRecommendationEnabled},
+		{name: "FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED", target: &cfg.Session.DevelopmentFullRolloutEnabled},
 	} {
 		raw, exists := os.LookupEnv(override.name)
 		if !exists || strings.TrimSpace(raw) == "" {
@@ -280,6 +281,10 @@ func ValidateAPIConfig(cfg *Config) error {
 	}
 	if !cfg.Kafka.Enabled || strings.TrimSpace(cfg.Redis.Addr) == "" {
 		return ErrInvalidKafkaConfig
+	}
+	if cfg.Multimodal.Session.DevelopmentFullRolloutEnabled &&
+		cfg.Kafka.Environment != "local" && cfg.Kafka.Environment != "test" {
+		return ErrInvalidMultimodalConfig
 	}
 	return nil
 }

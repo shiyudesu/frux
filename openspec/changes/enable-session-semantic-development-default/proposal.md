@@ -12,7 +12,7 @@ explicitly opt-in and fail-closed.
 - Extend the registered Session Semantic rollout policy to support an explicitly acknowledged 100%
   development rollout without weakening ordinary staged-rollout limits.
 - Create a new immutable v4 policy for full development rollout instead of modifying the accepted v3
-  policy in place, and exact-disable older semantic rollout targets after v4 activation.
+  policy in place, and exact-disable other semantic rollout targets after v4 activation.
 - Add an idempotent development startup reconciler that ensures the compatible v4 policy exists and is
   active whenever development full rollout is configured.
 - Update existing-policy acceptance so a 100% target requires a retained enabled emergency baseline
@@ -31,7 +31,7 @@ None.
 - `multimodal-provider-runtime`: Development Compose starts the Session-only runtime by default while
   production and explicit false overrides remain off.
 - `session-semantic-rollout`: Adds an explicitly development-scoped 100% rollout path, immutable v4
-  activation, and exact retirement of older semantic rollout targets.
+  activation, and exact retirement of other semantic rollout targets.
 - `session-semantic-acceptance-runner`: Allows full-cohort target verification while retaining an
   enabled baseline for exact-disable recovery.
 

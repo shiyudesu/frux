@@ -139,6 +139,7 @@ multimodal:
   session:
     max_seeds: 21
     max_lookback: "24h"
+    development_full_rollout_enabled: false
   session_shadow:
     enabled: false
     sample_ppm: 0

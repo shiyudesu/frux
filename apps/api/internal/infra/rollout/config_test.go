@@ -38,6 +38,28 @@ func TestLoadConfigFromEnvRejectsBoundsAndMutationNeedsBothGates(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnvRequiresExplicitFullRolloutAcknowledgement(t *testing.T) {
+	setRolloutConfigEnv(t)
+	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_TARGET_VERSION", "4")
+	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_PERCENTAGE", "100")
+	if _, err := LoadConfigFromEnv(ActionPlan); !errors.Is(err, ErrInvalidRolloutConfig) {
+		t.Fatalf("full rollout without acknowledgement error=%v", err)
+	}
+	t.Setenv(FullRolloutGate, "true")
+	config, err := LoadConfigFromEnv(ActionPlan)
+	if err != nil || !config.AllowFullRollout || config.RolloutPercentage != 100 {
+		t.Fatalf("config=%#v error=%v", config, err)
+	}
+	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_PERCENTAGE", "50")
+	if _, err := LoadConfigFromEnv(ActionPlan); !errors.Is(err, ErrInvalidRolloutConfig) {
+		t.Fatalf("intermediate rollout error=%v", err)
+	}
+	t.Setenv(FullRolloutGate, "not-a-bool")
+	if _, err := LoadConfigFromEnv(ActionPlan); !errors.Is(err, ErrInvalidRolloutConfig) {
+		t.Fatalf("invalid acknowledgement error=%v", err)
+	}
+}
+
 func setRolloutConfigEnv(t testing.TB) {
 	t.Helper()
 	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_POSTGRES_DSN", "postgres://frux:secret@127.0.0.1:5432/frux?sslmode=disable")
@@ -46,6 +68,7 @@ func setRolloutConfigEnv(t testing.TB) {
 	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_SOURCE_VERSION", "2")
 	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_TARGET_VERSION", "3")
 	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_PERCENTAGE", "1")
+	t.Setenv(FullRolloutGate, "false")
 	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_HTTP_TIMEOUT", "3s")
 	t.Setenv("FRUX_SESSION_SEMANTIC_ROLLOUT_MAX_RESPONSE_BYTES", "2097152")
 	t.Setenv("FRUX_MULTIMODAL_PROFILE", multimodalprofile.TongyiFlashSnapshotProfile)

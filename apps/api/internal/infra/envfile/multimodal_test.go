@@ -15,6 +15,7 @@ FRUX_MULTIMODAL_ENDPOINT=http://127.0.0.1:8099
 FRUX_MULTIMODAL_HMAC_SECRET="file-secret-value-123456789012345"
 FRUX_MULTIMODAL_ENABLED=true
 FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true
+FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=true
 DASHSCOPE_API_KEY=must-not-enter-frux-runtime
 `)
 	restoreMultimodalEnvironment(t)
@@ -28,7 +29,8 @@ DASHSCOPE_API_KEY=must-not-enter-frux-runtime
 		os.Getenv("FRUX_MULTIMODAL_ENDPOINT") != "http://127.0.0.1:8099" ||
 		os.Getenv("FRUX_MULTIMODAL_HMAC_SECRET") != "file-secret-value-123456789012345" ||
 		os.Getenv("FRUX_MULTIMODAL_ENABLED") != "true" ||
-		os.Getenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED") != "true" {
+		os.Getenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED") != "true" ||
+		os.Getenv("FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED") != "true" {
 		t.Fatal("Frux runtime variables were not loaded with environment precedence")
 	}
 	if _, exists := os.LookupEnv("DASHSCOPE_API_KEY"); exists {

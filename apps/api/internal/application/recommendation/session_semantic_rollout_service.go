@@ -11,10 +11,14 @@ import (
 	domainrecommendation "github.com/shiyudesu/frux/internal/domain/recommendation"
 )
 
+const DevelopmentSessionSemanticSourceVersion = 2
+const DevelopmentSessionSemanticPolicyVersion = 4
+
 type SessionSemanticRolloutLifecycleInput struct {
 	SourceVersion     int
 	TargetVersion     int
 	RolloutPercentage int
+	AllowFullRollout  bool
 	Contract          domainembedding.MultimodalContractIdentity
 	EvidenceAccepted  bool
 	RuntimeReady      bool
@@ -60,6 +64,52 @@ func NewSessionSemanticRolloutService(
 	return &SessionSemanticRolloutService{repo: repo, now: now}
 }
 
+// EnsureDevelopmentFullSessionSemanticPolicy makes the accepted Session Semantic policy the
+// effective policy for every local/test request without rewriting an existing policy version.
+func EnsureDevelopmentFullSessionSemanticPolicy(
+	ctx context.Context,
+	repo domainrecommendation.RolloutPolicyRepository,
+	contract domainembedding.MultimodalContractIdentity,
+	now func() time.Time,
+) (*domainrecommendation.Policy, error) {
+	service := NewSessionSemanticRolloutService(repo, now)
+	input := SessionSemanticRolloutLifecycleInput{
+		SourceVersion:     DevelopmentSessionSemanticSourceVersion,
+		TargetVersion:     DevelopmentSessionSemanticPolicyVersion,
+		RolloutPercentage: FullSessionSemanticRolloutPercentage,
+		AllowFullRollout:  true,
+		Contract:          contract,
+		EvidenceAccepted:  true,
+		RuntimeReady:      true,
+	}
+	if _, err := service.Create(ctx, input); err != nil {
+		return nil, err
+	}
+	activated, err := service.Activate(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if activated == nil || activated.Policy == nil {
+		return nil, ErrSessionSemanticRolloutConflict
+	}
+	policies, err := repo.ListPolicies(ctx, domainrecommendation.RecommendationRequestLogScene)
+	if err != nil {
+		return nil, ErrRecommendationPolicyRepositoryUnavailable
+	}
+	for _, policy := range policies {
+		if policy == nil || policy.Version == DevelopmentSessionSemanticPolicyVersion ||
+			!policy.Enabled || !IsSessionSemanticRolloutPolicy(policy) {
+			continue
+		}
+		if _, _, err := repo.DisablePolicy(
+			ctx, domainrecommendation.RecommendationRequestLogScene, policy.Version,
+		); err != nil {
+			return nil, err
+		}
+	}
+	return activated.Policy.Clone(), nil
+}
+
 func (s *SessionSemanticRolloutService) Plan(
 	ctx context.Context,
 	input SessionSemanticRolloutLifecycleInput,
@@ -77,7 +127,7 @@ func (s *SessionSemanticRolloutService) Plan(
 	}
 	plan, err := BuildSessionSemanticRolloutPolicy(source, SessionSemanticRolloutOptions{
 		TargetVersion: input.TargetVersion, RolloutPercentage: input.RolloutPercentage,
-		Contract: input.Contract, Now: s.now().UTC(),
+		AllowFullRollout: input.AllowFullRollout, Contract: input.Contract, Now: s.now().UTC(),
 	})
 	if err != nil {
 		return nil, err
@@ -207,8 +257,7 @@ func (s *SessionSemanticRolloutService) Disable(
 
 func IsSessionSemanticRolloutPolicy(policy *domainrecommendation.Policy) bool {
 	if policy == nil || strings.ToLower(strings.TrimSpace(policy.Scene)) != domainrecommendation.RecommendationRequestLogScene ||
-		policy.Config.RolloutPercentage < MinSessionSemanticRolloutPercentage ||
-		policy.Config.RolloutPercentage > MaxSessionSemanticRolloutPercentage ||
+		!validPersistedSessionSemanticRolloutPercentage(policy.Config.RolloutPercentage) ||
 		policy.Config.PreRankPoolLimit != domainrecommendation.MaxPolicyPreRankCandidates ||
 		policy.Config.RecallBudgets[domainrecommendation.RecallProviderSemanticSession] != 50 ||
 		policy.Config.ProviderDeadlinesMS[domainrecommendation.RecallProviderSemanticSession] != 250 ||
@@ -240,6 +289,10 @@ func IsSessionSemanticRolloutPolicy(policy *domainrecommendation.Policy) bool {
 		}
 	}
 	return true
+}
+
+func validPersistedSessionSemanticRolloutPercentage(percentage int) bool {
+	return validSessionSemanticRolloutPercentage(percentage, true)
 }
 
 func policyByVersion(policies []*domainrecommendation.Policy, version int) *domainrecommendation.Policy {
