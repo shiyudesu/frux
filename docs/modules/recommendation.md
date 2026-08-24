@@ -62,7 +62,7 @@
 | 进度参与兴趣权重 | 有效前台播放进度和完播提升内容兴趣，过短跳过不作为正反馈 |
 | 发布与 HTTP 解耦 | 曝光模块通过事务 Outbox 向 Kafka behavior stream 可靠投递；只有 broker acknowledgement 后才 dispatched，失败保留 pending |
 | 画像投影不影响写入结果 | 反馈和关注事实在各自事务内写入可租约重试的画像 Outbox；Worker 以稳定事件 ID 幂等投影，失败保留待重试 |
-| Session Semantic 默认休眠 | 只有运行时开关和完整策略同时选择 `semantic_session` 时才执行；请求只组合已有视频向量并查询 PostgreSQL Exact，不调用外部模型 |
+| Session Semantic 开发默认全量 | 开发 Compose 自动组装运行时并选择 v4；请求只组合已有视频向量并查询 PostgreSQL Exact，不调用外部模型，生产仍需显式开启 |
 | 客户端会话 ID 不等于兴趣证据 | current/recent ID 只限定最多 21 个种子；必须存在服务端交付、曝光、观看、互动或反馈事实才能贡献向量权重 |
 
 ## 5. 测试建议
@@ -168,14 +168,14 @@ source score 不跨 Provider 比较，goroutine 完成顺序和 Go map 迭代不
 调用和 Repository Fallback 继续使用响应页派生的有界池。回滚只需停止选择带配额字段的策略，不需要数据库
 Schema 或数据回滚。
 
-多模态视频 Job、Fact/Projection、Hybrid Search、Similar Videos 和 Exact 已实现但默认关闭。
-Session Semantic 同样默认休眠：`session-semantic-v1` 只在 current/recent 上下文圈定的范围内读取服务端可信
+多模态视频 Job、Hybrid Search 和 Similar Videos 已实现但默认关闭；已有 Fact/Projection 与 Exact 可被
+开发环境的 Session Semantic 直接复用。`session-semantic-v1` 只在 current/recent 上下文圈定的范围内读取服务端可信
 交付、曝光、观看、LIKE/FAVORITE 与推荐反馈事实，使用完整 active-contract 视频向量构造短期单位向量。
 `not_interested` 覆盖同视频隐式正向信号并提供有界负方向，`already_seen` 只做排除；缺失向量、合同不匹配、
 Confidence 不足或 Exact 超时均让 `semantic_session` 健康空结果或单 Provider degraded，现有 Hash/Fresh/Hot/
 Following 等路径继续工作。Confidence 同时缩放 `semantic_similarity` 和返回前缀；低覆盖导致既有 Quota Merge
 underfill 并将空余容量交给公共 fill。首页结果进入原 Snapshot，后续页不重算会话向量。
-长期画像、历史重建、HNSW、训练数据导出、Shadow 和正式 Rollout 仍受
+长期画像、历史重建、HNSW、训练数据导出和生产 Rollout 仍受
 [推荐系统演进路线](../recommendation-roadmap.md)中的后置 Gate 控制。
 
 观看行为 Worker 通过 `frux.recommendation.consume-view.v1` 在 raw fact 与 profile/outcome
@@ -219,7 +219,9 @@ author 0.15、follow 0.10、negative -0.75、exposure -0.40，作者上限为 10
 `recommend/v2` 仅稳定 hash cohort 的 5%，将 content/session/fresh 调整为
 0.60/0.30/0.15、每作者上限降为 6，其余 v1 参数不变；不会覆盖已有同版本策略。
 两个 bootstrap 版本都不包含 `semantic_session`、`semantic_similarity` 或 `session_semantic` 配置；仅启用
-`multimodal.session_recommendation_enabled` 不会改变请求，必须另建完整且可回滚的策略版本。
+`multimodal.session_recommendation_enabled` 不会改变请求，必须有完整且可回滚的策略版本。开发 Compose
+启用显式 full-rollout 配置后，API 启动会幂等确保 v4=100% 策略存在并启用，且精确关闭其他语义策略；
+v1/v2 仍保留为关闭 v4 后的回退。
 
 ## 10. Session Semantic 真实运行时验收
 
@@ -274,7 +276,8 @@ go run ./cmd/session-semantic-acceptance \
 
 existing-policy 模式不创建替代策略。Runner 会先验证目标已启用、属于注册的
 `session-semantic-rollout-v1`、合同兼容，并存在另一个 enabled 100% baseline；随后用正常策略选择器生成稳定的
-目标 Cohort 与 fallback Cohort 证据。无论成功还是管理开始后的失败，Runner 都只精确禁用目标版本；
+目标 Cohort 证据。1%～5%目标还会生成 fallback Cohort；100%目标不存在非目标分桶，因此只保留 baseline
+作为 exact disable 后的恢复路径。无论成功还是管理开始后的失败，Runner 都只精确禁用目标版本；
 `--cleanup` 撤销收藏但不会删除既有策略行，v1/v2 保持不变。
 
 如果进程在 deferred disable 前被强制终止，报告或终端中的 policy ID/version 可用于精确恢复：
@@ -357,8 +360,9 @@ go run ./cmd/session-semantic-shadow-eval \
 
 `session-semantic-rollout-v1` 从明确的已有 baseline policy 构造一个新的 disabled policy，不允许手写任意
 Semantic JSON。第一版固定：Semantic budget 50、deadline 250ms、reservation 10、
-`semantic_similarity=0.25`、pool 500、Session 24h/21 seeds/2个正信号/Confidence 0.25，默认 Cohort 1%，
-最大只允许5%。其余排序、抑制、打散、保留和 Snapshot 字段继承 source policy；v1/v2 不被修改。
+`semantic_similarity=0.25`、pool 500、Session 24h/21 seeds/2个正信号/Confidence 0.25。普通运营路径只允许
+1%～5%；本地/测试环境可在额外 `ALLOW_FULL` 确认下创建100%版本。其余排序、抑制、打散、保留和
+Snapshot 字段继承 source policy；v1/v2 不被修改。
 
 先生成绑定当前合同的 Shadow 证据：
 
@@ -405,7 +409,8 @@ go run ./cmd/session-semantic-rollout --action disable --execute
 ```
 
 Create/activate/disable 都支持同状态 replay；Create 遇到同版本异配置时冲突，不会覆盖。Activate 要求同 scene
-另有 enabled 100% baseline，命中1%稳定 Cohort 的请求选择更高语义版本，其余请求继续落到 v2/v1。日常
+另有 enabled 100% baseline。1%～5%策略只覆盖稳定 Cohort，其余请求继续落到 v2/v1；开发 v4=100%时所有
+请求都选择语义策略，baseline 仅在 exact disable 后恢复承接。日常
 Kill Switch 不使用 `RollbackPolicy`，因为 broad rollback 会关闭同 scene 的所有其他 staged policy；exact
 disable 只改变目标版本并保留历史行、向量、日志和 outcome。
 
@@ -413,15 +418,28 @@ disable 只改变目标版本并保留历史行、向量、日志和 outcome。
 门禁、target 状态、mutation/replay 和恢复命令，不包含 DSN、凭据、真实用户/请求、候选、向量、路径或
 raw error。扩大到更高比例必须创建新的更高 policy version，当前工具不会原地自动 ramp，也不声称因果提升。
 
+开发 Compose 现在无需专用 env 文件即可全量使用 Session Semantic。API 在 Builder、Exact 和合同组装完成后
+幂等创建/激活不可变 v4=100%，并精确禁用 v3；重启不会重复创建或修改 v4。手动复现100%运营流程时还需：
+
+```dotenv
+FRUX_SESSION_SEMANTIC_ROLLOUT_TARGET_VERSION=4
+FRUX_SESSION_SEMANTIC_ROLLOUT_PERCENTAGE=100
+FRUX_SESSION_SEMANTIC_ROLLOUT_ALLOW_FULL=true
+```
+
+生产配置仍默认关闭开发 full-rollout 标志，不能通过普通1%～5%配置意外扩大到100%。
+
 2026-08-22 本地 Docker 验证：Shadow/合同/100% baseline 门禁通过，API 在默认配置下明确报告
 runtime-ready=0；v3 以1%配置成功创建但保持 disabled，显式 activate 被 `prerequisite` 阻止，exact disable
 在不读取 Shadow 或 runtime 时以 replay 完成；v1=100%、v2=5% 全程保持 enabled。
 
-## 14. 扩大策略前门槛
+2026-08-24 开发默认全量接入验证：普通 `docker compose up -d api worker` 无需专用 runtime env，API
+报告 runtime-ready=1 并幂等激活 v4=100%；10000个确定性样本全部选择 v4，v3 被精确禁用，v1/v2 保持
+enabled。容器没有 Adapter Endpoint/HMAC，推荐请求仍为零外部模型调用路径。
 
-扩大 v2 前至少观察 24h：请求错误/降级率、snapshot hit、Provider timeout、profile lag、
-曝光到播放/完播率和负反馈率不得劣于 v1 门槛。应用回滚调用
-`PolicyService.Rollback(ctx, "recommend", 1)`；紧急 SQL 在事务中锁定 v1，关闭同 scene
-其他 `enabled` 行，并将 v1 的 `enabled=true`、`config_json.rollout_percentage=100` 提交。
-随后确认 `frux_recommendation_active_policy_version{scene="recommend"}` 为 1；保留日志、
-Outbox 和事实以便调查。
+## 14. 生产启用门槛
+
+开发 v4=100%只用于让低流量项目实际走到新链路，不等于已经证明生产收益。生产启用前仍应至少观察一个
+完整窗口：请求错误/降级率、snapshot hit、Provider timeout、profile lag、曝光到播放/完播率和负反馈率
+不得劣于 baseline。语义策略异常时优先执行 exact disable，使请求立即回落到仍启用的 v1/v2；只有需要关闭
+同 scene 全部 staged policy 时才使用 `PolicyService.Rollback`。保留日志、Outbox 和事实以便调查。

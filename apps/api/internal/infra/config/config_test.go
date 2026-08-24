@@ -409,14 +409,14 @@ func TestValidateAPIConfigRequiresKafkaRedisAndStrongInternalToken(t *testing.T)
 func TestValidateAPIConfigScopesDevelopmentFullRolloutToLocalAndTest(t *testing.T) {
 	for _, environment := range []string{"local", "test"} {
 		cfg := finalRuntimeConfig(InternalConfig{})
-		cfg.Kafka.Environment = environment
+		cfg.Environment = environment
 		cfg.Multimodal.Session.DevelopmentFullRolloutEnabled = true
 		if err := ValidateAPIConfig(&cfg); err != nil {
 			t.Fatalf("environment=%s error=%v", environment, err)
 		}
 	}
 	cfg := finalRuntimeConfig(InternalConfig{})
-	cfg.Kafka.Environment = "staging"
+	cfg.Environment = "staging"
 	cfg.Multimodal.Session.DevelopmentFullRolloutEnabled = true
 	if err := ValidateAPIConfig(&cfg); !errors.Is(err, ErrInvalidMultimodalConfig) {
 		t.Fatalf("error=%v", err)
@@ -495,7 +495,8 @@ func TestLoadProdConfigUsesMinIOAndSingleKafka(t *testing.T) {
 		!cfg.Media.Processing.DisableOrphanCleanup {
 		t.Fatalf("prod media config = %+v", cfg.Media)
 	}
-	if cfg.Media.PublicBaseURL != "https://frux.example.com:18443/media" ||
+	if cfg.Environment != "production" ||
+		cfg.Media.PublicBaseURL != "https://frux.example.com:18443/media" ||
 		cfg.Database.Host != "postgres" ||
 		cfg.Redis.Addr != "redis:6379" ||
 		cfg.Kafka.Environment != "local" ||

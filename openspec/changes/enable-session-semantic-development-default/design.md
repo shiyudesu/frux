@@ -27,9 +27,10 @@ place would invalidate its digest and historical evidence.
 ### 1. Use an explicit development full-rollout configuration
 
 Add `multimodal.session.development_full_rollout_enabled` and a strict environment override. The
-option is valid only when the parent and Session runtimes are enabled and Kafka environment is
-`local` or `test`. Development Compose defaults the profile and these three flags on; production
-passes no enabling defaults and rejects the development flag outside local/test.
+option is valid only when the parent and Session runtimes are enabled and the root runtime environment
+is `local` or `test`; this remains independent from Kafka's deployment mode. Development Compose
+defaults the profile and these three flags on; production passes no enabling defaults and rejects the
+development flag outside local/test.
 
 Alternative considered: change all YAML defaults to true. Rejected because native and production
 processes without a selected profile would fail startup and production intent would become ambiguous.

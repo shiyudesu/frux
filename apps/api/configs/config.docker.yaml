@@ -1,5 +1,6 @@
 # Docker Compose development configuration. Credentials are local defaults and
 # must not be reused for staging or production.
+environment: "local"
 port: 8080
 jwt:
   issuer: "frux"

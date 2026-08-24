@@ -2,19 +2,20 @@ package infraconfig
 
 // Config 是应用启动配置的根结构，对应 configs/config.yaml。
 type Config struct {
-	Port       int              `yaml:"port"`
-	JWT        JWTConfig        `yaml:"jwt"`
-	Security   SecurityConfig   `yaml:"security"`
-	Internal   InternalConfig   `yaml:"internal"`
-	Database   DatabaseConfig   `yaml:"database"`
-	Redis      RedisConfig      `yaml:"redis"`
-	Kafka      KafkaConfig      `yaml:"kafka"`
-	Media      MediaConfig      `yaml:"media"`
-	Moderation ModerationConfig `yaml:"moderation"`
-	Multimodal MultimodalConfig `yaml:"multimodal"`
-	Playback   PlaybackConfig   `yaml:"playback"`
-	Governance GovernanceConfig `yaml:"governance"`
-	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
+	Environment string           `yaml:"environment"`
+	Port        int              `yaml:"port"`
+	JWT         JWTConfig        `yaml:"jwt"`
+	Security    SecurityConfig   `yaml:"security"`
+	Internal    InternalConfig   `yaml:"internal"`
+	Database    DatabaseConfig   `yaml:"database"`
+	Redis       RedisConfig      `yaml:"redis"`
+	Kafka       KafkaConfig      `yaml:"kafka"`
+	Media       MediaConfig      `yaml:"media"`
+	Moderation  ModerationConfig `yaml:"moderation"`
+	Multimodal  MultimodalConfig `yaml:"multimodal"`
+	Playback    PlaybackConfig   `yaml:"playback"`
+	Governance  GovernanceConfig `yaml:"governance"`
+	RateLimit   RateLimitConfig  `yaml:"rate_limit"`
 }
 
 type MultimodalConfig struct {

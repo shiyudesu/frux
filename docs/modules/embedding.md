@@ -2,13 +2,13 @@
 
 ## 1. 模块边界
 
-视频向量模块同时保留稳定的 `hash-ngram-v1` 基线，以及默认关闭的多模态合同、Durable Job、权威
+视频向量模块同时保留稳定的 `hash-ngram-v1` 基线，以及可独立启用的多模态合同、Durable Job、权威
 向量事实、Exact Projection、查询向量和媒体帧准备能力。Application 合同不规定 Python、Go、ONNX、
 本地/远程服务、模型家族、硬件或供应商；Infrastructure 已提供签名 HTTP Provider Adapter 和进程接线，
-但当前仓库没有选择或内置正式模型服务，因此所有配置默认 `multimodal.enabled=false`，不会调用模型或
-改变现有产品行为。
+开发 Compose 默认只启用复用已有向量的 Session Semantic 路径；视频 Job、Query、Hybrid、Similar 和
+生产配置仍保持关闭，不会因刷 Feed 调用模型。
 
-多模态路径不训练/微调模型，不扫描历史视频，不创建 HNSW/IVFFlat；默认关闭的 Session Semantic
+多模态路径不训练/微调模型，不扫描历史视频，不创建 HNSW/IVFFlat；Session Semantic
 Recommendation 可在完整策略下复用已有 Fact/Projection 与 Exact，但推荐请求不调用 Provider，也不创建新的
 长期画像或向量存储。开发 Fixture 和功能启用后首次公开的新视频是第一阶段唯一向量来源。
 
@@ -162,30 +162,31 @@ go run ./cmd/multimodal-provider
 
 从仓库内启动时，API、Worker 和 Adapter 会自动向上查找 `.env.multimodal`，也会识别推荐位置
 `apps/.env.multimodal`，不需要执行 `source`。进程中已存在的环境变量优先于文件。API/Worker 只从文件加载
-已注册的 Frux 变量，包括 Profile、Endpoint、HMAC 和两个显式运行时布尔开关；只有 Adapter 会加载
+已注册的 Frux 变量，包括 Profile、Endpoint、HMAC 和三个显式运行时/开发策略布尔开关；只有 Adapter 会加载
 `DASHSCOPE_API_KEY` 与 Tongyi 边界参数。Adapter 固定调用阿里云共享的 Multimodal-Embedding
 接口，不需要配置业务空间 Endpoint。文件缺失时继续使用普通系统环境变量，
 文件存在但格式错误时启动失败。
 
 仅使用数据库中已有 active-contract 向量执行 Session Semantic 推荐时，不需要启动 Adapter，也不需要
-Endpoint、HMAC 或 API Key。Docker Compose 可使用专用的 Session-only 配置：
+Endpoint、HMAC 或 API Key。普通开发 Compose 已默认启用这条 Session-only 路径：
 
 ```bash
 cd apps
-docker compose --env-file .env.session-semantic-runtime.example up -d api worker
+docker compose up -d api worker
 ```
 
-该文件只设置 Profile、`FRUX_MULTIMODAL_ENABLED=true` 和
-`FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true`。两个布尔变量缺失或为空时保留 YAML 值，非法非空值
-会使配置加载失败；仓库 YAML 与普通 Compose 默认仍为关闭。启动后必须确认
-`frux_recommendation_session_semantic_runtime_ready 1`。完成验收后不带该 env 文件重新启动 API/Worker，
-并确认 readiness 回到0。
+开发 Compose 为 Profile、`FRUX_MULTIMODAL_ENABLED`、
+`FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED` 和开发全量策略提供默认值；都可以被显式环境变量覆盖。
+布尔值非法时配置加载失败。启动后 `frux_recommendation_session_semantic_runtime_ready` 应为1。
+`.env.session-semantic-runtime.example` 保留为显式配置参考；生产 Compose 不继承这些开发默认值。
 
 `.env.multimodal` 已被 Git 忽略。示例中的 `127.0.0.1:8099` 是**宿主机原生进程边界**：API、Worker 与
 Adapter 都原生运行时可以直接使用。默认 Docker Compose 不启动 Adapter，并且容器内的 `127.0.0.1`
 指向容器自身，因此不得把这份 loopback 文件直接当作可工作的容器 Endpoint 执行
-`docker compose --env-file .env.multimodal up`。默认 Compose 应保持多模态关闭并直接启动；如需让容器内
-API/Worker 连接 Adapter，必须另外提供容器可达且符合 Docker 配置 TLS 边界的 Endpoint。未来若增加
+`docker compose --env-file .env.multimodal up`。默认开发 Compose 只开启无需 Provider 的 Session Semantic；
+如需让容器内
+API/Worker 连接 Adapter，必须另外提供容器可达且符合 Docker 配置 TLS 边界的 Endpoint。Session-only
+推荐不使用该 Endpoint。未来若增加
 容器化 Adapter，应使用独立显式 Compose Profile 和内部地址，而不是复用原生 loopback 示例。
 
 `/health` 只表示进程存活；Adapter 必须先用所选模型完成一次真实 text embedding probe，之后才会在

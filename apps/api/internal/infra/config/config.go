@@ -29,6 +29,7 @@ var ErrInvalidKafkaConfig = errors.New("invalid kafka config")
 var ErrInvalidJWTConfig = errors.New("invalid jwt config")
 var ErrInvalidSecurityConfig = errors.New("invalid security config")
 var ErrInvalidModerationConfig = errors.New("invalid moderation config")
+var ErrInvalidEnvironment = errors.New("invalid runtime environment")
 
 const minInternalTokenLength = 32
 const maxAdminAccessTTL = 8 * time.Hour
@@ -270,6 +271,15 @@ func ValidateAPIConfig(cfg *Config) error {
 	if cfg == nil {
 		return ErrInvalidInternalToken
 	}
+	cfg.Environment = strings.ToLower(strings.TrimSpace(cfg.Environment))
+	if cfg.Environment == "" {
+		cfg.Environment = "local"
+	}
+	switch cfg.Environment {
+	case "local", "test", "staging", "production":
+	default:
+		return ErrInvalidEnvironment
+	}
 	if err := normalizeAndValidateInternalConfig(&cfg.Internal); err != nil {
 		return err
 	}
@@ -283,7 +293,7 @@ func ValidateAPIConfig(cfg *Config) error {
 		return ErrInvalidKafkaConfig
 	}
 	if cfg.Multimodal.Session.DevelopmentFullRolloutEnabled &&
-		cfg.Kafka.Environment != "local" && cfg.Kafka.Environment != "test" {
+		cfg.Environment != "local" && cfg.Environment != "test" {
 		return ErrInvalidMultimodalConfig
 	}
 	return nil

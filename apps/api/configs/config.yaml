@@ -1,5 +1,6 @@
 # Local development configuration. Replace all credentials before using it on
 # a shared or remote environment.
+environment: "local"
 port: 8080
 jwt:
   issuer: "frux"

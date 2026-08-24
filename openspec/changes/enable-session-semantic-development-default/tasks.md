@@ -14,11 +14,11 @@
 ## 3. Verification
 
 - [x] 3.1 Add application, config, router/reconciler, acceptance, operator, and PostgreSQL tests for full rollout and replay behavior.
-- [ ] 3.2 Rebuild and restart default development Compose without the special runtime env file.
-- [ ] 3.3 Verify runtime-ready=1, v4 enabled at100%, v3 disabled, v1/v2 unchanged, and deterministic request buckets all select v4.
-- [ ] 3.4 Run focused tests, real PostgreSQL integration tests, `go test ./...`, entrypoint builds, Compose validation, Docker build, and strict OpenSpec validation.
+- [x] 3.2 Rebuild and restart default development Compose without the special runtime env file.
+- [x] 3.3 Verify runtime-ready=1, v4 enabled at100%, v3 disabled, v1/v2 unchanged, and deterministic request buckets all select v4.
+- [x] 3.4 Run focused tests, real PostgreSQL integration tests, `go test ./...`, entrypoint builds, Compose validation, Docker build, and strict OpenSpec validation.
 
 ## 4. Documentation and Completion
 
-- [ ] 4.1 Update recommendation, multimodal, monitoring, module index, environment examples, and roadmap documentation for development-default full rollout and production opt-in behavior.
+- [x] 4.1 Update recommendation, multimodal, monitoring, module index, environment examples, and roadmap documentation for development-default full rollout and production opt-in behavior.
 - [ ] 4.2 Sync delta specs, archive the completed change, and leave the worktree clean with the development stack healthy.

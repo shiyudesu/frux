@@ -186,6 +186,8 @@ Session Semantic Rollout 使用
 `frux_recommendation_session_semantic_runtime_ready` 证明 API 已完整组装 Builder、Provider、active
 contract 与 Exact repository。该值只有0或1；普通 `/health=200`、已有向量事实或 Adapter ready 都不能
 代替它。`cmd/session-semantic-rollout --action activate` 必须读取到唯一的值1，否则 fail closed。
+开发 Compose 默认应为1，并由 v4=100%承接全部推荐请求；生产仍默认0。开发环境若该值为0，属于配置或
+依赖故障，而不再是预期的休眠状态。
 
 运营命令另记录
 `frux_recommendation_session_semantic_rollout_operations_total{action,result}`。action 只允许
@@ -193,11 +195,10 @@ plan/create/activate/status/disable，result 只允许 success/replay/blocked/er
 version、contract key、证据路径、DSN 或 raw error 放入标签。日常回滚应使用 exact disable；只有需要关闭
 同 scene 全部 staged policy 时才使用原有 broad rollback。
 
-Active rollout 技术验收结束后还要检查持久状态，而不能只看 Runner 成功：目标版本必须
-`enabled=false` 且仍存在，100% baseline 与原有 staged baseline 必须保持原状态；验收收藏必须撤销。
-随后不带 Session-only env 文件重启默认 API/Worker，并确认
-`frux_recommendation_session_semantic_runtime_ready 0`。若 Runner 在管理目标后异常退出，使用报告中的精确
-policy ID/version 禁用该行；不得用 scene 级 broad rollback 代替窄恢复。
+Active rollout 技术验收结束后还要检查持久状态，而不能只看 Runner 成功：验收目标必须按 Runner 约定
+`enabled=false` 且仍存在，100% baseline 必须保持原状态，验收收藏必须撤销。开发 full-rollout 模式下，
+下一次 API 启动会幂等恢复 v4=100%；若要长期关闭，应同时显式关闭开发 full-rollout 配置并 exact-disable
+v4。不得用 scene 级 broad rollback 代替窄恢复。
 
 Quota Merge 排障先比较 `returned → local_unique → readable`，再看 reservation/fill/final represented；
 `exhausted=1` 且 `underfill>0` 表示健康 Provider 的可读唯一输出不足，容量应由公共 fill 回收。overlap 高表示
