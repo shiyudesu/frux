@@ -311,10 +311,10 @@ export function ReviewDetailPage({ reviewID }: { reviewID: number }) {
       reasonCode,
       note
     });
-    if (pendingDecision.current?.signature !== signature) {
-      pendingDecision.current = { signature, key: crypto.randomUUID() };
-    }
     try {
+      if (pendingDecision.current?.signature !== signature) {
+        pendingDecision.current = { signature, key: createDecisionIdempotencyKey() };
+      }
       const result = await decideReviewCase(token, reviewID, {
         leaseToken: lease.lease_token,
         expectedCaseVersion: detail.case.version,
@@ -553,6 +553,17 @@ function DetailState({
       {action && <button type="button" onClick={onAction}>{action}</button>}
     </div>
   );
+}
+
+function createDecisionIdempotencyKey(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    try {
+      return `review-decision-${globalThis.crypto.randomUUID()}`;
+    } catch {
+      // Fall back for non-secure HTTP contexts and restricted browser runtimes.
+    }
+  }
+  return `review-decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function assignmentLabel(event: string): string {

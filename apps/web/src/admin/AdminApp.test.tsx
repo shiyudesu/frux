@@ -116,6 +116,7 @@ describe("admin content operations workspace", () => {
     forgetReviewLease(2);
     forgetReviewLease(3);
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("filters shell navigation to the server-confirmed permissions", async () => {
@@ -270,6 +271,35 @@ describe("admin content operations workspace", () => {
     await clickButton("确认通过");
     expect(container.textContent).toContain("审核结果已提交");
     expect(container.textContent).toContain("已通过");
+  });
+
+  it("submits a review decision when randomUUID is unavailable", async () => {
+    vi.stubGlobal("crypto", {});
+    vi.mocked(fetchAdminPrincipal).mockResolvedValue({
+      user_id: 7, role: "reviewer", permissions: ["review.read", "review.decide"]
+    });
+    vi.mocked(fetchReviewCase).mockResolvedValue(reviewDetail());
+    vi.mocked(claimReviewCase).mockResolvedValue({
+      case: { ...reviewDetail().case, version: 2, assigned_reviewer_id: 7, lease_expires_at: "2099-01-01T00:00:00Z" },
+      lease_token: "lease"
+    });
+    vi.mocked(decideReviewCase).mockResolvedValue({
+      case: { ...reviewDetail().case, version: 3, status: "approved", closed_at: "2026-08-06T00:00:00Z" },
+      decision: {
+        id: 9, reviewer_id: 7, outcome: "approve", reason_code: "content_compliant",
+        note: "", review_version: 1, case_version: 2, created_at: "2026-08-06T00:00:00Z"
+      },
+      duplicate: false
+    });
+    window.history.replaceState({}, "", "/admin/reviews/1");
+    await renderAdmin();
+    await clickButton("开始审核");
+    await clickButton("确认通过");
+
+    expect(decideReviewCase).toHaveBeenCalledOnce();
+    expect(vi.mocked(decideReviewCase).mock.calls[0][2].idempotencyKey)
+      .toMatch(/^review-decision-/);
+    expect(container.textContent).toContain("审核结果已提交");
   });
 
   it("reuses the decision idempotency key after response loss", async () => {
