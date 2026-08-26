@@ -254,6 +254,8 @@ jobs:
           FRUX_MULTIMODAL_HMAC_SECRET=CI-Only-Multimodal-HMAC-Secret-123! \
           FRUX_MULTIMODAL_ENABLED=true \
           FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true \
+          FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=true \
+          FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=true \
           FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true \
           FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false \
           FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true \
@@ -282,15 +284,13 @@ jobs:
           adapter_environment = adapter["environment"]
           for environment in (api_environment, worker_environment):
               assert "DASHSCOPE_API_KEY" not in environment
-          for name in (
-              "FRUX_MULTIMODAL_ENDPOINT",
-              "FRUX_MULTIMODAL_HMAC_SECRET",
-              "FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED",
-              "FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK",
-          ):
-              assert name not in api_environment, f"API must not receive {name}"
-
           assert adapter_environment["DASHSCOPE_API_KEY"] == "ci-dashscope-key"
+          assert api_environment["FRUX_MULTIMODAL_ENDPOINT"] == "http://multimodal-provider:8099"
+          assert api_environment["FRUX_MULTIMODAL_HMAC_SECRET"] == "CI-Only-Multimodal-HMAC-Secret-123!"
+          assert str(api_environment["FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED"]).lower() == "true"
+          assert str(api_environment["FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED"]).lower() == "true"
+          assert str(api_environment["FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK"]).lower() == "true"
+          assert "FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED" not in api_environment
           assert worker_environment["FRUX_MULTIMODAL_ENDPOINT"] == "http://multimodal-provider:8099"
           assert worker_environment["FRUX_MULTIMODAL_HMAC_SECRET"] == "CI-Only-Multimodal-HMAC-Secret-123!"
           assert str(worker_environment["FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED"]).lower() == "true"
@@ -317,6 +317,8 @@ jobs:
           FRUX_MULTIMODAL_HMAC_SECRET=CI-Only-Multimodal-HMAC-Secret-123! \
           FRUX_MULTIMODAL_ENABLED=true \
           FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true \
+          FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=true \
+          FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=true \
           FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true \
           FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false \
           FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true \
