@@ -193,25 +193,33 @@ func TestApplyMultimodalEnvironmentOverridesIsStrictAndDefaultPreserving(t *test
 		name        string
 		parent      string
 		videoJobs   string
+		query       string
+		hybrid      string
 		session     string
 		full        string
 		wantParent  bool
 		wantVideo   bool
+		wantQuery   bool
+		wantHybrid  bool
 		wantSession bool
 		wantFull    bool
 		wantErr     bool
 	}{
 		{name: "blank preserves yaml", parent: " ", videoJobs: "", session: "", full: " ", wantParent: false, wantSession: false},
-		{name: "enable video and development full runtime", parent: "true", videoJobs: "true", session: "TRUE", full: "true", wantParent: true, wantVideo: true, wantSession: true, wantFull: true},
+		{name: "enable video, search, and development full runtime", parent: "true", videoJobs: "true", query: "true", hybrid: "TRUE", session: "TRUE", full: "true", wantParent: true, wantVideo: true, wantQuery: true, wantHybrid: true, wantSession: true, wantFull: true},
 		{name: "explicit disable", parent: "false", videoJobs: "false", session: "false", full: "false", wantParent: false, wantSession: false},
 		{name: "invalid parent", parent: "enabled", session: "true", wantErr: true},
 		{name: "invalid video jobs", parent: "true", videoJobs: "yes", session: "true", wantErr: true},
+		{name: "invalid query embedding", parent: "true", query: "yes", wantErr: true},
+		{name: "invalid hybrid search", parent: "true", hybrid: "yes", wantErr: true},
 		{name: "invalid session", parent: "true", session: "yes", wantErr: true},
 		{name: "invalid full rollout", parent: "true", session: "true", full: "yes", wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("FRUX_MULTIMODAL_ENABLED", test.parent)
 			t.Setenv("FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED", test.videoJobs)
+			t.Setenv("FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED", test.query)
+			t.Setenv("FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED", test.hybrid)
 			t.Setenv("FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", test.session)
 			t.Setenv("FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED", test.full)
 			cfg := MultimodalConfig{}
@@ -220,6 +228,7 @@ func TestApplyMultimodalEnvironmentOverridesIsStrictAndDefaultPreserving(t *test
 				t.Fatalf("error=%v", err)
 			}
 			if err == nil && (cfg.Enabled != test.wantParent || cfg.VideoJobsEnabled != test.wantVideo ||
+				cfg.QueryEmbeddingEnabled != test.wantQuery || cfg.HybridSearchEnabled != test.wantHybrid ||
 				cfg.SessionRecommendationEnabled != test.wantSession ||
 				cfg.Session.DevelopmentFullRolloutEnabled != test.wantFull) {
 				t.Fatalf("config=%#v", cfg)

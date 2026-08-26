@@ -93,7 +93,7 @@ multimodal_deployment_enabled() {
 
 validate_multimodal_deployment_config() {
   local enabled profile endpoint hmac api_key application_hmac
-  local runtime video_jobs session production_full development_full private_http
+  local runtime video_jobs query_embedding hybrid_search session production_full development_full private_http
   local upstream_timeout shutdown_timeout max_request_bytes max_response_bytes
   local name value
 
@@ -102,6 +102,8 @@ validate_multimodal_deployment_config() {
     die "FRUX_MULTIMODAL_DEPLOYMENT_ENABLED must be true or false"
   runtime=$(prod_env_value_or FRUX_MULTIMODAL_ENABLED false)
   video_jobs=$(prod_env_value_or FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED false)
+  query_embedding=$(prod_env_value_or FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED false)
+  hybrid_search=$(prod_env_value_or FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED false)
   session=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED false)
   production_full=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED false)
   development_full=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED false)
@@ -109,6 +111,8 @@ validate_multimodal_deployment_config() {
   for name in \
     FRUX_MULTIMODAL_ENABLED \
     FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED \
+    FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED \
+    FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED \
     FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED \
     FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED \
     FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED \
@@ -118,7 +122,8 @@ validate_multimodal_deployment_config() {
   done
 
   if [[ $enabled == false ]]; then
-    [[ $runtime != true && $video_jobs != true && $session != true &&
+    [[ $runtime != true && $video_jobs != true && $query_embedding != true &&
+      $hybrid_search != true && $session != true &&
       $production_full != true && $development_full != true && $private_http != true ]] ||
       die "multimodal feature flags require FRUX_MULTIMODAL_DEPLOYMENT_ENABLED=true"
     return 0
@@ -159,6 +164,8 @@ validate_multimodal_deployment_config() {
   [[ $runtime == true && $video_jobs == true && $session == true &&
     $production_full == true && $private_http == true ]] ||
     die "production multimodal runtime, video jobs, Session, full rollout, and private HTTP must be enabled together"
+  [[ $hybrid_search != true || $query_embedding == true ]] ||
+    die "multimodal hybrid search requires query embedding"
   [[ $development_full != true ]] ||
     die "development full rollout must remain disabled in production"
 }
@@ -474,6 +481,8 @@ restore_release_without_multimodal() {
     export FRUX_MULTIMODAL_HMAC_SECRET=
     export FRUX_MULTIMODAL_ENABLED=false
     export FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=false
+    export FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=false
+    export FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=false
     export FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=false
     export FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false
     export FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=false

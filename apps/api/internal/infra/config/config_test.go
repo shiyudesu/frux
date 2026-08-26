@@ -489,6 +489,25 @@ func TestLoadConfigResolvesMultimodalProfileFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadConfigEnablesMultimodalSearchFromEnvironment(t *testing.T) {
+	t.Setenv("FRUX_INTERNAL_TOKEN", "rT8v0%PzL2kQ7mX4cN9wA6dF1hJ5sB3y")
+	t.Setenv("FRUX_MULTIMODAL_PROFILE", multimodalprofile.TongyiFlashSnapshotProfile)
+	t.Setenv("FRUX_MULTIMODAL_ENDPOINT", "http://127.0.0.1:8099")
+	t.Setenv("FRUX_MULTIMODAL_HMAC_SECRET", "multimodal-provider-secret-value-123")
+	t.Setenv("FRUX_MULTIMODAL_ENABLED", "true")
+	t.Setenv("FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED", "true")
+	t.Setenv("FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED", "true")
+
+	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "configs", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Multimodal.Enabled || !cfg.Multimodal.QueryEmbeddingEnabled ||
+		!cfg.Multimodal.HybridSearchEnabled {
+		t.Fatalf("multimodal search config=%#v", cfg.Multimodal)
+	}
+}
+
 func TestLoadProdConfigUsesMinIOAndSingleKafka(t *testing.T) {
 	environment := map[string]string{
 		"FRUX_DOMAIN":                  "frux.example.com",

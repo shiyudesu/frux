@@ -35,3 +35,11 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${FRUX_WORKER_METRICS_HOST_PORT:-9091}:9091"
+
+  api:
+    environment:
+      FRUX_MULTIMODAL_ENDPOINT: http://multimodal-provider:8099
+      FRUX_MULTIMODAL_HMAC_SECRET: frux-local-compose-multimodal-hmac-2026-change-before-sharing
+    depends_on:
+      multimodal-provider:
+        condition: service_healthy

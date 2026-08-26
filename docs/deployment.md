@@ -241,9 +241,10 @@ API 镜像同时包含 `frux-multimodal-provider`，但 Compose 和 Kubernetes �
 公网 HTTP 主机仍会被拒绝，跨主机部署必须在 Adapter 前终止 TLS。请求和响应继续使用独立 HMAC 做完整性
 校验，但内部 HTTP 本身不提供机密性，因此不能把 Adapter 端口映射到宿主机或公网。
 
-百炼 API Key 只注入 Adapter，不能注入 API/Worker。Worker 只接收 Adapter Endpoint 和独立 HMAC；API
-只接收 Profile、Session runtime 与生产全量策略开关。`FRUX_MULTIMODAL_PROFILE` 必须在 API、Worker 和
-Adapter 中保持一致；当前允许选择带日期的原生融合档位或无日期的本地均值融合档位。
+百炼 API Key 只注入 Adapter，不能注入 API/Worker。Worker 接收 Adapter Endpoint 和独立 HMAC 来生成
+视频向量；启用 Query Embedding/Hybrid Search 时，API 也接收同一私网 Endpoint 和独立 HMAC 来生成查询
+向量，但仍不接收百炼 API Key。`FRUX_MULTIMODAL_PROFILE` 必须在 API、Worker 和 Adapter 中保持一致；
+当前允许选择带日期的原生融合档位或无日期的本地均值融合档位。
 
 原生仓库开发可把配置保存为 `apps/.env.multimodal`，三个 Go 命令会自动发现它，且只有 Adapter 会加载
 其中的 DashScope 凭证。容器部署不会自动读取宿主机上的该文件，仍需使用 Compose/Kubernetes 的环境变量

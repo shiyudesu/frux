@@ -273,6 +273,8 @@ FRUX_MULTIMODAL_ENDPOINT=http://multimodal-provider:8099
 FRUX_MULTIMODAL_HMAC_SECRET=<独立生成的至少32字符随机值>
 FRUX_MULTIMODAL_ENABLED=true
 FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true
+FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=true
+FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=true
 FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true
 FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false
 FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true
@@ -321,7 +323,7 @@ compose=(docker compose --profile multimodal \
 "${compose[@]}" ps api worker multimodal-provider
 test -z "$("${compose[@]}" port multimodal-provider 8099 2>/dev/null)"
 "${compose[@]}" exec -T api sh -ec \
-  'test -z "${DASHSCOPE_API_KEY+x}" && test -z "${FRUX_MULTIMODAL_ENDPOINT+x}" && test -z "${FRUX_MULTIMODAL_HMAC_SECRET+x}"'
+  'test -z "${DASHSCOPE_API_KEY+x}" && test -n "$FRUX_MULTIMODAL_ENDPOINT" && test -n "$FRUX_MULTIMODAL_HMAC_SECRET" && test "$FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED" = true && test "$FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED" = true'
 "${compose[@]}" exec -T worker sh -ec \
   'test -z "${DASHSCOPE_API_KEY+x}" && test -n "$FRUX_MULTIMODAL_ENDPOINT" && test -n "$FRUX_MULTIMODAL_HMAC_SECRET"'
 "${compose[@]}" exec -T multimodal-provider sh -ec \
@@ -344,8 +346,9 @@ test -z "$("${compose[@]}" port multimodal-provider 8099 2>/dev/null)"
 ```
 
 该 Profile 会在每次 Adapter 重新创建时产生一次很小的文本 startup probe，并在每个新公开视频 Job 上产生
-一次视频向量调用；失败后重试可能增加调用。Query Embedding、Hybrid Search 和 Similar Videos 仍未启用，
-刷 Feed 不产生百炼调用。按 2026-08-24 百炼北京区官方原价，两个可选 Profile 的图片/文本输入均为
+一次视频向量调用；失败后重试可能增加调用。Query Embedding/Hybrid Search 开启后，搜索词缓存未命中会
+产生一次文本向量调用；刷 Feed 仍不产生百炼调用。Similar Videos 默认保持关闭。按 2026-08-24 百炼北京区
+官方原价，两个可选 Profile 的图片/文本输入均为
 0.15 元/百万 Token；本项目实测两个小视频合计 1,680 input tokens，约 0.000252 元，若内容复杂度相近，
 1,000 个视频约 0.126 元。实际 Token、活动价、网络和存储费用以账单为准：
 [Tongyi Embedding Vision Flash 计费](https://help.aliyun.com/zh/model-studio/tongyi-embedding-vision-flash)。
@@ -357,6 +360,8 @@ test -z "$("${compose[@]}" port multimodal-provider 8099 2>/dev/null)"
 FRUX_MULTIMODAL_DEPLOYMENT_ENABLED=false
 FRUX_MULTIMODAL_ENABLED=false
 FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=false
+FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=false
+FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=false
 FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=false
 FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false
 FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=false

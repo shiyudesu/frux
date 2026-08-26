@@ -19,6 +19,8 @@ write_valid_multimodal_env() {
     'FRUX_MULTIMODAL_HMAC_SECRET=CI-Only-Multimodal-HMAC-Secret-123!' \
     'FRUX_MULTIMODAL_ENABLED=true' \
     'FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true' \
+    'FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=true' \
+    'FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=true' \
     'FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true' \
     'FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false' \
     'FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true' \
@@ -69,6 +71,14 @@ replace_env_value FRUX_MULTIMODAL_ENABLED yes
 expect_validation_failure 'non-boolean feature flag'
 
 write_valid_multimodal_env
+replace_env_value FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED yes
+expect_validation_failure 'non-boolean query embedding flag'
+
+write_valid_multimodal_env
+replace_env_value FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED false
+expect_validation_failure 'hybrid search without query embedding'
+
+write_valid_multimodal_env
 replace_env_value FRUX_MULTIMODAL_HMAC_SECRET CI-Only-Application-HMAC-Secret-123!
 expect_validation_failure 'shared application and provider HMAC'
 
@@ -80,6 +90,8 @@ write_valid_multimodal_env
 replace_env_value FRUX_MULTIMODAL_DEPLOYMENT_ENABLED false
 replace_env_value FRUX_MULTIMODAL_ENABLED false
 replace_env_value FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED false
+replace_env_value FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED false
+replace_env_value FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED false
 replace_env_value FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED false
 replace_env_value FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED false
 replace_env_value FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK false

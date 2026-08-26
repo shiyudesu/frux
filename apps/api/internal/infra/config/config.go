@@ -101,6 +101,8 @@ func applyMultimodalEnvironmentOverrides(cfg *MultimodalConfig) error {
 	}{
 		{name: "FRUX_MULTIMODAL_ENABLED", target: &cfg.Enabled},
 		{name: "FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED", target: &cfg.VideoJobsEnabled},
+		{name: "FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED", target: &cfg.QueryEmbeddingEnabled},
+		{name: "FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED", target: &cfg.HybridSearchEnabled},
 		{name: "FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK", target: &cfg.Provider.AllowInsecurePrivateNetwork},
 		{name: "FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED", target: &cfg.SessionRecommendationEnabled},
 		{name: "FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED", target: &cfg.Session.DevelopmentFullRolloutEnabled},

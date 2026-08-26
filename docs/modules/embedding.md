@@ -196,8 +196,9 @@ docker compose --env-file .env.multimodal \
 ```
 
 覆盖文件启动 `multimodal-provider`，其真实 startup probe 成功并通过健康检查后，Worker 才启动
-`video_jobs_enabled=true` 的任务执行器。Adapter 是唯一接收 `DASHSCOPE_API_KEY` 的容器；Worker 只接收
-Profile、`http://multimodal-provider:8099` 和本地 Compose HMAC，API 不接收模型 Key 或视频 Job Endpoint。
+`video_jobs_enabled=true` 的任务执行器。Adapter 是唯一接收 `DASHSCOPE_API_KEY` 的容器；Worker 接收
+Profile、`http://multimodal-provider:8099` 和本地 Compose HMAC。开启 Query Embedding/Hybrid Search 时，
+API 也通过同一私网 Endpoint 和 HMAC 调用 Adapter，但不接收模型 Key。
 本仓库当前机器使用忽略的 `apps/.env` 自动选择该覆盖；删除该本地文件即可恢复基础 Compose 行为。
 
 `.env.multimodal` 已被 Git 忽略。示例中的 `127.0.0.1:8099` 是**宿主机原生进程边界**：API、Worker 与
@@ -219,7 +220,8 @@ request ID 不进入正常日志或 Prometheus label。
    `FRUX_MULTIMODAL_HMAC_SECRET`；
 3. 先只打开 `multimodal.enabled` 与 `video_jobs_enabled`，发布少量开发视频生成向量；
 4. 确认 Job、Fact、Projection 和成本指标正常，再打开 `similar_videos_enabled`；
-5. 使用真实 Golden Set 验收后，最后打开 `query_embedding_enabled` 与 `hybrid_search_enabled`。
+5. 使用真实 Golden Set 验收后，最后设置 `FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=true` 与
+   `FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=true`。
 
 北京地域公开原价为每千输入 Token 0.00015 元。Adapter 按 operation 累加 input/image/text/output Token，
 便于用实际调用校准费用；该计数不包含请求内容。官方接口与模型限制以
