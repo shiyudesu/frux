@@ -182,8 +182,8 @@ func TestHandlerMapsUnavailableHybridContinuationToRetryableResponse(t *testing.
 		t.Fatal(err)
 	}
 	config, err := applicationsearch.NewHybridVideoSearchConfig(
-		contract, domainembedding.MultimodalHybridMergeVersionV1,
-		domainsearch.MaxLimit+1, 10, 10, time.Minute,
+		contract, domainembedding.MultimodalHybridMergeVersionV2,
+		domainsearch.MaxLimit+1, 10, 10, 0.55, 5, time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestHandlerMapsUnavailableHybridContinuationToRetryableResponse(t *testing.
 	)
 	cursor := applicationsearch.EncodeHybridVideoCursor("cat", &applicationsearch.HybridVideoCursor{
 		Mode:           applicationsearch.VideoRetrievalModeHybrid,
-		RankingVersion: domainembedding.MultimodalHybridMergeVersionV1,
+		RankingVersion: domainembedding.MultimodalHybridMergeVersionV2,
 		ContractKey:    contract.Key(), HybridScore: 1, PublishedAt: now,
 		VideoID: 1, ExpiresAt: now.Add(time.Minute),
 	})

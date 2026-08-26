@@ -129,6 +129,14 @@ multimodal:
     admission_limit: 2
     max_request_bytes: 25165824
     max_response_bytes: 2097152
+  hybrid:
+    version: "hybrid-rank-v2"
+    pool_limit: 100
+    lexical_reservation: 20
+    semantic_reservation: 5
+    min_semantic_similarity: 0.55
+    max_semantic_only: 5
+    cursor_ttl: "15m"
   session:
     max_seeds: 21
     max_lookback: "24h"

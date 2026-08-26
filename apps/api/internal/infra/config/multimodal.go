@@ -329,7 +329,7 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 
 	cfg.Hybrid.Version = strings.ToLower(strings.TrimSpace(cfg.Hybrid.Version))
 	if cfg.Hybrid.Version == "" {
-		cfg.Hybrid.Version = domainembedding.MultimodalHybridMergeVersionV1
+		cfg.Hybrid.Version = domainembedding.MultimodalHybridMergeVersionV2
 	}
 	cfg.Hybrid.FallbackMode = strings.ToLower(strings.TrimSpace(cfg.Hybrid.FallbackMode))
 	if cfg.Hybrid.FallbackMode == "" {
@@ -342,16 +342,26 @@ func normalizeAndValidateMultimodalConfig(cfg *MultimodalConfig) error {
 		cfg.Hybrid.LexicalReservation = 20
 	}
 	if cfg.Hybrid.SemanticReservation == 0 {
-		cfg.Hybrid.SemanticReservation = 20
+		cfg.Hybrid.SemanticReservation = 5
+	}
+	if cfg.Hybrid.MinSemanticSimilarity == 0 {
+		cfg.Hybrid.MinSemanticSimilarity = 0.55
+	}
+	if cfg.Hybrid.MaxSemanticOnly == 0 {
+		cfg.Hybrid.MaxSemanticOnly = 5
 	}
 	cfg.Hybrid.CursorTTL = defaultDuration(cfg.Hybrid.CursorTTL, "15m")
 	cursorTTL, cursorErr := time.ParseDuration(cfg.Hybrid.CursorTTL)
-	if cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV1 ||
+	if cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV2 ||
 		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback ||
 		cfg.Hybrid.PoolLimit < 51 || cfg.Hybrid.PoolLimit > 500 ||
 		cfg.Hybrid.PoolLimit > cfg.Exact.MaxLimit ||
 		cfg.Hybrid.LexicalReservation < 0 || cfg.Hybrid.SemanticReservation < 0 ||
 		cfg.Hybrid.LexicalReservation+cfg.Hybrid.SemanticReservation > cfg.Hybrid.PoolLimit ||
+		math.IsNaN(cfg.Hybrid.MinSemanticSimilarity) || math.IsInf(cfg.Hybrid.MinSemanticSimilarity, 0) ||
+		cfg.Hybrid.MinSemanticSimilarity <= 0 || cfg.Hybrid.MinSemanticSimilarity >= 1 ||
+		cfg.Hybrid.MaxSemanticOnly < 1 || cfg.Hybrid.MaxSemanticOnly > 20 ||
+		cfg.Hybrid.MaxSemanticOnly > cfg.Hybrid.PoolLimit ||
 		cursorErr != nil || cursorTTL < time.Minute || cursorTTL > 24*time.Hour {
 		return ErrInvalidMultimodalConfig
 	}

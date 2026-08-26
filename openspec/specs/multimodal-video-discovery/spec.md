@@ -53,6 +53,9 @@ lexical and exact semantic candidates using a versioned deterministic merge and 
 deduplicate by video ID while retaining both reasons, revalidate readability, and return a stable
 query-bound cursor. User search SHALL remain lexical-only. The API composition root SHALL install the
 hybrid service only when query embedding, exact retrieval, and their shared contract are validated.
+Semantic candidates below the configured model-specific similarity floor SHALL be excluded from
+hybrid search, and semantic-only expansion SHALL be capped independently from lexical matches and
+lexical/semantic overlap. The merge version SHALL change whenever these filtering semantics change.
 
 #### Scenario: Video matches both retrieval paths
 - **WHEN** a readable video is returned by lexical and semantic retrieval
@@ -60,7 +63,11 @@ hybrid service only when query embedding, exact retrieval, and their shared cont
 
 #### Scenario: Video matches only semantic meaning
 - **WHEN** a readable video is semantically related but its title and description do not lexically match the normalized query
-- **THEN** it may appear in the hybrid video results according to the bounded semantic reservation and score
+- **THEN** it may appear only when it meets the configured similarity floor and the semantic-only cap is not exhausted
+
+#### Scenario: Query has no confident semantic match
+- **WHEN** exact retrieval returns only candidates below the configured similarity floor
+- **THEN** those candidates are excluded and search returns only lexical matches or a healthy empty result
 
 #### Scenario: Hybrid search continues from a cursor
 - **WHEN** the caller submits a valid cursor for the same normalized query, hybrid version, retrieval mode, and model contract

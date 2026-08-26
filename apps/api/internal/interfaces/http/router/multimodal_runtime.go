@@ -94,7 +94,8 @@ func newMultimodalSearchService(
 			}
 			hybridConfig, err := applicationsearch.NewHybridVideoSearchConfig(
 				contract, cfg.Hybrid.Version, cfg.Hybrid.PoolLimit,
-				cfg.Hybrid.LexicalReservation, cfg.Hybrid.SemanticReservation, cursorTTL,
+				cfg.Hybrid.LexicalReservation, cfg.Hybrid.SemanticReservation,
+				cfg.Hybrid.MinSemanticSimilarity, cfg.Hybrid.MaxSemanticOnly, cursorTTL,
 			)
 			if err != nil {
 				return nil, err

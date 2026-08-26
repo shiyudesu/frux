@@ -1,7 +1,7 @@
 {
   "version": "multimodal-golden-v1",
   "model_contract": "development-fixture-contract-v1",
-  "merge_version": "hybrid-rank-v1",
+  "merge_version": "hybrid-rank-v2",
   "cutoff": 3,
   "cases": [
     {

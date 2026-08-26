@@ -94,6 +94,7 @@ multimodal_deployment_enabled() {
 validate_multimodal_deployment_config() {
   local enabled profile endpoint hmac api_key application_hmac
   local runtime video_jobs query_embedding hybrid_search session production_full development_full private_http
+  local hybrid_min_similarity hybrid_max_semantic_only
   local upstream_timeout shutdown_timeout max_request_bytes max_response_bytes
   local name value
 
@@ -108,6 +109,8 @@ validate_multimodal_deployment_config() {
   production_full=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED false)
   development_full=$(prod_env_value_or FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED false)
   private_http=$(prod_env_value_or FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK false)
+  hybrid_min_similarity=$(prod_env_value_or FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY 0.55)
+  hybrid_max_semantic_only=$(prod_env_value_or FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY 5)
   for name in \
     FRUX_MULTIMODAL_ENABLED \
     FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED \
@@ -168,6 +171,11 @@ validate_multimodal_deployment_config() {
     die "multimodal hybrid search requires query embedding"
   [[ $development_full != true ]] ||
     die "development full rollout must remain disabled in production"
+  awk -v value="$hybrid_min_similarity" 'BEGIN { exit !(value > 0 && value < 1) }' ||
+    die "FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY must be between 0 and 1"
+  [[ $hybrid_max_semantic_only =~ ^[1-9][0-9]*$ ]] &&
+    ((hybrid_max_semantic_only <= 20)) ||
+    die "FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY must be between 1 and 20"
 }
 
 release_supports_multimodal() {

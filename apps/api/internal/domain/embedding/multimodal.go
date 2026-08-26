@@ -21,6 +21,7 @@ const (
 	MultimodalFusionPolicyV1         = "provider-fusion-v1"
 	MultimodalNormalizedMeanFusionV1 = "normalized-mean-fusion-v1"
 	MultimodalHybridMergeVersionV1   = "hybrid-rank-v1"
+	MultimodalHybridMergeVersionV2   = "hybrid-rank-v2"
 	MultimodalExactRankingVersionV1  = "exact-cosine-v1"
 	MultimodalLexicalFallback        = "lexical"
 	MinMultimodalDimension           = 32

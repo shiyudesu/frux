@@ -21,6 +21,8 @@ write_valid_multimodal_env() {
     'FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED=true' \
     'FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=true' \
     'FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=true' \
+    'FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY=0.55' \
+    'FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY=5' \
     'FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED=true' \
     'FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED=false' \
     'FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED=true' \
@@ -77,6 +79,14 @@ expect_validation_failure 'non-boolean query embedding flag'
 write_valid_multimodal_env
 replace_env_value FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED false
 expect_validation_failure 'hybrid search without query embedding'
+
+write_valid_multimodal_env
+replace_env_value FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY 1
+expect_validation_failure 'unsafe hybrid similarity floor'
+
+write_valid_multimodal_env
+replace_env_value FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY 21
+expect_validation_failure 'unbounded semantic-only candidates'
 
 write_valid_multimodal_env
 replace_env_value FRUX_MULTIMODAL_HMAC_SECRET CI-Only-Application-HMAC-Secret-123!

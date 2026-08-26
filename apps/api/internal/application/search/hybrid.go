@@ -31,12 +31,14 @@ type PublicVideoLoader interface {
 }
 
 type HybridVideoSearchConfig struct {
-	Contract            domainembedding.MultimodalContractIdentity
-	Version             string
-	PoolLimit           int
-	LexicalReservation  int
-	SemanticReservation int
-	CursorTTL           time.Duration
+	Contract              domainembedding.MultimodalContractIdentity
+	Version               string
+	PoolLimit             int
+	LexicalReservation    int
+	SemanticReservation   int
+	MinSemanticSimilarity float64
+	MaxSemanticOnly       int
+	CursorTTL             time.Duration
 }
 
 type hybridVideoSearch struct {
@@ -62,6 +64,8 @@ func NewHybridVideoSearchConfig(
 	poolLimit int,
 	lexicalReservation int,
 	semanticReservation int,
+	minSemanticSimilarity float64,
+	maxSemanticOnly int,
 	cursorTTL time.Duration,
 ) (HybridVideoSearchConfig, error) {
 	validated, err := domainembedding.NewMultimodalContractIdentity(
@@ -70,14 +74,18 @@ func NewHybridVideoSearchConfig(
 		contract.ImagePreprocessingPolicy, contract.FusionPolicy,
 	)
 	version = strings.ToLower(strings.TrimSpace(version))
-	if err != nil || !validated.Equal(contract) || version != domainembedding.MultimodalHybridMergeVersionV1 ||
+	if err != nil || !validated.Equal(contract) || version != domainembedding.MultimodalHybridMergeVersionV2 ||
 		poolLimit < domainsearch.MaxLimit+1 || poolLimit > 500 || lexicalReservation < 0 || semanticReservation < 0 ||
-		lexicalReservation+semanticReservation > poolLimit || cursorTTL < time.Minute || cursorTTL > 24*time.Hour {
+		lexicalReservation+semanticReservation > poolLimit || math.IsNaN(minSemanticSimilarity) ||
+		math.IsInf(minSemanticSimilarity, 0) || minSemanticSimilarity <= 0 || minSemanticSimilarity >= 1 ||
+		maxSemanticOnly < 1 || maxSemanticOnly > 20 || maxSemanticOnly > poolLimit ||
+		cursorTTL < time.Minute || cursorTTL > 24*time.Hour {
 		return HybridVideoSearchConfig{}, ErrInvalidHybridSearchConfig
 	}
 	return HybridVideoSearchConfig{
 		Contract: contract, Version: version, PoolLimit: poolLimit,
 		LexicalReservation: lexicalReservation, SemanticReservation: semanticReservation,
+		MinSemanticSimilarity: minSemanticSimilarity, MaxSemanticOnly: maxSemanticOnly,
 		CursorTTL: cursorTTL,
 	}, nil
 }
@@ -141,6 +149,7 @@ func (s *Service) searchHybridVideos(ctx context.Context, query, cursorValue str
 		}
 		return s.searchLexicalFallback(ctx, query, nil, limit, lexical)
 	}
+	semantic = filterHybridSemanticCandidates(lexical, semantic, h.config)
 	semanticIDs := make([]int64, 0, len(semantic))
 	for _, candidate := range semantic {
 		semanticIDs = append(semanticIDs, candidate.VideoID)
@@ -281,6 +290,7 @@ func mixHybridVideoCandidates(
 	semanticVideos map[int64]*domainvideo.Video,
 	config HybridVideoSearchConfig,
 ) []*hybridVideoCandidate {
+	semantic = filterHybridSemanticCandidates(lexical, semantic, config)
 	candidates := make(map[int64]*hybridVideoCandidate, len(lexical)+len(semantic))
 	lexicalSequence := make([]int64, 0, len(lexical))
 	semanticSequence := make([]int64, 0, len(semantic))
@@ -395,6 +405,48 @@ func mixHybridVideoCandidates(
 		return selected[i].item.ID > selected[j].item.ID
 	})
 	return selected
+}
+
+func filterHybridSemanticCandidates(
+	lexical []*domainsearch.VideoIndexItem,
+	semantic []domainembedding.MultimodalExactCandidate,
+	config HybridVideoSearchConfig,
+) []domainembedding.MultimodalExactCandidate {
+	lexicalIDs := make(map[int64]struct{}, len(lexical))
+	for _, item := range lexical {
+		if item != nil && item.ID > 0 {
+			lexicalIDs[item.ID] = struct{}{}
+		}
+	}
+	minimum := config.MinSemanticSimilarity
+	if minimum <= 0 {
+		minimum = math.SmallestNonzeroFloat64
+	}
+	maxSemanticOnly := config.MaxSemanticOnly
+	if maxSemanticOnly <= 0 {
+		maxSemanticOnly = config.PoolLimit
+	}
+	filtered := make([]domainembedding.MultimodalExactCandidate, 0, len(semantic))
+	seen := make(map[int64]struct{}, len(semantic))
+	semanticOnly := 0
+	for _, candidate := range semantic {
+		if candidate.VideoID <= 0 || candidate.Similarity < minimum ||
+			math.IsNaN(candidate.Similarity) || math.IsInf(candidate.Similarity, 0) {
+			continue
+		}
+		if _, duplicate := seen[candidate.VideoID]; duplicate {
+			continue
+		}
+		seen[candidate.VideoID] = struct{}{}
+		if _, overlap := lexicalIDs[candidate.VideoID]; !overlap {
+			if semanticOnly >= maxSemanticOnly {
+				continue
+			}
+			semanticOnly++
+		}
+		filtered = append(filtered, candidate)
+	}
+	return filtered
 }
 
 func hybridCandidateAfterCursor(candidate *hybridVideoCandidate, cursor *HybridVideoCursor) bool {

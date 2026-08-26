@@ -244,8 +244,9 @@ func routerMultimodalHybridConfig(contract domainembedding.MultimodalContractIde
 		Query:    infraconfig.MultimodalQueryConfig{MaxRunes: 64, CacheTTL: "1m", CacheEntries: 10},
 		Exact:    infraconfig.MultimodalExactConfig{MaxLimit: 100},
 		Hybrid: infraconfig.MultimodalHybridConfig{
-			Version:   domainembedding.MultimodalHybridMergeVersionV1,
-			PoolLimit: 100, LexicalReservation: 1, SemanticReservation: 1, CursorTTL: "15m",
+			Version: domainembedding.MultimodalHybridMergeVersionV2, PoolLimit: 100,
+			LexicalReservation: 1, SemanticReservation: 1,
+			MinSemanticSimilarity: 0.55, MaxSemanticOnly: 5, CursorTTL: "15m",
 		},
 	}
 }

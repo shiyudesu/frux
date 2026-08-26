@@ -40,10 +40,11 @@ func TestNormalizeAndValidateMultimodalConfigDisabledDefaults(t *testing.T) {
 		cfg.Jobs.ShutdownTimeout != "15s" ||
 		cfg.MaxVideoTextRunes != 2048 || cfg.Images.MaxCount != 4 ||
 		cfg.Query.MaxRunes != 128 || cfg.Query.CacheEntries != 1000 ||
-		cfg.Exact.MaxLimit != 100 || cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV1 ||
+		cfg.Exact.MaxLimit != 100 || cfg.Hybrid.Version != domainembedding.MultimodalHybridMergeVersionV2 ||
 		cfg.Hybrid.FallbackMode != domainembedding.MultimodalLexicalFallback ||
 		cfg.Hybrid.PoolLimit != 100 || cfg.Hybrid.LexicalReservation != 20 ||
-		cfg.Hybrid.SemanticReservation != 20 || cfg.Hybrid.CursorTTL != "15m" ||
+		cfg.Hybrid.SemanticReservation != 5 || cfg.Hybrid.MinSemanticSimilarity != 0.55 ||
+		cfg.Hybrid.MaxSemanticOnly != 5 || cfg.Hybrid.CursorTTL != "15m" ||
 		cfg.SessionRecommendationEnabled || cfg.Session.MaxSeeds != 21 || cfg.Session.MaxLookback != "24h" ||
 		cfg.SessionShadow.Enabled || cfg.SessionShadow.SamplePPM != 0 || cfg.SessionShadow.Budget != 50 ||
 		cfg.SessionShadow.Deadline != "250ms" || cfg.SessionShadow.MaxInFlight != 2 ||
@@ -151,7 +152,9 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 		{name: "fallback disabled", mutate: func(c *MultimodalConfig) { c.Hybrid.FallbackMode = "none" }},
 		{name: "hybrid pool below page bound", mutate: func(c *MultimodalConfig) { c.Hybrid.PoolLimit = 50 }},
 		{name: "hybrid pool exceeds exact", mutate: func(c *MultimodalConfig) { c.Hybrid.PoolLimit = 101 }},
-		{name: "hybrid reservations exceed pool", mutate: func(c *MultimodalConfig) { c.Hybrid.LexicalReservation = 81 }},
+		{name: "hybrid reservations exceed pool", mutate: func(c *MultimodalConfig) { c.Hybrid.LexicalReservation = 96 }},
+		{name: "hybrid similarity floor", mutate: func(c *MultimodalConfig) { c.Hybrid.MinSemanticSimilarity = 1 }},
+		{name: "hybrid semantic-only cap", mutate: func(c *MultimodalConfig) { c.Hybrid.MaxSemanticOnly = 21 }},
 		{name: "hybrid without query", mutate: func(c *MultimodalConfig) { c.QueryEmbeddingEnabled = false }},
 		{name: "disabled with active feature", mutate: func(c *MultimodalConfig) { c.Enabled = false }},
 	}
@@ -163,6 +166,28 @@ func TestNormalizeAndValidateMultimodalConfigRejectsInvalidContractsAndBounds(t 
 				t.Fatalf("error = %v, want %v", err, ErrInvalidMultimodalConfig)
 			}
 		})
+	}
+}
+
+func TestApplyMultimodalHybridQualityEnvironmentOverrides(t *testing.T) {
+	t.Setenv("FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY", "0.63")
+	t.Setenv("FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY", "3")
+	cfg := MultimodalConfig{}
+	if err := applyMultimodalEnvironmentOverrides(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hybrid.MinSemanticSimilarity != 0.63 || cfg.Hybrid.MaxSemanticOnly != 3 {
+		t.Fatalf("hybrid config=%#v", cfg.Hybrid)
+	}
+
+	t.Setenv("FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY", "not-a-number")
+	if err := applyMultimodalEnvironmentOverrides(&MultimodalConfig{}); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("similarity override error=%v", err)
+	}
+	t.Setenv("FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY", "0.63")
+	t.Setenv("FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY", "many")
+	if err := applyMultimodalEnvironmentOverrides(&MultimodalConfig{}); !errors.Is(err, ErrInvalidMultimodalConfig) {
+		t.Fatalf("semantic-only override error=%v", err)
 	}
 }
 

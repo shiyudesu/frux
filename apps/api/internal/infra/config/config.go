@@ -118,6 +118,20 @@ func applyMultimodalEnvironmentOverrides(cfg *MultimodalConfig) error {
 		}
 		*override.target = value
 	}
+	if raw, exists := os.LookupEnv("FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY"); exists && strings.TrimSpace(raw) != "" {
+		value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if err != nil {
+			return ErrInvalidMultimodalConfig
+		}
+		cfg.Hybrid.MinSemanticSimilarity = value
+	}
+	if raw, exists := os.LookupEnv("FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY"); exists && strings.TrimSpace(raw) != "" {
+		value, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			return ErrInvalidMultimodalConfig
+		}
+		cfg.Hybrid.MaxSemanticOnly = value
+	}
 	return nil
 }
 

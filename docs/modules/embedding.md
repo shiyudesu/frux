@@ -223,6 +223,11 @@ request ID 不进入正常日志或 Prometheus label。
 5. 使用真实 Golden Set 验收后，最后设置 `FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED=true` 与
    `FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED=true`。
 
+Hybrid Search 使用 `hybrid-rank-v2`。语义候选默认要求余弦相似度至少 `0.55`，且一次查询最多扩展
+5 个没有关键词重叠的纯语义视频；关键词匹配和关键词/语义重叠不受该纯语义上限影响。可通过
+`FRUX_MULTIMODAL_HYBRID_MIN_SIMILARITY` 与 `FRUX_MULTIMODAL_HYBRID_MAX_SEMANTIC_ONLY` 调整。
+相似度阈值没有跨数据集通用值，正式调整应基于当前 Profile 的真实查询分布和人工 Golden Set。
+
 北京地域公开原价为每千输入 Token 0.00015 元。Adapter 按 operation 累加 input/image/text/output Token，
 便于用实际调用校准费用；该计数不包含请求内容。官方接口与模型限制以
 [阿里云 Multimodal-Embedding 文档](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)

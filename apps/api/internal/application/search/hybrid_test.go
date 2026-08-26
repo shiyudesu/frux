@@ -59,11 +59,11 @@ func (s *publicVideoLoaderStub) BatchGetReadable(_ context.Context, _ int64, ids
 func TestHybridVideoCursorBindsModeVersionContractAndExpiry(t *testing.T) {
 	now := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
 	cursor := EncodeHybridVideoCursor("cat", &HybridVideoCursor{
-		Mode: VideoRetrievalModeHybrid, RankingVersion: domainembedding.MultimodalHybridMergeVersionV1,
+		Mode: VideoRetrievalModeHybrid, RankingVersion: domainembedding.MultimodalHybridMergeVersionV2,
 		ContractKey: "contract", HybridScore: 1.25, PublishedAt: now, VideoID: 9,
 		ExpiresAt: now.Add(time.Minute),
 	})
-	decoded, err := DecodeHybridVideoCursor(cursor, "cat", domainembedding.MultimodalHybridMergeVersionV1, "contract", now)
+	decoded, err := DecodeHybridVideoCursor(cursor, "cat", domainembedding.MultimodalHybridMergeVersionV2, "contract", now)
 	if err != nil || decoded.Mode != VideoRetrievalModeHybrid || decoded.HybridScore != 1.25 || decoded.VideoID != 9 {
 		t.Fatalf("decoded cursor=%#v err=%v", decoded, err)
 	}
@@ -71,10 +71,10 @@ func TestHybridVideoCursorBindsModeVersionContractAndExpiry(t *testing.T) {
 		query, version, contract string
 		now                      time.Time
 	}{
-		{query: "dog", version: domainembedding.MultimodalHybridMergeVersionV1, contract: "contract", now: now},
+		{query: "dog", version: domainembedding.MultimodalHybridMergeVersionV2, contract: "contract", now: now},
 		{query: "cat", version: "v2", contract: "contract", now: now},
-		{query: "cat", version: domainembedding.MultimodalHybridMergeVersionV1, contract: "other", now: now},
-		{query: "cat", version: domainembedding.MultimodalHybridMergeVersionV1, contract: "contract", now: now.Add(2 * time.Minute)},
+		{query: "cat", version: domainembedding.MultimodalHybridMergeVersionV2, contract: "other", now: now},
+		{query: "cat", version: domainembedding.MultimodalHybridMergeVersionV2, contract: "contract", now: now.Add(2 * time.Minute)},
 	} {
 		if _, err := DecodeHybridVideoCursor(cursor, test.query, test.version, test.contract, test.now); !errors.Is(err, domainsearch.ErrInvalidCursor) {
 			t.Fatalf("rebound cursor error=%v for %#v", err, test)
@@ -83,7 +83,7 @@ func TestHybridVideoCursorBindsModeVersionContractAndExpiry(t *testing.T) {
 	legacy := EncodeVideoCursor("cat", &domainsearch.VideoCursor{
 		Relevance: domainsearch.VideoRelevanceExactTitle, PublishedAt: now, VideoID: 9,
 	})
-	if _, err := DecodeHybridVideoCursor(legacy, "cat", domainembedding.MultimodalHybridMergeVersionV1, "contract", now); !errors.Is(err, domainsearch.ErrInvalidCursor) {
+	if _, err := DecodeHybridVideoCursor(legacy, "cat", domainembedding.MultimodalHybridMergeVersionV2, "contract", now); !errors.Is(err, domainsearch.ErrInvalidCursor) {
 		t.Fatalf("legacy cursor error=%v", err)
 	}
 }
@@ -115,6 +115,50 @@ func TestMixHybridVideoCandidatesIsDeterministicAndRetainsOverlap(t *testing.T) 
 	}
 }
 
+func TestFilterHybridSemanticCandidatesRejectsLowConfidenceAndCapsSemanticOnly(t *testing.T) {
+	now := time.Date(2026, 8, 26, 14, 0, 0, 0, time.UTC)
+	lexical := []*domainsearch.VideoIndexItem{{ID: 2, PublishedAt: now}}
+	semantic := []domainembedding.MultimodalExactCandidate{
+		{VideoID: 1, Similarity: 0.91, PublishedAt: now},
+		{VideoID: 2, Similarity: 0.82, PublishedAt: now},
+		{VideoID: 3, Similarity: 0.73, PublishedAt: now},
+		{VideoID: 4, Similarity: 0.72, PublishedAt: now},
+		{VideoID: 5, Similarity: 0.54, PublishedAt: now},
+		{VideoID: 1, Similarity: 0.90, PublishedAt: now},
+	}
+	filtered := filterHybridSemanticCandidates(lexical, semantic, HybridVideoSearchConfig{
+		PoolLimit: 100, MinSemanticSimilarity: 0.55, MaxSemanticOnly: 2,
+	})
+	ids := make([]int64, 0, len(filtered))
+	for _, candidate := range filtered {
+		ids = append(ids, candidate.VideoID)
+	}
+	if !reflect.DeepEqual(ids, []int64{1, 2, 3}) {
+		t.Fatalf("filtered semantic IDs=%v", ids)
+	}
+}
+
+func TestHybridConfigRejectsLegacyVersionAndUnsafeQualityBounds(t *testing.T) {
+	contract := searchHybridContract(t)
+	for _, test := range []struct {
+		version string
+		minimum float64
+		maximum int
+	}{
+		{version: domainembedding.MultimodalHybridMergeVersionV1, minimum: 0.55, maximum: 5},
+		{version: domainembedding.MultimodalHybridMergeVersionV2, minimum: 0, maximum: 5},
+		{version: domainembedding.MultimodalHybridMergeVersionV2, minimum: 1, maximum: 5},
+		{version: domainembedding.MultimodalHybridMergeVersionV2, minimum: 0.55, maximum: 21},
+	} {
+		if _, err := NewHybridVideoSearchConfig(
+			contract, test.version, domainsearch.MaxLimit+1, 1, 1,
+			test.minimum, test.maximum, time.Minute,
+		); !errors.Is(err, ErrInvalidHybridSearchConfig) {
+			t.Fatalf("version=%q minimum=%v maximum=%d error=%v", test.version, test.minimum, test.maximum, err)
+		}
+	}
+}
+
 func TestHybridVideoSearchFallsBackLexicallyAndPreservesMode(t *testing.T) {
 	now := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
 	contract := searchHybridContract(t)
@@ -129,7 +173,7 @@ func TestHybridVideoSearchFallsBackLexicallyAndPreservesMode(t *testing.T) {
 	if err != nil || len(page.Items) != 2 || !page.HasMore || page.NextCursor == "" {
 		t.Fatalf("fallback page=%#v err=%v", page, err)
 	}
-	cursor, err := DecodeHybridVideoCursor(page.NextCursor, "cat", domainembedding.MultimodalHybridMergeVersionV1, contract.Key(), now)
+	cursor, err := DecodeHybridVideoCursor(page.NextCursor, "cat", domainembedding.MultimodalHybridMergeVersionV2, contract.Key(), now)
 	if err != nil || cursor.Mode != VideoRetrievalModeLexical || cursor.ContractKey != "" {
 		t.Fatalf("fallback cursor=%#v err=%v", cursor, err)
 	}
@@ -176,12 +220,66 @@ func TestHybridVideoSearchMergesSemanticOnlyAndPaginates(t *testing.T) {
 	}
 }
 
+func TestHybridVideoSearchReturnsEmptyForOnlyLowConfidenceSemanticCandidates(t *testing.T) {
+	now := time.Date(2026, 8, 26, 15, 0, 0, 0, time.UTC)
+	contract := searchHybridContract(t)
+	vector := make([]float64, contract.Dimension)
+	vector[0] = 1
+	service := hybridSearchService(
+		t,
+		&videoIndexStub{},
+		&semanticQueryEmbedderStub{vector: &domainembedding.MultimodalQueryVector{Contract: contract, Values: vector}},
+		&semanticVideoIndexStub{items: []domainembedding.MultimodalExactCandidate{
+			{VideoID: 1, Similarity: 0.54, PublishedAt: now},
+			{VideoID: 2, Similarity: 0.40, PublishedAt: now.Add(-time.Minute)},
+		}},
+		&publicVideoLoaderStub{videos: map[int64]*domainvideo.Video{
+			1: searchHybridVideo(1, now), 2: searchHybridVideo(2, now.Add(-time.Minute)),
+		}},
+		contract,
+		now,
+	)
+	page, err := service.SearchVideos(context.Background(), Request{Query: "unrelated", Limit: 20})
+	if err != nil || len(page.Items) != 0 || page.HasMore || page.NextCursor != "" {
+		t.Fatalf("low-confidence page=%#v err=%v", page, err)
+	}
+}
+
+func TestHybridVideoSearchCapsSemanticOnlyExpansion(t *testing.T) {
+	now := time.Date(2026, 8, 26, 15, 30, 0, 0, time.UTC)
+	contract := searchHybridContract(t)
+	vector := make([]float64, contract.Dimension)
+	vector[0] = 1
+	exactItems := make([]domainembedding.MultimodalExactCandidate, 0, 8)
+	videos := make(map[int64]*domainvideo.Video, 8)
+	for id := int64(1); id <= 8; id++ {
+		publishedAt := now.Add(-time.Duration(id) * time.Minute)
+		exactItems = append(exactItems, domainembedding.MultimodalExactCandidate{
+			VideoID: id, Similarity: 0.90 - float64(id)/100, PublishedAt: publishedAt,
+		})
+		videos[id] = searchHybridVideo(id, publishedAt)
+	}
+	service := hybridSearchService(
+		t,
+		&videoIndexStub{},
+		&semanticQueryEmbedderStub{vector: &domainembedding.MultimodalQueryVector{Contract: contract, Values: vector}},
+		&semanticVideoIndexStub{items: exactItems},
+		&publicVideoLoaderStub{videos: videos},
+		contract,
+		now,
+	)
+	page, err := service.SearchVideos(context.Background(), Request{Query: "semantic", Limit: 20})
+	if err != nil || len(page.Items) != 5 || page.HasMore {
+		t.Fatalf("semantic-only page=%#v err=%v", page, err)
+	}
+}
+
 func TestHybridVideoSearchLeavesUserSearchUnchanged(t *testing.T) {
 	contract := searchHybridContract(t)
 	userIndex := &userIndexStub{items: []*domainsearch.UserIndexItem{{
 		ID: 7, Nickname: "cat", UpdatedAt: time.Now(), Relevance: domainsearch.UserRelevanceExactNickname,
 	}}}
-	config, err := NewHybridVideoSearchConfig(contract, domainembedding.MultimodalHybridMergeVersionV1, domainsearch.MaxLimit+1, 1, 1, time.Minute)
+	config, err := NewHybridVideoSearchConfig(contract, domainembedding.MultimodalHybridMergeVersionV2, domainsearch.MaxLimit+1, 1, 1, 0.55, 5, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +303,7 @@ func hybridSearchService(
 ) *Service {
 	t.Helper()
 	config, err := NewHybridVideoSearchConfig(
-		contract, domainembedding.MultimodalHybridMergeVersionV1, domainsearch.MaxLimit+1, 1, 1, time.Minute,
+		contract, domainembedding.MultimodalHybridMergeVersionV2, domainsearch.MaxLimit+1, 1, 1, 0.55, 5, time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)
