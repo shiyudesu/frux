@@ -21,7 +21,7 @@ Frux 使用 Go、React、PostgreSQL、Redis、Kafka 和 S3 兼容对象存储，
 
 ## 在线体验
 
-公开 NAT 演示地址默认使用完整 HTTPS 高端口 Origin：`https://frux.shiyudesu.com:<public-port>`。
+在线演示地址：[http://43.248.3.147:18082](http://43.248.3.147:18082)。
 
 **郑重说明：**
 
