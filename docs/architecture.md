@@ -2,6 +2,10 @@
 
 本文按 `mermaid-diagrams` skill 重构：每张图只表达一个概念，节点保持克制，连接线带语义标签，图前给出用途说明。当前实现由 Go API 与 Worker 共同承载账户、视频、Feed、互动、曝光、个人内容库、事件通知和私信聊天能力。
 
+可交互浏览的高层运行时地图见 [Frux 运行时架构](frux-runtime.architecture.html)，其可验证 Archify
+规范见 [frux-runtime.architecture.json](frux-runtime.architecture.json)。交互图支持搜索、上下游追踪、
+聚焦视图、亮暗主题和 SVG/PNG 导出；本文继续保留更细的分层、请求与数据模型图。
+
 ## 1. 系统上下文
 
 这张图展示 Frux 与客户端、存储和演进型基础设施的边界。

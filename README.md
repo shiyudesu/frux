@@ -238,6 +238,7 @@ Domain <- Application <- Infrastructure / Interfaces
 | [产品说明](docs/product.md) | 产品范围、模块地图和功能状态 |
 | [快速阅读](docs/quickread.md) | 新读者代码阅读路线 |
 | [系统架构](docs/architecture.md) | 分层、核心链路和数据模型 |
+| [交互式运行时架构](docs/frux-runtime.architecture.html) | Archify 生成的可搜索、可追踪系统地图（[规范](docs/frux-runtime.architecture.json)） |
 | [工程规范](docs/engineering.md) | 目录规则、API 风格和测试约定 |
 | [UI/UX](docs/uiux.md) | Web 页面、交互和响应式规格 |
 | [优化说明](docs/optimization.md) | Feed、缓存、媒体和播放优化 |

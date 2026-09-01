@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Frux 运行时架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/shiyudesu/frux",
+      "revision": "7c28695cd6813521bd0862389e470855930e2fd3"
+    },
+    "views": [
+      {
+        "id": "request_path",
+        "label": "用户请求主链路",
+        "focus": ["clients", "web", "api", "postgres"],
+        "note": "从浏览器进入 React Web 与 Go API，最终落到业务事实存储。"
+      },
+      {
+        "id": "async_path",
+        "label": "异步事件与任务",
+        "focus": ["api", "kafka", "worker", "postgres", "minio"],
+        "note": "Kafka 负责可回放事件和唤醒，Worker 以 PostgreSQL 任务保证长期正确性。"
+      },
+      {
+        "id": "semantic_path",
+        "label": "可选多模态链路",
+        "focus": ["worker", "multimodal", "dashscope", "postgres"],
+        "note": "显式启用后，隔离适配器调用外部模型并把权威向量事实写回 PostgreSQL。"
+      },
+      {
+        "id": "operations_path",
+        "label": "运行观测",
+        "focus": ["api", "worker", "observability"],
+        "note": "API 与 Worker 暴露指标，由 Prometheus 采集并在 Grafana 中展示。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "clients",
+      "type": "external",
+      "label": "用户与管理员",
+      "sublabel": "浏览器访问",
+      "pos": [20, 350],
+      "size": [140, 68],
+      "sources": [{ "path": "README.md", "label": "产品入口" }]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "React Web",
+      "sublabel": "Vite + TypeScript",
+      "pos": [210, 350],
+      "size": [140, 68],
+      "sources": [
+        { "path": "apps/web/package.json", "label": "前端依赖" },
+        { "path": "apps/web/vite.config.ts", "label": "构建入口" }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Go API",
+      "sublabel": "Hertz HTTP 服务",
+      "pos": [430, 350],
+      "size": [140, 68],
+      "sources": [{ "path": "apps/api/cmd/feed/main.go", "label": "API 装配" }]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "业务事实与耐久任务",
+      "pos": [660, 350],
+      "size": [150, 70],
+      "sources": [{ "path": "apps/docker-compose.yml", "label": "本地编排" }]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "缓存、计数与协调",
+      "pos": [660, 100],
+      "size": [150, 70],
+      "sources": [{ "path": "apps/docker-compose.yml", "label": "本地编排" }]
+    },
+    {
+      "id": "kafka",
+      "type": "messagebus",
+      "label": "Apache Kafka",
+      "sublabel": "事件、重试与 DLQ",
+      "pos": [660, 600],
+      "size": [150, 70],
+      "sources": [
+        { "path": "apps/docker-compose.yml", "label": "Broker 编排" },
+        { "path": "docs/kafka.md", "label": "事件合同" }
+      ]
+    },
+    {
+      "id": "minio",
+      "type": "cloud",
+      "label": "MinIO / S3",
+      "sublabel": "私有媒体对象",
+      "pos": [902.5, 100],
+      "size": [150, 70],
+      "sources": [
+        { "path": "apps/docker-compose.yml", "label": "对象存储" },
+        { "path": "docs/operations/self-hosted-minio.md", "label": "部署边界" }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Go Worker",
+      "sublabel": "媒体、审核与事件消费",
+      "pos": [900, 600],
+      "size": [155, 70],
+      "sources": [{ "path": "apps/api/cmd/worker/main.go", "label": "Worker 装配" }]
+    },
+    {
+      "id": "observability",
+      "type": "external",
+      "label": "Prometheus + Grafana",
+      "sublabel": "指标、告警与看板",
+      "pos": [408, 100],
+      "size": [184, 72],
+      "sources": [
+        { "path": "apps/monitoring/prometheus.yml", "label": "采集配置" },
+        { "path": "apps/monitoring/grafana/dashboards/frux-overview.json", "label": "总览看板" }
+      ]
+    },
+    {
+      "id": "multimodal",
+      "type": "backend",
+      "label": "多模态适配器",
+      "sublabel": "双向 HMAC 隔离",
+      "pos": [1140, 600],
+      "size": [160, 70],
+      "sources": [
+        { "path": "apps/api/cmd/multimodal-provider/main.go", "label": "适配器入口" },
+        { "path": "docs/modules/embedding.md", "label": "向量合同" }
+      ]
+    },
+    {
+      "id": "dashscope",
+      "type": "external",
+      "label": "DashScope",
+      "sublabel": "Tongyi 视频向量模型",
+      "pos": [1140, 350],
+      "size": [160, 70],
+      "sources": [{ "path": "docs/modules/embedding.md", "label": "外部模型边界" }]
+    }
+  ],
+  "connections": [
+    { "id": "client_web", "from": "clients", "to": "web", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "web_api", "from": "web", "to": "api", "label": "JSON / HTTP", "variant": "emphasis" },
+    { "id": "api_postgres", "from": "api", "to": "postgres", "label": "读写业务事实", "variant": "emphasis", "labelAt": [570, 320] },
+    { "id": "api_redis", "from": "api", "to": "redis", "label": "缓存与限流" },
+    { "id": "api_kafka", "from": "api", "to": "kafka", "label": "发布领域事件", "variant": "dashed" },
+    { "id": "kafka_worker", "from": "kafka", "to": "worker", "label": "消费、重试、DLQ", "variant": "emphasis", "labelDy": 24 },
+    { "id": "worker_postgres", "from": "worker", "to": "postgres", "label": "提交耐久结果" },
+    { "id": "worker_minio", "from": "worker", "to": "minio", "label": "处理媒体对象", "fromSide": "top", "toSide": "bottom", "labelAt": [979, 684] },
+    { "id": "worker_multimodal", "from": "worker", "to": "multimodal", "label": "HMAC 任务交接", "variant": "security" },
+    { "id": "multimodal_dashscope", "from": "multimodal", "to": "dashscope", "label": "显式启用的模型调用", "variant": "dashed" },
+    { "id": "api_metrics", "from": "api", "to": "observability", "label": "暴露服务指标", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "一致性边界",
+      "items": [
+        "PostgreSQL 保存业务事实、权威向量与长期任务状态",
+        "Kafka 提供可回放事件和短时唤醒，不承担长期租约",
+        "Redis 只承载可重建缓存、计数与协调状态"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "媒体边界",
+      "items": [
+        "MinIO / S3 Bucket 保持私有",
+        "API 为浏览器签发受控媒体 URL",
+        "Worker 读取原始对象并写回处理结果"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "外部模型隔离",
+      "items": [
+        "多模态能力默认关闭，不会自动产生付费调用",
+        "DashScope API Key 只进入隔离适配器",
+        "API 与 Worker 通过版本化 HMAC 合同连接适配器"
+      ]
+    }
+  ]
+}
