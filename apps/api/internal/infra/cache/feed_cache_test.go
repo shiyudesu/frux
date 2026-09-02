@@ -43,6 +43,129 @@ func TestFollowingIndexFallsBackForStaleUnfollowedInboxAuthor(t *testing.T) {
 	}
 }
 
+func TestFollowingIndexMergesInboxAndOutboxWithoutDuplicatesInTimelineOrder(t *testing.T) {
+	cache := newActionReceiptTestCache(t)
+	ctx := context.Background()
+	base := time.Date(2026, 9, 2, 8, 0, 0, 0, time.UTC)
+	// Reverse the IDs relative to publication order and keep every item in the
+	// same second. This catches score encodings that accidentally order a burst
+	// by video ID instead of its sub-second publication timestamp.
+	oldest := &domainfeed.FeedPageItem{VideoID: 303, AuthorID: 10, PublishedAt: base}
+	middle := &domainfeed.FeedPageItem{VideoID: 202, AuthorID: 10, PublishedAt: base.Add(250 * time.Microsecond)}
+	newest := &domainfeed.FeedPageItem{VideoID: 101, AuthorID: 99, PublishedAt: base.Add(500 * time.Microsecond)}
+
+	if err := cache.AddInboxItems(ctx, oldest.AuthorID, []int64{42}, oldest, 100); err != nil {
+		t.Fatalf("add oldest inbox item: %v", err)
+	}
+	if err := cache.AddInboxItems(ctx, middle.AuthorID, []int64{42}, middle, 100); err != nil {
+		t.Fatalf("add middle inbox item: %v", err)
+	}
+	// Simulate a threshold transition leaving the same video in both indexes.
+	if err := cache.AddInboxItems(ctx, newest.AuthorID, []int64{42}, newest, 100); err != nil {
+		t.Fatalf("add duplicate inbox item: %v", err)
+	}
+	if err := cache.AddAuthorOutboxItem(ctx, newest.AuthorID, newest, 100); err != nil {
+		t.Fatalf("add author outbox item: %v", err)
+	}
+
+	first, ok, err := cache.ListFollowingIndexPage(ctx, 42, []int64{10, 99}, []int64{99}, nil, 2)
+	if err != nil || !ok {
+		t.Fatalf("list first merged page: ok=%t err=%v", ok, err)
+	}
+	if len(first) != 2 || first[0].VideoID != 101 || first[1].VideoID != 202 {
+		t.Fatalf("unexpected first merged page: %+v", first)
+	}
+
+	second, ok, err := cache.ListFollowingIndexPage(ctx, 42, []int64{10, 99}, []int64{99}, &domainfeed.TimelineCursor{
+		PublishedAt: first[1].PublishedAt,
+		VideoID:     first[1].VideoID,
+	}, 2)
+	if err != nil || !ok {
+		t.Fatalf("list second merged page: ok=%t err=%v", ok, err)
+	}
+	if len(second) != 1 || second[0].VideoID != 303 {
+		t.Fatalf("unexpected second merged page: %+v", second)
+	}
+}
+
+func TestFollowingIndexWritesAreIdempotentForDuplicateDelivery(t *testing.T) {
+	cache := newActionReceiptTestCache(t)
+	ctx := context.Background()
+	item := &domainfeed.FeedPageItem{
+		VideoID: 201, AuthorID: 20,
+		PublishedAt: time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC),
+	}
+	for range 2 {
+		if err := cache.AddInboxItems(ctx, item.AuthorID, []int64{42}, item, 100); err != nil {
+			t.Fatalf("repeat inbox delivery: %v", err)
+		}
+		if err := cache.AddAuthorOutboxItem(ctx, item.AuthorID, item, 100); err != nil {
+			t.Fatalf("repeat outbox delivery: %v", err)
+		}
+	}
+
+	inboxCount, err := cache.client.ZCard(ctx, followingInboxKey(42)).Result()
+	if err != nil {
+		t.Fatalf("read inbox cardinality: %v", err)
+	}
+	outboxCount, err := cache.client.ZCard(ctx, followingAuthorOutboxKey(item.AuthorID)).Result()
+	if err != nil {
+		t.Fatalf("read outbox cardinality: %v", err)
+	}
+	if inboxCount != 1 || outboxCount != 1 {
+		t.Fatalf("duplicate delivery changed cardinality: inbox=%d outbox=%d", inboxCount, outboxCount)
+	}
+}
+
+func TestFeedCacheBatchReadsUseTwoCommandsInsteadOfPerItemGets(t *testing.T) {
+	server, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		server.Close()
+	})
+	ctx := context.Background()
+	batch := NewFeedCache(client)
+	cards := map[int64]*domainfeed.FeedCard{}
+	stats := map[int64]*domainfeed.FeedStat{}
+	for _, videoID := range []int64{1, 2, 3} {
+		cards[videoID] = &domainfeed.FeedCard{VideoID: videoID}
+		stats[videoID] = &domainfeed.FeedStat{VideoID: videoID}
+	}
+	if err := batch.SetCards(ctx, cards, time.Minute); err != nil {
+		t.Fatalf("set cards: %v", err)
+	}
+	if err := batch.SetStats(ctx, stats, time.Minute); err != nil {
+		t.Fatalf("set stats: %v", err)
+	}
+
+	beforeBatch := server.CommandCount()
+	if _, err := batch.GetCards(ctx, []int64{1, 2, 3}); err != nil {
+		t.Fatalf("batch cards: %v", err)
+	}
+	if _, err := batch.GetStats(ctx, []int64{1, 2, 3}); err != nil {
+		t.Fatalf("batch stats: %v", err)
+	}
+	batchCommands := server.CommandCount() - beforeBatch
+
+	sequential := NewFeedCache(client, WithSequentialFeedCacheReads(true))
+	beforeSequential := server.CommandCount()
+	if _, err := sequential.GetCards(ctx, []int64{1, 2, 3}); err != nil {
+		t.Fatalf("sequential cards: %v", err)
+	}
+	if _, err := sequential.GetStats(ctx, []int64{1, 2, 3}); err != nil {
+		t.Fatalf("sequential stats: %v", err)
+	}
+	sequentialCommands := server.CommandCount() - beforeSequential
+
+	if batchCommands != 2 || sequentialCommands != 6 {
+		t.Fatalf("commands: batch=%d sequential=%d", batchCommands, sequentialCommands)
+	}
+}
+
 type actionStatFakeRedis struct {
 	hashes     map[string]map[string]string
 	hashErrors map[string]error

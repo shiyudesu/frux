@@ -52,6 +52,7 @@ type feedItemAPIResponse struct {
 type memoryFeedRepo struct {
 	mu                       sync.Mutex
 	items                    []*domainfeed.FeedItem
+	timelineDelay            time.Duration
 	timelineCalls            int
 	hotCalls                 int
 	cardCalls                int
@@ -249,8 +250,25 @@ func (r *memoryFeedRepo) SetViewerActionForTest(viewerID int64, videoID int64, l
 	}
 }
 
+func (r *memoryFeedRepo) InsertItemForTest(item *domainfeed.FeedItem) {
+	if item == nil || item.VideoID <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.items = append(r.items, item)
+	r.publicVideoIDs[item.VideoID] = struct{}{}
+}
+
 // ListTimelinePage 模拟真实仓储的 published_at DESC, video_id DESC 排序。
 func (r *memoryFeedRepo) ListTimelinePage(ctx context.Context, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
+	if r.timelineDelay > 0 {
+		select {
+		case <-time.After(r.timelineDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.timelineCalls++
@@ -1028,6 +1046,199 @@ func TestTimelineFeedCache(t *testing.T) {
 	decodeJSON(t, secondResponse, &secondPage)
 	if len(secondPage.Items) != 1 || secondPage.Items[0].VideoID != 3 {
 		t.Fatalf("stale cached video leaked into timeline response: %+v", secondPage)
+	}
+}
+
+func TestTimelineSingleflightCollapsesConcurrentPageMisses(t *testing.T) {
+	repo := newMemoryFeedRepo(seedFeedItems())
+	repo.timelineDelay = 50 * time.Millisecond
+	cache := newMemoryFeedCache()
+	service := applicationfeed.New(repo, applicationfeed.WithFeedCache(cache))
+
+	const concurrency = 100
+	start := make(chan struct{})
+	errs := make(chan error, concurrency)
+	var wait sync.WaitGroup
+	wait.Add(concurrency)
+	for range concurrency {
+		go func() {
+			defer wait.Done()
+			<-start
+			result, err := service.GetFeed(context.Background(), applicationfeed.FeedRequest{
+				Scene: domainfeed.SceneTimeline,
+				Limit: 2,
+			})
+			if err == nil && (result == nil || len(result.Items) != 2) {
+				err = errors.New("unexpected feed result")
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent feed request: %v", err)
+		}
+	}
+
+	if calls := repo.TimelineCalls(); calls != 1 {
+		t.Fatalf("timeline page repo calls=%d, want 1", calls)
+	}
+	t.Logf(
+		"concurrent_requests=%d page_repo_calls=%d card_repo_calls=%d stat_repo_calls=%d",
+		concurrency,
+		repo.TimelineCalls(),
+		repo.CardCalls(),
+		repo.StatCalls(),
+	)
+}
+
+func TestTimelineCursorHasNoDuplicateOrMissingInitialItemsDuringInserts(t *testing.T) {
+	const initialCount = 1000
+	const pageSize = 20
+	const insertsPerPage = 5
+	base := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	items := make([]*domainfeed.FeedItem, 0, initialCount)
+	for videoID := int64(1); videoID <= initialCount; videoID++ {
+		publishedAt := base.Add(-time.Duration((initialCount-int(videoID))/3) * time.Second)
+		items = append(items, &domainfeed.FeedItem{
+			VideoID: videoID, AuthorID: videoID%50 + 1,
+			Title: "cursor fixture", MediaURL: "media", CoverURL: "cover",
+			PublishedAt: publishedAt,
+		})
+	}
+	repo := newMemoryFeedRepo(items)
+	service := applicationfeed.New(repo)
+
+	seen := make(map[int64]int, initialCount)
+	cursor := ""
+	nextVideoID := int64(initialCount + 1)
+	for pageNumber := 0; pageNumber < 100; pageNumber++ {
+		page, err := service.GetFeed(context.Background(), applicationfeed.FeedRequest{
+			Scene: domainfeed.SceneTimeline, Cursor: cursor, Limit: pageSize,
+		})
+		if err != nil {
+			t.Fatalf("load cursor page %d: %v", pageNumber, err)
+		}
+		for _, item := range page.Items {
+			if item.VideoID <= initialCount {
+				seen[item.VideoID]++
+			}
+		}
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+		for insert := 0; insert < insertsPerPage; insert++ {
+			repo.InsertItemForTest(&domainfeed.FeedItem{
+				VideoID: nextVideoID, AuthorID: 999,
+				Title: "newer concurrent insert", MediaURL: "media", CoverURL: "cover",
+				PublishedAt: base.Add(time.Duration(pageNumber+1) * time.Second),
+			})
+			nextVideoID++
+		}
+	}
+
+	duplicates := 0
+	missing := 0
+	for videoID := int64(1); videoID <= initialCount; videoID++ {
+		switch count := seen[videoID]; {
+		case count == 0:
+			missing++
+		case count > 1:
+			duplicates += count - 1
+		}
+	}
+	if duplicates != 0 || missing != 0 {
+		t.Fatalf("cursor pagination duplicates=%d missing=%d", duplicates, missing)
+	}
+	t.Logf(
+		"initial_items=%d page_size=%d inserts_per_page=%d duplicates=%d missing=%d",
+		initialCount, pageSize, insertsPerPage, duplicates, missing,
+	)
+}
+
+func TestOffsetPaginationRepeatsAndMissesInitialItemsDuringInserts(t *testing.T) {
+	const initialCount = 1000
+	const pageSize = 20
+	const insertsPerPage = 5
+	items := make([]int64, 0, initialCount)
+	for videoID := int64(initialCount); videoID >= 1; videoID-- {
+		items = append(items, videoID)
+	}
+
+	seen := make(map[int64]int, initialCount)
+	nextVideoID := int64(initialCount + 1)
+	for pageNumber := 0; pageNumber < initialCount/pageSize; pageNumber++ {
+		offset := pageNumber * pageSize
+		end := min(offset+pageSize, len(items))
+		for _, videoID := range items[offset:end] {
+			if videoID <= initialCount {
+				seen[videoID]++
+			}
+		}
+		newItems := make([]int64, 0, insertsPerPage+len(items))
+		for range insertsPerPage {
+			newItems = append(newItems, nextVideoID)
+			nextVideoID++
+		}
+		items = append(newItems, items...)
+	}
+
+	duplicates := 0
+	missing := 0
+	for videoID := int64(1); videoID <= initialCount; videoID++ {
+		switch count := seen[videoID]; {
+		case count == 0:
+			missing++
+		case count > 1:
+			duplicates += count - 1
+		}
+	}
+	if duplicates == 0 || missing == 0 {
+		t.Fatalf("offset test did not expose drift: duplicates=%d missing=%d", duplicates, missing)
+	}
+	t.Logf(
+		"initial_items=%d page_size=%d inserts_per_page=%d duplicates=%d missing=%d",
+		initialCount, pageSize, insertsPerPage, duplicates, missing,
+	)
+}
+
+func TestFeedAssemblyRepositoryCallsRemainConstantAcrossPageSizes(t *testing.T) {
+	base := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	items := make([]*domainfeed.FeedItem, 0, 100)
+	for videoID := int64(1); videoID <= 100; videoID++ {
+		items = append(items, &domainfeed.FeedItem{
+			VideoID: videoID, AuthorID: videoID%10 + 1,
+			Title: "batch fixture", MediaURL: "media", CoverURL: "cover",
+			PublishedAt: base.Add(-time.Duration(videoID) * time.Second),
+		})
+	}
+
+	for _, pageSize := range []int{10, 50, 100} {
+		repo := newMemoryFeedRepo(items)
+		service := applicationfeed.New(repo)
+		page, err := service.GetFeed(context.Background(), applicationfeed.FeedRequest{
+			Scene: domainfeed.SceneTimeline, Limit: pageSize,
+		})
+		if err != nil {
+			t.Fatalf("page_size=%d: %v", pageSize, err)
+		}
+		if len(page.Items) != pageSize {
+			t.Fatalf("page_size=%d items=%d", pageSize, len(page.Items))
+		}
+		if repo.TimelineCalls() != 1 || repo.CardCalls() != 1 || repo.StatCalls() != 1 {
+			t.Fatalf(
+				"page_size=%d timeline=%d card=%d stat=%d",
+				pageSize, repo.TimelineCalls(), repo.CardCalls(), repo.StatCalls(),
+			)
+		}
+		t.Logf(
+			"page_size=%d page_batch_calls=%d card_batch_calls=%d stat_batch_calls=%d",
+			pageSize, repo.TimelineCalls(), repo.CardCalls(), repo.StatCalls(),
+		)
 	}
 }
 

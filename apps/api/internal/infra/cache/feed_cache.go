@@ -58,12 +58,29 @@ type redisStatCacheClient interface {
 
 // FeedCache 使用 Redis 保存 Feed 查询结果。
 type FeedCache struct {
-	client redisWatchCmdable
+	client          redisWatchCmdable
+	sequentialReads bool
+}
+
+type FeedCacheOption func(*FeedCache)
+
+func WithSequentialFeedCacheReads(enabled bool) FeedCacheOption {
+	return func(cache *FeedCache) {
+		if cache != nil {
+			cache.sequentialReads = enabled
+		}
+	}
 }
 
 // NewFeedCache 创建 Feed 结果缓存。
-func NewFeedCache(client redisWatchCmdable) *FeedCache {
-	return &FeedCache{client: client}
+func NewFeedCache(client redisWatchCmdable, options ...FeedCacheOption) *FeedCache {
+	cache := &FeedCache{client: client}
+	for _, option := range options {
+		if option != nil {
+			option(cache)
+		}
+	}
+	return cache
 }
 
 // GetPage 读取缓存中的轻量 Feed 页。
@@ -106,7 +123,7 @@ func (c *FeedCache) GetCards(ctx context.Context, videoIDs []int64) (map[int64]*
 		return cards, nil
 	}
 
-	values, err := c.client.MGet(ctx, cacheKeys(videoIDs, feedCardKey)...).Result()
+	values, err := cacheReadValues(ctx, c.client, cacheKeys(videoIDs, feedCardKey), c.sequentialReads)
 	if err != nil {
 		inframetrics.ObserveCacheRead("card", len(videoIDs), 0, err)
 		return nil, err
@@ -162,16 +179,20 @@ func (c *FeedCache) InvalidateVideo(ctx context.Context, videoID int64) error {
 
 // GetStats 批量读取视频计数缓存。
 func (c *FeedCache) GetStats(ctx context.Context, videoIDs []int64) (map[int64]*domainfeed.FeedStat, error) {
-	return getStats(ctx, c.client, videoIDs)
+	return getStatsWithMode(ctx, c.client, videoIDs, c.sequentialReads)
 }
 
 func getStats(ctx context.Context, client redisStatCacheClient, videoIDs []int64) (map[int64]*domainfeed.FeedStat, error) {
+	return getStatsWithMode(ctx, client, videoIDs, false)
+}
+
+func getStatsWithMode(ctx context.Context, client redisStatCacheClient, videoIDs []int64, sequential bool) (map[int64]*domainfeed.FeedStat, error) {
 	stats := map[int64]*domainfeed.FeedStat{}
 	if len(videoIDs) == 0 {
 		return stats, nil
 	}
 
-	values, err := client.MGet(ctx, cacheKeys(videoIDs, feedStatKey)...).Result()
+	values, err := cacheReadValues(ctx, client, cacheKeys(videoIDs, feedStatKey), sequential)
 	if err != nil {
 		inframetrics.ObserveCacheRead("stat", len(videoIDs), 0, err)
 		return nil, err
@@ -206,6 +227,24 @@ func getStats(ctx context.Context, client redisStatCacheClient, videoIDs []int64
 	}
 	inframetrics.ObserveCacheRead("stat", len(videoIDs), len(stats), nil)
 	return stats, nil
+}
+
+func cacheReadValues(ctx context.Context, client redisStatCacheClient, keys []string, sequential bool) ([]any, error) {
+	if !sequential {
+		return client.MGet(ctx, keys...).Result()
+	}
+	values := make([]any, len(keys))
+	for index, key := range keys {
+		value, err := client.Get(ctx, key).Result()
+		if err == redis.Nil {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		values[index] = value
+	}
+	return values, nil
 }
 
 // SetStats 批量写入视频计数缓存。
@@ -358,7 +397,11 @@ func (c *FeedCache) ListFollowingIndexPage(
 
 	pipe := c.client.Pipeline()
 	cardinalityCommands := make([]*redis.IntCmd, 0, len(keys))
-	rangeCommands := make([]*redis.StringSliceCmd, 0, len(keys))
+	type followingRangeCommands struct {
+		sameScore *redis.StringSliceCmd
+		older     *redis.StringSliceCmd
+	}
+	rangeCommands := make([]followingRangeCommands, 0, len(keys))
 	minScore := "-inf"
 	maxScore := "+inf"
 	if cursor != nil {
@@ -366,11 +409,20 @@ func (c *FeedCache) ListFollowingIndexPage(
 	}
 	for _, key := range keys {
 		cardinalityCommands = append(cardinalityCommands, pipe.ZCard(ctx, key))
-		rangeCommands = append(rangeCommands, pipe.ZRevRangeByScore(ctx, key, &redis.ZRangeBy{
+		commands := followingRangeCommands{}
+		if cursor != nil {
+			score := fmt.Sprintf("%f", followingIndexScore(cursor.PublishedAt, cursor.VideoID))
+			commands.sameScore = pipe.ZRevRangeByScore(ctx, key, &redis.ZRangeBy{
+				Min: score,
+				Max: score,
+			})
+		}
+		commands.older = pipe.ZRevRangeByScore(ctx, key, &redis.ZRangeBy{
 			Min:   minScore,
 			Max:   maxScore,
 			Count: int64(limit),
-		}))
+		})
+		rangeCommands = append(rangeCommands, commands)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, false, err
@@ -395,14 +447,26 @@ func (c *FeedCache) ListFollowingIndexPage(
 	allowedAuthors := int64Set(followedAuthorIDs)
 	staleInbox := false
 	items := make([]*domainfeed.FeedPageItem, 0, limit*len(rangeCommands))
-	for commandIndex, cmd := range rangeCommands {
-		members, err := cmd.Result()
+	for commandIndex, commands := range rangeCommands {
+		members := make([]string, 0, limit)
+		if commands.sameScore != nil {
+			sameScoreMembers, err := commands.sameScore.Result()
+			if err != nil && err != redis.Nil {
+				return nil, false, err
+			}
+			members = append(members, sameScoreMembers...)
+		}
+		olderMembers, err := commands.older.Result()
 		if err != nil && err != redis.Nil {
 			return nil, false, err
 		}
+		members = append(members, olderMembers...)
 		for _, member := range members {
 			item, ok := feedPageItemFromFollowingMember(member)
 			if !ok {
+				continue
+			}
+			if cursor != nil && !feedPageItemBeforeCursor(item, cursor) {
 				continue
 			}
 			if commandIndex == 0 {
@@ -1379,19 +1443,29 @@ func feedStatKey(videoID int64) string {
 }
 
 func followingInboxKey(userID int64) string {
-	return fmt.Sprintf("feed:following:inbox:v1:%d", userID)
+	return fmt.Sprintf("feed:following:inbox:v2:%d", userID)
 }
 
 func followingAuthorOutboxKey(authorID int64) string {
-	return fmt.Sprintf("feed:following:author:v1:%d", authorID)
+	return fmt.Sprintf("feed:following:author:v2:%d", authorID)
 }
 
 func followingIndexScore(publishedAt time.Time, videoID int64) float64 {
-	return float64(publishedAt.UTC().Unix()*1000000 + videoID%1000000)
+	return float64(publishedAt.UTC().UnixMicro())
 }
 
 func followingIndexMember(videoID int64, authorID int64, publishedAt time.Time) string {
-	return fmt.Sprintf("%d:%d:%s", videoID, authorID, publishedAt.UTC().Format(time.RFC3339Nano))
+	return fmt.Sprintf("%020d:%020d:%s", videoID, authorID, publishedAt.UTC().Format(time.RFC3339Nano))
+}
+
+func feedPageItemBeforeCursor(item *domainfeed.FeedPageItem, cursor *domainfeed.TimelineCursor) bool {
+	if item == nil || cursor == nil {
+		return true
+	}
+	if !item.PublishedAt.Equal(cursor.PublishedAt) {
+		return item.PublishedAt.Before(cursor.PublishedAt)
+	}
+	return item.VideoID < cursor.VideoID
 }
 
 func feedPageItemFromFollowingMember(member string) (*domainfeed.FeedPageItem, bool) {

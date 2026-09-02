@@ -56,6 +56,25 @@ type memoryFollowingIndex struct {
 	outboxVideoID int64
 }
 
+type countingFollowingIndex struct {
+	inboxCalls   int
+	inboxWrites  int
+	outboxCalls  int
+	outboxWrites int
+}
+
+func (i *countingFollowingIndex) AddInboxItems(_ context.Context, _ int64, userIDs []int64, _ *domainfeed.FeedPageItem, _ int64) error {
+	i.inboxCalls++
+	i.inboxWrites += len(userIDs)
+	return nil
+}
+
+func (i *countingFollowingIndex) AddAuthorOutboxItem(_ context.Context, _ int64, _ *domainfeed.FeedPageItem, _ int64) error {
+	i.outboxCalls++
+	i.outboxWrites++
+	return nil
+}
+
 func (i *memoryFollowingIndex) AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error {
 	i.inboxUsers = append(i.inboxUsers, userIDs...)
 	i.inboxVideoID = item.VideoID
@@ -157,4 +176,68 @@ func TestFanoutWorkerSkipsPreheatWhenRuntimeControlIsDisabled(t *testing.T) {
 	if index.inboxVideoID != 101 {
 		t.Fatal("disabling optional preheat changed required fanout behavior")
 	}
+}
+
+func TestFanoutCostMatrix(t *testing.T) {
+	tests := []int{100, 1000, 5000, 9999, 10000, 50000}
+	for _, followerCount := range tests {
+		repo := &memoryFanoutRepo{followerCount: followerCount}
+		if followerCount < domainfeed.BigCreatorFollowerThreshold {
+			repo.followerIDs = make([]int64, followerCount)
+			for index := range repo.followerIDs {
+				repo.followerIDs[index] = int64(index + 1)
+			}
+		}
+		index := &countingFollowingIndex{}
+		worker := applicationvideo.NewFanoutWorker(
+			repo, nil, index, nil,
+			applicationvideo.WithFanoutBatchSize(500),
+		)
+		started := time.Now()
+		err := worker.HandleVideoPublished(context.Background(), &applicationvideo.PublishedEvent{
+			VideoID: 9001, AuthorID: 42,
+			PublishedAt: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
+		})
+		duration := time.Since(started)
+		if err != nil {
+			t.Fatalf("followers=%d: %v", followerCount, err)
+		}
+		if followerCount < domainfeed.BigCreatorFollowerThreshold {
+			if index.inboxWrites != followerCount || index.outboxWrites != 0 {
+				t.Fatalf("followers=%d index=%+v", followerCount, index)
+			}
+		} else if index.inboxWrites != 0 || index.outboxWrites != 1 {
+			t.Fatalf("followers=%d index=%+v", followerCount, index)
+		}
+		t.Logf(
+			"followers=%d inbox_calls=%d logical_inbox_writes=%d outbox_calls=%d logical_outbox_writes=%d duration=%s",
+			followerCount,
+			index.inboxCalls,
+			index.inboxWrites,
+			index.outboxCalls,
+			index.outboxWrites,
+			duration,
+		)
+	}
+}
+
+func TestHybridFanoutLogicalWriteReductionForBenchmarkMix(t *testing.T) {
+	const normalEvents = 800
+	const normalFollowers = 5419
+	const bigCreatorEvents = 200
+	const bigCreatorFollowers = 11999
+
+	allPushWrites := normalEvents*normalFollowers + bigCreatorEvents*bigCreatorFollowers
+	hybridWrites := normalEvents*normalFollowers + bigCreatorEvents
+	reduction := 1 - float64(hybridWrites)/float64(allPushWrites)
+	if reduction <= 0 {
+		t.Fatalf("unexpected reduction: %f", reduction)
+	}
+	t.Logf(
+		"events=%d all_push_logical_writes=%d hybrid_logical_writes=%d reduction=%.2f%%",
+		normalEvents+bigCreatorEvents,
+		allPushWrites,
+		hybridWrites,
+		reduction*100,
+	)
 }

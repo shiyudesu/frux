@@ -406,6 +406,36 @@ func TestValidateAPIConfigRequiresKafkaRedisAndStrongInternalToken(t *testing.T)
 	}
 }
 
+func TestValidateAPIConfigNormalizesFeedCacheMode(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		mode  string
+		want  string
+		valid bool
+	}{
+		{name: "default", want: "batch", valid: true},
+		{name: "batch", mode: " BATCH ", want: "batch", valid: true},
+		{name: "sequential", mode: "sequential", want: "sequential", valid: true},
+		{name: "disabled", mode: "disabled", want: "disabled", valid: true},
+		{name: "invalid", mode: "pipeline", valid: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := finalRuntimeConfig(InternalConfig{})
+			cfg.Redis.FeedCacheMode = test.mode
+			err := ValidateAPIConfig(&cfg)
+			if test.valid {
+				if err != nil || cfg.Redis.FeedCacheMode != test.want {
+					t.Fatalf("mode=%q err=%v", cfg.Redis.FeedCacheMode, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidRedisConfig) {
+				t.Fatalf("error=%v, want ErrInvalidRedisConfig", err)
+			}
+		})
+	}
+}
+
 func TestValidateAPIConfigScopesDevelopmentFullRolloutToLocalAndTest(t *testing.T) {
 	for _, environment := range []string{"local", "test"} {
 		cfg := finalRuntimeConfig(InternalConfig{})

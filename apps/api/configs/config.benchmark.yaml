@@ -1,0 +1,176 @@
+# Isolated server-side benchmark configuration. The benchmark Compose stack
+# supplies every secret and dependency; it never reuses Prod data or model
+# credentials.
+environment: "test"
+port: 8080
+
+jwt:
+  issuer: "frux-benchmark"
+  access_ttl: "15m"
+  admin_access_ttl: "30m"
+  clock_leeway: "30s"
+  consumer:
+    active_key_id: "consumer-benchmark-v1"
+    keys:
+      - id: "consumer-benchmark-v1"
+        secret: "${FRUX_JWT_CONSUMER_SECRET}"
+  admin:
+    active_key_id: "admin-benchmark-v1"
+    keys:
+      - id: "admin-benchmark-v1"
+        secret: "${FRUX_JWT_ADMIN_SECRET}"
+
+security:
+  hmac_secret: "${FRUX_HMAC_SECRET}"
+
+internal:
+  enabled: true
+  token: "${FRUX_INTERNAL_TOKEN}"
+
+database:
+  host: "postgres"
+  port: 5432
+  user: "${FRUX_POSTGRES_USER}"
+  password: "${FRUX_POSTGRES_PASSWORD}"
+  name: "${FRUX_POSTGRES_DATABASE}"
+  ssl_mode: "disable"
+  time_zone: "UTC"
+
+redis:
+  addr: "redis:6379"
+  password: "${FRUX_REDIS_PASSWORD}"
+  db: 0
+  feed_cache_mode: "${FRUX_FEED_CACHE_MODE}"
+
+kafka:
+  enabled: true
+  environment: "local"
+  brokers:
+    - "kafka:9092"
+  client_id: "frux-benchmark"
+  topic_prefix: "benchmark"
+  allow_local_provisioning: true
+  authentication:
+    mechanism: "none"
+    username: ""
+    password: ""
+  tls:
+    enabled: false
+    ca_file: ""
+    certificate_file: ""
+    private_key_file: ""
+    server_name: ""
+    insecure_skip_verify: false
+  timeouts:
+    dial: "5s"
+    request: "10s"
+    produce: "10s"
+    admin: "10s"
+    shutdown: "15s"
+  consumer:
+    max_poll_records: 100
+    max_poll_bytes: 8388608
+    partition_concurrency: 4
+    drain_timeout: "10s"
+    assignment_timeout: "15s"
+  production_validation:
+    replication_factor: 1
+    min_in_sync_replicas: 1
+    require_authentication: false
+    require_tls: false
+
+media:
+  backend: "local"
+  local_root: "./uploads"
+  public_base_url: "/media"
+  signed_url_ttl: "15m"
+  upload_session_ttl: "15m"
+  processing:
+    profile_version: "v2"
+    max_attempts: 1
+    worker_concurrency: 1
+    lease_ttl: "10m"
+    max_duration: "30m"
+    command_timeout: "60m"
+    ffmpeg_preset: "veryfast"
+    cleanup_delay: "1h"
+    disable_orphan_cleanup: true
+  s3:
+    endpoint: ""
+    presign_endpoint: ""
+    region: ""
+    bucket: ""
+    access_key: ""
+    secret_key: ""
+    use_path_style: true
+    auto_create_bucket: false
+    require_public_https: false
+
+moderation:
+  mode: "disabled"
+
+# All external multimodal paths are deliberately disabled. The benchmark
+# stack does not run multimodal-provider and does not receive DASHSCOPE_API_KEY.
+multimodal:
+  profile: ""
+  enabled: false
+  video_jobs_enabled: false
+  query_embedding_enabled: false
+  hybrid_search_enabled: false
+  similar_videos_enabled: false
+  session_recommendation_enabled: false
+  max_video_text_runes: 2048
+  contract: {}
+  provider:
+    endpoint: ""
+    hmac_secret: ""
+    protocol_version: "frux-multimodal-v1"
+    allow_insecure_local: false
+    allow_insecure_private_network: false
+    startup_timeout: "3s"
+    deadline: "15s"
+    admission_limit: 1
+    max_request_bytes: 25165824
+    max_response_bytes: 2097152
+  hybrid:
+    version: "hybrid-rank-v2"
+    pool_limit: 100
+    lexical_reservation: 20
+    semantic_reservation: 5
+    min_semantic_similarity: 0.55
+    max_semantic_only: 5
+    cursor_ttl: "15m"
+  session:
+    max_seeds: 21
+    max_lookback: "24h"
+    development_full_rollout_enabled: false
+    production_full_rollout_enabled: false
+  session_shadow:
+    enabled: false
+    sample_ppm: 0
+    budget: 50
+    deadline: "250ms"
+    max_in_flight: 1
+    comparison_limit: 100
+    simulated_pool_limit: 100
+    simulated_top_k: 20
+    semantic_reservation: 10
+    semantic_weight: 0.25
+    shutdown_timeout: "2s"
+
+playback:
+  telemetry:
+    retention: "24h"
+    cleanup_interval: "1h"
+    cleanup_batch_size: 1000
+    max_batches_per_minute: 10000
+
+governance:
+  poll_interval: "5s"
+  poll_timeout: "2s"
+
+rate_limit:
+  max_entries: 50000
+  idle_ttl: "10m"
+  redis_timeout: "75ms"
+  trusted_proxies: []

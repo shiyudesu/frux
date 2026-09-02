@@ -36,6 +36,7 @@ apps/api/worker
 apps/api/multimodal-provider
 apps/api/.offline-data/
 apps/api/.offline-reports/
+apps/benchmark-results/
 .clone-ui/
 docs/interview-questions.md
 docs/resume-highlights.md

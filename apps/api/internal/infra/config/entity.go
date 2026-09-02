@@ -297,7 +297,8 @@ type DatabaseConfig struct {
 
 // RedisConfig 保存 Redis 连接参数，用于 Feed 读缓存。
 type RedisConfig struct {
-	Addr     string `yaml:"addr"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+	Addr          string `yaml:"addr"`
+	Password      string `yaml:"password"`
+	DB            int    `yaml:"db"`
+	FeedCacheMode string `yaml:"feed_cache_mode"`
 }

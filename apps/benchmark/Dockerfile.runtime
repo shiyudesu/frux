@@ -1,0 +1,5 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+COPY --chmod=0755 bin/frux-api /app/frux-api
+COPY --chmod=0755 bin/frux-worker /app/frux-worker

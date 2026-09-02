@@ -30,6 +30,7 @@ var ErrInvalidJWTConfig = errors.New("invalid jwt config")
 var ErrInvalidSecurityConfig = errors.New("invalid security config")
 var ErrInvalidModerationConfig = errors.New("invalid moderation config")
 var ErrInvalidEnvironment = errors.New("invalid runtime environment")
+var ErrInvalidRedisConfig = errors.New("invalid redis config")
 
 const minInternalTokenLength = 32
 const maxAdminAccessTTL = 8 * time.Hour
@@ -310,6 +311,15 @@ func ValidateAPIConfig(cfg *Config) error {
 	}
 	if !cfg.Kafka.Enabled || strings.TrimSpace(cfg.Redis.Addr) == "" {
 		return ErrInvalidKafkaConfig
+	}
+	cfg.Redis.FeedCacheMode = strings.ToLower(strings.TrimSpace(cfg.Redis.FeedCacheMode))
+	if cfg.Redis.FeedCacheMode == "" {
+		cfg.Redis.FeedCacheMode = "batch"
+	}
+	switch cfg.Redis.FeedCacheMode {
+	case "batch", "sequential", "disabled":
+	default:
+		return ErrInvalidRedisConfig
 	}
 	if cfg.Multimodal.Session.DevelopmentFullRolloutEnabled &&
 		cfg.Environment != "local" && cfg.Environment != "test" {

@@ -1,0 +1,276 @@
+# Isolated benchmark stack for the NAT server. It intentionally shares no
+# database, Redis, Kafka, media volume, or credentials with frux-prod.
+
+x-benchmark-logging: &benchmark-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-environment: &app-environment
+  FRUX_JWT_CONSUMER_SECRET: ${FRUX_BENCH_JWT_CONSUMER_SECRET:?set FRUX_BENCH_JWT_CONSUMER_SECRET}
+  FRUX_JWT_ADMIN_SECRET: ${FRUX_BENCH_JWT_ADMIN_SECRET:?set FRUX_BENCH_JWT_ADMIN_SECRET}
+  FRUX_HMAC_SECRET: ${FRUX_BENCH_HMAC_SECRET:?set FRUX_BENCH_HMAC_SECRET}
+  FRUX_INTERNAL_TOKEN: ${FRUX_BENCH_INTERNAL_TOKEN:?set FRUX_BENCH_INTERNAL_TOKEN}
+  FRUX_POSTGRES_USER: ${FRUX_BENCH_POSTGRES_USER:-frux_bench}
+  FRUX_POSTGRES_PASSWORD: ${FRUX_BENCH_POSTGRES_PASSWORD:?set FRUX_BENCH_POSTGRES_PASSWORD}
+  FRUX_POSTGRES_DATABASE: ${FRUX_BENCH_POSTGRES_DATABASE:-frux_benchmark}
+  FRUX_REDIS_PASSWORD: ${FRUX_BENCH_REDIS_PASSWORD:?set FRUX_BENCH_REDIS_PASSWORD}
+  FRUX_FEED_CACHE_MODE: ${FRUX_BENCH_FEED_CACHE_MODE:-batch}
+  FRUX_MULTIMODAL_ENABLED: "false"
+  FRUX_MULTIMODAL_VIDEO_JOBS_ENABLED: "false"
+  FRUX_MULTIMODAL_QUERY_EMBEDDING_ENABLED: "false"
+  FRUX_MULTIMODAL_HYBRID_SEARCH_ENABLED: "false"
+  FRUX_MULTIMODAL_SIMILAR_VIDEOS_ENABLED: "false"
+  FRUX_MULTIMODAL_SESSION_RECOMMENDATION_ENABLED: "false"
+  FRUX_MULTIMODAL_SESSION_DEVELOPMENT_FULL_ROLLOUT_ENABLED: "false"
+  FRUX_MULTIMODAL_SESSION_PRODUCTION_FULL_ROLLOUT_ENABLED: "false"
+  FRUX_MULTIMODAL_ALLOW_INSECURE_PRIVATE_NETWORK: "false"
+
+services:
+  postgres:
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_USER: ${FRUX_BENCH_POSTGRES_USER:-frux_bench}
+      POSTGRES_PASSWORD: ${FRUX_BENCH_POSTGRES_PASSWORD:?set FRUX_BENCH_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${FRUX_BENCH_POSTGRES_DATABASE:-frux_benchmark}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    cpus: ${FRUX_BENCH_POSTGRES_CPUS:-0.75}
+    mem_limit: ${FRUX_BENCH_POSTGRES_MEMORY:-2g}
+    restart: unless-stopped
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+  redis:
+    image: redis:7.4-alpine
+    environment:
+      REDIS_PASSWORD: ${FRUX_BENCH_REDIS_PASSWORD:?set FRUX_BENCH_REDIS_PASSWORD}
+      REDIS_MAXMEMORY: ${FRUX_BENCH_REDIS_MAXMEMORY:-768mb}
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        exec redis-server
+        --appendonly yes
+        --appendfsync everysec
+        --requirepass "$$REDIS_PASSWORD"
+        --maxmemory "$$REDIS_MAXMEMORY"
+        --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+      - ${FRUX_BENCH_RESULTS_DIR:-./benchmark-results}:/benchmark-results
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    cpus: ${FRUX_BENCH_REDIS_CPUS:-0.25}
+    mem_limit: ${FRUX_BENCH_REDIS_MEMORY:-1g}
+    restart: unless-stopped
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+  kafka:
+    image: apache/kafka:4.0.0
+    environment:
+      CLUSTER_ID: "QmVuY2htYXJrRnJ1eEtmNw"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: "LogAppendTime"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_LOG_RETENTION_HOURS: ${FRUX_BENCH_KAFKA_RETENTION_HOURS:-2}
+      KAFKA_LOG_RETENTION_BYTES: ${FRUX_BENCH_KAFKA_RETENTION_BYTES:-134217728}
+      KAFKA_LOG_SEGMENT_BYTES: ${FRUX_BENCH_KAFKA_SEGMENT_BYTES:-67108864}
+      KAFKA_HEAP_OPTS: ${FRUX_BENCH_KAFKA_HEAP_OPTS:--Xms512m -Xmx1024m}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+    cpus: ${FRUX_BENCH_KAFKA_CPUS:-0.75}
+    mem_limit: ${FRUX_BENCH_KAFKA_MEMORY:-2g}
+    restart: unless-stopped
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+  api:
+    image: ${FRUX_API_IMAGE:?load the immutable API image through .env.release}
+    environment:
+      <<: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FRUX_BENCH_API_PORT:-28081}:8080"
+    volumes:
+      - ./api/configs/config.benchmark.yaml:/app/configs/config.yaml:ro
+      - api_uploads:/app/uploads
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:8080/health >/dev/null
+      interval: 10s
+      timeout: 3s
+      retries: 18
+      start_period: 30s
+    cpus: ${FRUX_BENCH_API_CPUS:-1.5}
+    mem_limit: ${FRUX_BENCH_API_MEMORY:-3g}
+    restart: unless-stopped
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+  worker:
+    image: ${FRUX_API_IMAGE:?load the immutable API image through .env.release}
+    command: ["./frux-worker"]
+    environment:
+      <<: *app-environment
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./api/configs/config.benchmark.yaml:/app/configs/config.yaml:ro
+      - api_uploads:/app/uploads
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:9091/metrics >/dev/null
+      interval: 15s
+      timeout: 3s
+      retries: 18
+      start_period: 45s
+    cpus: ${FRUX_BENCH_WORKER_CPUS:-1}
+    mem_limit: ${FRUX_BENCH_WORKER_MEMORY:-2g}
+    restart: unless-stopped
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${FRUX_BENCH_PROMETHEUS_RETENTION:-48h}
+      - --storage.tsdb.retention.size=${FRUX_BENCH_PROMETHEUS_SIZE:-512MB}
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FRUX_BENCH_PROMETHEUS_PORT:-29090}:9090"
+    volumes:
+      - ./benchmark/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    cpus: ${FRUX_BENCH_PROMETHEUS_CPUS:-0.25}
+    mem_limit: ${FRUX_BENCH_PROMETHEUS_MEMORY:-768m}
+    restart: unless-stopped
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+  seed:
+    image: postgres:17.5-alpine
+    profiles: ["seed"]
+    environment:
+      PGPASSWORD: ${FRUX_BENCH_POSTGRES_PASSWORD:?set FRUX_BENCH_POSTGRES_PASSWORD}
+      BENCHMARK_PASSWORD: ${FRUX_BENCH_VIEWER_PASSWORD:?set FRUX_BENCH_VIEWER_PASSWORD}
+      BENCHMARK_USERS: ${FRUX_BENCH_SEED_USERS:-12000}
+      BENCHMARK_AUTHORS: ${FRUX_BENCH_SEED_AUTHORS:-500}
+      BENCHMARK_VIDEOS: ${FRUX_BENCH_SEED_VIDEOS:-50000}
+      BENCHMARK_FOLLOWS_PER_USER: ${FRUX_BENCH_SEED_FOLLOWS_PER_USER:-30}
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >-
+        exec psql
+        -h postgres
+        -U "${FRUX_BENCH_POSTGRES_USER:-frux_bench}"
+        -d "${FRUX_BENCH_POSTGRES_DATABASE:-frux_benchmark}"
+        -v benchmark_password="$$BENCHMARK_PASSWORD"
+        -v users="$$BENCHMARK_USERS"
+        -v authors="$$BENCHMARK_AUTHORS"
+        -v videos="$$BENCHMARK_VIDEOS"
+        -v follows_per_user="$$BENCHMARK_FOLLOWS_PER_USER"
+        -f /benchmark/seed.sql
+    volumes:
+      - ./benchmark/seed.sql:/benchmark/seed.sql:ro
+    cpus: ${FRUX_BENCH_SEED_CPUS:-1}
+    mem_limit: ${FRUX_BENCH_SEED_MEMORY:-1g}
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+  k6:
+    image: ${FRUX_BENCH_K6_IMAGE:-grafana/k6:2.2.0}
+    profiles: ["load"]
+    user: "0:0"
+    environment:
+      BASE_URL: http://api:8080
+      SCENE: ${FRUX_BENCH_SCENE:-timeline}
+      VUS: ${FRUX_BENCH_VUS:-20}
+      DURATION: ${FRUX_BENCH_DURATION:-60s}
+      LIMIT: ${FRUX_BENCH_LIMIT:-20}
+      THINK_TIME: ${FRUX_BENCH_THINK_TIME:-0}
+      ACCOUNT: bench_viewer
+      PASSWORD: ${FRUX_BENCH_VIEWER_PASSWORD:?set FRUX_BENCH_VIEWER_PASSWORD}
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./benchmark/k6:/scripts:ro
+      - ${FRUX_BENCH_RESULTS_DIR:-./benchmark-results}:/results
+    cpus: ${FRUX_BENCH_K6_CPUS:-1}
+    mem_limit: ${FRUX_BENCH_K6_MEMORY:-1g}
+    logging: *benchmark-logging
+    networks:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
+  api_uploads:
+  prometheus_data:
+
+networks:
+  backend:

@@ -294,7 +294,6 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 	var distributedRateLimiter applicationratelimit.DistributedLimiter
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
-		feedCache = infracache.NewFeedCache(redisClient)
 		distributedRateLimiter = infracache.NewRedisRateLimiter(
 			infracache.NewRateLimitRedisClient(cfg.Redis),
 		)
@@ -305,10 +304,16 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		recommendationOptions = append(recommendationOptions,
 			applicationrecommendation.WithSnapshotPagination(infracache.NewRecommendationSnapshotStore(redisClient), snapshotSigner),
 		)
-		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
-		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
-		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
-		videoOptions = append(videoOptions, applicationvideo.WithVideoCacheInvalidator(feedCache))
+		if cfg.Redis.FeedCacheMode != "disabled" {
+			feedCache = infracache.NewFeedCache(
+				redisClient,
+				infracache.WithSequentialFeedCacheReads(cfg.Redis.FeedCacheMode == "sequential"),
+			)
+			feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
+			interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
+			interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
+			videoOptions = append(videoOptions, applicationvideo.WithVideoCacheInvalidator(feedCache))
+		}
 	}
 	rateLimitIdleTTL, err := time.ParseDuration(cfg.RateLimit.IdleTTL)
 	if err != nil {
