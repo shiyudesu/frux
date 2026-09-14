@@ -299,7 +299,7 @@ func (r *Repository) BatchGetFeedStats(ctx context.Context, videoIDs []int64) (m
 	var models []domainfeed.FeedStat
 	err := r.db.WithContext(ctx).
 		Table("video_stat").
-		Select("video_id, like_count, comment_count, favorite_count").
+		Select("video_id, revision, like_count, comment_count, favorite_count").
 		Where("video_id IN ?", videoIDs).
 		Scan(&models).
 		Error

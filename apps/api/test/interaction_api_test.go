@@ -999,7 +999,8 @@ func TestInteractionMessageWriter(t *testing.T) {
 	}
 }
 
-// TestInteractionAsyncActionPipeline 覆盖点赞收藏先写快速状态，再由事件 Worker 落库。
+// TestInteractionAsyncActionPipeline verifies durable acceptance before success;
+// later Kafka deliveries are idempotent and never apply the count twice.
 func TestInteractionAsyncActionPipeline(t *testing.T) {
 	repo := newMemoryInteractionRepo()
 	recorder := newMemoryHotScoreRecorder()
@@ -1017,8 +1018,8 @@ func TestInteractionAsyncActionPipeline(t *testing.T) {
 	if !liked.Active || liked.LikeCount != 1 {
 		t.Fatalf("unexpected async like result: %+v", liked)
 	}
-	if repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike) != 0 {
-		t.Fatalf("repo should not be updated before worker")
+	if repo.ActionCountForTest(1001, domaininteraction.ActionTypeLike) != 1 {
+		t.Fatalf("success was returned before the durable count was updated")
 	}
 	if pipeline.EventCount() != 1 {
 		t.Fatalf("unexpected event count: %d", pipeline.EventCount())
@@ -1821,7 +1822,7 @@ func (p *memoryActionPipeline) SetActionState(ctx context.Context, userID int64,
 			VideoID:                 videoID,
 			ActionType:              actionType,
 			Active:                  previous.Active,
-			IdempotencyKey:          idempotencyKey,
+			IdempotencyKey:          previous.IdempotencyKey,
 			RecommendationRequestID: previous.RecommendationRequestID,
 			Version:                 previous.Version,
 			EventID:                 previous.EventID,

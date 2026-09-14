@@ -54,7 +54,7 @@ func (r *Repository) GetVideoStat(ctx context.Context, videoID int64) (*domainin
 	var stat infravideo.VideoStatModel
 	err := r.db.WithContext(ctx).
 		Table("video_stat AS vs").
-		Select("vs.video_id, vs.like_count, vs.comment_count, vs.favorite_count, vs.created_at, vs.updated_at").
+		Select("vs.video_id, vs.revision, vs.like_count, vs.comment_count, vs.favorite_count, vs.created_at, vs.updated_at").
 		Joins("JOIN video AS v ON v.id = vs.video_id").
 		Where("vs.video_id = ? AND v.status = ? AND v.visibility = ? AND v.media_status IN ?", videoID, domainvideo.StatusPublished, domainvideo.VisibilityPublic, []string{domainmedia.MediaStatusLegacyReady, domainmedia.MediaStatusReady}).
 		Take(&stat).
@@ -64,6 +64,7 @@ func (r *Repository) GetVideoStat(ctx context.Context, videoID int64) (*domainin
 	}
 	return &domaininteraction.VideoStat{
 		VideoID:       stat.VideoID,
+		Revision:      stat.Revision,
 		LikeCount:     stat.LikeCount,
 		CommentCount:  stat.CommentCount,
 		FavoriteCount: stat.FavoriteCount,
@@ -1030,6 +1031,7 @@ func updateVideoStatCounter(tx *gorm.DB, videoID int64, field string, delta int)
 		return 0, domaininteraction.ErrInvalidActionType
 	}
 
+	stat.Revision++
 	if err := tx.Save(&stat).Error; err != nil {
 		return 0, err
 	}

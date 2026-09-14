@@ -15,6 +15,8 @@ type synchronousActionRepositoryStub struct {
 	legacyCalls      int
 	persistCalls     int
 	persistErr       error
+	stat             *domaininteraction.VideoStat
+	statErr          error
 }
 
 func (r *synchronousActionRepositoryStub) PersistAcceptedActionEvent(context.Context, *domaininteraction.AcceptedActionEvent) error {
@@ -28,6 +30,7 @@ type actionStateStoreStub struct {
 	rollbackErr    error
 	rollbackCalls  int
 	confirmCalls   int
+	err            error
 }
 
 func (s *actionStateStoreStub) SetActionState(
@@ -41,7 +44,7 @@ func (s *actionStateStoreStub) SetActionState(
 	*domaininteraction.ActionStateSnapshot,
 	ActionMutation,
 ) (*ActionStateResult, error) {
-	return s.state, nil
+	return s.state, s.err
 }
 
 func (s *actionStateStoreStub) RollbackActionState(context.Context, *ActionStateResult) (bool, error) {
@@ -54,9 +57,15 @@ func (s *actionStateStoreStub) ConfirmActionStateHandoff(context.Context, *Actio
 	return nil
 }
 
-type actionPublisherStub struct{ err error }
+type actionPublisherStub struct {
+	err       error
+	onPublish func()
+}
 
 func (p actionPublisherStub) PublishActionChanged(context.Context, *ActionChangedEvent) error {
+	if p.onPublish != nil {
+		p.onPublish()
+	}
 	return p.err
 }
 
@@ -97,7 +106,14 @@ func (o *actionDeliveryObserverStub) ObserveActionRollback(result string) {
 	o.rollback = append(o.rollback, result)
 }
 
-func (*synchronousActionRepositoryStub) GetVideoStat(context.Context, int64) (*domaininteraction.VideoStat, error) {
+func (r *synchronousActionRepositoryStub) GetVideoStat(context.Context, int64) (*domaininteraction.VideoStat, error) {
+	if r.statErr != nil {
+		return nil, r.statErr
+	}
+	if r.stat != nil {
+		stat := *r.stat
+		return &stat, nil
+	}
 	return &domaininteraction.VideoStat{VideoID: 11}, nil
 }
 
@@ -210,13 +226,14 @@ func TestKafkaAndFallbackFailureConditionallyRollBackRedis(t *testing.T) {
 	}
 }
 
-func TestUncertainKafkaAndFallbackFailureDoesNotRollBackRedis(t *testing.T) {
+func TestFailedDurableAcceptDoesNotPublishToKafka(t *testing.T) {
 	persistErr := errors.New("database unavailable")
 	repo := &synchronousActionRepositoryStub{persistErr: persistErr}
 	store := &actionStateStoreStub{state: acceptedAsyncState(), rollbackResult: true}
+	publishCalls := 0
 	service := New(
 		repo,
-		WithAsyncActionPipeline(store, actionPublisherStub{err: possiblyAcknowledgedError{
+		WithAsyncActionPipeline(store, actionPublisherStub{onPublish: func() { publishCalls++ }, err: possiblyAcknowledgedError{
 			err: errors.New("Kafka result uncertain"),
 		}}),
 	)
@@ -224,7 +241,7 @@ func TestUncertainKafkaAndFallbackFailureDoesNotRollBackRedis(t *testing.T) {
 	if !errors.Is(err, ErrUpdateInteractionFailed) || !errors.Is(err, persistErr) {
 		t.Fatalf("error = %v", err)
 	}
-	if store.rollbackCalls != 0 || store.confirmCalls != 0 {
+	if publishCalls != 0 || store.rollbackCalls != 1 || store.confirmCalls != 0 {
 		t.Fatalf("store=%#v", store)
 	}
 }
@@ -253,5 +270,57 @@ func acceptedAsyncState() *ActionStateResult {
 		Active: true, LikeCount: 1, Delta: 1, IdempotencyKey: "like-1",
 		Version: 3, EventID: "action-event-1", OccurredAt: now,
 		ShouldPublish: true, CanRollback: true,
+	}
+}
+
+type snapshotStatCacheStub struct {
+	saved *domaininteraction.VideoStat
+	err   error
+}
+
+func (c *snapshotStatCacheStub) SetVideoStat(_ context.Context, stat *domaininteraction.VideoStat) error {
+	cloned := *stat
+	c.saved = &cloned
+	return c.err
+}
+
+func TestCommentCacheKeepsSnapshotFieldsWithTheirRevision(t *testing.T) {
+	repo := &synchronousActionRepositoryStub{stat: &domaininteraction.VideoStat{VideoID: 11, Revision: 8, LikeCount: 12, CommentCount: 9}}
+	cache := &snapshotStatCacheStub{}
+	service := New(repo, WithStatCache(cache))
+	service.syncCommentCount(context.Background(), 11, 3)
+	if cache.saved == nil || cache.saved.CommentCount != 9 || cache.saved.Revision != 8 || cache.saved.LikeCount != 12 {
+		t.Fatalf("mixed an old comment result into a new snapshot: %+v", cache.saved)
+	}
+	cache.saved = nil
+	repo.statErr = errors.New("database unavailable")
+	service.syncCommentCount(context.Background(), 11, 3)
+	if cache.saved != nil {
+		t.Fatalf("fabricated a cache value on read failure: %+v", cache.saved)
+	}
+}
+
+func TestActionPersistsBeforePublishAndIgnoresCacheWriteFailure(t *testing.T) {
+	repo := &synchronousActionRepositoryStub{stat: &domaininteraction.VideoStat{VideoID: 11, Revision: 8, LikeCount: 12}}
+	cache := &snapshotStatCacheStub{err: errors.New("Redis unavailable")}
+	store := &actionStateStoreStub{state: acceptedAsyncState()}
+	service := New(repo, WithStatCache(cache), WithAsyncActionPipeline(store, actionPublisherStub{onPublish: func() {
+		if repo.persistCalls != 1 {
+			t.Fatal("published before durable persistence")
+		}
+	}}))
+	result, err := service.Like(context.Background(), 7, 11, "like-1")
+	if err != nil || result.LikeCount != 12 || repo.persistCalls != 1 || store.rollbackCalls != 0 {
+		t.Fatalf("cache failure lost durable success: %+v, %v", result, err)
+	}
+}
+
+func TestRedisUnavailableUsesDurableActionRepository(t *testing.T) {
+	repo := &synchronousActionRepositoryStub{}
+	store := &actionStateStoreStub{err: errors.New("Redis unavailable")}
+	service := New(repo, WithAsyncActionPipeline(store, actionPublisherStub{onPublish: func() { t.Fatal("fallback should use the durable repository handoff") }}))
+	result, err := service.Like(context.Background(), 7, 11, "like-1")
+	if err != nil || result.LikeCount != 1 || repo.synchronousCalls != 1 {
+		t.Fatalf("Redis outage lost write availability: %+v %v", result, err)
 	}
 }

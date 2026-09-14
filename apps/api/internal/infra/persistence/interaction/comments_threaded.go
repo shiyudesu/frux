@@ -767,6 +767,7 @@ func ReconcileCommentCounters(db *gorm.DB) error {
 		UPDATE video_stat AS current
 		SET
 			comment_count = GREATEST(current.comment_count + snapshot.desired_comment_count - snapshot.baseline_comment_count, 0),
+			revision = current.revision + 1,
 			updated_at = NOW()
 		FROM snapshot
 		WHERE current.video_id = snapshot.video_id

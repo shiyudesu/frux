@@ -11,8 +11,8 @@ recovery for accepted action changes and committed view events.
 Frux SHALL publish accepted action changes and committed view events to separate registered Kafka topics with stable event IDs, versioned envelopes, bounded payloads, delete-based retention, and broker-assigned append timestamps.
 
 #### Scenario: Action event is published
-- **WHEN** Redis accepts a valid action mutation and assigns its monotonic version
-- **THEN** Frux publishes the action event keyed by its user, video, and action-type identity
+- **WHEN** a valid action mutation has been durably accepted in PostgreSQL with its stable event identity and request receipt
+- **THEN** Frux attempts Kafka publication keyed by user, video, and action-type identity, without using Redis counter persistence as the success boundary
 
 #### Scenario: View event is committed
 - **WHEN** the view-event transaction commits its raw fact and outbox row
@@ -53,7 +53,7 @@ Frux SHALL publish behavior events only to Kafka and SHALL run one registered ac
 
 #### Scenario: Action publication fails
 - **WHEN** Kafka fails or cannot confirm action publication
-- **THEN** synchronous PostgreSQL fallback may persist the stable event and conditional Redis rollback is allowed only when Kafka is known not to have acknowledged it
+- **THEN** the already committed action and its durable projection/outcome handoffs remain authoritative, and a Kafka failure alone does not roll back that action
 
 #### Scenario: View publication fails
 - **WHEN** Kafka does not acknowledge a view event
@@ -97,3 +97,23 @@ Kafka SHALL retain behavior events for the registered operational replay window 
 #### Scenario: A new independent consumer starts within retention
 - **WHEN** a registered future consumer group starts from an available earlier offset
 - **THEN** it can consume retained behavior events without changing the offsets of existing groups
+
+### Requirement: Recoverable Versioned Action Counts
+Successful actions SHALL have a PostgreSQL fact and durable request-idempotency receipt before success. The count revision SHALL advance in the same database transaction as a count change. Redis SHALL cache complete versioned count snapshots, not combine a newly loaded database baseline with retained Redis increments.
+
+#### Scenario: A stale snapshot finishes after a newer snapshot
+- **WHEN** a lower count revision attempts to populate a cache whose revision fence is higher
+- **THEN** it does not overwrite or extend the lifetime of the newer snapshot, including when JSON alone was evicted
+
+#### Scenario: Redis loses its count snapshot and revision fence
+- **WHEN** a delayed caller attempts to repopulate both missing keys
+- **THEN** the cache reloads authoritative PostgreSQL snapshots after establishing its Redis write guard, in a batch rather than per-video queries
+- **AND** failed revalidation does not publish the delayed caller's unverified value
+
+#### Scenario: An old action request is retried after Redis loss
+- **WHEN** a user likes, later unlikes, and retries the original successful like key after Redis was cleared
+- **THEN** the durable request receipt prevents the old request from changing the latest action state or counters again
+
+#### Scenario: A new revision decreases a count
+- **WHEN** an unlike or comment deletion produces a newer count revision
+- **THEN** the newer snapshot may lower the cached number; ordering is by revision rather than by count magnitude

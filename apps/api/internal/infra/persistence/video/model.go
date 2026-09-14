@@ -168,6 +168,7 @@ func (VideoModel) TableName() string {
 // VideoStatModel 映射 video_stat 表，保存可频繁变更的互动计数。
 type VideoStatModel struct {
 	VideoID       int64     `gorm:"column:video_id;primaryKey"`
+	Revision      int64     `gorm:"column:revision;not null;default:0"`
 	LikeCount     int       `gorm:"column:like_count;not null;default:0"`
 	CommentCount  int       `gorm:"column:comment_count;not null;default:0"`
 	FavoriteCount int       `gorm:"column:favorite_count;not null;default:0"`

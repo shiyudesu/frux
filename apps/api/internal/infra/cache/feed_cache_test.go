@@ -8,6 +8,7 @@ import (
 	applicationinteraction "github.com/shiyudesu/frux/internal/application/interaction"
 	domainfeed "github.com/shiyudesu/frux/internal/domain/feed"
 	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
+	"sync"
 	"testing"
 	"time"
 
@@ -135,6 +136,7 @@ func TestFeedCacheBatchReadsUseTwoCommandsInsteadOfPerItemGets(t *testing.T) {
 		cards[videoID] = &domainfeed.FeedCard{VideoID: videoID}
 		stats[videoID] = &domainfeed.FeedStat{VideoID: videoID}
 	}
+	batch.statSource = &memoryFeedStatSource{stats: stats}
 	if err := batch.SetCards(ctx, cards, time.Minute); err != nil {
 		t.Fatalf("set cards: %v", err)
 	}
@@ -166,24 +168,60 @@ func TestFeedCacheBatchReadsUseTwoCommandsInsteadOfPerItemGets(t *testing.T) {
 	}
 }
 
-type actionStatFakeRedis struct {
-	hashes     map[string]map[string]string
-	hashErrors map[string]error
-	values     map[string]string
+type actionHandoffRepositoryStub struct {
+	mu        sync.Mutex
+	stat      domaininteraction.VideoStat
+	states    map[string]domaininteraction.ActionStateSnapshot
+	processed map[string]bool
 }
 
-type actionHandoffRepositoryStub struct{}
-
-func (*actionHandoffRepositoryStub) PersistAcceptedActionEvent(context.Context, *domaininteraction.AcceptedActionEvent) error {
+func (r *actionHandoffRepositoryStub) PersistAcceptedActionEvent(_ context.Context, event *domaininteraction.AcceptedActionEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.processed == nil {
+		r.processed = map[string]bool{}
+		r.states = map[string]domaininteraction.ActionStateSnapshot{}
+	}
+	if r.processed[event.EventID] {
+		return nil
+	}
+	r.processed[event.EventID] = true
+	key := fmt.Sprintf("%d:%d:%s", event.UserID, event.VideoID, event.ActionType)
+	previous := r.states[key]
+	delta := 0
+	if previous.Active != event.Active {
+		if event.Active {
+			delta = 1
+		} else {
+			delta = -1
+		}
+	}
+	r.stat.VideoID = event.VideoID
+	if event.ActionType == domaininteraction.ActionTypeLike {
+		r.stat.LikeCount += delta
+	} else {
+		r.stat.FavoriteCount += delta
+	}
+	if delta != 0 {
+		r.stat.Revision++
+	}
+	r.states[key] = domaininteraction.ActionStateSnapshot{Exists: true, Active: event.Active, Version: event.Version, EventID: event.EventID, IdempotencyKey: event.IdempotencyKey, OccurredAt: event.OccurredAt, UpdatedAt: event.OccurredAt}
 	return nil
 }
 
-func (*actionHandoffRepositoryStub) GetVideoStat(_ context.Context, videoID int64) (*domaininteraction.VideoStat, error) {
-	return &domaininteraction.VideoStat{VideoID: videoID}, nil
+func (r *actionHandoffRepositoryStub) GetVideoStat(_ context.Context, videoID int64) (*domaininteraction.VideoStat, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stat := r.stat
+	stat.VideoID = videoID
+	return &stat, nil
 }
 
-func (*actionHandoffRepositoryStub) GetActionState(context.Context, int64, int64, string) (*domaininteraction.ActionStateSnapshot, error) {
-	return &domaininteraction.ActionStateSnapshot{}, nil
+func (r *actionHandoffRepositoryStub) GetActionState(_ context.Context, userID int64, videoID int64, actionType string) (*domaininteraction.ActionStateSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state := r.states[fmt.Sprintf("%d:%d:%s", userID, videoID, actionType)]
+	return &state, nil
 }
 
 func (*actionHandoffRepositoryStub) GetVideoAuthorID(context.Context, int64) (int64, error) {
@@ -228,148 +266,21 @@ func (p *actionEventPublisherStub) PublishActionChanged(_ context.Context, event
 	return nil
 }
 
-func newActionStatFakeRedis() *actionStatFakeRedis {
-	return &actionStatFakeRedis{
-		hashes:     map[string]map[string]string{},
-		hashErrors: map[string]error{},
-		values:     map[string]string{},
-	}
-}
-
-func (r *actionStatFakeRedis) HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd {
-	if err := r.hashErrors[key]; err != nil {
-		return redis.NewMapStringStringResult(nil, err)
-	}
-	values := r.hashes[key]
-	if values == nil {
-		values = map[string]string{}
-	}
-	return redis.NewMapStringStringResult(values, nil)
-}
-
-func (r *actionStatFakeRedis) Get(ctx context.Context, key string) *redis.StringCmd {
-	value, ok := r.values[key]
-	if !ok {
-		return redis.NewStringResult("", redis.Nil)
-	}
-	return redis.NewStringResult(value, nil)
-}
-
-func (r *actionStatFakeRedis) Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd {
-	switch typed := value.(type) {
-	case string:
-		r.values[key] = typed
-	case []byte:
-		r.values[key] = string(typed)
-	default:
-		content, _ := json.Marshal(typed)
-		r.values[key] = string(content)
-	}
-	return redis.NewStatusResult("OK", nil)
-}
-
-func (r *actionStatFakeRedis) MGet(ctx context.Context, keys ...string) *redis.SliceCmd {
-	values := make([]any, 0, len(keys))
-	for _, key := range keys {
-		if value, ok := r.values[key]; ok {
-			values = append(values, value)
-			continue
-		}
-		values = append(values, nil)
-	}
-	return redis.NewSliceResult(values, nil)
-}
-
-func TestActionStatAggregatesCounterShards(t *testing.T) {
-	ctx := context.Background()
-	videoID := int64(1001)
-	redisClient := newActionStatFakeRedis()
-	redisClient.hashes[interactionStatCounterBaseKey(videoID)] = map[string]string{
-		"like_count":     "10",
-		"comment_count":  "3",
-		"favorite_count": "4",
-	}
-	redisClient.hashes[interactionStatCounterShardKey(videoID, interactionStatCounterShardIndex(42))] = map[string]string{
-		"like_count":     "1",
-		"favorite_count": "1",
-	}
-	redisClient.hashes[interactionStatCounterShardKey(videoID, interactionStatCounterShardIndex(43))] = map[string]string{
-		"like_count": "-1",
-	}
-	redisClient.hashes[interactionStatCounterShardKey(videoID, interactionStatCounterShardIndex(44))] = map[string]string{
-		"like_count": "1",
-	}
-
-	stat, err := actionStat(ctx, redisClient, interactionStatCounterBaseKey(videoID), interactionStatCounterShardKeys(videoID), feedStatKey(videoID), videoID, nil)
-	if err != nil {
-		t.Fatalf("actionStat: %v", err)
-	}
-	if stat.LikeCount != 11 || stat.FavoriteCount != 5 || stat.CommentCount != 3 {
-		t.Fatalf("unexpected stat: %+v", stat)
-	}
-}
-
-func TestActionStatFallsBackToInitialStat(t *testing.T) {
-	ctx := context.Background()
-	videoID := int64(1002)
-	redisClient := newActionStatFakeRedis()
-	initial := &domaininteraction.VideoStat{
-		VideoID:       videoID,
-		LikeCount:     7,
-		CommentCount:  2,
-		FavoriteCount: 1,
-	}
-	redisClient.hashes[interactionStatCounterShardKey(videoID, interactionStatCounterShardIndex(42))] = map[string]string{
-		"like_count":     "1",
-		"favorite_count": "-1",
-	}
-
-	stat, err := actionStat(ctx, redisClient, interactionStatCounterBaseKey(videoID), interactionStatCounterShardKeys(videoID), feedStatKey(videoID), videoID, initial)
-	if err != nil {
-		t.Fatalf("actionStat: %v", err)
-	}
-	if stat.LikeCount != 8 || stat.FavoriteCount != 0 || stat.CommentCount != 2 {
-		t.Fatalf("unexpected stat: %+v", stat)
-	}
-}
-
-func TestGetStatsReadsShardedCountersOnJSONMiss(t *testing.T) {
-	ctx := context.Background()
-	videoID := int64(1003)
-	redisClient := newActionStatFakeRedis()
-	redisClient.hashes[interactionStatCounterBaseKey(videoID)] = map[string]string{
-		"like_count":     "2",
-		"comment_count":  "1",
-		"favorite_count": "0",
-	}
-	redisClient.hashes[interactionStatCounterShardKey(videoID, interactionStatCounterShardIndex(42))] = map[string]string{
-		"like_count":     "1",
-		"favorite_count": "1",
-	}
-	stats, err := getStats(ctx, redisClient, []int64{videoID})
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
-	stat := stats[videoID]
-	if stat == nil || stat.LikeCount != 3 || stat.FavoriteCount != 1 || stat.CommentCount != 1 {
-		t.Fatalf("unexpected stats: %+v", stats)
-	}
-	if _, ok := redisClient.values[feedStatKey(videoID)]; !ok {
-		t.Fatalf("expected sharded stat to be written back to JSON cache")
-	}
-}
-
 func TestSetVideoStatWritesJSONCache(t *testing.T) {
 	ctx := context.Background()
 	videoID := int64(1005)
-	redisClient := newActionStatFakeRedis()
+	cache := newActionReceiptTestCache(t)
+	redisClient := cache.client
+	cache.statSource = &memoryFeedStatSource{stats: map[int64]*domainfeed.FeedStat{
+		videoID: {VideoID: videoID, LikeCount: 2, CommentCount: 3, FavoriteCount: 1},
+	}}
 
-	err := setActionStatJSON(ctx, redisClient, feedStatKey(videoID), videoStatToFeedStat(&domaininteraction.VideoStat{
+	err := cache.SetVideoStat(ctx, &domaininteraction.VideoStat{
 		VideoID:       videoID,
 		LikeCount:     2,
 		CommentCount:  3,
 		FavoriteCount: 1,
-	}))
+	})
 	if err != nil {
 		t.Fatalf("SetVideoStat: %v", err)
 	}
@@ -381,55 +292,6 @@ func TestSetVideoStatWritesJSONCache(t *testing.T) {
 	stat := stats[videoID]
 	if stat == nil || stat.LikeCount != 2 || stat.CommentCount != 3 || stat.FavoriteCount != 1 {
 		t.Fatalf("unexpected stat: %+v", stat)
-	}
-}
-
-func TestActionStatBaseInitUsesInitialStat(t *testing.T) {
-	videoID := int64(1004)
-	initial := &domaininteraction.VideoStat{
-		VideoID:       videoID,
-		LikeCount:     1,
-		CommentCount:  1,
-		FavoriteCount: 1,
-	}
-
-	stat := actionStatBaseInit(videoID, initial)
-	if stat != initial {
-		t.Fatalf("unexpected stat: %+v", stat)
-	}
-}
-
-func TestCompleteActionStateResultReturnsCommittedMutationOnCountReadFailure(t *testing.T) {
-	videoID := int64(1006)
-	countReadErr := errors.New("count read failed")
-	redisClient := newActionStatFakeRedis()
-	counterBaseKey := interactionStatCounterBaseKey(videoID)
-	redisClient.hashErrors[counterBaseKey] = countReadErr
-	committed := &applicationinteraction.ActionStateResult{
-		UserID:        42,
-		VideoID:       videoID,
-		ActionType:    domaininteraction.ActionTypeLike,
-		Active:        true,
-		Delta:         1,
-		Version:       3,
-		EventID:       "event-3",
-		ShouldPublish: true,
-		CanRollback:   true,
-	}
-
-	result, err := completeActionStateResult(
-		context.Background(),
-		redisClient,
-		committed,
-		counterBaseKey,
-		feedStatKey(videoID),
-		&domaininteraction.VideoStat{VideoID: videoID},
-	)
-	if !errors.Is(err, countReadErr) {
-		t.Fatalf("expected count read failure, got %v", err)
-	}
-	if result != committed || result.Version != 3 || !result.CanRollback {
-		t.Fatalf("committed mutation metadata was lost: %+v", result)
 	}
 }
 

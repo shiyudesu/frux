@@ -237,6 +237,7 @@ type CommentNotification struct {
 // VideoStat 保存互动模块需要的视频统计快照。
 type VideoStat struct {
 	VideoID       int64
+	Revision      int64
 	LikeCount     int
 	CommentCount  int
 	FavoriteCount int

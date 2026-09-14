@@ -143,11 +143,12 @@ CREATE INDEX idx_video_timeline ON video (status, published_at DESC, id DESC);
 ```text
 feed:page:v1:{scene}:limit:{limit}:first
 feed:page:v1:{scene}:limit:{limit}:cursor:{cursorHash}
-video:card:v1:{video_id}
-video:stat:v1:{video_id}
+video:card:v2:{video_id}
+video:stat:v2:{video_id}
+video:stat:revision:v1:{video_id}
 ```
 
-页缓存只保存 `video_id` 和排序字段。Feed Service 读取页后使用 Redis MGET 批量读取 `video:card` 和 `video:stat`，缓存缺失时批量回源 PostgreSQL。即使卡片来自 Redis，也会批量查询数据库重新确认 `status=published AND visibility=public`，因此旧页或旧卡片中的私密/下架 ID 会在组装阶段被丢弃。可见性、删除或生命周期变化会删除对应卡片和统计缓存；页缓存中的旧 ID 依靠上述校验安全失效。
+页缓存只保存 `video_id` 和排序字段。Feed Service 读取页后使用 Redis MGET 批量读取 `video:card` 和 `video:stat`，缓存缺失时批量回源 PostgreSQL。计数是数据库完整版本化快照，不再与 Redis 分片增量相加；回填时通过 WATCH、版本比较及缺失版本记录后的批量数据库核验防止旧快照覆盖，详见 [互动模块](interaction.md#版本化计数快照)。即使卡片来自 Redis，也会批量查询数据库重新确认 `status=published AND visibility=public`，因此旧页或旧卡片中的私密/下架 ID 会在组装阶段被丢弃。可见性、删除或生命周期变化会删除对应卡片和统计缓存；页缓存中的旧 ID 依靠上述校验安全失效。
 
 关注流 Redis inbox 还必须绑定当前有效关注作者集合。读取时若发现取关作者的陈旧条目或缺少作者 ID 的旧格式条目，整页回退 PostgreSQL 关注关系真相源，不能把历史扇出内容继续返回给已取关用户。
 

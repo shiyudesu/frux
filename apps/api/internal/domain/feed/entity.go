@@ -72,6 +72,7 @@ type FeedCard struct {
 // FeedStat 保存视频卡片中的高频计数字段。
 type FeedStat struct {
 	VideoID       int64
+	Revision      int64
 	LikeCount     int
 	CommentCount  int
 	FavoriteCount int

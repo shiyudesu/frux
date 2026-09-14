@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	applicationeventstream "github.com/shiyudesu/frux/internal/application/eventstream"
 	domaininteraction "github.com/shiyudesu/frux/internal/domain/interaction"
 	domainmessage "github.com/shiyudesu/frux/internal/domain/message"
 )
@@ -188,7 +187,8 @@ func WithStatCache(cache StatCache) Option {
 	}
 }
 
-// WithAsyncActionPipeline 为点赞收藏启用 Redis 快速写和 MQ 异步落库。
+// WithAsyncActionPipeline retains Redis action receipts and Kafka delivery.
+// Accepted actions are persisted before success; Redis counts are not authoritative.
 func WithAsyncActionPipeline(store ActionStateStore, publisher ActionEventPublisher) Option {
 	return func(s *Service) {
 		s.actionStateStore = store
@@ -439,6 +439,15 @@ func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, ac
 	if err != nil {
 		return nil, err
 	}
+	if durable, ok := s.repo.(domaininteraction.DurableActionRequestRepository); ok && strings.TrimSpace(idempotencyKey) != "" {
+		receipt, err := durable.FindActionRequest(ctx, userID, videoID, actionType, active, idempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		if receipt != nil {
+			return actionResultFromReceipt(receipt), nil
+		}
+	}
 	if s.actionStateStore != nil && s.actionPublisher != nil {
 		return s.setActionAsync(ctx, userID, videoID, actionType, active, idempotencyKey, recommendationRequestID)
 	}
@@ -465,76 +474,76 @@ func (s *Service) setActionAsync(ctx context.Context, userID int64, videoID int6
 		if errors.Is(err, domaininteraction.ErrActionIdempotencyConflict) {
 			return nil, err
 		}
-		return nil, s.handleActionStateStoreFailure(ctx, state, err)
+		if state != nil {
+			// Preserve the existing conditional recovery of a mutation that the
+			// store knows it committed; do not invent a different accepted event.
+			return nil, s.handleActionStateStoreFailure(ctx, state, err)
+		}
+		// Redis is recoverable state, not the authority for accepted actions.
+		// A Redis outage must not prevent the durable repository from accepting
+		// a request. Its receipt and version checks remain the final authority.
+		return s.setActionSync(ctx, userID, videoID, actionType, active, idempotencyKey, recommendationRequestID)
 	}
 
-	if state.ShouldPublish {
+	if state.ShouldPublish || state.EventID != "" {
 		event := actionChangedEventFromState(userID, state)
-		if publishErr := s.actionPublisher.PublishActionChanged(ctx, event); publishErr != nil {
-			recoveryCtx, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
-			accepted, acceptedErr := acceptedActionEvent(event)
-			if acceptedErr != nil {
-				rolledBack, rollbackErr := s.rollbackActionState(recoveryCtx, state)
-				cancelRecovery()
-				s.observeActionFallback("invalid")
-				if rollbackErr != nil {
-					recoveryErr := s.ensureActionEventDurable(ctx, event)
-					return nil, actionUpdateError(publishErr, acceptedErr, rollbackErr, recoveryErr)
-				}
-				_ = rolledBack
-				return nil, actionUpdateError(publishErr, acceptedErr)
+		accepted, acceptedErr := acceptedActionEvent(event)
+		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionRecoveryTimeout)
+		var receipt *domaininteraction.ActionRequestReceipt
+		if acceptedErr == nil {
+			if durable, ok := s.repo.(domaininteraction.DurableActionRequestRepository); ok {
+				receipt, acceptedErr = durable.PersistActionRequest(recoveryCtx, accepted, idempotencyKey)
+			} else {
+				acceptedErr = s.repo.PersistAcceptedActionEvent(recoveryCtx, accepted)
 			}
-			if persistErr := s.repo.PersistAcceptedActionEvent(recoveryCtx, accepted); persistErr != nil {
-				s.observeActionFallback("failure")
-				if applicationeventstream.MayHaveTransportAcknowledgement(publishErr) {
-					cancelRecovery()
-					if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
-						return nil, errors.Join(
-							domaininteraction.ErrVideoNotFound,
-							publishErr,
-							persistErr,
-						)
-					}
-					return nil, actionUpdateError(
-						publishErr,
-						persistErr,
-					)
-				}
-				_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
-				cancelRecovery()
-				if rollbackErr != nil {
-					recoveryErr := s.ensureActionEventDurable(ctx, event)
-					if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
-						return nil, errors.Join(domaininteraction.ErrVideoNotFound, publishErr, persistErr, rollbackErr, recoveryErr)
-					}
-					return nil, actionUpdateError(
-						publishErr,
-						persistErr,
-						rollbackErr,
-						recoveryErr,
-					)
-				}
-				if errors.Is(persistErr, domaininteraction.ErrVideoNotFound) {
-					return nil, domaininteraction.ErrVideoNotFound
-				}
-				return nil, actionUpdateError(publishErr, persistErr)
+		}
+		if acceptedErr != nil {
+			_, rollbackErr := s.rollbackActionState(recoveryCtx, state)
+			cancel()
+			s.observeActionFallback("failure")
+			return nil, actionUpdateError(acceptedErr, rollbackErr)
+		}
+		if receipt != nil && receipt.Replayed {
+			// Another request may have committed this key after the initial
+			// lookup. Discard only our still-owned provisional Redis mutation.
+			_, _ = s.rollbackActionState(recoveryCtx, state)
+			cancel()
+			return actionResultFromReceipt(receipt), nil
+		}
+		cancel()
+
+		// Success is now backed by PostgreSQL before any Kafka publication.
+		// The accepted receipt already owns durable profile/outcome handoffs,
+		// so a transport failure cannot lose this mutation or justify rollback.
+		if state.ShouldPublish {
+			if publishErr := s.actionPublisher.PublishActionChanged(ctx, event); publishErr != nil {
+				s.observeActionFallback("success")
 			}
-			s.observeActionFallback("success")
-			cancelRecovery()
 		}
-		if confirmErr := s.confirmActionStateHandoff(ctx, state); confirmErr != nil {
-			return nil, actionUpdateError(confirmErr)
-		}
+		_ = s.confirmActionStateHandoff(ctx, state)
+	} else if _, durable := s.repo.(domaininteraction.DurableActionRequestRepository); durable {
+		// A no-op without an event still needs a durable HTTP request receipt.
+		return s.setActionSync(ctx, userID, videoID, actionType, active, idempotencyKey, recommendationRequestID)
+	}
+	if snapshot := s.syncVideoStat(ctx, videoID); snapshot != nil {
+		state.LikeCount = snapshot.LikeCount
+		state.FavoriteCount = snapshot.FavoriteCount
 	}
 	s.applyActionSideEffects(ctx, state, userID)
-
 	return &ActionResult{
-		VideoID:       state.VideoID,
-		ActionType:    state.ActionType,
-		Active:        state.Active,
-		LikeCount:     state.LikeCount,
-		FavoriteCount: state.FavoriteCount,
+		VideoID: state.VideoID, ActionType: state.ActionType, Active: state.Active,
+		LikeCount: state.LikeCount, FavoriteCount: state.FavoriteCount,
 	}, nil
+}
+
+func actionResultFromReceipt(receipt *domaininteraction.ActionRequestReceipt) *ActionResult {
+	result := &ActionResult{VideoID: receipt.VideoID, ActionType: receipt.ActionType, Active: receipt.Active}
+	if receipt.ActionType == domaininteraction.ActionTypeLike {
+		result.LikeCount = receipt.Count
+	} else {
+		result.FavoriteCount = receipt.Count
+	}
+	return result
 }
 
 func (s *Service) applyActionSideEffects(
@@ -693,6 +702,7 @@ func (s *Service) setActionSync(ctx context.Context, userID int64, videoID int64
 	if action.ActionType == domaininteraction.ActionTypeLike && action.Active() && delta > 0 {
 		s.notifyLike(ctx, action)
 	}
+	s.syncVideoStat(ctx, videoID)
 	return result, nil
 }
 
@@ -705,15 +715,21 @@ func (s *Service) recordHotScore(ctx context.Context, videoID int64, scoreDelta 
 }
 
 func (s *Service) syncCommentCount(ctx context.Context, videoID int64, commentCount int) {
-	if s.statCache == nil || videoID <= 0 {
-		return
-	}
+	// commentCount belongs to the earlier mutation result, not necessarily to
+	// the newer snapshot read below. Never mix that value with a newer revision.
+	s.syncVideoStat(ctx, videoID)
+}
+
+func (s *Service) syncVideoStat(ctx context.Context, videoID int64) *domaininteraction.VideoStat {
 	stat, err := s.repo.GetVideoStat(ctx, videoID)
-	if err != nil {
-		stat = &domaininteraction.VideoStat{VideoID: videoID}
+	if err != nil || stat == nil {
+		// Do not manufacture zero counts on a read failure.
+		return nil
 	}
-	stat.CommentCount = commentCount
-	_ = s.statCache.SetVideoStat(ctx, stat)
+	if s.statCache != nil {
+		_ = s.statCache.SetVideoStat(ctx, stat)
+	}
+	return stat
 }
 
 func recordActionHotScore(ctx context.Context, recorder HotScoreRecorder, videoID int64, actionType string, delta int) {

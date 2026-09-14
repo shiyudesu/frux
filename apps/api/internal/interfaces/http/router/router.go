@@ -307,6 +307,7 @@ func Register(h *server.Hertz, cfg *infraconfig.Config, db *sql.DB) error {
 		if cfg.Redis.FeedCacheMode != "disabled" {
 			feedCache = infracache.NewFeedCache(
 				redisClient,
+				infracache.WithFeedStatSource(feedRepo),
 				infracache.WithSequentialFeedCacheReads(cfg.Redis.FeedCacheMode == "sequential"),
 			)
 			feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))

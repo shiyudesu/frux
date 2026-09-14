@@ -18,6 +18,22 @@ type AcceptedActionEventRepository interface {
 	PersistAcceptedActionEvent(ctx context.Context, event *AcceptedActionEvent) error
 }
 
+// DurableActionRequestRepository keeps HTTP idempotency independent of Redis
+// receipt retention. Event identity and the current request key can differ for
+// a no-op recovering a previously accepted mutation.
+type DurableActionRequestRepository interface {
+	FindActionRequest(context.Context, int64, int64, string, bool, string) (*ActionRequestReceipt, error)
+	PersistActionRequest(context.Context, *AcceptedActionEvent, string) (*ActionRequestReceipt, error)
+}
+
+type ActionRequestReceipt struct {
+	VideoID    int64
+	ActionType string
+	Active     bool
+	Count      int
+	Replayed   bool
+}
+
 type ThreadedCommentRepository interface {
 	CreateThreadedComment(ctx context.Context, comment *Comment) (*CommentMutationResult, error)
 	ListCommentRoots(ctx context.Context, query CommentRootQuery) (*CommentPage, error)

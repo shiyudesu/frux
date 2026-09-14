@@ -134,45 +134,73 @@ apps/api/internal/interfaces/http/interaction/
 }
 ```
 
-### 3.3 异步落库
+### 3.3 耐久接受与异步交接
 
-点赞和收藏启用 Redis 快速状态后，接口先校验视频状态和幂等键，再在同一个 Redis CAS 事务中写入行为状态、实时计数和该 `(user_id, video_id, action_type)` 的单调版本。事件通过 Kafka `frux.interaction.action-changed.v1`、规范 action-state key、幂等生产和 broker acknowledgement 交接，Worker 只启动注册 active mutation Group。
+2026-09-13 起，点赞/收藏成功响应以 PostgreSQL 耐久事实为前提，Redis 不再维护或汇总视频计数增量。
+Redis 保留用户行为的快速状态、状态版本及临时幂等回执，Kafka 保留事件交接和重复安全的消费。
 
-推荐流操作可选传入 `X-Recommendation-Request-ID`（最长 64）。该归因字段是不可信输入，随 durable action event 传递后，Worker 仅在耐久推荐证据绑定当前用户、request 和视频时幂等保存 `like` 或 `favorite` outcome；缺失或伪造归因会跳过 outcome，不改变已接受互动或画像信号。
+正常请求先检查 PostgreSQL 中的 HTTP 幂等回执；命中时返回原回复，不再次改变用户行为。
+未命中则验证视频、读取耐久状态，通过 Redis CAS 生成稳定 action event，再由
+`PersistActionRequest` 在同一数据库事务中应用该事件、更新计数、保存当前 HTTP 请求键的回执及
+画像/推荐结果 handoff。数据库提交成功后才尝试 Kafka 发布并返回成功。Redis 无法接受新请求时，
+使用 `SetActionWithAcceptedEvent` 的数据库同步路径。
 
-每个 Redis 状态版本都记录其 `handoff_confirmed` 标志。Kafka publication 失败或 acknowledgement 不确定时，API 使用短时、脱离客户端取消的恢复上下文同步持久化同一事件。若 fallback 也失败但 Kafka 可能已确认，API 返回可见更新失败且不回滚；后续 delivery 按同一事件版本落库。只有 Kafka 明确未确认且 fallback 失败才允许条件回滚。相同状态的无键重试、相同幂等键重放和新的 `delta=0` 幂等键若遇到未确认版本，都会重发该稳定事件（或同步持久化）并确认 handoff 后才返回成功，不能仅因状态未变化跳过耐久交接。新的请求键在确认前以有界（最多 32 条）的 `idempotency_receipts` 依赖该版本；确认后才成为普通 no-op 回执。每个键仍绑定目标 active 载荷：同键相反载荷返回冲突且不改变状态。
+事件的幂等键和当前 HTTP 请求键可能不同：例如新键的 no-op 恢复旧事件。两者分别保存，不可把新
+请求键改写到旧事件载荷里。Redis 清空后，已成功请求的耐久回执仍能防止“点赞 → 取消 → 重试旧点赞”
+再次改变计数。同键相反目标返回冲突。当前公开视频校验同样适用于回执重放。
 
-发布与同步持久化都失败时，回滚只可撤销仍未确认、仍匹配 `state_version + event_id`、且没有后续依赖回执的版本；版本计数器不回退，因此可重试的撤销会分配更高版本。已确认的版本、依赖该版本的并发 no-op 或更高版本都会让回滚条件不命中，避免旧失败路径撤销已报告的成功。Redis 事务提交后若响应计数读取失败，缓存层会把版本和原事件元数据一并返回给应用层，以同一条件恢复或回滚；恢复失败时未确认事件保留在 Redis，后续重试可再次交接。
+Kafka 发布失败不撤销已提交事实：数据库中的 leased profile/outcome handoff 仍由后台 Worker 重试；
+后续重复 Kafka delivery 通过稳定事件 ID 和状态顺序去重。数据库接受失败时不进行正常发布，
+只对仍属于本请求、尚未确认且没有后续依赖的 Redis 临时状态做条件回滚。临时状态确认失败或读缓存
+写失败不抹掉已经提交的数据库事实。若状态存储返回“已提交但读取失败”的元数据，既有有界恢复路径
+仍保留该原事件；该错误路径不会凭 Redis 状态返回成功。
 
-同步请求和已接收事件使用不同的持久化入口：
+消费端继续按单个 action 的 `version + occurred_at + event_id` 排序，旧事件不回退最新状态。
+互动事实、作者获赞计数和画像/推荐 handoff 的持久化逻辑由同步入口和消费入口复用。
+私密/下架后的已接受事件可以完成耐久交接，但不会放宽 Feed 和其他公共读路径的可见性校验。
 
-- `SetActionWithAcceptedEvent` 服务于 Redis 或异步传输不可用时的新 HTTP 请求，必须在事务内再次锁定并验证视频仍为 `published + public`。每个非空 `Idempotency-Key` 都在 `interaction_action_idempotency_receipt` 中绑定目标 active 状态和首次响应计数：同键同目标返回首次结果，同键相反目标返回 409。状态未改变（包括不存在的行为收到取消）只写该回执；只有真实状态转换才创建 action event、画像投影 handoff 和推荐 outcome handoff。
-- `PersistAcceptedActionEvent` 仅供 Worker 使用，表示事件已在入队前通过公开可读校验；视频之后变为私密或下架时仍写入互动事实和统计，但已删除或不存在的视频作为终止事件丢弃。
-- `interaction_action_event` 按 `event_id` 保存版本和完整已处理载荷。同一事件重复投递不再次改变 `interaction_action`、`video_stat` 或作者 `received_like_count`；相同事件 ID 携带不同载荷视为终止冲突。
-- `interaction_action` 为每个 `user_id + video_id + action_type` 保存最新 `latest_event_version + latest_event_occurred_at + latest_event_id`。Worker 首先比较版本；仅在版本相同的兼容事件中使用时间和事件 ID 确定顺序。任何较新事件（即使目标 active/canceled 状态未变）都推进这组顺序字段和推荐 request 归因，而状态相同的事件不改变统计增量；延迟旧事件与精确重复事件写入/命中回执后成功确认，但不改变物化状态或聚合。
-- Worker 将格式错误、无效字段、事件 ID 冲突、视频不存在和视频已删除分类为 terminal；数据库连接等瞬时错误进入 Kafka 注册恢复策略，而不会确认尚未完成的 durable handoff。
+#### 版本化计数快照
 
-有效 LIKE/FAVORITE 是推荐画像的正向耐久事实；推荐 Worker 通过稳定 action event ID 消费，
-重复事件不重复加权。互动请求不直接信任或写入客户端推荐画像，避免异步失败扩散到点赞、
-收藏的用户可见结果。
+`video_stat` 新增 `revision BIGINT NOT NULL DEFAULT 0`。点赞、取消、收藏、评论增删以及评论对账
+在修改计数的同一事务内推进 revision；重复事件和无状态变化的 no-op 不推进计数版本。
+`GetVideoStat` 与 Feed 批量查询一次读取完整的 revision 和各计数字段，禁止将旧评论结果的数量
+拼进后来读到的新版本快照。读失败时不制造全零快照。
 
-每个已接受 action receipt 同事务持有可租约重试的画像投影和 outcome 归因字段。Action Worker 在该
-事务提交后才允许 Kafka offset 前进；缺失 embedding、待到达的推荐证据和投影失败只由带指数退避的
-leased outbox 重试。发布恢复失败时，HTTP 的同步持久化路径仍会留下该 durable outbox，Worker 最终
-按同一 event ID 投影，且与 Kafka 重投递去重。
-
-私密或下架视频的互动事实不会放宽任何读取规则：Feed、公开视频详情、公开主页和个人内容库补齐仍按当前可读性过滤内容。
-
-核心键和队列：
-
-| 类型 | 名称 |
+| 用途 | Redis key |
 | --- | --- |
-| 用户行为状态 | `interaction:action:v1:{user_id}:{video_id}:{action}` |
-| 实时计数 Hash | `video:stat:counter:v1:{video_id}` |
-| Feed 计数 JSON | `video:stat:v1:{video_id}` |
-| Kafka Topic | `frux.interaction.action-changed.v1` |
-| Kafka active Group | `frux.interaction.persist-action.v1` |
-| Kafka recovery policy | `block-and-retry` |
+| 用户行为临时状态 | `interaction:action:v1:{user_id}:{video_id}:{action}` |
+| 完整计数 JSON String | `video:stat:v2:{video_id}`，包含 VideoID、Revision、LikeCount、CommentCount、FavoriteCount |
+| 已缓存版本记录 | `video:stat:revision:v1:{video_id}` |
+| 已停用的计数结构 | `video:stat:counter:v1:*`，新代码既不更新也不读取 |
+| Kafka Topic / active Group | `frux.interaction.action-changed.v1` / `frux.interaction.persist-action.v1` |
+
+JSON 默认 TTL 为 15 秒，版本记录默认保留 24 小时。MGET 命中只读取卡片和计数各一批，不增加版本
+检查命令。JSON miss 由应用层批量查询 PostgreSQL，不把旧 Hash 中的增量加到新数据库值上。
+
+所有回填、预热和写后刷新统一使用 `publishFeedStatSnapshots`：
+
+1. WATCH 本批视频的 JSON key 和版本记录，批量读取已有缓存。
+2. 低 revision 不覆盖高 revision；相同 revision 的已有快照不可变，也不因重放延长 JSON TTL。
+   比较的是版本而非数量，因此新版本的取消点赞可以正确降低点赞数。
+3. 版本记录也缺失时（过期、淘汰或 Redis 全丢失），在 WATCH 后重新**批量**读取权威数据库快照。
+   不信任调用方可能在缓存丢失之前取得的旧值；数据库核验失败则不写缓存。
+4. JSON 和版本记录在同一 Redis 事务中写入。最多尝试 3 轮，并发冲突时重新检查；不降级成
+   无条件 SET。API 的耐久成功与可选缓存写入错误分开处理。
+
+这消除了计数基值与分片独立过期、重复叠加已落库增量，以及 Redis 丢失造成耐久点赞遗失的问题。
+缓存仍是允许短 TTL 陈旧的展示副本，不承担数据库的持久化职责。
+
+#### 验证与升级
+
+- miniredis 和私有真实 Redis 的双客户端交错测试覆盖旧快照晚到、数量下降、评论快照、JSON 淘汰、
+  版本记录淘汰、FLUSHDB 与冷启动；另验证冷启动数据库读取保持批量、重试有上限。
+- 真实 PostgreSQL 测试覆盖成功前耐久接受、Redis 全清空后恢复、旧 HTTP 幂等键重放、评论版本排序、
+  并发计数与 revision 同事务提交、事务失败时同时回滚，以及旧 Kafka delivery 的重复安全。
+- 部署需要先完成自动迁移新增 revision 列，并协调升级 API/Worker；升级窗口应停止旧写入并处理完
+  原异步接受队列，避免把旧版“broker 确认即成功”的语义与新语义混用。新 JSON 使用 v2 命名空间，
+  旧 v1 JSON 和旧计数 Hash 不必手工清空，新读路径会忽略它们。
+- 写路径增加了同步数据库耐久接受，冷回填在版本记录缺失时增加一次批量数据库核验；原性能报告仍是
+  原实现的历史证据，不能当作本次修复后的性能结果。MGET 正常命中读取方式保持不变。
 
 Consumer 只有拿到非空 Partition assignment 后才健康，Worker 在有界 `assignment_timeout` 内等待
 view Group ready，之后才启动 action Group。Source Group 在加入前通过 PostgreSQL durable marker

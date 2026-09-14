@@ -159,7 +159,7 @@ func startWorkers(
 	}
 
 	redisClient := infracache.NewRedisClient(cfg.Redis)
-	feedCache := infracache.NewFeedCache(redisClient)
+	feedCache := infracache.NewFeedCache(redisClient, infracache.WithFeedStatSource(infrafeed.New(gormDB)))
 	governancePollInterval, err := time.ParseDuration(cfg.Governance.PollInterval)
 	if err != nil {
 		return err

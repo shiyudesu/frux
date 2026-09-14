@@ -47,8 +47,8 @@ duration、Provider underfill/exhausted 和 overlap；预算扩张必须同时�
 | P0-01 | Timeline 首页大量访问 | 页缓存、短 TTL、singleflight 回源 | 首页 P95 响应稳定在可接受范围 |
 | P0-02 | Feed 卡片组装慢 | 页缓存只存 ID，卡片和计数批量 MGET | 单页查询减少 N+1 回源 |
 | P0-03 | 分页重复和漏数 | 游标携带排序字段，稳定排序 | 翻页结果无重复且顺序稳定 |
-| P0-04 | 数据库缓存一致性偏差 | 写事实表，缓存短 TTL，异步更新 | 计数最终一致，缓存异常可回源 |
-| P0-05 | 并发点赞收藏评论 | Redis 快速状态、Kafka retained stream、PostgreSQL fallback、稳定事件 ID | 重复请求计数稳定 |
+| P0-04 | 数据库缓存一致性偏差 | 数据库先提交，版本化快照回填，缓存短 TTL | 计数最终一致，缓存异常可回源 |
+| P0-05 | 并发点赞收藏评论 | PostgreSQL 耐久接受与版本化计数、Redis 快速状态和受保护读缓存、Kafka 后续交接 | 重复请求和缓存丢失不重复执行计数 |
 | P0-06 | 大 V 发布放大 | 粉丝数阈值、异步 fanout、懒加载补偿 | 发布接口不被粉丝量线性拖慢 |
 | P0-07 | 热门视频热 key | 分钟桶 ZSET、窗口合并、短期窗口缓存 | Hot 查询避免集中打 PostgreSQL |
 
@@ -88,7 +88,7 @@ duration、Provider underfill/exhausted 和 overlap；预算扩张必须同时�
 验收：
 
 - 单页 Feed 查询使用批量读取。
-- Redis 缺失时最多一次批量视频查询和一次批量计数查询。
+- 普通回源使用一次批量视频查询和一次批量计数查询；计数缓存的版本记录也缺失时，回填前额外进行一次批量数据库核验，不逐视频查询。
 - 返回顺序与页缓存或数据库排序一致。
 
 ## 6. 游标分页
@@ -123,10 +123,10 @@ duration、Provider underfill/exhausted 和 overlap；预算扩张必须同时�
 ```text
 HTTP Handler
   -> Interaction Service
-  -> Redis 行为状态和实时计数
-  -> Kafka ActionChangedEvent
-  -> Worker
-  -> PostgreSQL interaction_action / interaction_comment / video_stat
+  -> Redis 行为临时状态（不可用时走数据库路径）
+  -> PostgreSQL 行为事实、请求回执、计数与 revision 同事务提交
+  -> 尝试 Kafka ActionChangedEvent 交接；按版本刷新 Redis 计数 JSON
+  -> Worker 重复安全消费，处理耐久画像/推荐 handoff
 ```
 
 异常处理：
@@ -134,7 +134,7 @@ HTTP Handler
 | 异常 | 处理 |
 | --- | --- |
 | Redis 不可用 | 降级为 PostgreSQL 路径或返回可识别错误 |
-| Kafka 投递失败/确认不确定 | 同步 PostgreSQL receipt/outbox fallback；发布与 fallback 双失败条件回滚 Redis |
+| Kafka 投递失败/确认不确定 | 正常成功前已提交 PostgreSQL 事实及 handoff，不因 Kafka 失败回滚已提交计数 |
 | View Kafka 发布失败 | Outbox 保留 pending 并重试；稳定 event ID 吸收重复 |
 | Worker 重复消费 | 使用唯一键和幂等键保证安全 |
 | 缓存计数偏差 | TTL 过期后回源修正 |
